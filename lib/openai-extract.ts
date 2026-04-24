@@ -1,19 +1,90 @@
 import "server-only";
 
 import OpenAI from "openai";
+import type { ChatCompletionContentPart } from "openai/resources/chat/completions";
 
 import { groupContactsFromExtraction } from "@/lib/contact-grouping";
 import { openaiCostUsd } from "@/lib/openai-pricing";
 
-const DEFAULT_MODEL = "gpt-5-mini";
-const MAX_BODY_CHARS = 12_000;
-const SUB_BATCH = 5;
+const DEFAULT_MODEL = "gpt-5";
+
+/** Emails per OpenAI request (structured JSON). Larger ⇒ fewer API calls per HTTP batch. */
+function subBatchSize(): number {
+  const raw = process.env.OPENAI_EXTRACTION_SUB_BATCH?.trim();
+  const n = raw ? parseInt(raw, 10) : 14;
+  if (!Number.isFinite(n) || n < 2) return 14;
+  return Math.min(30, Math.floor(n));
+}
+
+/** Max concurrent OpenAI calls when a single HTTP batch is split into many sub-batches. */
+function maxOpenAiParallel(): number {
+  const raw = process.env.OPENAI_EXTRACTION_MAX_PARALLEL?.trim();
+  const n = raw ? parseInt(raw, 10) : 10;
+  if (!Number.isFinite(n) || n < 1) return 10;
+  return Math.min(20, Math.floor(n));
+}
+
+async function mapPoolLimited<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let next = 0;
+  let active = 0;
+  let settled = false;
+  return new Promise((resolve, reject) => {
+    function tryResolve() {
+      if (settled) return;
+      if (next >= items.length && active === 0) {
+        settled = true;
+        resolve(results);
+      }
+    }
+    function kick() {
+      if (settled) return;
+      while (active < limit && next < items.length) {
+        const i = next++;
+        active++;
+        fn(items[i]!, i)
+          .then((r) => {
+            if (settled) return;
+            results[i] = r;
+            active--;
+            tryResolve();
+            kick();
+          })
+          .catch((e) => {
+            if (!settled) {
+              settled = true;
+              reject(e);
+            }
+          });
+      }
+      tryResolve();
+    }
+    kick();
+  });
+}
+
+function maxBodyChars(): number {
+  const raw = process.env.OPENAI_EXTRACTION_MAX_BODY_CHARS?.trim();
+  // Slightly lower default speeds huge runs; raise via env if you need long signatures.
+  if (!raw) return 8_000;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 2_000) return 2_000;
+  if (n > 24_000) return 24_000;
+  return n;
+}
 
 export type ExtractEmailIn = {
   id: string;
   subject: string;
   body: string;
   from?: string;
+  /** `data:image/…;base64,…` from Gmail MIME parts (optional). */
+  images?: string[];
 };
 
 export type ExtractedContact = {
@@ -76,12 +147,59 @@ Rules:
 - Prefer real human names over company names for **names** and **contacts[].name**.
 - Exclude obvious noreply/system addresses from meaningful contacts when possible.
 - You MUST return exactly one object in **results** per input email id, with the same **id** string.
+- Do not add the sender (From header) as a contact row from the header alone; do extract names, phones, and emails that appear in the body or in embedded images (e.g. signature blocks, cards).
+- Extract any email addresses or names from images that might be embedded in the email.
+- Extract the details even from signature as well.
 - For each **contacts[]** row, use JSON empty string "" (not null) for any unknown name, email, or phone field (the schema requires strings).`;
 
 function trimBody(s: string): string {
+  const max = maxBodyChars();
   const t = s.trim();
-  if (t.length <= MAX_BODY_CHARS) return t;
-  return `${t.slice(0, MAX_BODY_CHARS)}\n\n[…truncated for API size…]`;
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}\n\n[…truncated for API size…]`;
+}
+
+function openAiImageDetail(): "low" | "high" | "auto" {
+  const v = (process.env.OPENAI_EXTRACTION_IMAGE_DETAIL || "low").toLowerCase();
+  if (v === "high" || v === "auto") return v;
+  return "low";
+}
+
+/** Plain string if no images; multimodal parts when any email includes images. */
+function buildUserContent(emails: ExtractEmailIn[]): string | ChatCompletionContentPart[] {
+  const anyImages = emails.some((e) => (e.images?.length ?? 0) > 0);
+  if (!anyImages) {
+    return emails
+      .map(
+        (e, i) =>
+          `--- EMAIL ${i + 1} ---\nid: ${e.id}\nfrom_header: ${(e.from || "").slice(0, 500)}\nsubject: ${e.subject}\nbody:\n${trimBody(e.body)}`
+      )
+      .join("\n\n");
+  }
+
+  const parts: ChatCompletionContentPart[] = [
+    {
+      type: "text",
+      text: "Each block below is one email (id in the block). Any images that immediately follow a block belong to that email (e.g. signature logos, business cards, scanned contact strips). Use both the plain text and those images to fill names, phones, and emails.\n\n",
+    },
+  ];
+
+  for (let i = 0; i < emails.length; i++) {
+    const e = emails[i]!;
+    parts.push({
+      type: "text",
+      text: `--- EMAIL ${i + 1} ---\nid: ${e.id}\nfrom_header: ${(e.from || "").slice(0, 500)}\nsubject: ${e.subject}\nbody:\n${trimBody(e.body)}`,
+    });
+    for (const dataUrl of e.images || []) {
+      if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) continue;
+      parts.push({
+        type: "image_url",
+        image_url: { url: dataUrl, detail: openAiImageDetail() },
+      });
+    }
+  }
+
+  return parts;
 }
 
 let _client: OpenAI | null = null;
@@ -94,7 +212,12 @@ function getClient(): OpenAI {
         "OPENAI_API_KEY is not set. Add it to your .env (see .env.example)."
       );
     }
-    _client = new OpenAI({ apiKey: key });
+    const timeoutMs = parseInt(process.env.OPENAI_TIMEOUT_MS || "240000", 10);
+    _client = new OpenAI({
+      apiKey: key,
+      timeout:
+        Number.isFinite(timeoutMs) && timeoutMs >= 30_000 ? timeoutMs : 240_000,
+    });
   }
   return _client;
 }
@@ -146,12 +269,7 @@ async function callOpenAIOnce(emails: ExtractEmailIn[]): Promise<{
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }> {
   const model = getModel();
-  const userBlock = emails
-    .map(
-      (e, i) =>
-        `--- EMAIL ${i + 1} ---\nid: ${e.id}\nfrom_header: ${(e.from || "").slice(0, 500)}\nsubject: ${e.subject}\nbody:\n${trimBody(e.body)}`
-    )
-    .join("\n\n");
+  const userContent = buildUserContent(emails);
 
   const client = getClient();
   const response = await client.chat.completions.create({
@@ -167,7 +285,7 @@ async function callOpenAIOnce(emails: ExtractEmailIn[]): Promise<{
     },
     messages: [
       { role: "system", content: SYSTEM },
-      { role: "user", content: userBlock },
+      { role: "user", content: userContent },
     ],
   });
 
@@ -267,11 +385,18 @@ export async function extractEmailsWithOpenAI(
   const model = getModel();
   let prompt = 0;
   let completion = 0;
-  const all: OpenAIExtractResult[] = [];
+  const sub = subBatchSize();
+  const slices: ExtractEmailIn[][] = [];
+  for (let i = 0; i < emails.length; i += sub) {
+    slices.push(emails.slice(i, i + sub));
+  }
 
-  for (let i = 0; i < emails.length; i += SUB_BATCH) {
-    const slice = emails.slice(i, i + SUB_BATCH);
-    const { results, usage } = await callOpenAIOnce(slice);
+  const parallel = maxOpenAiParallel();
+  const settled = await mapPoolLimited(slices, parallel, (slice) =>
+    callOpenAIOnce(slice)
+  );
+  const all: OpenAIExtractResult[] = [];
+  for (const { results, usage } of settled) {
     all.push(...results);
     prompt += usage.prompt_tokens ?? 0;
     completion += usage.completion_tokens ?? 0;

@@ -7,19 +7,21 @@ type Props = {
   max: number;
   className?: string;
   label?: string;
+  /** Short hint under the bar (e.g. how often progress updates). */
+  hint?: string;
   indeterminate?: boolean;
 };
 
-export function ProgressBar({ value, max, className, label, indeterminate }: Props) {
+export function ProgressBar({ value, max, className, label, hint, indeterminate }: Props) {
   const pct = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
 
   return (
     <div className={cn("w-full space-y-2", className)}>
       {label ? (
-        <div className="flex justify-between text-sm">
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
+        <div className="flex justify-between gap-3 text-sm">
+          <span className="min-w-0 font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
           {!indeterminate && (
-            <span className="tabular-nums text-zinc-500 dark:text-zinc-400">
+            <span className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400">
               {value} / {max} <span className="text-xs">({pct}%)</span>
             </span>
           )}
@@ -34,6 +36,9 @@ export function ProgressBar({ value, max, className, label, indeterminate }: Pro
           style={!indeterminate ? { width: `${pct}%` } : undefined}
         />
       </div>
+      {hint ? (
+        <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{hint}</p>
+      ) : null}
     </div>
   );
 }

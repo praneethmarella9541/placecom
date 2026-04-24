@@ -11,6 +11,7 @@ import {
   getMaxEmailsSetting,
   parseMaxEmails,
 } from "@/lib/user-settings";
+import { getExtractHttpBatchSize } from "@/lib/extract-config";
 import { ExportButton } from "@/components/ExportButton";
 import { ProgressBar } from "@/components/ProgressBar";
 import type { ResultRow } from "@/components/ResultsTable";
@@ -19,7 +20,24 @@ import { Skeleton } from "@/components/Skeleton";
 import { IconPlay, IconSettings, IconUser, IconPhone, IconAtSign, IconMail } from "@/components/Icons";
 
 type Phase = "idle" | "fetching" | "extracting" | "done" | "error";
-const CHUNK = 20;
+const CHUNK = getExtractHttpBatchSize();
+
+type FetchStreamMsg =
+  | { type: "listing"; listed: number }
+  | { type: "list"; total: number }
+  | { type: "bodies"; done: number; total: number }
+  | {
+      type: "complete";
+      emails: {
+        id: string;
+        subject: string;
+        from: string;
+        body: string;
+        date: string;
+        images?: string[];
+      }[];
+    }
+  | { type: "error"; code?: string; message?: string };
 
 export default function DashboardPage() {
   const supabase = createClient();
@@ -28,6 +46,9 @@ export default function DashboardPage() {
   const [progress, setProgress] = useState(0);
   const [progressMax, setProgressMax] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
+  const [progressHint, setProgressHint] = useState("");
+  /** After Gmail list completes we know total and show determinate download progress. */
+  const [gmailListReady, setGmailListReady] = useState(false);
   const [rows, setRows] = useState<ResultRow[]>([]);
   const [loadingRows, setLoadingRows] = useState(true);
   const [openAiRunSummary, setOpenAiRunSummary] = useState<string | null>(null);
@@ -88,6 +109,8 @@ export default function DashboardPage() {
     setPhase("fetching");
     setProgress(0);
     setProgressMax(1);
+    setGmailListReady(false);
+    setProgressHint("");
     setProgressLabel("Connecting to Gmail…");
 
     const { data: { session } } = await supabase.auth.getSession();
@@ -117,27 +140,116 @@ export default function DashboardPage() {
     const { job } = (await jobRes.json()) as { job: { id: string } };
     const jobId = job.id;
 
-    let fetchRes: Response;
+    let emails: {
+      id: string;
+      subject: string;
+      from: string;
+      body: string;
+      date: string;
+      images?: string[];
+    }[] = [];
     try {
-      fetchRes = await fetch("/api/fetch-emails", {
+      const fetchRes = await fetch("/api/fetch-emails", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken, maxEmails, labelFilter }),
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson",
+        },
+        body: JSON.stringify({
+          accessToken,
+          maxEmails,
+          labelFilter,
+          stream: true,
+        }),
       });
-    } catch (e) { setError(clientFetchFailedMessage(e)); setPhase("error"); return; }
-    if (fetchRes.status === 401) {
-      const j = await fetchRes.json().catch(() => ({}));
-      setError(j.message || "Google session expired. Please sign out and reconnect.");
-      setPhase("error"); return;
-    }
-    if (!fetchRes.ok) {
-      const j = await fetchRes.json().catch(() => ({}));
-      setError(j.error || "Failed to fetch emails"); setPhase("error"); return;
-    }
+      if (fetchRes.status === 401) {
+        const j = await fetchRes.json().catch(() => ({}));
+        setError(j.message || "Google session expired. Please sign out and reconnect.");
+        setPhase("error");
+        return;
+      }
+      if (!fetchRes.ok) {
+        const j = await fetchRes.json().catch(() => ({}));
+        setError(
+          typeof j.error === "string"
+            ? j.error
+            : typeof j.message === "string"
+              ? j.message
+              : "Failed to fetch emails"
+        );
+        setPhase("error");
+        return;
+      }
+      if (!fetchRes.body) {
+        setError("No response body from Gmail fetch.");
+        setPhase("error");
+        return;
+      }
 
-    const { emails } = (await fetchRes.json()) as {
-      emails: { id: string; subject: string; from: string; body: string; date: string }[];
-    };
+      setProgressHint(
+        "Listing can take a moment; bodies download in parallel. Percent matches messages loaded."
+      );
+      const reader = fetchRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let gotComplete = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const t = line.trim();
+          if (!t) continue;
+          let msg: FetchStreamMsg;
+          try {
+            msg = JSON.parse(t) as FetchStreamMsg;
+          } catch {
+            setError("Invalid progress stream from server.");
+            setPhase("error");
+            return;
+          }
+          if (msg.type === "listing") {
+            setProgressLabel(`Listing messages in Gmail… (${msg.listed} found)`);
+          } else if (msg.type === "list") {
+            setProgressMax(Math.max(msg.total, 1));
+            setProgress(0);
+            setGmailListReady(true);
+            setProgressLabel("Downloading message bodies…");
+          } else if (msg.type === "bodies") {
+            setProgress(msg.done);
+          } else if (msg.type === "complete") {
+            emails = msg.emails;
+            gotComplete = true;
+          } else if (msg.type === "error") {
+            if (msg.code === "UNAUTHORIZED") {
+              setError(
+                msg.message ||
+                  "Google session expired. Please sign out and reconnect."
+              );
+            } else if (msg.code === "GMAIL_INSUFFICIENT_SCOPE") {
+              setError(msg.message || "Gmail permission missing for this account.");
+            } else {
+              setError(msg.message || "Failed to fetch emails");
+            }
+            setPhase("error");
+            return;
+          }
+        }
+      }
+
+      if (!gotComplete) {
+        setError("Gmail fetch ended unexpectedly. Try again.");
+        setPhase("error");
+        return;
+      }
+    } catch (e) {
+      setError(clientFetchFailedMessage(e));
+      setPhase("error");
+      return;
+    }
 
     let patch: Response;
     try {
@@ -156,13 +268,23 @@ export default function DashboardPage() {
       setPhase("done"); setProgressLabel(""); await loadExtractions(); return;
     }
 
-    setPhase("extracting"); setProgressMax(emails.length); setProgress(0);
-    setProgressLabel("Extracting with OpenAI (gpt-5-mini)…");
+    setPhase("extracting");
+    setProgressMax(emails.length);
+    setProgress(0);
+    setGmailListReady(true);
+    setProgressHint(
+      emails.length > 5000
+        ? `Each step = up to ${CHUNK} emails. Very large run (${emails.length.toLocaleString()} msgs) — browser holds all bodies in RAM; ~100k+ needs a server/queue or a smaller cap in Settings.`
+        : `Each step = one server batch of up to ${CHUNK} emails (OpenAI runs parallel sub-requests inside the batch).`
+    );
     const batchCount = Math.ceil(emails.length / CHUNK);
 
     for (let b = 0; b < batchCount; b++) {
       const startIdx = b * CHUNK;
       const slice = emails.slice(startIdx, startIdx + CHUNK);
+      setProgressLabel(
+        `Extracting with OpenAI… (batch ${b + 1} of ${batchCount}, up to ${slice.length} messages)`
+      );
       let exRes: Response;
       try {
         exRes = await fetch("/api/extract", {
@@ -171,7 +293,15 @@ export default function DashboardPage() {
           body: JSON.stringify({
             jobId, jobTotalEmails: emails.length,
             batchIndex: b, batchCount,
-            emails: slice.map((e, i) => ({ id: e.id, subject: e.subject, body: e.body, from: e.from, date: e.date, position: startIdx + i })),
+            emails: slice.map((e, i) => ({
+              id: e.id,
+              subject: e.subject,
+              body: e.body,
+              from: e.from,
+              date: e.date,
+              position: startIdx + i,
+              ...(e.images && e.images.length > 0 ? { images: e.images } : {}),
+            })),
           }),
         });
       } catch (e) { setError(clientFetchFailedMessage(e)); setPhase("error"); return; }
@@ -200,7 +330,10 @@ export default function DashboardPage() {
       }
     }
 
-    setPhase("done"); setProgress(emails.length); setProgressLabel("");
+    setPhase("done");
+    setProgress(emails.length);
+    setProgressLabel("");
+    setProgressHint("");
     await loadExtractions();
   }
 
@@ -278,7 +411,13 @@ export default function DashboardPage() {
 
         {busy ? (
           <div className="mt-6">
-            <ProgressBar value={progress} max={Math.max(progressMax, 1)} label={progressLabel || "Progress"} indeterminate={phase === "fetching"} />
+            <ProgressBar
+              value={progress}
+              max={Math.max(progressMax, 1)}
+              label={progressLabel || "Progress"}
+              hint={progressHint}
+              indeterminate={phase === "fetching" && !gmailListReady}
+            />
           </div>
         ) : null}
 

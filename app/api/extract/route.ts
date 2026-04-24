@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
+import { getExtractHttpBatchSize } from "@/lib/extract-config";
 import { extractEmailsWithOpenAI } from "@/lib/openai-extract";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
-
-const CHUNK = 20;
 
 type IncomingEmail = {
   id: string;
@@ -14,6 +13,8 @@ type IncomingEmail = {
   from?: string;
   date?: string;
   position?: number;
+  /** `data:image/…;base64,…` from Gmail for vision */
+  images?: string[];
 };
 
 type BatchBody = {
@@ -97,6 +98,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const CHUNK = getExtractHttpBatchSize();
+
   let raw: Record<string, unknown>;
   try {
     raw = (await request.json()) as Record<string, unknown>;
@@ -146,6 +149,7 @@ export async function POST(request: Request) {
         subject: e.subject ?? "",
         body: e.body ?? "",
         from: e.from ?? "",
+        ...(Array.isArray(e.images) && e.images.length > 0 ? { images: e.images } : {}),
       }));
 
       const { results: chunkResults, usage, costUsd } =
@@ -271,6 +275,7 @@ export async function POST(request: Request) {
         subject: e.subject ?? "",
         body: e.body ?? "",
         from: e.from ?? "",
+        ...(Array.isArray(e.images) && e.images.length > 0 ? { images: e.images } : {}),
       }));
 
       const { results: chunkResults, usage, costUsd } =

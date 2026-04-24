@@ -1,0 +1,467 @@
+import { describeUpstreamFetchError } from "@/lib/fetch-errors";
+import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
+
+const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
+
+export type MailFolder = "inbox" | "sent";
+
+export type ThreadListItem = {
+  id: string;
+  snippet: string;
+  subject: string;
+  from: string;
+  date: string;
+  historyId?: string;
+};
+
+export type ThreadListPage = {
+  threads: ThreadListItem[];
+  nextPageToken?: string;
+};
+
+const LABELS: Record<MailFolder, string[]> = {
+  inbox: ["INBOX"],
+  sent: ["SENT"],
+};
+
+const QUERY: Record<MailFolder, string> = {
+  inbox: "category:primary",
+  sent: "",
+};
+
+async function fetchMessageMeta(
+  accessToken: string,
+  messageId: string
+): Promise<{ subject: string; from: string; date: string }> {
+  const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`;
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return { subject: "", from: "", date: "" };
+    const data = (await res.json()) as {
+      internalDate?: string;
+      payload?: { headers?: { name?: string; value?: string }[] };
+    };
+    const headers = data.payload?.headers || [];
+    const get = (k: string) => {
+      const lower = k.toLowerCase();
+      const h = headers.find((x) => (x.name || "").toLowerCase() === lower);
+      return (h?.value || "").trim();
+    };
+    let date = get("Date");
+    if (data.internalDate) {
+      const ms = parseInt(data.internalDate, 10);
+      if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
+    }
+    return { subject: get("Subject"), from: get("From"), date };
+  } catch {
+    return { subject: "", from: "", date: "" };
+  }
+}
+
+export async function listThreadsPage(
+  accessToken: string,
+  options: {
+    folder: MailFolder;
+    maxResults: number;
+    pageToken?: string;
+  }
+): Promise<ThreadListPage> {
+  const labels = LABELS[options.folder];
+  const q = QUERY[options.folder];
+  const params = new URLSearchParams({
+    maxResults: String(Math.min(Math.max(options.maxResults, 1), 100)),
+  });
+  for (const l of labels) params.append("labelIds", l);
+  if (q) params.set("q", q);
+  if (options.pageToken) params.set("pageToken", options.pageToken);
+
+  const url = `${GMAIL_API}/threads?${params.toString()}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(e, "Gmail API (threads list)")
+    );
+  }
+
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail threads list ${res.status}: ${text}`);
+  }
+
+  const data = (await res.json()) as {
+    threads?: { id: string; snippet?: string; historyId?: string }[];
+    nextPageToken?: string;
+  };
+
+  const rawThreads = data.threads || [];
+
+  const threads: ThreadListItem[] = await Promise.all(
+    rawThreads.map(async (t) => {
+      const meta = await fetchMessageMeta(accessToken, t.id);
+      return {
+        id: t.id,
+        snippet: t.snippet || "",
+        subject: meta.subject,
+        from: meta.from,
+        date: meta.date,
+        historyId: t.historyId,
+      };
+    })
+  );
+
+  return { threads, nextPageToken: data.nextPageToken };
+}
+
+type GmailHeader = { name?: string; value?: string };
+
+function getHeader(headers: GmailHeader[] | undefined, key: string): string {
+  if (!headers) return "";
+  const lower = key.toLowerCase();
+  const h = headers.find((x) => (x.name || "").toLowerCase() === lower);
+  return (h?.value || "").trim();
+}
+
+function decodeBase64Url(data: string): string {
+  const pad = data.length % 4;
+  const padded = pad ? data + "=".repeat(4 - pad) : data;
+  const b64 = padded.replace(/-/g, "+").replace(/_/g, "/");
+  try {
+    return Buffer.from(b64, "base64").toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+function collectParts(
+  payload: Record<string, unknown>,
+  targetMime: string
+): string[] {
+  const mimeType = String(payload.mimeType || "");
+  const body = payload.body as { data?: string } | undefined;
+  const parts = payload.parts as Record<string, unknown>[] | undefined;
+  const chunks: string[] = [];
+  if (mimeType === targetMime && body?.data) {
+    chunks.push(decodeBase64Url(body.data));
+  }
+  if (Array.isArray(parts)) {
+    for (const p of parts) {
+      chunks.push(...collectParts(p as Record<string, unknown>, targetMime));
+    }
+  }
+  return chunks;
+}
+
+export type AttachmentInfo = {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+};
+
+export type ThreadMessageView = {
+  id: string;
+  threadId: string;
+  subject: string;
+  from: string;
+  to: string;
+  date: string;
+  body: string;
+  bodyHtml: string;
+  messageIdHeader?: string;
+  attachments: AttachmentInfo[];
+};
+
+function collectAttachments(payload: Record<string, unknown>, messageId: string): AttachmentInfo[] {
+  const attachments: AttachmentInfo[] = [];
+  const body = payload.body as { attachmentId?: string; size?: number } | undefined;
+  const filename = String(payload.filename || "");
+  const mimeType = String(payload.mimeType || "");
+  const parts = payload.parts as Record<string, unknown>[] | undefined;
+
+  if (filename && body?.attachmentId) {
+    attachments.push({
+      attachmentId: body.attachmentId,
+      filename,
+      mimeType,
+      size: body.size || 0,
+    });
+  }
+
+  if (Array.isArray(parts)) {
+    for (const p of parts) {
+      attachments.push(...collectAttachments(p as Record<string, unknown>, messageId));
+    }
+  }
+  return attachments;
+}
+
+export async function getThreadMessages(
+  accessToken: string,
+  threadId: string
+): Promise<ThreadMessageView[]> {
+  const url = `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?format=full`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Gmail API (thread get)"));
+  }
+
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail thread get ${res.status}: ${text}`);
+  }
+
+  const data = (await res.json()) as {
+    id: string;
+    messages?: {
+      id: string;
+      threadId?: string;
+      internalDate?: string;
+      payload?: Record<string, unknown>;
+    }[];
+  };
+
+  const rawMsgs = data.messages || [];
+  const sorted = [...rawMsgs].sort((a, b) => {
+    const ta = parseInt(a.internalDate || "0", 10);
+    const tb = parseInt(b.internalDate || "0", 10);
+    return ta - tb;
+  });
+
+  const out: ThreadMessageView[] = [];
+  const messages = sorted;
+
+  for (const m of messages) {
+    const payload = m.payload || {};
+    const headers = (payload.headers as GmailHeader[]) || [];
+    const subject = getHeader(headers, "Subject");
+    const from = getHeader(headers, "From");
+    const to = getHeader(headers, "To");
+    const dateHeader = getHeader(headers, "Date");
+    const messageIdHeader = getHeader(headers, "Message-ID");
+    let date = dateHeader;
+    if (m.internalDate) {
+      const ms = parseInt(m.internalDate, 10);
+      if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
+    }
+    const body = collectParts(payload, "text/plain").join("\n\n").trim();
+    const bodyHtml = collectParts(payload, "text/html").join("").trim();
+    const attachments = collectAttachments(payload, m.id);
+    out.push({
+      id: m.id,
+      threadId: m.threadId || data.id,
+      subject,
+      from,
+      to,
+      date: date || new Date().toISOString(),
+      body,
+      bodyHtml,
+      messageIdHeader: messageIdHeader || undefined,
+      attachments,
+    });
+  }
+
+  return out;
+}
+
+function toBase64Url(buf: Buffer): string {
+  return buf
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\n/g, "<br>");
+}
+
+const MIME_ALT_BOUNDARY = "----=_PlaceAlt_001";
+const MIME_MIXED_BOUNDARY = "----=_PlaceMixed_001";
+
+export type SendAttachment = {
+  filename: string;
+  mimeType: string;
+  base64Data: string;
+};
+
+function buildAlternativePart(plainText: string, trackingPixelUrl?: string): string {
+  const htmlBody = trackingPixelUrl
+    ? `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${escapeHtml(plainText)}</div><img src="${trackingPixelUrl}" width="1" height="1" style="display:none" alt="" />`
+    : `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${escapeHtml(plainText)}</div>`;
+
+  return [
+    `--${MIME_ALT_BOUNDARY}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    plainText,
+    `--${MIME_ALT_BOUNDARY}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    htmlBody,
+    `--${MIME_ALT_BOUNDARY}--`,
+  ].join("\r\n");
+}
+
+function buildMimeBody(
+  plainText: string,
+  trackingPixelUrl?: string,
+  attachments?: SendAttachment[]
+): { contentType: string; body: string } {
+  const altPart = buildAlternativePart(plainText, trackingPixelUrl);
+
+  if (!attachments || attachments.length === 0) {
+    return {
+      contentType: `multipart/alternative; boundary="${MIME_ALT_BOUNDARY}"`,
+      body: altPart,
+    };
+  }
+
+  const parts: string[] = [
+    `--${MIME_MIXED_BOUNDARY}`,
+    `Content-Type: multipart/alternative; boundary="${MIME_ALT_BOUNDARY}"`,
+    "",
+    altPart,
+  ];
+
+  for (const att of attachments) {
+    parts.push(
+      `--${MIME_MIXED_BOUNDARY}`,
+      `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename="${att.filename}"`,
+      "",
+      att.base64Data
+    );
+  }
+
+  parts.push(`--${MIME_MIXED_BOUNDARY}--`);
+
+  return {
+    contentType: `multipart/mixed; boundary="${MIME_MIXED_BOUNDARY}"`,
+    body: parts.join("\r\n"),
+  };
+}
+
+export async function sendMailViaGmail(
+  accessToken: string,
+  options: {
+    to: string;
+    subject: string;
+    textBody: string;
+    threadId?: string;
+    inReplyToMessageId?: string;
+    references?: string;
+    trackingPixelUrl?: string;
+    attachments?: SendAttachment[];
+  }
+): Promise<{ id: string; threadId: string }> {
+  let inReplyTo = "";
+  let references = options.references || "";
+  let subject = options.subject;
+
+  if (options.inReplyToMessageId) {
+    const msgUrl = `${GMAIL_API}/messages/${encodeURIComponent(options.inReplyToMessageId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=Subject&metadataHeaders=References`;
+    const gm = await fetch(msgUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (gm.ok) {
+      const meta = (await gm.json()) as {
+        payload?: { headers?: GmailHeader[] };
+      };
+      const headers = meta.payload?.headers || [];
+      const mid = getHeader(headers, "Message-ID");
+      const sub = getHeader(headers, "Subject");
+      const ref = getHeader(headers, "References");
+      if (mid) inReplyTo = mid;
+      if (sub && options.subject.trim() === "") {
+        subject = /^Re:\s/i.test(sub) ? sub : `Re: ${sub}`;
+      }
+      if (ref && inReplyTo) {
+        references = `${ref} ${inReplyTo}`.trim();
+      } else if (inReplyTo) {
+        references = inReplyTo;
+      }
+    }
+  }
+
+  const subj = (subject || "").trim() || "(no subject)";
+  const { contentType, body: mimeBody } = buildMimeBody(
+    options.textBody,
+    options.trackingPixelUrl,
+    options.attachments
+  );
+
+  const rawLines = [
+    `To: ${options.to}`,
+    `Subject: ${subj}`,
+    "MIME-Version: 1.0",
+    `Content-Type: ${contentType}`,
+  ];
+  if (inReplyTo) rawLines.push(`In-Reply-To: ${inReplyTo}`);
+  if (references) rawLines.push(`References: ${references}`);
+  rawLines.push("", mimeBody);
+  const raw = rawLines.join("\r\n");
+  const encoded = toBase64Url(Buffer.from(raw, "utf8"));
+
+  const body: { raw: string; threadId?: string } = { raw: encoded };
+  if (options.threadId) body.threadId = options.threadId;
+
+  const sendUrl = `${GMAIL_API}/messages/send`;
+  let res: Response;
+  try {
+    res = await fetch(sendUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Gmail API (send)"));
+  }
+
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail send ${res.status}: ${text}`);
+  }
+
+  const sent = (await res.json()) as { id: string; threadId: string };
+  return { id: sent.id, threadId: sent.threadId };
+}
+

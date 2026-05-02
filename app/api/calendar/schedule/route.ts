@@ -61,6 +61,29 @@ export async function POST(request: Request) {
       notes: body?.notes,
       title: body?.title,
     });
+
+    const hangoutLink = event.hangoutLink;
+    if (hangoutLink) {
+      try {
+        const { inviteFirefliesBot } = await import("@/lib/fireflies");
+        await inviteFirefliesBot(hangoutLink);
+        
+        const { createServerSupabaseClient } = await import("@/lib/supabase-server");
+        const supabase = createServerSupabaseClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        if (user) {
+          await supabase.from("meeting_recordings").insert({
+            user_id: user.id,
+            meeting_url: hangoutLink,
+            attendee_email: recruiterEmail,
+          });
+        }
+      } catch (err) {
+        console.error("Failed to invite Fireflies bot:", err);
+      }
+    }
+
     return NextResponse.json({ event }, { status: 201 });
   } catch (e) {
     const err = e as Error & { code?: string };

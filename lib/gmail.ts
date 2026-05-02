@@ -413,3 +413,36 @@ export async function fetchEmailsWithDetails(
     onProgress: options.onProgress,
   });
 }
+
+export async function sendGmailMessage(
+  accessToken: string,
+  to: string,
+  subject: string,
+  bodyText: string
+): Promise<void> {
+  const emailLines = [
+    `To: ${to}`,
+    "Content-Type: text/plain; charset=utf-8",
+    "MIME-Version: 1.0",
+    `Subject: =?utf-8?B?${Buffer.from(subject).toString("base64")}?=`,
+    "",
+    bodyText,
+  ];
+  
+  const rawEmail = Buffer.from(emailLines.join("\r\n")).toString("base64url");
+  
+  const url = `${GMAIL_API}/messages/send`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ raw: rawEmail }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gmail send error ${res.status}: ${text}`);
+  }
+}

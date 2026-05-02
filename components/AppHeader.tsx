@@ -22,6 +22,7 @@ const links = [
   { href: "/dashboard", label: "Dashboard", icon: IconDashboard },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },
   { href: "/calls", label: "Calls", icon: IconPhone },
+  { href: "/meetings", label: "Meetings", icon: IconCalendar },
   { href: "/settings", label: "Settings", icon: IconSettings },
 ];
 

@@ -15,6 +15,7 @@ export type CalendarEventItem = {
   start: { dateTime?: string; date?: string; timeZone?: string };
   end: { dateTime?: string; date?: string; timeZone?: string };
   attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
+  hangoutLink?: string;
 };
 
 function toErrorCode(status: number): string {
@@ -96,11 +97,17 @@ export async function createPrimaryCalendarEvent(
     },
     attendees: [{ email: input.recruiterEmail.trim() }],
     guestsCanInviteOthers: false,
+    conferenceData: {
+      createRequest: {
+        requestId: `meet-${Date.now()}`,
+        conferenceSolutionKey: { type: "hangoutsMeet" },
+      },
+    },
   };
 
   let res: Response;
   try {
-    res = await fetch(`${CALENDAR_API}/calendars/primary/events`, {
+    res = await fetch(`${CALENDAR_API}/calendars/primary/events?conferenceDataVersion=1`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,

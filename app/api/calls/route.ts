@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 const FINAL_STATUSES = new Set(["completed", "failed", "busy", "no-answer", "canceled"]);
 
 function validPhone(input: string): boolean {
-  return /^\+?[1-9]\d{7,14}$/.test(input.replace(/\s+/g, ""));
+  return /^\+[1-9]\d{7,14}$/.test(input.replace(/\s+/g, ""));
 }
 
 async function getUserOr401() {
@@ -105,7 +105,7 @@ export async function POST(request: Request) {
 
   if (!validPhone(to) || !validPhone(agentPhone)) {
     return NextResponse.json(
-      { error: "Provide valid E.164-like phone numbers (e.g. +14155552671)." },
+      { error: "Provide valid E.164 phone numbers with +country code (e.g. +14155552671)." },
       { status: 400 }
     );
   }
@@ -117,22 +117,27 @@ export async function POST(request: Request) {
   }
 
   try {
-    const twiml = `<Response><Say voice="alice">Connecting your placement call.</Say><Dial>${to}</Dial></Response>`;
-    const call = await client.calls.create({
+    // Click-to-call bridge:
+    // 1) Twilio first calls the agent.
+    // 2) After the agent answers, Twilio dials the recruiter and bridges audio.
+    const bridgeTwiml = `<Response><Say voice="alice">Connecting your placement call now.</Say><Dial callerId="${fromNumber}"><Number>${to}</Number></Dial></Response>`;
+    const bridgedCall = await client.calls.create({
       to: agentPhone,
       from: fromNumber,
-      twiml,
+      twiml: bridgeTwiml,
     });
 
     const { error } = await supabase.from("call_logs").insert({
       user_id: user.id,
-      call_sid: call.sid,
+      call_sid: bridgedCall.sid,
       to_number: to,
       from_number: fromNumber,
       agent_number: agentPhone,
       company_name: companyName || null,
-      notes: notes || null,
-      status: call.status || "queued",
+      notes: [notes, `bridge_to:${to}`]
+        .filter(Boolean)
+        .join(" | "),
+      status: bridgedCall.status || "queued",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });
@@ -142,8 +147,8 @@ export async function POST(request: Request) {
       {
         ok: true,
         call: {
-          sid: call.sid,
-          status: call.status,
+          sid: bridgedCall.sid,
+          status: bridgedCall.status,
         },
       },
       { status: 201 }

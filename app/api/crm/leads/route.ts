@@ -3,6 +3,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 
+type LeadInteractionSummary = { lead_id: string; created_at: string };
+
 export async function GET() {
   const supabase = createServerSupabaseClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -25,19 +27,14 @@ export async function GET() {
 
   // Fetch all interactions for these leads to compute last_interaction_at
   const leadIds = leads.map(l => l.id);
-  let allInteractions: any[] = [];
-  
+  let allInteractions: LeadInteractionSummary[] = [];
+
   if (leadIds.length > 0) {
     const { data: interData } = await supabase
       .from("lead_interactions")
       .select("lead_id, created_at")
       .in("lead_id", leadIds);
     if (interData) allInteractions = interData;
-  }
-
-  if (error) {
-    console.error("GET Leads error:", error);
-    return NextResponse.json({ error: "Database error: " + error.message }, { status: 500 });
   }
 
   // Process the data to include `last_interaction_at`
@@ -49,8 +46,8 @@ export async function GET() {
     
     if (leadInteractions.length > 0) {
       // Find the most recent interaction
-      const sortedInteractions = leadInteractions.sort((a: any, b: any) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      const sortedInteractions = [...leadInteractions].sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
       lastInteraction = sortedInteractions[0].created_at;
     }
@@ -100,7 +97,8 @@ export async function POST(request: Request) {
     if (error) throw error;
 
     return NextResponse.json({ lead: newLead });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to create lead";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

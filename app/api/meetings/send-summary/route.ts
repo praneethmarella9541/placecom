@@ -49,11 +49,9 @@ export async function POST(request: Request) {
   try {
     await sendGmailMessage(auth.accessToken, recording.attendee_email, subject, emailBody);
     return NextResponse.json({ success: true });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Failed to send email:", err);
-    return NextResponse.json(
-      { error: err.message || "Failed to send email" },
-      { status: 500 }
-    );
+    const msg = err instanceof Error ? err.message : "Failed to send email";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -66,7 +66,7 @@ function formatSegmentTime(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function useSpeakerSegmentList(segs: TranscriptSegment[] | null): boolean {
+function hasSpeakerSegmentList(segs: TranscriptSegment[] | null): boolean {
   return Boolean(segs?.length && segs.some((s) => s.speaker !== "Transcript"));
 }
 
@@ -337,7 +337,7 @@ export default function CallsPage() {
                     <td className="max-w-[min(420px,44vw)] px-2 py-2 align-top text-xs text-zinc-700 dark:text-zinc-300">
                       {log.transcript !== null ? (
                         <div className="max-h-52 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2 dark:border-zinc-700 dark:bg-zinc-900/50">
-                          {useSpeakerSegmentList(log.transcript_segments) && log.transcript_segments ? (
+                          {hasSpeakerSegmentList(log.transcript_segments) && log.transcript_segments ? (
                             <ul className="space-y-2">
                               {log.transcript_segments.map((seg, idx) => (
                                 <li key={`${log.id}-seg-${idx}`} className="border-b border-zinc-200/80 pb-2 last:border-0 last:pb-0 dark:border-zinc-700/80">

@@ -43,6 +43,10 @@ type MeetingRow = {
 const NEW_LEAD_STAGES: LeadStage[] = ["Awareness", "Engagement", "Conversion", "Retention"];
 const REG_RECRUITER_STAGES: LeadStage[] = ["Relationship Mgt", "JD Expected", "JD Received", "Drive Scheduled"];
 
+function errMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 function getScoreColor(score: LeadScore) {
   if (score === "Hot") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800/50";
   if (score === "Warm") return "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-200 dark:border-orange-800/50";
@@ -94,8 +98,8 @@ export default function CRMPage() {
       }
       const json = await res.json();
       setLeads(json.leads || []);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errMessage(e));
     } finally {
       setLoading(false);
     }
@@ -167,8 +171,8 @@ export default function CRMPage() {
       setNewPhone("");
       setNewScore("Warm");
       await loadLeads();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
     }
   }
 
@@ -182,8 +186,8 @@ export default function CRMPage() {
         body: JSON.stringify({ stage: newStage })
       });
       if (!res.ok) throw new Error("Failed to update stage");
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
       void loadLeads(); // Revert on failure
     }
   }
@@ -199,8 +203,8 @@ export default function CRMPage() {
         body: JSON.stringify({ jd_count: newCount })
       });
       if (!res.ok) throw new Error("Failed to update JD count");
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
       void loadLeads();
     }
   }
@@ -227,8 +231,8 @@ export default function CRMPage() {
       } else {
         setMeetings([]);
       }
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
     } finally {
       setLoadingInteractions(false);
     }
@@ -251,8 +255,8 @@ export default function CRMPage() {
       setInteractionNotes("");
       await loadInteractions(activeLead);
       void loadLeads(); // Refresh last_interaction_at
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
     }
   }
 
@@ -265,11 +269,18 @@ export default function CRMPage() {
             {titleCase("Marketing funnel CRM")}
           </h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            {titleCase("Manage corporate leads through the placement pipeline.")}
+            {loading
+              ? titleCase("Loading leads…")
+              : titleCase("Manage corporate leads through the placement pipeline.")}
           </p>
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => void loadLeads()} className="btn-ghost">
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void loadLeads()}
+            className="btn-ghost disabled:opacity-50"
+          >
             <IconRefresh className="h-4 w-4" /> {titleCase("Refresh")}
           </button>
           <button type="button" onClick={() => setIsAddLeadOpen(true)} className="btn-primary">
@@ -580,7 +591,9 @@ export default function CRMPage() {
                 <form onSubmit={handleAddInteraction} className="space-y-3">
                   <select 
                     value={interactionType} 
-                    onChange={e => setInteractionType(e.target.value as any)} 
+                    onChange={(e) =>
+                      setInteractionType(e.target.value as InteractionRow["interaction_type"])
+                    } 
                     className="input-field py-1.5 text-sm"
                   >
                     <option value="Note">{titleCase("Note / update")}</option>

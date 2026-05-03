@@ -22,6 +22,10 @@ export default function MeetingsPage() {
   const [error, setError] = useState<string | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [sendSuccessId, setSendSuccessId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncInfo, setSyncInfo] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteSuccess, setDeleteSuccess] = useState(false);
 
   const loadMeetings = useCallback(async () => {
     setLoading(true);
@@ -63,6 +67,69 @@ export default function MeetingsPage() {
     }
   }
 
+  async function syncWithFireflies() {
+    setSyncing(true);
+    setSyncInfo(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/meetings/sync", { method: "POST" });
+      const body = (await res.json()) as {
+        updated?: number;
+        skipped?: number;
+        pendingCount?: number;
+        transcriptsFetched?: number;
+        message?: string;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(body.error || "Sync failed");
+      const parts = [
+        body.message || "",
+        typeof body.transcriptsFetched === "number"
+          ? `Pulled ${body.transcriptsFetched} transcript(s) from Fireflies.`
+          : "",
+        typeof body.updated === "number" && body.updated > 0
+          ? `Saved ${body.updated} meeting(s).`
+          : "",
+      ].filter(Boolean);
+      setSyncInfo(parts.join(" "));
+      await loadMeetings();
+    } catch (e) {
+      setError(clientFetchFailedMessage(e));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function deleteMeeting(id: string) {
+    if (
+      !window.confirm(
+        "Delete this meeting record? The summary and transcript will be removed from your account."
+      )
+    ) {
+      return;
+    }
+    setDeletingId(id);
+    setError(null);
+    setSyncInfo(null);
+    setDeleteSuccess(false);
+    try {
+      const res = await fetch(`/api/meetings/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const body = (await res.json()) as { error?: string; hint?: string };
+      if (!res.ok) {
+        const msg = [body.error, body.hint].filter(Boolean).join("\n\n");
+        throw new Error(msg || "Delete failed");
+      }
+      setSendSuccessId((cur) => (cur === id ? null : cur));
+      setMeetings((prev) => prev.filter((m) => m.id !== id));
+      setDeleteSuccess(true);
+      setTimeout(() => setDeleteSuccess(false), 3500);
+    } catch (e) {
+      setError(clientFetchFailedMessage(e));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -74,10 +141,33 @@ export default function MeetingsPage() {
             View AI-generated transcripts and summaries from your Fireflies meetings.
           </p>
         </div>
-        <button type="button" onClick={() => void loadMeetings()} className="btn-ghost">
-          <IconRefresh className="h-4 w-4" /> Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void syncWithFireflies()}
+            disabled={syncing}
+            className="btn-primary gap-2"
+          >
+            <IconRefresh className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Syncing…" : "Sync with Fireflies"}
+          </button>
+          <button type="button" onClick={() => void loadMeetings()} className="btn-ghost" disabled={syncing}>
+            <IconRefresh className="h-4 w-4" /> Refresh list
+          </button>
+        </div>
       </div>
+
+      {syncInfo ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+          {syncInfo}
+        </div>
+      ) : null}
+
+      {deleteSuccess ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+          Meeting deleted — summary and transcript were removed from your account.
+        </div>
+      ) : null}
 
       {error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-100">
@@ -123,12 +213,12 @@ export default function MeetingsPage() {
                     <p className="mt-1 text-xs text-zinc-500">Attendee: {m.attendee_email}</p>
                   ) : null}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {m.status === "completed" && m.summary && m.attendee_email ? (
                     <button
                       type="button"
                       onClick={() => void sendSummaryEmail(m.id)}
-                      disabled={sendingId === m.id}
+                      disabled={sendingId === m.id || deletingId === m.id}
                       className="btn-primary"
                     >
                       {sendingId === m.id ? "Sending..." : "Email Summary to Attendee"}
@@ -137,13 +227,22 @@ export default function MeetingsPage() {
                   {sendSuccessId === m.id ? (
                     <span className="text-sm text-emerald-600 dark:text-emerald-400">Sent!</span>
                   ) : null}
+                  <button
+                    type="button"
+                    onClick={() => void deleteMeeting(m.id)}
+                    disabled={deletingId === m.id || syncing}
+                    className="btn-danger"
+                  >
+                    {deletingId === m.id ? "Deleting…" : "Delete"}
+                  </button>
                 </div>
               </div>
 
               <div className="p-5">
                 {m.status !== "completed" ? (
                   <p className="text-sm text-zinc-500">
-                    Waiting for Fireflies to process this meeting. The transcript and summary will appear here automatically when ready.
+                    Waiting for Fireflies to process this meeting. On localhost, webhooks cannot reach your app — use{" "}
+                    <strong>Sync with Fireflies</strong> above to pull the transcript and summary.
                   </p>
                 ) : (
                   <div className="grid gap-6 lg:grid-cols-2">

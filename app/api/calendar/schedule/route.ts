@@ -65,8 +65,8 @@ export async function POST(request: Request) {
     const hangoutLink = event.hangoutLink;
     if (hangoutLink) {
       try {
-        const { inviteFirefliesBot } = await import("@/lib/fireflies");
-        await inviteFirefliesBot(hangoutLink);
+        // The bot fred@fireflies.ai is now automatically invited via Google Calendar attendees array
+        // so we just need to register it in our DB for tracking
         
         const { createServerSupabaseClient } = await import("@/lib/supabase-server");
         const supabase = createServerSupabaseClient();

@@ -5,6 +5,9 @@
     },
     "app/api/fetch-emails/route.ts": {
       "maxDuration": 300
+    },
+    "app/api/meetings/sync/route.ts": {
+      "maxDuration": 120
     }
   }
 }

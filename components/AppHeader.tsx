@@ -15,11 +15,13 @@ import {
   IconLogOut,
   IconMenu,
   IconX,
+  IconUser,
 } from "@/components/Icons";
 
 const links = [
   { href: "/inbox", label: "Mail", icon: IconMail },
   { href: "/dashboard", label: "Dashboard", icon: IconDashboard },
+  { href: "/crm", label: "CRM", icon: IconUser },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },
   { href: "/calls", label: "Calls", icon: IconPhone },
   { href: "/meetings", label: "Meetings", icon: IconCalendar },

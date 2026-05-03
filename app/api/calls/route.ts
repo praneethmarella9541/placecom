@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
 import { getTwilioClient, getTwilioFromNumber, isTwilioConfigured } from "@/lib/twilio";
 
 export const runtime = "nodejs";
@@ -20,6 +21,83 @@ async function getUserOr401() {
   return { supabase, user };
 }
 
+async function firstUsableRecording(client: NonNullable<ReturnType<typeof getTwilioClient>>, callSid: string) {
+  try {
+    const nested = await client.calls(callSid).recordings.list({ limit: 20 });
+    const fromNested =
+      nested.find((r) => r.status === "completed") ||
+      nested.find((r) => r.status === "processing") ||
+      nested[0];
+    if (fromNested) return fromNested;
+  } catch {
+    // fall through to account-level list
+  }
+  try {
+    const list = await client.recordings.list({ callSid, limit: 20 });
+    return list.find((r) => r.status === "completed") || list.find((r) => r.status === "processing") || list[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Try recording sync once a call is no longer freshly queued (covers Twilio lag before "completed"). */
+function shouldAttemptRecordingSync(status: string): boolean {
+  const s = String(status || "").toLowerCase();
+  if (s === "queued" || s === "initiated") return false;
+  return true;
+}
+
+async function syncRecordingsFromTwilio(
+  client: NonNullable<ReturnType<typeof getTwilioClient>>,
+  supabase: ReturnType<typeof createServerSupabaseClient>,
+  userId: string,
+  logs: Array<{ id: string; call_sid: string; recording_sid: string | null; status: string }>
+): Promise<boolean> {
+  const todo = logs.filter((l) => !l.recording_sid && shouldAttemptRecordingSync(String(l.status || ""))).slice(0, 10);
+
+  let wrote = false;
+  for (const log of todo) {
+    let rec: Awaited<ReturnType<typeof firstUsableRecording>> = await firstUsableRecording(client, log.call_sid);
+    if (!rec) {
+      try {
+        const children = await client.calls.list({ parentCallSid: log.call_sid, limit: 10 });
+        for (const c of children) {
+          rec = await firstUsableRecording(client, c.sid);
+          if (rec) break;
+        }
+      } catch {
+        continue;
+      }
+    }
+    if (!rec?.sid) continue;
+    const dur = rec.duration ? Number.parseInt(String(rec.duration), 10) : null;
+    const { error: upErr } = await supabase
+      .from("call_logs")
+      .update({
+        recording_sid: rec.sid,
+        recording_duration_seconds: Number.isFinite(dur) ? dur : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", log.id)
+      .eq("user_id", userId);
+    if (!upErr) wrote = true;
+  }
+  return wrote;
+}
+
+function buildBridgeTwiml(fromNumber: string, to: string): string {
+  // Recording is started on the outbound REST Call (record: true) so the file is tied to the
+  // same CallSid we store. Dial-only recording often lands on the child leg and is easy to miss.
+  return `<Response><Say voice="alice">Connecting your placement call now.</Say><Dial callerId="${fromNumber}"><Number>${to}</Number></Dial></Response>`;
+}
+
+function httpsRecordingCallbackUrl(): string | undefined {
+  const base = getTwilioWebhookBaseUrl();
+  const callback = base ? `${base}/api/twilio/recording` : null;
+  if (callback?.startsWith("https://")) return callback;
+  return undefined;
+}
+
 async function syncCallStatuses(
   supabase: ReturnType<typeof createServerSupabaseClient>,
   userId: string
@@ -32,7 +110,7 @@ async function syncCallStatuses(
     .select("id, call_sid, status")
     .eq("user_id", userId)
     .order("created_at", { ascending: false })
-    .limit(30);
+    .limit(12);
 
   for (const row of pending || []) {
     if (FINAL_STATUSES.has(String(row.status || ""))) continue;
@@ -56,22 +134,44 @@ async function syncCallStatuses(
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+
+  const url = new URL(request.url);
+  const syncRecordings = url.searchParams.get("syncRecordings") === "1";
 
   await syncCallStatuses(supabase, user.id);
 
   const { data, error } = await supabase
     .from("call_logs")
     .select(
-      "id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, started_at, ended_at, created_at"
+      "id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, started_at, ended_at, created_at, recording_sid, recording_duration_seconds, transcript, transcript_segments"
     )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(200);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const twilioClient = getTwilioClient();
+  if (syncRecordings && twilioClient && data?.length) {
+    const wrote = await syncRecordingsFromTwilio(twilioClient, supabase, user.id, data);
+    if (wrote) {
+      const { data: refreshed, error: err2 } = await supabase
+        .from("call_logs")
+        .select(
+          "id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, started_at, ended_at, created_at, recording_sid, recording_duration_seconds, transcript, transcript_segments"
+        )
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (!err2 && refreshed) {
+        return NextResponse.json({ logs: refreshed });
+      }
+    }
+  }
+
   return NextResponse.json({ logs: data || [] });
 }
 
@@ -120,11 +220,19 @@ export async function POST(request: Request) {
     // Click-to-call bridge:
     // 1) Twilio first calls the agent.
     // 2) After the agent answers, Twilio dials the recruiter and bridges audio.
-    const bridgeTwiml = `<Response><Say voice="alice">Connecting your placement call now.</Say><Dial callerId="${fromNumber}"><Number>${to}</Number></Dial></Response>`;
+    const bridgeTwiml = buildBridgeTwiml(fromNumber, to);
+    const recordingCb = httpsRecordingCallbackUrl();
     const bridgedCall = await client.calls.create({
       to: agentPhone,
       from: fromNumber,
       twiml: bridgeTwiml,
+      record: true,
+      ...(recordingCb
+        ? {
+            recordingStatusCallback: recordingCb,
+            recordingStatusCallbackEvent: ["completed"] as const,
+          }
+        : {}),
     });
 
     const { error } = await supabase.from("call_logs").insert({

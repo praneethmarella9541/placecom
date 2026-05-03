@@ -17,6 +17,44 @@ export function formatDate(iso: string | null | undefined): string {
   }
 }
 
+/** Fixed en-US so weekday and month names read consistently in calendar UI. */
+export function formatCalendarDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const s = iso.trim();
+  try {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const [y, m, d] = s.split("-").map(Number);
+      return new Intl.DateTimeFormat("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(new Date(Date.UTC(y, m - 1, d)));
+    }
+    const d = new Date(s);
+    const hasTime = s.includes("T");
+    if (hasTime) {
+      return new Intl.DateTimeFormat("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }).format(d);
+    }
+    return new Intl.DateTimeFormat("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+      year: "numeric",
+    }).format(d);
+  } catch {
+    return iso;
+  }
+}
+
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "";
   try {

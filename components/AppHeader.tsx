@@ -5,13 +5,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
+import { titleCase } from "@/lib/title-case";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   IconMail,
   IconDashboard,
   IconCalendar,
   IconPhone,
-  IconSettings,
   IconLogOut,
   IconMenu,
   IconX,
@@ -20,12 +20,11 @@ import {
 
 const links = [
   { href: "/inbox", label: "Mail", icon: IconMail },
-  { href: "/dashboard", label: "Dashboard", icon: IconDashboard },
+  { href: "/dashboard", label: "Extraction", icon: IconDashboard },
   { href: "/crm", label: "CRM", icon: IconUser },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },
   { href: "/calls", label: "Calls", icon: IconPhone },
   { href: "/meetings", label: "Meetings", icon: IconCalendar },
-  { href: "/settings", label: "Settings", icon: IconSettings },
 ];
 
 export function AppHeader() {
@@ -49,7 +48,7 @@ export function AppHeader() {
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-sm font-bold text-white">
               G
             </span>
-            <span className="hidden sm:inline">Gmail Extractor</span>
+            <span className="hidden sm:inline">Placecom</span>
           </Link>
           <nav className="hidden items-center gap-0.5 md:flex">
             {links.map((l) => {
@@ -66,7 +65,7 @@ export function AppHeader() {
                   )}
                 >
                   <Icon className="h-3.5 w-3.5 opacity-70" />
-                  {l.label}
+                  {titleCase(l.label)}
                 </Link>
               );
             })}
@@ -80,7 +79,7 @@ export function AppHeader() {
             className="btn-ghost hidden gap-1.5 text-[13px] sm:inline-flex"
           >
             <IconLogOut className="h-3.5 w-3.5 opacity-70" />
-            Sign out
+            {titleCase("Sign out")}
           </button>
           <button
             type="button"
@@ -111,7 +110,7 @@ export function AppHeader() {
                   )}
                 >
                   <Icon className="h-4 w-4 opacity-70" />
-                  {l.label}
+                  {titleCase(l.label)}
                 </Link>
               );
             })}
@@ -121,7 +120,7 @@ export function AppHeader() {
               className="btn-ghost justify-start gap-2 py-2.5 text-red-600 dark:text-red-400"
             >
               <IconLogOut className="h-4 w-4 opacity-70" />
-              Sign out
+              {titleCase("Sign out")}
             </button>
           </nav>
         </div>

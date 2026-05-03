@@ -1,4 +1,4 @@
-export type MaxEmailsOption = "50" | "100" | "500" | "all";
+export type MaxEmailsOption = "10" | "50" | "100" | "500" | "all";
 export type LabelOption = "inbox" | "sent" | "all";
 
 const MAX_KEY = "gmail_extract_max_emails";
@@ -7,7 +7,7 @@ const LABEL_KEY = "gmail_extract_label";
 export function getMaxEmailsSetting(): MaxEmailsOption {
   if (typeof window === "undefined") return "50";
   const v = localStorage.getItem(MAX_KEY) as MaxEmailsOption | null;
-  if (v === "50" || v === "100" || v === "500" || v === "all") return v;
+  if (v === "10" || v === "50" || v === "100" || v === "500" || v === "all") return v;
   return "50";
 }
 

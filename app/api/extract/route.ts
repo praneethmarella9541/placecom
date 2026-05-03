@@ -183,7 +183,7 @@ export async function POST(request: Request) {
       const newProcessed = (jobRow.processed_emails || 0) + emails.length;
       const isLast = batchIndex === batchCount - 1;
 
-      const openai = await bumpJobOpenAIUsage(supabase, jobId, {
+      await bumpJobOpenAIUsage(supabase, jobId, {
         input: usage.prompt_tokens,
         output: usage.completion_tokens,
         cost: costUsd,
@@ -205,14 +205,6 @@ export async function POST(request: Request) {
         totalEmails: jobTotalEmails,
         results: chunkResults,
         done: isLast,
-        openai: {
-          batchCostUsd: costUsd,
-          batchInputTokens: usage.prompt_tokens,
-          batchOutputTokens: usage.completion_tokens,
-          jobCostUsd: openai.openaiCostUsd,
-          jobInputTokens: openai.openaiInputTokens,
-          jobOutputTokens: openai.openaiOutputTokens,
-        },
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Extraction failed";
@@ -261,12 +253,6 @@ export async function POST(request: Request) {
     contacts: { name: string | null; email: string | null; phone: string | null }[];
   };
   const processed: FlatResult[] = [];
-  let jobOpenai = {
-    openaiInputTokens: 0,
-    openaiOutputTokens: 0,
-    openaiCostUsd: 0,
-  };
-
   try {
     for (let i = 0; i < emails.length; i += CHUNK) {
       const slice = emails.slice(i, i + CHUNK);
@@ -307,7 +293,7 @@ export async function POST(request: Request) {
         throw new Error(insErr.message);
       }
 
-      jobOpenai = await bumpJobOpenAIUsage(supabase, jobId, {
+      await bumpJobOpenAIUsage(supabase, jobId, {
         input: usage.prompt_tokens,
         output: usage.completion_tokens,
         cost: costUsd,
@@ -328,11 +314,6 @@ export async function POST(request: Request) {
       jobId,
       results: processed,
       total: processed.length,
-      openai: {
-        jobCostUsd: jobOpenai.openaiCostUsd,
-        jobInputTokens: jobOpenai.openaiInputTokens,
-        jobOutputTokens: jobOpenai.openaiOutputTokens,
-      },
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Extraction failed";

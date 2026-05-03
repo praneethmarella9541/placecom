@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { IconPhone, IconRefresh } from "@/components/Icons";
+import { titleCase } from "@/lib/title-case";
 
 type RecruiterRow = {
   email: string;
@@ -164,7 +165,9 @@ export default function CallsPage() {
         (e instanceof Error && e.name === "AbortError") ||
         (typeof DOMException !== "undefined" && e instanceof DOMException && e.name === "AbortError");
       if (aborted) {
-        setError("Transcription timed out. Try again, or use a shorter recording.");
+        setError(
+          titleCase("Transcription timed out. Try again, or use a shorter recording.")
+        );
       } else {
         setError(clientFetchFailedMessage(e));
       }
@@ -205,16 +208,11 @@ export default function CallsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Calls
+            {titleCase("Calls")}
           </h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Place recruiter calls with Twilio, track call logs, play recordings, and transcribe (Twilio first when
-            possible; OpenAI is used automatically if Twilio cannot transcribe this recording type). Refresh syncs
-            recording links from Twilio.
-          </p>
         </div>
         <button type="button" onClick={() => void load({ syncRecordings: true })} className="btn-ghost">
-          <IconRefresh className="h-4 w-4" /> Refresh
+          <IconRefresh className="h-4 w-4" /> {titleCase("Refresh")}
         </button>
       </div>
 
@@ -226,25 +224,25 @@ export default function CallsPage() {
 
       <div className="card p-5">
         <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">
-          Make a Call
+          {titleCase("Make a call")}
         </h2>
         <div className="grid gap-3 md:grid-cols-2">
           <input
             className="input-field"
-            placeholder="Your phone (agent) e.g. +9198..."
+            placeholder={titleCase("Your phone (agent) e.g. +9198...")}
             value={agentPhone}
             onChange={(e) => setAgentPhone(e.target.value)}
           />
           <input
             className="input-field"
-            placeholder="Recruiter phone (to) e.g. +1415..."
+            placeholder={titleCase("Recruiter phone (to) e.g. +1415...")}
             value={toPhone}
             onChange={(e) => setToPhone(e.target.value)}
           />
           <input
             className="input-field md:col-span-2"
             list="recruiter-emails-for-calls"
-            placeholder="Recruiter email (optional lookup)"
+            placeholder={titleCase("Recruiter email (optional lookup)")}
             onChange={(e) => {
               const selected = recruiters.find((r) => r.email === e.target.value);
               if (selected && !companyName) setCompanyName(selected.companyName);
@@ -259,47 +257,47 @@ export default function CallsPage() {
           </datalist>
           <input
             className="input-field md:col-span-2"
-            placeholder="Company name (optional)"
+            placeholder={titleCase("Company name (optional)")}
             value={companyName}
             onChange={(e) => setCompanyName(e.target.value)}
           />
           <textarea
             className="input-field resize-none md:col-span-2"
             rows={3}
-            placeholder="Call notes (optional)"
+            placeholder={titleCase("Call notes (optional)")}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
         </div>
         <div className="mt-4">
           <button type="button" onClick={() => void placeCall()} disabled={calling} className="btn-primary">
-            <IconPhone className="h-4 w-4" /> {calling ? "Calling..." : "Start Call"}
+            <IconPhone className="h-4 w-4" /> {calling ? titleCase("Calling...") : titleCase("Start call")}
           </button>
         </div>
       </div>
 
       <div className="card p-5">
         <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">
-          Call Logs
+          {titleCase("Call logs")}
         </h2>
         {loading ? (
-          <p className="text-sm text-zinc-500">Loading call logs...</p>
+          <p className="text-sm text-zinc-500">{titleCase("Loading call logs...")}</p>
         ) : logs.length === 0 ? (
-          <p className="text-sm text-zinc-500">No calls yet.</p>
+          <p className="text-sm text-zinc-500">{titleCase("No calls yet.")}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1100px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-zinc-500">
+              <thead className="text-xs tracking-wide text-zinc-500">
                 <tr>
-                  <th className="px-2 py-2">Time</th>
-                  <th className="px-2 py-2">To</th>
-                  <th className="px-2 py-2">Agent</th>
-                  <th className="px-2 py-2">Company</th>
-                  <th className="px-2 py-2">Status</th>
-                  <th className="px-2 py-2">Duration</th>
-                  <th className="px-2 py-2">Recording</th>
-                  <th className="px-2 py-2">Transcript</th>
-                  <th className="px-2 py-2">SID</th>
+                  <th className="px-2 py-2">{titleCase("Time")}</th>
+                  <th className="px-2 py-2">{titleCase("To")}</th>
+                  <th className="px-2 py-2">{titleCase("Agent")}</th>
+                  <th className="px-2 py-2">{titleCase("Company")}</th>
+                  <th className="px-2 py-2">{titleCase("Status")}</th>
+                  <th className="px-2 py-2">{titleCase("Duration")}</th>
+                  <th className="px-2 py-2">{titleCase("Recording")}</th>
+                  <th className="px-2 py-2">{titleCase("Transcript")}</th>
+                  <th className="px-2 py-2">{titleCase("SID")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -324,7 +322,7 @@ export default function CallsPage() {
                             className="h-8 w-full max-w-[200px]"
                             src={`/api/calls/recording/${encodeURIComponent(log.recording_sid)}`}
                           >
-                            Recording
+                            {titleCase("Recording")}
                           </audio>
                           {log.recording_duration_seconds != null ? (
                             <span className="block text-xs text-zinc-500">
@@ -362,13 +360,13 @@ export default function CallsPage() {
                           ) : log.transcript.length > 0 ? (
                             <p className="whitespace-pre-wrap">{log.transcript}</p>
                           ) : (
-                            <span className="italic text-zinc-500">No speech detected.</span>
+                            <span className="italic text-zinc-500">{titleCase("No speech detected.")}</span>
                           )}
                         </div>
                       ) : log.recording_sid ? (
                         <div className="flex flex-col gap-1">
                           {transcribingId === log.id ? (
-                            <span className="text-zinc-500">Transcribing…</span>
+                            <span className="text-zinc-500">{titleCase("Transcribing…")}</span>
                           ) : (
                             <button
                               type="button"
@@ -376,7 +374,7 @@ export default function CallsPage() {
                               onClick={() => void transcribeCallLog(log.id)}
                               disabled={transcribingId !== null}
                             >
-                              Transcribe
+                              {titleCase("Transcribe")}
                             </button>
                           )}
                         </div>

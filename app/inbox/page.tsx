@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
+import { titleCase } from "@/lib/title-case";
 import {
   IconInbox,
   IconSend,
@@ -164,7 +165,7 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
       sandbox="allow-same-origin"
       className="mt-3 w-full border-0"
       style={{ height: `${height}px`, minHeight: 60 }}
-      title="Email body"
+      title={titleCase("Email body")}
     />
   );
 }
@@ -311,13 +312,12 @@ export default function InboxPage() {
     <div className="space-y-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">Mail</h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Live Gmail — nothing stored in Supabase. Send and reply go straight to Google.
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+            {titleCase("Mail")}
+          </h1>
         </div>
         <button type="button" onClick={() => setComposeOpen(true)} className="btn-primary">
-          <IconPlus className="h-4 w-4" /> Compose
+          <IconPlus className="h-4 w-4" /> {titleCase("Compose")}
         </button>
       </div>
 
@@ -340,7 +340,7 @@ export default function InboxPage() {
                     folder === f.key && "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
                   )}
                 >
-                  <Icon className="h-3.5 w-3.5" /> {f.label}
+                  <Icon className="h-3.5 w-3.5" /> {titleCase(f.label)}
                 </button>
               );
             })}
@@ -348,7 +348,7 @@ export default function InboxPage() {
               type="button"
               onClick={() => void loadThreads({ append: false })}
               className="btn-ghost rounded-lg p-2"
-              title="Refresh"
+              title={titleCase("Refresh")}
             >
               <IconRefresh className="h-3.5 w-3.5" />
             </button>
@@ -367,7 +367,9 @@ export default function InboxPage() {
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
                 <IconInbox className="h-7 w-7 text-zinc-400" />
               </div>
-              <p className="text-sm text-zinc-500">No threads in {folder}</p>
+              <p className="text-sm text-zinc-500">
+                {titleCase(`No threads in ${folder}`)}
+              </p>
             </div>
           ) : (
             <ul className="scrollbar-thin flex-1 divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800/60">
@@ -428,7 +430,9 @@ export default function InboxPage() {
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
                 <IconMail className="h-8 w-8 text-zinc-300 dark:text-zinc-600" />
               </div>
-              <p className="text-sm text-zinc-500">Select a thread or compose a new message</p>
+              <p className="text-sm text-zinc-500">
+                {titleCase("Select a thread or compose a new message")}
+              </p>
             </div>
           ) : loadingThread ? (
             <div className="space-y-4 p-6">
@@ -444,7 +448,11 @@ export default function InboxPage() {
                 <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
                   {messages[0]?.subject || "(no subject)"}
                 </h2>
-                <p className="mt-1 text-xs text-zinc-500">{messages.length} message{messages.length !== 1 ? "s" : ""} in thread</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {titleCase(
+                    `${messages.length} message${messages.length !== 1 ? "s" : ""} in thread`
+                  )}
+                </p>
               </div>
               <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto p-5">
                 {messages.map((m, i) => (
@@ -482,7 +490,7 @@ export default function InboxPage() {
                           return (
                             <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                               <IconCheck className="h-3 w-3" />
-                              Sent
+                              {titleCase("Sent")}
                             </span>
                           );
                         })()}
@@ -500,19 +508,22 @@ export default function InboxPage() {
               <div className="border-t p-4">
                 {!replyOpen ? (
                   <button type="button" onClick={() => setReplyOpen(true)} className="btn-secondary w-full justify-center">
-                    <IconReply className="h-4 w-4" /> Reply
+                    <IconReply className="h-4 w-4" /> {titleCase("Reply")}
                   </button>
                 ) : (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <p className="text-xs font-medium text-zinc-500">Replying to {extractEmailAddress(messages[messages.length - 1].from)}</p>
+                      <p className="text-xs font-medium text-zinc-500">
+                        {titleCase("Replying to")}{" "}
+                        {extractEmailAddress(messages[messages.length - 1].from)}
+                      </p>
                       <button type="button" onClick={() => setReplyOpen(false)} className="btn-ghost p-1"><IconX className="h-4 w-4" /></button>
                     </div>
                     <textarea
                       value={replyText}
                       onChange={(e) => setReplyText(e.target.value)}
                       rows={4}
-                      placeholder="Write your reply…"
+                      placeholder={titleCase("Write your reply…")}
                       className="input-field resize-none"
                       autoFocus
                     />
@@ -531,7 +542,7 @@ export default function InboxPage() {
                       <div>
                         <input ref={replyFileRef} type="file" multiple className="hidden" onChange={(e) => { void handleFileSelect(e.target.files, "reply"); e.target.value = ""; }} />
                         <button type="button" onClick={() => replyFileRef.current?.click()} className="btn-ghost gap-1 text-[12px]">
-                          <IconPaperclip className="h-3.5 w-3.5" /> Attach
+                          <IconPaperclip className="h-3.5 w-3.5" /> {titleCase("Attach")}
                         </button>
                       </div>
                       <button
@@ -541,9 +552,14 @@ export default function InboxPage() {
                         className="btn-primary"
                       >
                         {sendBusy ? (
-                          <><span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> Sending…</>
+                          <>
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />{" "}
+                            {titleCase("Sending…")}
+                          </>
                         ) : (
-                          <><IconSend className="h-4 w-4" /> Send</>
+                          <>
+                            <IconSend className="h-4 w-4" /> {titleCase("Send")}
+                          </>
                         )}
                       </button>
                     </div>
@@ -553,7 +569,7 @@ export default function InboxPage() {
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center p-8 text-sm text-zinc-500">
-              No messages in thread.
+              {titleCase("No messages in thread.")}
             </div>
           )}
         </div>
@@ -564,13 +580,33 @@ export default function InboxPage() {
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true">
           <div className="card w-full max-w-lg animate-[slideUp_0.2s_ease-out] overflow-hidden">
             <div className="flex items-center justify-between border-b px-5 py-4">
-              <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">New message</h3>
+              <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+                {titleCase("New message")}
+              </h3>
               <button type="button" onClick={() => setComposeOpen(false)} className="btn-ghost p-1.5"><IconX className="h-4 w-4" /></button>
             </div>
             <div className="space-y-3 p-5">
-              <input type="email" placeholder="To" value={composeTo} onChange={(e) => setComposeTo(e.target.value)} className="input-field" />
-              <input type="text" placeholder="Subject" value={composeSubject} onChange={(e) => setComposeSubject(e.target.value)} className="input-field" />
-              <textarea placeholder="Write your message…" value={composeBody} onChange={(e) => setComposeBody(e.target.value)} rows={8} className="input-field resize-none" />
+              <input
+                type="email"
+                placeholder={titleCase("To")}
+                value={composeTo}
+                onChange={(e) => setComposeTo(e.target.value)}
+                className="input-field"
+              />
+              <input
+                type="text"
+                placeholder={titleCase("Subject")}
+                value={composeSubject}
+                onChange={(e) => setComposeSubject(e.target.value)}
+                className="input-field"
+              />
+              <textarea
+                placeholder={titleCase("Write your message…")}
+                value={composeBody}
+                onChange={(e) => setComposeBody(e.target.value)}
+                rows={8}
+                className="input-field resize-none"
+              />
               {composeFiles.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {composeFiles.map((f, i) => (
@@ -588,13 +624,28 @@ export default function InboxPage() {
               <div>
                 <input ref={composeFileRef} type="file" multiple className="hidden" onChange={(e) => { void handleFileSelect(e.target.files, "compose"); e.target.value = ""; }} />
                 <button type="button" onClick={() => composeFileRef.current?.click()} className="btn-ghost gap-1 text-[12px]">
-                  <IconPaperclip className="h-3.5 w-3.5" /> Attach files
+                  <IconPaperclip className="h-3.5 w-3.5" /> {titleCase("Attach files")}
                 </button>
               </div>
               <div className="flex gap-2">
-                <button type="button" onClick={() => { setComposeOpen(false); setComposeFiles([]); }} className="btn-ghost">Cancel</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setComposeOpen(false);
+                    setComposeFiles([]);
+                  }}
+                  className="btn-ghost"
+                >
+                  {titleCase("Cancel")}
+                </button>
                 <button type="button" disabled={sendBusy} onClick={() => void sendCompose()} className="btn-primary">
-                  {sendBusy ? "Sending…" : <><IconSend className="h-4 w-4" /> Send</>}
+                  {sendBusy ? (
+                    titleCase("Sending…")
+                  ) : (
+                    <>
+                      <IconSend className="h-4 w-4" /> {titleCase("Send")}
+                    </>
+                  )}
                 </button>
               </div>
             </div>

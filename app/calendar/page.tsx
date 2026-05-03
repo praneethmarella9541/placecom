@@ -7,8 +7,9 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import type { DateSelectArg } from "@fullcalendar/core";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
-import { formatDate } from "@/lib/utils";
+import { formatCalendarDateTime } from "@/lib/utils";
 import { IconCalendar, IconPlus, IconRefresh, IconX } from "@/components/Icons";
+import { titleCase } from "@/lib/title-case";
 
 type EventRow = {
   id: string;
@@ -157,11 +158,8 @@ export default function CalendarPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Calendar
+            {titleCase("Calendar")}
           </h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Primary Google Calendar events and recruiter meeting scheduling.
-          </p>
         </div>
         <div className="flex gap-2">
           <button
@@ -172,10 +170,10 @@ export default function CalendarPage() {
             }}
             className="btn-ghost"
           >
-            <IconRefresh className="h-4 w-4" /> Refresh
+            <IconRefresh className="h-4 w-4" /> {titleCase("Refresh")}
           </button>
           <button type="button" onClick={() => setModalOpen(true)} className="btn-primary">
-            <IconPlus className="h-4 w-4" /> Schedule Meeting
+            <IconPlus className="h-4 w-4" /> {titleCase("Schedule meeting")}
           </button>
         </div>
       </div>
@@ -189,13 +187,13 @@ export default function CalendarPage() {
       <div className="card p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-            Calendar (In-App)
+            {titleCase("Calendar (in-app)")}
           </h2>
           <span className="text-xs text-zinc-500">
-            Select a slot to schedule meeting
+            {titleCase("Select a slot to schedule meeting")}
           </span>
         </div>
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="calendar-surface overflow-hidden rounded-xl border border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
           <FullCalendar
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin]}
             initialView="timeGridWeek"
@@ -204,6 +202,7 @@ export default function CalendarPage() {
               center: "title",
               right: "timeGridWeek,timeGridDay,dayGridMonth",
             }}
+            allDayText="All day"
             selectable
             selectMirror
             select={onDateSelect}
@@ -217,23 +216,26 @@ export default function CalendarPage() {
               setRangeStartIso(arg.start.toISOString());
               setRangeEndIso(arg.end.toISOString());
             }}
-            height={720}
+            height="auto"
+            contentHeight={560}
           />
         </div>
         <p className="mt-2 text-xs text-zinc-500">
-          Events are synced from your primary Google Calendar. Creating a meeting here writes directly to Google Calendar.
+          {titleCase(
+            "Events are synced from your primary Google Calendar. Creating a meeting here writes directly to Google Calendar."
+          )}
         </p>
       </div>
 
       <div className="card p-5">
         <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">
-          Upcoming Events
+          {titleCase("Upcoming events")}
         </h2>
         {loadingEvents ? (
-          <p className="text-sm text-zinc-500">Loading events...</p>
+          <p className="text-sm text-zinc-500">{titleCase("Loading events...")}</p>
         ) : events.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-zinc-500">
-            <IconCalendar className="h-4 w-4" /> No events in selected range.
+            <IconCalendar className="h-4 w-4" /> {titleCase("No events in selected range.")}
           </div>
         ) : (
           <ul className="space-y-2">
@@ -241,7 +243,8 @@ export default function CalendarPage() {
               <li key={e.id} className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
                 <p className="font-medium text-zinc-900 dark:text-zinc-100">{e.summary || "(untitled)"}</p>
                 <p className="mt-1 text-xs text-zinc-500">
-                  {formatDate(e.start?.dateTime || e.start?.date || "")} - {formatDate(e.end?.dateTime || e.end?.date || "")}
+                  {formatCalendarDateTime(e.start?.dateTime || e.start?.date || "")} —{" "}
+                  {formatCalendarDateTime(e.end?.dateTime || e.end?.date || "")}
                 </p>
               </li>
             ))}
@@ -253,7 +256,9 @@ export default function CalendarPage() {
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center">
           <div className="card w-full max-w-xl overflow-hidden">
             <div className="flex items-center justify-between border-b px-5 py-4">
-              <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">Schedule Meeting</h3>
+              <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
+                {titleCase("Schedule meeting")}
+              </h3>
               <button type="button" onClick={() => setModalOpen(false)} className="btn-ghost p-1.5">
                 <IconX className="h-4 w-4" />
               </button>
@@ -263,7 +268,7 @@ export default function CalendarPage() {
                 <input
                   list="recruiter-emails"
                   type="email"
-                  placeholder="Recruiter Email"
+                  placeholder={titleCase("Recruiter email")}
                   value={recruiterEmail}
                   onChange={(e) => {
                     const email = e.target.value;
@@ -282,28 +287,44 @@ export default function CalendarPage() {
                 </datalist>
                 <p className="mt-1 text-[11px] text-zinc-500">
                   {loadingRecruiters
-                    ? "Loading recruiter suggestions..."
-                    : "Suggestions use extracted contacts (internal data). Lusha/scraped sources can pass email here too."}
+                    ? titleCase("Loading recruiter suggestions...")
+                    : titleCase(
+                        "Suggestions use extracted contacts (internal data). Lusha/scraped sources can pass email here too."
+                      )}
                 </p>
               </div>
-              <input type="text" placeholder="Company Name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} className="input-field" />
-              <input type="text" placeholder="Meeting Title (optional)" value={title} onChange={(e) => setTitle(e.target.value)} className="input-field" />
+              <input
+                type="text"
+                placeholder={titleCase("Company name")}
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                className="input-field"
+              />
+              <input
+                type="text"
+                placeholder={titleCase("Meeting title (optional)")}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className="input-field"
+              />
               <div className="grid gap-3 sm:grid-cols-2">
                 <input type="datetime-local" value={startDateTime} onChange={(e) => setStartDateTime(e.target.value)} className="input-field" />
                 <input type="datetime-local" value={endDateTime} onChange={(e) => setEndDateTime(e.target.value)} className="input-field" />
               </div>
               <textarea
                 rows={4}
-                placeholder="Notes (optional)"
+                placeholder={titleCase("Notes (optional)")}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 className="input-field resize-none"
               />
             </div>
             <div className="flex items-center justify-end gap-2 border-t px-5 py-4">
-              <button type="button" onClick={() => setModalOpen(false)} className="btn-ghost">Cancel</button>
+              <button type="button" onClick={() => setModalOpen(false)} className="btn-ghost">
+                {titleCase("Cancel")}
+              </button>
               <button type="button" disabled={busy} onClick={() => void scheduleMeeting()} className="btn-primary">
-                {busy ? "Scheduling..." : "Create Event"}
+                {busy ? titleCase("Scheduling...") : titleCase("Create event")}
               </button>
             </div>
           </div>
@@ -315,7 +336,7 @@ export default function CalendarPage() {
           <div className="card w-full max-w-xl overflow-hidden">
             <div className="flex items-center justify-between border-b px-5 py-4">
               <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
-                Meeting Details
+                {titleCase("Meeting details")}
               </h3>
               <button type="button" onClick={() => setSelectedEvent(null)} className="btn-ghost p-1.5">
                 <IconX className="h-4 w-4" />
@@ -323,55 +344,55 @@ export default function CalendarPage() {
             </div>
             <div className="space-y-4 p-5">
               <div>
-                <p className="text-xs uppercase tracking-wide text-zinc-500">Title</p>
+                <p className="text-xs tracking-wide text-zinc-500">{titleCase("Title")}</p>
                 <p className="mt-1 text-sm font-medium text-zinc-900 dark:text-zinc-100">
                   {selectedEvent.summary || "(untitled)"}
                 </p>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-zinc-500">Start</p>
+                  <p className="text-xs tracking-wide text-zinc-500">{titleCase("Start")}</p>
                   <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-200">
-                    {formatDate(selectedEvent.start?.dateTime || selectedEvent.start?.date || "")}
+                    {formatCalendarDateTime(selectedEvent.start?.dateTime || selectedEvent.start?.date || "")}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs uppercase tracking-wide text-zinc-500">End</p>
+                  <p className="text-xs tracking-wide text-zinc-500">{titleCase("End")}</p>
                   <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-200">
-                    {formatDate(selectedEvent.end?.dateTime || selectedEvent.end?.date || "")}
+                    {formatCalendarDateTime(selectedEvent.end?.dateTime || selectedEvent.end?.date || "")}
                   </p>
                 </div>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-zinc-500">Status</p>
+                <p className="text-xs tracking-wide text-zinc-500">{titleCase("Status")}</p>
                 <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-200">
-                  {selectedEvent.status || "confirmed"}
+                  {titleCase((selectedEvent.status || "confirmed").replace(/-/g, " "))}
                 </p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-zinc-500">Location</p>
+                <p className="text-xs tracking-wide text-zinc-500">{titleCase("Location")}</p>
                 <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-200">
-                  {selectedEvent.location || "Not specified"}
+                  {selectedEvent.location || titleCase("Not specified")}
                 </p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-zinc-500">Attendees</p>
+                <p className="text-xs tracking-wide text-zinc-500">{titleCase("Attendees")}</p>
                 <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-200">
                   {selectedEvent.attendees?.length
                     ? selectedEvent.attendees.map((a) => a.email).filter(Boolean).join(", ")
-                    : "No attendees listed"}
+                    : titleCase("No attendees listed")}
                 </p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-zinc-500">Notes</p>
+                <p className="text-xs tracking-wide text-zinc-500">{titleCase("Notes")}</p>
                 <p className="mt-1 whitespace-pre-wrap text-sm text-zinc-800 dark:text-zinc-200">
-                  {selectedEvent.description || "No description"}
+                  {selectedEvent.description || titleCase("No description")}
                 </p>
               </div>
             </div>
             <div className="flex items-center justify-between gap-2 border-t px-5 py-4">
               <button type="button" onClick={() => setSelectedEvent(null)} className="btn-ghost">
-                Close
+                {titleCase("Close")}
               </button>
               <div className="flex gap-2">
                 {selectedEvent.hangoutLink ? (
@@ -381,7 +402,7 @@ export default function CalendarPage() {
                     rel="noreferrer"
                     className="btn-primary"
                   >
-                    Join Meeting
+                    {titleCase("Join meeting")}
                   </a>
                 ) : null}
                 {selectedEvent.htmlLink ? (
@@ -391,7 +412,7 @@ export default function CalendarPage() {
                     rel="noreferrer"
                     className="btn-secondary"
                   >
-                    Open in Google Calendar
+                    {titleCase("Open in Google Calendar")}
                   </a>
                 ) : null}
               </div>

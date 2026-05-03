@@ -384,12 +384,13 @@ export default function CRMPage() {
         </div>
       </div>
 
-      {/* Kanban Board */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 overflow-x-auto pb-4">
+      {/* Kanban Board — minmax tracks + scroll so columns never shrink under min width (avoids border overlap) */}
+      <div className="min-w-0 overflow-x-auto pb-4">
+        <div className="grid w-max min-w-full grid-cols-1 gap-4 pb-1 md:[grid-template-columns:repeat(2,minmax(280px,1fr))] xl:[grid-template-columns:repeat(4,minmax(280px,1fr))]">
         {CURRENT_STAGES.map(stage => {
           const stageLeads = filteredLeads.filter(l => l.stage === stage);
           return (
-            <div key={stage} className="flex min-h-[500px] min-w-[280px] flex-col rounded-2xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+            <div key={stage} className="flex min-h-[500px] min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
               <div className="mb-4 flex items-start justify-between gap-3 px-1">
                 <h3 className="min-w-0 flex-1 break-words font-semibold leading-snug text-zinc-800 dark:text-zinc-200">
                   {titleCase(stage)}
@@ -462,6 +463,7 @@ export default function CRMPage() {
             </div>
           );
         })}
+        </div>
       </div>
 
       {/* Add Lead Modal */}

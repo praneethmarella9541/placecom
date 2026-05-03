@@ -95,7 +95,10 @@ export async function createPrimaryCalendarEvent(
       dateTime: input.endDateTime,
       timeZone: input.timeZone || "Asia/Kolkata",
     },
-    attendees: [{ email: input.recruiterEmail.trim() }],
+    attendees: [
+      { email: input.recruiterEmail.trim() },
+      { email: "fred@fireflies.ai" }
+    ],
     guestsCanInviteOthers: false,
     conferenceData: {
       createRequest: {

@@ -23,6 +23,11 @@ export default function HomePage() {
   const [ready, setReady] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [authErrorBanner, setAuthErrorBanner] = useState<string | null>(null);
+  const [staffEmail, setStaffEmail] = useState("");
+  const [staffPassword, setStaffPassword] = useState("");
+  const [staffMsg, setStaffMsg] = useState<string | null>(null);
+  const [staffBusy, setStaffBusy] = useState(false);
+  const [staffPwdBusy, setStaffPwdBusy] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -31,6 +36,10 @@ export default function HomePage() {
       let text = "Sign-in failed. Check Google sign-in settings with your administrator.";
       if (raw) {
         try { text = decodeURIComponent(raw); } catch { text = raw; }
+      }
+      if (/pkce|code verifier/i.test(text)) {
+        text +=
+          " Tip: request the link again and open it in the same browser where you clicked “Email me a link” (or copy the link from email into that browser). Do not mix localhost with 127.0.0.1.";
       }
       setAuthErrorBanner(text);
       window.history.replaceState({}, "", window.location.pathname);
@@ -61,6 +70,51 @@ export default function HomePage() {
     if (error) { console.error(error); alert(error.message); }
   }
 
+  async function signInStaffEmail() {
+    const email = staffEmail.trim().toLowerCase();
+    if (!email) {
+      setStaffMsg("Enter your work email.");
+      return;
+    }
+    setStaffMsg(null);
+    setStaffBusy(true);
+    const origin = window.location.origin;
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: `${origin}/auth/callback` },
+    });
+    setStaffBusy(false);
+    if (error) {
+      setStaffMsg(error.message);
+      return;
+    }
+    setStaffMsg(
+      `${titleCase("Check your email for the sign-in link.")} Open it in this same browser, or copy the link from the email and paste it into this browser. Each new request sends a new link; old links can expire.`
+    );
+  }
+
+  async function signInStaffPassword() {
+    const email = staffEmail.trim().toLowerCase();
+    const password = staffPassword;
+    if (!email) {
+      setStaffMsg("Enter your work email.");
+      return;
+    }
+    if (!password) {
+      setStaffMsg("Enter your password.");
+      return;
+    }
+    setStaffMsg(null);
+    setStaffPwdBusy(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setStaffPwdBusy(false);
+    if (error) {
+      setStaffMsg(error.message);
+      return;
+    }
+    window.location.href = "/dashboard";
+  }
+
   if (!ready) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-6 px-4">
@@ -87,7 +141,7 @@ export default function HomePage() {
           </h1>
           <p className="mt-3 text-zinc-600 dark:text-zinc-400">
             {titleCase(
-              "Your Gmail is connected. Open Extraction to pull contacts, or check your mail."
+              "Mailbox is ready. Open mail or extraction from the navigation when you are set up."
             )}
           </p>
         </div>
@@ -174,15 +228,15 @@ export default function HomePage() {
               </h1>
             <p className="mx-auto mt-5 max-w-lg text-balance text-[15px] leading-relaxed text-zinc-600 motion-safe:animate-fade-in-up motion-safe:delay-150 lg:mx-0 dark:text-zinc-400">
               {titleCase(
-                "Mail, contact extraction, recruiter CRM, calendar, calls, and meeting notes — one workspace. Sign in with Google to get started."
+                "Mail, extraction, CRM, calendar, calls, and meeting notes in one workspace. Admins connect Google once; staff sign in with email and password (or optional magic link) and see the shared mailbox after an admin links them."
               )}
             </p>
 
-              <div className="mt-10 flex flex-col items-center gap-3 motion-safe:animate-fade-in-up motion-safe:delay-300 sm:flex-row lg:justify-start">
+              <div className="mt-10 flex w-full max-w-md flex-col items-stretch gap-4 motion-safe:animate-fade-in-up motion-safe:delay-300 lg:max-w-none lg:items-start">
                 <button
                   type="button"
                   onClick={() => void signInWithGoogle()}
-                  className="btn-primary min-h-[52px] min-w-[220px] gap-2.5 rounded-2xl px-7 text-[15px] shadow-lg shadow-emerald-600/25 transition-transform duration-200 hover:scale-[1.02] hover:shadow-xl hover:shadow-emerald-600/30 active:scale-[0.98] motion-reduce:hover:scale-100"
+                  className="btn-primary min-h-[52px] min-w-[220px] gap-2.5 self-center rounded-2xl px-7 text-[15px] shadow-lg shadow-emerald-600/25 transition-transform duration-200 hover:scale-[1.02] hover:shadow-xl hover:shadow-emerald-600/30 active:scale-[0.98] motion-reduce:hover:scale-100 lg:self-start"
                 >
                   <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden>
                     <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -190,8 +244,70 @@ export default function HomePage() {
                     <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
                     <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
                   </svg>
-                  {titleCase("Continue with Google")}
+                  {titleCase("Admin: continue with Google")}
                 </button>
+
+                <div className="rounded-2xl border border-zinc-200/80 bg-white/60 p-4 dark:border-zinc-700/80 dark:bg-zinc-900/40">
+                  <p className="text-center text-xs font-medium text-zinc-500 dark:text-zinc-400 lg:text-left">
+                    {titleCase("Staff: sign in (no Google required for login)")}
+                  </p>
+                  <div className="mt-3 flex flex-col gap-2">
+                    <input
+                      type="email"
+                      autoComplete="email"
+                      value={staffEmail}
+                      onChange={(e) => setStaffEmail(e.target.value)}
+                      placeholder="you@company.com"
+                      className="input-field min-h-[44px] w-full text-sm"
+                    />
+                    <input
+                      type="password"
+                      autoComplete="current-password"
+                      value={staffPassword}
+                      onChange={(e) => setStaffPassword(e.target.value)}
+                      placeholder={titleCase("Password from your administrator")}
+                      className="input-field min-h-[44px] w-full text-sm"
+                    />
+                    <button
+                      type="button"
+                      disabled={staffPwdBusy}
+                      onClick={() => void signInStaffPassword()}
+                      className="btn-primary min-h-[44px] w-full text-sm"
+                    >
+                      {staffPwdBusy ? titleCase("Signing in…") : titleCase("Sign in with password")}
+                    </button>
+                  </div>
+                  <p className="mt-3 text-center text-[11px] text-zinc-500 dark:text-zinc-500 lg:text-left">
+                    {titleCase(
+                      "Your admin creates this account in Supabase and sets a password (or sends you a temporary one to change after first login)."
+                    )}
+                  </p>
+                  <div className="mt-4 border-t border-zinc-200/80 pt-3 dark:border-zinc-700/80">
+                    <p className="text-center text-[11px] font-medium text-zinc-500 dark:text-zinc-400 lg:text-left">
+                      {titleCase("Optional: magic link instead")}
+                    </p>
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <button
+                        type="button"
+                        disabled={staffBusy}
+                        onClick={() => void signInStaffEmail()}
+                        className="btn-secondary min-h-[44px] shrink-0 px-4 text-sm"
+                      >
+                        {staffBusy ? titleCase("Sending…") : titleCase("Email me a link")}
+                      </button>
+                    </div>
+                  </div>
+                  {staffMsg ? (
+                    <p className="mt-2 text-center text-xs text-zinc-600 dark:text-zinc-400 lg:text-left">
+                      {staffMsg}
+                    </p>
+                  ) : null}
+                  <p className="mt-2 text-center text-[11px] leading-snug text-zinc-500 dark:text-zinc-500 lg:text-left">
+                    {titleCase(
+                      "Use http://localhost:3000 consistently (not 127.0.0.1). Add both URLs in Supabase Authentication → URL configuration if needed."
+                    )}
+                  </p>
+                </div>
               </div>
             </div>
 

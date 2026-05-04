@@ -1,39 +1,24 @@
 import "server-only";
 
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { resolveMailboxGoogleAccessToken } from "@/lib/mailbox-google-access";
 
 export type GmailAuthResult =
   | { ok: true; accessToken: string; userId: string }
   | { ok: false; status: number; message: string };
 
 /**
- * Gmail calls use the Google access token stored on the Supabase session after OAuth.
- * Nothing is persisted to our DB for inbox/sync — token lives in session only.
+ * Resolves a Google access token for the mailbox the signed-in user may use:
+ * admins use their own Google connection (stored refresh token when available);
+ * staff use the linked admin's stored mailbox.
  */
 export async function requireGmailAccessToken(): Promise<GmailAuthResult> {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-
-  if (userErr || !user?.id) {
-    return { ok: false, status: 401, message: "Not signed in" };
+  const resolved = await resolveMailboxGoogleAccessToken();
+  if (!resolved.ok) {
+    return { ok: false, status: resolved.status, message: resolved.message };
   }
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  const accessToken = session?.provider_token;
-  if (!accessToken) {
-    return {
-      ok: false,
-      status: 401,
-      message:
-        "No Google access token in session. Sign out and sign in again (Gmail scopes required).",
-    };
-  }
-
-  return { ok: true, accessToken, userId: session.user.id };
+  return {
+    ok: true,
+    accessToken: resolved.accessToken,
+    userId: resolved.sessionUserId,
+  };
 }

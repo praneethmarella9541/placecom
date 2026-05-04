@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
+import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import {
   collectMessageIdsForFetch,
@@ -37,12 +38,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const accessToken = body.accessToken?.trim();
+  let accessToken = body.accessToken?.trim();
   if (!accessToken) {
-    return NextResponse.json(
-      { error: "accessToken is required" },
-      { status: 400 }
-    );
+    const auth = await requireGmailAccessToken();
+    if (!auth.ok) {
+      return NextResponse.json({ error: auth.message }, { status: auth.status });
+    }
+    accessToken = auth.accessToken;
   }
 
   const rawMaxEmails = body.maxEmails ?? 50;

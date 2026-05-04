@@ -66,10 +66,14 @@ export async function listThreadsPage(
     folder: MailFolder;
     maxResults: number;
     pageToken?: string;
+    /** Gmail search terms (same syntax as Gmail search box), AND-ed with folder filters. */
+    searchQuery?: string;
   }
 ): Promise<ThreadListPage> {
   const labels = LABELS[options.folder];
-  const q = QUERY[options.folder];
+  const baseQ = QUERY[options.folder];
+  const userQ = (options.searchQuery || "").trim();
+  const q = [baseQ, userQ].filter(Boolean).join(" ");
   const params = new URLSearchParams({
     maxResults: String(Math.min(Math.max(options.maxResults, 1), 100)),
   });

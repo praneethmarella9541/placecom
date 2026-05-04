@@ -17,6 +17,7 @@ import {
   IconCheck,
   IconPaperclip,
   IconDownload,
+  IconSearch,
 } from "@/components/Icons";
 
 type Folder = "inbox" | "sent";
@@ -176,6 +177,8 @@ export default function InboxPage() {
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
   const [loadingList, setLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const [mailSearchInput, setMailSearchInput] = useState("");
+  const [mailSearch, setMailSearch] = useState("");
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MsgView[] | null>(null);
@@ -210,6 +213,11 @@ export default function InboxPage() {
     else setReplyFiles((prev) => [...prev, ...newFiles]);
   }
 
+  useEffect(() => {
+    const t = setTimeout(() => setMailSearch(mailSearchInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [mailSearchInput]);
+
   const loadTracking = useCallback(async () => {
     try {
       const res = await fetch("/api/gmail/tracking");
@@ -231,6 +239,7 @@ export default function InboxPage() {
       if (!opts.append) { setLoadingList(true); setListError(null); }
       const params = new URLSearchParams({ folder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
+      if (mailSearch) params.set("search", mailSearch);
       try {
         const res = await fetch(`/api/gmail/threads?${params.toString()}`);
         const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
@@ -241,11 +250,16 @@ export default function InboxPage() {
         setListError(e instanceof Error ? e.message : "Failed to load");
         if (!opts.append) setThreads([]);
       } finally { setLoadingList(false); }
-    }, [folder]
+    },     [folder, mailSearch]
   );
 
-  useEffect(() => { void loadThreads({ append: false }); }, [loadThreads]);
-  useEffect(() => { void loadTracking(); }, [loadTracking]);
+  useEffect(() => {
+    void loadThreads({ append: false });
+  }, [loadThreads]);
+
+  useEffect(() => {
+    void loadTracking();
+  }, [loadTracking]);
 
   const openThread = useCallback(async (threadId: string) => {
     setSelectedId(threadId);
@@ -315,8 +329,11 @@ export default function InboxPage() {
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
             {titleCase("Mail")}
           </h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            {titleCase("Read and send messages with your connected Gmail account.")}
+          </p>
         </div>
-        <button type="button" onClick={() => setComposeOpen(true)} className="btn-primary">
+        <button type="button" onClick={() => setComposeOpen(true)} className="btn-primary shrink-0">
           <IconPlus className="h-4 w-4" /> {titleCase("Compose")}
         </button>
       </div>
@@ -334,7 +351,13 @@ export default function InboxPage() {
                 <button
                   key={f.key}
                   type="button"
-                  onClick={() => { setFolder(f.key); setSelectedId(null); setMessages(null); }}
+                  onClick={() => {
+                    setFolder(f.key);
+                    setSelectedId(null);
+                    setMessages(null);
+                    setMailSearchInput("");
+                    setMailSearch("");
+                  }}
                   className={cn(
                     "btn-ghost flex-1 justify-center gap-1.5 rounded-lg py-2 text-xs",
                     folder === f.key && "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
@@ -354,6 +377,20 @@ export default function InboxPage() {
             </button>
           </div>
 
+          <div className="border-b px-3 pb-3 pt-1">
+            <div className="relative">
+              <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+              <input
+                type="search"
+                value={mailSearchInput}
+                onChange={(e) => setMailSearchInput(e.target.value)}
+                placeholder={titleCase("Search mail (same as Gmail)")}
+                className="input-field w-full py-2 pl-9 pr-3 text-sm"
+                autoComplete="off"
+              />
+            </div>
+          </div>
+
           {loadingList ? (
             <div className="space-y-2 p-4">
               {[...Array(6)].map((_, i) => (
@@ -368,7 +405,7 @@ export default function InboxPage() {
                 <IconInbox className="h-7 w-7 text-zinc-400" />
               </div>
               <p className="text-sm text-zinc-500">
-                {titleCase(`No threads in ${folder}`)}
+                {titleCase(mailSearch ? "No threads match your search" : `No threads in ${folder}`)}
               </p>
             </div>
           ) : (

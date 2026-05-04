@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { listThreadsPage, type MailFolder } from "@/lib/gmail-inbox";
-import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
+import { listDriveFilesPage } from "@/lib/drive";
 
 export const runtime = "nodejs";
 
@@ -12,26 +11,24 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const folderRaw = searchParams.get("folder") || "inbox";
-  const folder: MailFolder =
-    folderRaw === "sent" ? "sent" : "inbox";
   const pageToken = searchParams.get("pageToken") || undefined;
-  const searchQuery = searchParams.get("search")?.trim() || undefined;
-  const maxResults = Math.min(
+  const search = searchParams.get("search")?.trim() || undefined;
+  const parentRaw = searchParams.get("parent")?.trim();
+  const parentId = parentRaw && parentRaw.length > 0 ? parentRaw : "root";
+  const pageSize = Math.min(
     50,
-    Math.max(5, parseInt(searchParams.get("maxResults") || "25", 10) || 25)
+    Math.max(5, parseInt(searchParams.get("pageSize") || "30", 10) || 30)
   );
 
   try {
-    const page = await listThreadsPage(auth.accessToken, {
-      folder,
-      maxResults,
+    const page = await listDriveFilesPage(auth.accessToken, {
+      pageSize,
       pageToken,
-      searchQuery,
+      search,
+      parentId,
     });
     return NextResponse.json({
-      folder,
-      threads: page.threads,
+      files: page.files,
       nextPageToken: page.nextPageToken,
     });
   } catch (e) {
@@ -42,15 +39,12 @@ export async function GET(request: Request) {
         { status: 401 }
       );
     }
-    if (err.code === GMAIL_INSUFFICIENT_SCOPE) {
-      return NextResponse.json(
-        { error: GMAIL_INSUFFICIENT_SCOPE, message: err.message },
-        { status: 403 }
-      );
+    if (err.code === "DRIVE_INSUFFICIENT_SCOPE") {
+      return NextResponse.json({ error: err.message }, { status: 403 });
     }
     console.error(e);
     return NextResponse.json(
-      { error: err.message || "Failed to list threads" },
+      { error: err.message || "Failed to list Drive files" },
       { status: 500 }
     );
   }

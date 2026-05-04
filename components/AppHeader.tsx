@@ -9,6 +9,7 @@ import { titleCase } from "@/lib/title-case";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import {
   IconMail,
+  IconFolder,
   IconDashboard,
   IconCalendar,
   IconPhone,
@@ -16,10 +17,13 @@ import {
   IconMenu,
   IconX,
   IconUser,
+  IconBroadcast,
 } from "@/components/Icons";
 
 const links = [
   { href: "/inbox", label: "Mail", icon: IconMail },
+  { href: "/drive", label: "Drive", icon: IconFolder },
+  { href: "/broadcasting", label: "Broadcasting", icon: IconBroadcast },
   { href: "/dashboard", label: "Extraction", icon: IconDashboard },
   { href: "/crm", label: "CRM", icon: IconUser },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },

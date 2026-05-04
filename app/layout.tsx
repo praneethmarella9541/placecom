@@ -14,9 +14,9 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Gmail Extractor",
+  title: "Placecom",
   description:
-    "Extract names, phone numbers, and emails from Gmail with OpenAI GPT-4o",
+    "Mail, contact extraction, recruiter CRM, calendar, calls, and meeting notes in one workspace.",
 };
 
 const themeInitScript = `(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||(t!=='light'&&window.matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark')}}catch(e){}})()`;

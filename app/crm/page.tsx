@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { IconRefresh, IconPlus, IconUser, IconPhone, IconMail, IconMenu, IconX, IconCalendar } from "@/components/Icons";
+import { titleCase } from "@/lib/title-case";
 
 type LeadScore = "Hot" | "Warm" | "Cold";
 type LeadType = "New Lead" | "Regular Recruiter";
@@ -41,6 +42,10 @@ type MeetingRow = {
 
 const NEW_LEAD_STAGES: LeadStage[] = ["Awareness", "Engagement", "Conversion", "Retention"];
 const REG_RECRUITER_STAGES: LeadStage[] = ["Relationship Mgt", "JD Expected", "JD Received", "Drive Scheduled"];
+
+function errMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
 function getScoreColor(score: LeadScore) {
   if (score === "Hot") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800/50";
@@ -93,8 +98,8 @@ export default function CRMPage() {
       }
       const json = await res.json();
       setLeads(json.leads || []);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(errMessage(e));
     } finally {
       setLoading(false);
     }
@@ -166,8 +171,8 @@ export default function CRMPage() {
       setNewPhone("");
       setNewScore("Warm");
       await loadLeads();
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
     }
   }
 
@@ -181,8 +186,8 @@ export default function CRMPage() {
         body: JSON.stringify({ stage: newStage })
       });
       if (!res.ok) throw new Error("Failed to update stage");
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
       void loadLeads(); // Revert on failure
     }
   }
@@ -198,8 +203,8 @@ export default function CRMPage() {
         body: JSON.stringify({ jd_count: newCount })
       });
       if (!res.ok) throw new Error("Failed to update JD count");
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
       void loadLeads();
     }
   }
@@ -226,8 +231,8 @@ export default function CRMPage() {
       } else {
         setMeetings([]);
       }
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
     } finally {
       setLoadingInteractions(false);
     }
@@ -250,8 +255,8 @@ export default function CRMPage() {
       setInteractionNotes("");
       await loadInteractions(activeLead);
       void loadLeads(); // Refresh last_interaction_at
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err: unknown) {
+      alert(errMessage(err));
     }
   }
 
@@ -261,18 +266,25 @@ export default function CRMPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Marketing Funnel CRM
+            {titleCase("Marketing funnel CRM")}
           </h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            Manage corporate leads through the placement pipeline.
+            {loading
+              ? titleCase("Loading leads…")
+              : titleCase("Manage corporate leads through the placement pipeline.")}
           </p>
         </div>
         <div className="flex gap-2">
-          <button type="button" onClick={() => void loadLeads()} className="btn-ghost">
-            <IconRefresh className="h-4 w-4" /> Refresh
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void loadLeads()}
+            className="btn-ghost disabled:opacity-50"
+          >
+            <IconRefresh className="h-4 w-4" /> {titleCase("Refresh")}
           </button>
           <button type="button" onClick={() => setIsAddLeadOpen(true)} className="btn-primary">
-            <IconPlus className="h-4 w-4" /> Add Lead
+            <IconPlus className="h-4 w-4" /> {titleCase("Add lead")}
           </button>
         </div>
       </div>
@@ -284,47 +296,74 @@ export default function CRMPage() {
       ) : null}
 
       {/* Funnel Switcher */}
-      <div className="flex border-b border-zinc-200 dark:border-zinc-800">
-        <button 
+      <div className="relative flex flex-wrap gap-x-1 border-b border-zinc-200 dark:border-zinc-800">
+        <button
+          type="button"
           onClick={() => setActiveFunnel("New Lead")}
-          className={`py-3 px-6 font-semibold text-sm border-b-2 transition-colors ${activeFunnel === "New Lead" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"}`}
+          className={`relative py-3 px-4 text-sm font-semibold transition-colors sm:px-6 ${
+            activeFunnel === "New Lead"
+              ? "z-[1] -mb-px border-b-2 border-emerald-500 text-emerald-600 dark:text-emerald-400"
+              : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+          }`}
         >
-          New Leads Pipeline
+          {titleCase("New leads pipeline")}
         </button>
-        <button 
+        <button
+          type="button"
           onClick={() => setActiveFunnel("Regular Recruiter")}
-          className={`py-3 px-6 font-semibold text-sm border-b-2 transition-colors ${activeFunnel === "Regular Recruiter" ? "border-emerald-500 text-emerald-600 dark:text-emerald-400" : "border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"}`}
+          className={`relative py-3 px-4 text-sm font-semibold transition-colors sm:px-6 ${
+            activeFunnel === "Regular Recruiter"
+              ? "z-[1] -mb-px border-b-2 border-emerald-500 text-emerald-600 dark:text-emerald-400"
+              : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+          }`}
         >
-          Regular Recruiters
+          {titleCase("Regular recruiters")}
         </button>
       </div>
 
-      {/* Top Metrics Dashboard */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {CURRENT_STAGES.map((stage, idx) => (
-          <div key={stage} className={`card p-4 flex flex-col justify-between ${idx > 0 ? ['border-l-4 border-l-orange-400', 'border-l-4 border-l-emerald-500', 'border-l-4 border-l-indigo-500'][idx-1] : ''}`}>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{stage}</p>
-            <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">{funnelCounts[stage]}</p>
-            <p className="mt-1 text-xs text-zinc-400">Total</p>
-          </div>
-        ))}
-        <div className="card p-4 flex flex-col justify-between bg-zinc-900 dark:bg-zinc-800 text-white shadow-xl">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Velocity</p>
-          <p className="mt-2 text-3xl font-bold">{leadVelocity} <span className="text-lg font-normal text-zinc-400">days</span></p>
-          <p className="mt-1 text-xs text-zinc-400">Avg. time in Engagement</p>
+      {/* Top Metrics Dashboard — horizontal scroll below lg so stage labels do not stack/overlap */}
+      <div className="scrollbar-thin -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 pt-0.5 sm:snap-none lg:mx-0 lg:grid lg:grid-cols-5 lg:gap-4 lg:overflow-x-visible lg:px-0 lg:pb-0">
+        {CURRENT_STAGES.map((stage, idx) => {
+          const stageAccent = ["border-l-orange-400", "border-l-emerald-500", "border-l-indigo-500"];
+          const borderAccent =
+            idx === 0 ? "" : `border-l-4 ${stageAccent[(idx - 1) % stageAccent.length]}`;
+          return (
+            <div
+              key={stage}
+              className={`card flex min-w-[158px] shrink-0 snap-center flex-col justify-between p-4 lg:min-w-0 ${borderAccent}`}
+            >
+              <p className="line-clamp-3 break-words text-[10px] font-semibold tracking-wider text-zinc-500">
+                {titleCase(stage)}
+              </p>
+              <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">{funnelCounts[stage]}</p>
+              <p className="mt-1 text-xs text-zinc-400">{titleCase("Total")}</p>
+            </div>
+          );
+        })}
+        <div className="card flex min-w-[158px] shrink-0 snap-center flex-col justify-between bg-zinc-900 p-4 shadow-xl dark:bg-zinc-800 lg:min-w-0">
+          <p className="text-[10px] font-semibold tracking-wider text-zinc-400">{titleCase("Velocity")}</p>
+          <p className="mt-2 text-3xl font-bold">
+            {leadVelocity}{" "}
+            <span className="text-lg font-normal text-zinc-400">{titleCase("days")}</span>
+          </p>
+          <p className="mt-1 text-xs leading-snug text-zinc-400">
+            {titleCase("Avg. time in engagement")}
+          </p>
         </div>
       </div>
 
       {/* Placement Head Controls */}
       <div className="flex flex-col sm:flex-row items-center justify-between bg-white dark:bg-zinc-950 p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 gap-4 shadow-sm">
         <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Staff View:</label>
+          <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            {titleCase("Staff view:")}
+          </label>
           <select 
             className="input-field py-1.5 min-w-[150px]"
             value={staffFilter}
             onChange={e => setStaffFilter(e.target.value)}
           >
-            <option value="All">All Staff</option>
+            <option value="All">{titleCase("All staff")}</option>
             {allStaffNames.map(name => (
               <option key={name} value={name}>{name}</option>
             ))}
@@ -340,20 +379,23 @@ export default function CRMPage() {
           />
           <label htmlFor="stalledFilter" className="text-sm font-medium text-red-600 dark:text-red-400 flex items-center gap-1 cursor-pointer">
             <span className="flex h-2 w-2 rounded-full bg-red-500"></span>
-            Show Stalled Leads ({'>'}3 days no activity)
+            {titleCase("Show stalled leads (>3 days no activity)")}
           </label>
         </div>
       </div>
 
-      {/* Kanban Board */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 overflow-x-auto pb-4">
+      {/* Kanban Board — minmax tracks + scroll so columns never shrink under min width (avoids border overlap) */}
+      <div className="min-w-0 overflow-x-auto pb-4">
+        <div className="grid w-max min-w-full grid-cols-1 gap-4 pb-1 md:[grid-template-columns:repeat(2,minmax(280px,1fr))] xl:[grid-template-columns:repeat(4,minmax(280px,1fr))]">
         {CURRENT_STAGES.map(stage => {
           const stageLeads = filteredLeads.filter(l => l.stage === stage);
           return (
-            <div key={stage} className="flex flex-col bg-zinc-50/80 dark:bg-zinc-900/40 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-3 min-w-[280px] h-full min-h-[500px]">
-              <div className="flex items-center justify-between mb-4 px-2">
-                <h3 className="font-semibold text-zinc-800 dark:text-zinc-200">{stage}</h3>
-                <span className="bg-zinc-200 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 text-xs px-2 py-1 rounded-full font-medium">
+            <div key={stage} className="flex min-h-[500px] min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
+              <div className="mb-4 flex items-start justify-between gap-3 px-1">
+                <h3 className="min-w-0 flex-1 break-words font-semibold leading-snug text-zinc-800 dark:text-zinc-200">
+                  {titleCase(stage)}
+                </h3>
+                <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
                   {stageLeads.length}
                 </span>
               </div>
@@ -369,10 +411,10 @@ export default function CRMPage() {
                   >
                     <div className="flex items-start justify-between mb-2">
                       <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${getScoreColor(lead.score)}`}>
-                        {lead.score}
+                        {titleCase(lead.score)}
                       </span>
                       {stalledOnly || new Date(lead.last_interaction_at) < new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) ? (
-                         <span title="Stalled Lead" className="h-2 w-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse"></span>
+                         <span title={titleCase("Stalled lead")} className="h-2 w-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse"></span>
                       ) : null}
                     </div>
                     <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-1">{lead.company_name}</h4>
@@ -381,7 +423,9 @@ export default function CRMPage() {
                     {/* Regular Recruiter JD Counter */}
                     {lead.lead_type === "Regular Recruiter" && (
                       <div className="mt-3 flex items-center justify-between bg-zinc-50 dark:bg-zinc-900 rounded p-1.5 border border-zinc-200 dark:border-zinc-800" onClick={e => e.stopPropagation()}>
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">JDs Rcvd:</span>
+                        <span className="text-[10px] font-medium text-zinc-500 tracking-wider">
+                          {titleCase("JDs rcvd:")}
+                        </span>
                         <div className="flex items-center gap-2">
                           <button onClick={() => handleUpdateJDCount(lead.id, lead.jd_count - 1)} className="w-5 h-5 flex items-center justify-center rounded bg-white border shadow-sm text-zinc-500 hover:text-zinc-900">-</button>
                           <span className="text-xs font-bold w-4 text-center">{lead.jd_count}</span>
@@ -391,7 +435,9 @@ export default function CRMPage() {
                     )}
 
                     <div className="flex items-center justify-between mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                      <p className="text-[10px] text-zinc-400 font-medium">Staff: {lead.staff_name}</p>
+                      <p className="text-[10px] text-zinc-400 font-medium">
+                        {titleCase("Staff:")} {lead.staff_name}
+                      </p>
                       {/* Stage Mover */}
                       <select 
                         className="text-[10px] bg-transparent text-zinc-500 border-none p-0 cursor-pointer focus:ring-0 w-[80px] text-right"
@@ -399,70 +445,126 @@ export default function CRMPage() {
                         onClick={e => e.stopPropagation()}
                         onChange={(e) => handleUpdateLeadStage(lead.id, e.target.value as LeadStage)}
                       >
-                        {CURRENT_STAGES.map(s => <option key={s} value={s}>Move to {s}</option>)}
+                        {CURRENT_STAGES.map((s) => (
+                          <option key={s} value={s}>
+                            {titleCase(`Move to ${s}`)}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
                 ))}
                 {stageLeads.length === 0 && (
                   <div className="border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl flex items-center justify-center p-6 text-zinc-400 text-sm">
-                    No leads
+                    {titleCase("No leads")}
                   </div>
                 )}
               </div>
             </div>
           );
         })}
+        </div>
       </div>
 
       {/* Add Lead Modal */}
       {isAddLeadOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="card w-full max-w-lg bg-white dark:bg-zinc-950 p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-4">Add Corporate Lead</h2>
+            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-4">
+              {titleCase("Add corporate lead")}
+            </h2>
             <form onSubmit={handleAddLead} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-zinc-500 mb-1">Company Name *</label>
-                <input required value={newCompany} onChange={e => setNewCompany(e.target.value)} className="input-field" placeholder="e.g. Acme Corp" />
+                <label className="block text-xs font-medium text-zinc-500 mb-1">
+                  {titleCase("Company name *")}
+                </label>
+                <input
+                  required
+                  value={newCompany}
+                  onChange={(e) => setNewCompany(e.target.value)}
+                  className="input-field"
+                  placeholder={titleCase("e.g. Acme Corp")}
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Lead Type</label>
-                  <select value={newLeadType} onChange={e => setNewLeadType(e.target.value as LeadType)} className="input-field">
-                    <option value="New Lead">New Lead (Pipeline)</option>
-                    <option value="Regular Recruiter">Regular Recruiter</option>
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                    {titleCase("Lead type")}
+                  </label>
+                  <select
+                    value={newLeadType}
+                    onChange={(e) => setNewLeadType(e.target.value as LeadType)}
+                    className="input-field"
+                  >
+                    <option value="New Lead">{titleCase("New lead (pipeline)")}</option>
+                    <option value="Regular Recruiter">{titleCase("Regular recruiter")}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Staff Member</label>
-                  <input value={newStaff} onChange={e => setNewStaff(e.target.value)} className="input-field" placeholder="e.g. John Smith" />
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                    {titleCase("Staff member")}
+                  </label>
+                  <input
+                    value={newStaff}
+                    onChange={(e) => setNewStaff(e.target.value)}
+                    className="input-field"
+                    placeholder={titleCase("e.g. John Smith")}
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Contact Person</label>
-                  <input value={newContact} onChange={e => setNewContact(e.target.value)} className="input-field" placeholder="e.g. Jane Doe" />
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                    {titleCase("Contact person")}
+                  </label>
+                  <input
+                    value={newContact}
+                    onChange={(e) => setNewContact(e.target.value)}
+                    className="input-field"
+                    placeholder={titleCase("e.g. Jane Doe")}
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Email</label>
-                  <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} className="input-field" placeholder="jane@acme.com" />
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">{titleCase("Email")}</label>
+                  <input
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    className="input-field"
+                    placeholder="jane@acme.com"
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Phone</label>
-                  <input value={newPhone} onChange={e => setNewPhone(e.target.value)} className="input-field" placeholder="+1 234 567 8900" />
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">{titleCase("Phone")}</label>
+                  <input
+                    value={newPhone}
+                    onChange={(e) => setNewPhone(e.target.value)}
+                    className="input-field"
+                    placeholder="+1 234 567 8900"
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">Initial Lead Score</label>
-                  <select value={newScore} onChange={e => setNewScore(e.target.value as LeadScore)} className="input-field">
-                    <option value="Hot">Hot (High Intent)</option>
-                    <option value="Warm">Warm (Interested)</option>
-                    <option value="Cold">Cold (Outreach)</option>
+                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                    {titleCase("Initial lead score")}
+                  </label>
+                  <select
+                    value={newScore}
+                    onChange={(e) => setNewScore(e.target.value as LeadScore)}
+                    className="input-field"
+                  >
+                    <option value="Hot">{titleCase("Hot (high intent)")}</option>
+                    <option value="Warm">{titleCase("Warm (interested)")}</option>
+                    <option value="Cold">{titleCase("Cold (outreach)")}</option>
                   </select>
                 </div>
               </div>
               <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-                <button type="button" onClick={() => setIsAddLeadOpen(false)} className="btn-ghost">Cancel</button>
-                <button type="submit" className="btn-primary">Save Lead</button>
+                <button type="button" onClick={() => setIsAddLeadOpen(false)} className="btn-ghost">
+                  {titleCase("Cancel")}
+                </button>
+                <button type="submit" className="btn-primary">
+                  {titleCase("Save lead")}
+                </button>
               </div>
             </form>
           </div>
@@ -476,7 +578,9 @@ export default function CRMPage() {
             <div className="p-5 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-900/50">
               <div>
                 <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">{activeLead.company_name}</h2>
-                <p className="text-sm text-zinc-500">{activeLead.contact_name || "No Contact Person"}</p>
+                <p className="text-sm text-zinc-500">
+                  {activeLead.contact_name || titleCase("No contact person")}
+                </p>
                 {activeLead.email && <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-0.5">{activeLead.email}</p>}
               </div>
               <button onClick={() => setActiveLead(null)} className="btn-ghost p-2 rounded-full"><IconX className="h-5 w-5" /></button>
@@ -485,52 +589,67 @@ export default function CRMPage() {
             <div className="flex-1 overflow-y-auto p-5 space-y-6">
               {/* Interaction Form */}
               <div className="bg-zinc-50 dark:bg-zinc-900/30 rounded-xl p-4 border border-zinc-200 dark:border-zinc-800">
-                <h3 className="text-sm font-semibold mb-3">Log Interaction</h3>
+                <h3 className="text-sm font-semibold mb-3">{titleCase("Log interaction")}</h3>
                 <form onSubmit={handleAddInteraction} className="space-y-3">
                   <select 
                     value={interactionType} 
-                    onChange={e => setInteractionType(e.target.value as any)} 
+                    onChange={(e) =>
+                      setInteractionType(e.target.value as InteractionRow["interaction_type"])
+                    } 
                     className="input-field py-1.5 text-sm"
                   >
-                    <option value="Note">Note / Update</option>
-                    <option value="Call">Phone Call</option>
-                    <option value="Email">Email Sent</option>
-                    <option value="Meeting">Meeting (e.g. Meet/Zoom)</option>
+                    <option value="Note">{titleCase("Note / update")}</option>
+                    <option value="Call">{titleCase("Phone call")}</option>
+                    <option value="Email">{titleCase("Email sent")}</option>
+                    <option value="Meeting">{titleCase("Meeting (e.g. Meet/Zoom)")}</option>
                   </select>
                   <textarea 
                     required
                     rows={3} 
                     value={interactionNotes}
                     onChange={e => setInteractionNotes(e.target.value)}
-                    placeholder="Enter details..." 
+                    placeholder={titleCase("Enter details...")} 
                     className="input-field text-sm resize-none"
                   ></textarea>
-                  <button type="submit" className="btn-primary w-full py-2 text-sm justify-center">Log Activity</button>
+                  <button type="submit" className="btn-primary w-full py-2 text-sm justify-center">
+                    {titleCase("Log activity")}
+                  </button>
                 </form>
               </div>
 
               {/* History / Meetings Toggle */}
               <div>
-                <div className="flex border-b border-zinc-200 dark:border-zinc-800 mb-4">
-                  <button 
+                <div className="relative mb-4 flex flex-wrap gap-x-1 border-b border-zinc-200 dark:border-zinc-800">
+                  <button
+                    type="button"
                     onClick={() => setActivePanelTab("History")}
-                    className={`pb-2 px-4 text-sm font-medium border-b-2 transition-colors ${activePanelTab === "History" ? "border-emerald-500 text-zinc-900 dark:text-white" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+                    className={`relative px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
+                      activePanelTab === "History"
+                        ? "z-[1] -mb-px border-b-2 border-emerald-500 text-zinc-900 dark:text-white"
+                        : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                    }`}
                   >
-                    History ({interactions.length})
+                    {titleCase(`History (${interactions.length})`)}
                   </button>
-                  <button 
+                  <button
+                    type="button"
                     onClick={() => setActivePanelTab("Meetings")}
-                    className={`pb-2 px-4 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${activePanelTab === "Meetings" ? "border-emerald-500 text-zinc-900 dark:text-white" : "border-transparent text-zinc-500 hover:text-zinc-700"}`}
+                    className={`relative flex items-center gap-1.5 px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
+                      activePanelTab === "Meetings"
+                        ? "z-[1] -mb-px border-b-2 border-emerald-500 text-zinc-900 dark:text-white"
+                        : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                    }`}
                   >
-                    <IconCalendar className="h-3.5 w-3.5" /> GMeet Summaries ({meetings.length})
+                    <IconCalendar className="h-3.5 w-3.5 shrink-0" />
+                    {titleCase(`GMeet summaries (${meetings.length})`)}
                   </button>
                 </div>
 
                 {loadingInteractions ? (
-                  <p className="text-sm text-zinc-500">Loading...</p>
+                  <p className="text-sm text-zinc-500">{titleCase("Loading...")}</p>
                 ) : activePanelTab === "History" ? (
                   interactions.length === 0 ? (
-                    <p className="text-sm text-zinc-500 italic">No interactions recorded.</p>
+                    <p className="text-sm text-zinc-500 italic">{titleCase("No interactions recorded.")}</p>
                   ) : (
                     <div className="space-y-4 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
                       {interactions.map((i) => (
@@ -543,7 +662,9 @@ export default function CRMPage() {
                           </div>
                           <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded border border-slate-200 bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
                             <div className="flex items-center justify-between mb-1">
-                              <span className="font-bold text-slate-900 dark:text-white text-sm">{i.interaction_type}</span>
+                              <span className="font-bold text-slate-900 dark:text-white text-sm">
+                                {titleCase(i.interaction_type)}
+                              </span>
                               <time className="font-caveat font-medium text-emerald-600 dark:text-emerald-400 text-xs">{new Date(i.created_at).toLocaleDateString()}</time>
                             </div>
                             <div className="text-slate-500 dark:text-slate-400 text-xs whitespace-pre-wrap">{i.notes}</div>
@@ -555,22 +676,38 @@ export default function CRMPage() {
                 ) : (
                   meetings.length === 0 ? (
                     <div className="text-center p-6 bg-zinc-50 dark:bg-zinc-900/50 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700">
-                      <p className="text-sm text-zinc-500">No Google Meet summaries found for <span className="font-medium text-zinc-700 dark:text-zinc-300">{activeLead.email || "this lead"}</span>.</p>
-                      <p className="text-xs text-zinc-400 mt-2">Make sure Fireflies joins the meeting and you have added their exact email address above.</p>
+                      <p className="text-sm text-zinc-500">
+                        {titleCase("No Google Meet summaries found for")}{" "}
+                        <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                          {activeLead.email || titleCase("this lead")}
+                        </span>
+                        .
+                      </p>
+                      <p className="text-xs text-zinc-400 mt-2">
+                        {titleCase(
+                          "Make sure your meeting notetaker joins the meeting and you have added their exact email address above."
+                        )}
+                      </p>
                     </div>
                   ) : (
                     <div className="space-y-4">
                       {meetings.map((m) => (
                         <div key={m.id} className="p-4 rounded-xl border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 shadow-sm">
                           <div className="flex items-center justify-between mb-2">
-                            <span className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-1.5"><IconCalendar className="h-4 w-4 text-emerald-600" /> Fireflies AI</span>
+                            <span className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-1.5">
+                              <IconCalendar className="h-4 w-4 text-emerald-600" /> {titleCase("Meeting notes")}
+                            </span>
                             <time className="text-xs font-medium text-zinc-500">{new Date(m.created_at).toLocaleDateString()}</time>
                           </div>
                           <div className="mt-2 p-3 bg-zinc-50 dark:bg-zinc-950 rounded-lg text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap leading-relaxed border border-zinc-100 dark:border-zinc-800">
-                            {m.summary ? m.summary : <span className="italic text-zinc-400">Processing summary...</span>}
+                            {m.summary ? (
+                              m.summary
+                            ) : (
+                              <span className="italic text-zinc-400">{titleCase("Processing summary...")}</span>
+                            )}
                           </div>
                           <a href={m.meeting_url} target="_blank" rel="noreferrer" className="mt-3 text-xs text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1">
-                            View Transcript &rarr;
+                            {titleCase("View transcript →")}
                           </a>
                         </div>
                       ))}

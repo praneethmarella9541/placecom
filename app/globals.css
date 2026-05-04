@@ -95,6 +95,14 @@
   .badge-zinc {
     @apply badge bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300;
   }
+
+  /* FullCalendar: capitalize weekday / month labels (calendar page wrapper). */
+  .calendar-surface .fc-col-header-cell-cushion,
+  .calendar-surface .fc-toolbar-title,
+  .calendar-surface .fc-timegrid-axis-cushion,
+  .calendar-surface .fc-list-day-text {
+    text-transform: capitalize;
+  }
 }
 
 @layer utilities {

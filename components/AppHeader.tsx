@@ -10,10 +10,10 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import {
   IconMail,
+  IconFolder,
   IconDashboard,
   IconCalendar,
   IconPhone,
-  IconSettings,
   IconLogOut,
   IconMenu,
   IconX,
@@ -23,7 +23,9 @@ import {
 
 const baseLinks = [
   { href: "/inbox", label: "Mail", icon: IconMail },
-  { href: "/dashboard", label: "Dashboard", icon: IconDashboard },
+  { href: "/drive", label: "Drive", icon: IconFolder },
+  { href: "/broadcasting", label: "Broadcasting", icon: IconBroadcast },
+  { href: "/dashboard", label: "Extraction", icon: IconDashboard },
   { href: "/crm", label: "CRM", icon: IconUser },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },
   { href: "/calls", label: "Calls", icon: IconPhone },
@@ -71,7 +73,7 @@ export function AppHeader() {
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-sm font-bold text-white">
               G
             </span>
-            <span className="hidden sm:inline">Gmail Extractor</span>
+            <span className="hidden sm:inline">Placecom</span>
           </Link>
           <nav className="hidden items-center gap-0.5 md:flex">
             {links.map((l) => {

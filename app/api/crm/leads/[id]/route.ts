@@ -19,7 +19,7 @@ export async function PATCH(
     const body = await request.json();
     const { stage, score, company_name, contact_name, email, phone, staff_name, lead_type, jd_count } = body;
 
-    const updates: any = { updated_at: new Date().toISOString() };
+    const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (stage !== undefined) {
       updates.stage = stage;
       updates.stage_updated_at = new Date().toISOString();
@@ -44,7 +44,8 @@ export async function PATCH(
     if (error) throw error;
 
     return NextResponse.json({ lead: updatedLead });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to update lead";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

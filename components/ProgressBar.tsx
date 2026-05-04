@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { titleCase } from "@/lib/title-case";
 
 type Props = {
   value: number;
@@ -19,7 +20,9 @@ export function ProgressBar({ value, max, className, label, hint, indeterminate 
     <div className={cn("w-full space-y-2", className)}>
       {label ? (
         <div className="flex justify-between gap-3 text-sm">
-          <span className="min-w-0 font-medium text-zinc-700 dark:text-zinc-300">{label}</span>
+          <span className="min-w-0 font-medium text-zinc-700 dark:text-zinc-300">
+            {titleCase(label)}
+          </span>
           {!indeterminate && (
             <span className="shrink-0 tabular-nums text-zinc-500 dark:text-zinc-400">
               {value} / {max} <span className="text-xs">({pct}%)</span>
@@ -37,7 +40,7 @@ export function ProgressBar({ value, max, className, label, hint, indeterminate 
         />
       </div>
       {hint ? (
-        <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{hint}</p>
+        <p className="text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">{titleCase(hint)}</p>
       ) : null}
     </div>
   );

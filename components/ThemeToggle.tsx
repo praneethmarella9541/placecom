@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { IconSun, IconMoon } from "@/components/Icons";
+import { titleCase } from "@/lib/title-case";
 
 export function ThemeToggle() {
   const [dark, setDark] = useState(false);
@@ -22,7 +23,7 @@ export function ThemeToggle() {
       type="button"
       onClick={toggle}
       className="btn-ghost rounded-full p-2"
-      aria-label="Toggle dark mode"
+      aria-label={titleCase("Toggle dark mode")}
     >
       {dark ? <IconSun className="h-[18px] w-[18px]" /> : <IconMoon className="h-[18px] w-[18px]" />}
     </button>

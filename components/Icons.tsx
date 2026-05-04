@@ -159,3 +159,37 @@ export function IconPaperclip({ className, ...p }: P) {
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={cn(base, "h-4 w-4", className)} {...p}><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
   );
 }
+
+export function IconFolder({ className, ...p }: P) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={cn(base, "h-4 w-4", className)} {...p}>
+      <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+    </svg>
+  );
+}
+
+export function IconFile({ className, ...p }: P) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={cn(base, "h-4 w-4", className)} {...p}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="8" x2="16" y1="13" y2="13" />
+      <line x1="8" x2="16" y1="17" y2="17" />
+    </svg>
+  );
+}
+
+export function IconBroadcast({ className, ...p }: P) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" className={cn(base, "h-4 w-4", className)} {...p}>
+      <path d="M11 6a7 7 0 0 1 7 7" />
+      <path d="M11 10a3 3 0 0 1 3 3" />
+      <path d="M6.5 6.5 3 3" />
+      <path d="M3 10H2" />
+      <path d="M3 14H2" />
+      <path d="M6.5 17.5 3 21" />
+      <path d="M10 21v1" />
+      <path d="M14 21v1" />
+    </svg>
+  );
+}

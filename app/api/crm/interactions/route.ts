@@ -63,7 +63,8 @@ export async function POST(request: Request) {
     if (error) throw error;
 
     return NextResponse.json({ interaction: newInteraction });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Failed to create interaction";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

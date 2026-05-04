@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { IconRefresh } from "@/components/Icons";
+import { titleCase } from "@/lib/title-case";
 
 type MeetingRow = {
   id: string;
@@ -67,7 +68,7 @@ export default function MeetingsPage() {
     }
   }
 
-  async function syncWithFireflies() {
+  async function syncTranscripts() {
     setSyncing(true);
     setSyncInfo(null);
     setError(null);
@@ -85,7 +86,7 @@ export default function MeetingsPage() {
       const parts = [
         body.message || "",
         typeof body.transcriptsFetched === "number"
-          ? `Pulled ${body.transcriptsFetched} transcript(s) from Fireflies.`
+          ? `Pulled ${body.transcriptsFetched} transcript(s).`
           : "",
         typeof body.updated === "number" && body.updated > 0
           ? `Saved ${body.updated} meeting(s).`
@@ -103,7 +104,9 @@ export default function MeetingsPage() {
   async function deleteMeeting(id: string) {
     if (
       !window.confirm(
-        "Delete this meeting record? The summary and transcript will be removed from your account."
+        titleCase(
+          "Delete this meeting record? The summary and transcript will be removed from your account."
+        )
       )
     ) {
       return;
@@ -135,24 +138,24 @@ export default function MeetingsPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            Meetings & Summaries
+            {titleCase("Meetings & summaries")}
           </h1>
           <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            View AI-generated transcripts and summaries from your Fireflies meetings.
+            {titleCase("View AI-generated transcripts and summaries from synced meetings.")}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => void syncWithFireflies()}
+            onClick={() => void syncTranscripts()}
             disabled={syncing}
             className="btn-primary gap-2"
           >
             <IconRefresh className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Syncing…" : "Sync with Fireflies"}
+            {syncing ? titleCase("Syncing…") : titleCase("Sync transcripts")}
           </button>
           <button type="button" onClick={() => void loadMeetings()} className="btn-ghost" disabled={syncing}>
-            <IconRefresh className="h-4 w-4" /> Refresh list
+            <IconRefresh className="h-4 w-4" /> {titleCase("Refresh list")}
           </button>
         </div>
       </div>
@@ -165,7 +168,9 @@ export default function MeetingsPage() {
 
       {deleteSuccess ? (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
-          Meeting deleted — summary and transcript were removed from your account.
+          {titleCase(
+            "Meeting deleted — summary and transcript were removed from your account."
+          )}
         </div>
       ) : null}
 
@@ -177,10 +182,10 @@ export default function MeetingsPage() {
 
       <div className="grid gap-6">
         {loading ? (
-          <p className="text-sm text-zinc-500">Loading meetings...</p>
+          <p className="text-sm text-zinc-500">{titleCase("Loading meetings...")}</p>
         ) : meetings.length === 0 ? (
           <div className="card p-5 text-center">
-            <p className="text-sm text-zinc-500">No recorded meetings yet.</p>
+            <p className="text-sm text-zinc-500">{titleCase("No recorded meetings yet.")}</p>
           </div>
         ) : (
           meetings.map((m) => (
@@ -210,7 +215,9 @@ export default function MeetingsPage() {
                     {m.meeting_url}
                   </a>
                   {m.attendee_email ? (
-                    <p className="mt-1 text-xs text-zinc-500">Attendee: {m.attendee_email}</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {titleCase("Attendee:")} {m.attendee_email}
+                    </p>
                   ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -221,11 +228,15 @@ export default function MeetingsPage() {
                       disabled={sendingId === m.id || deletingId === m.id}
                       className="btn-primary"
                     >
-                      {sendingId === m.id ? "Sending..." : "Email Summary to Attendee"}
+                      {sendingId === m.id
+                        ? titleCase("Sending...")
+                        : titleCase("Email summary to attendee")}
                     </button>
                   ) : null}
                   {sendSuccessId === m.id ? (
-                    <span className="text-sm text-emerald-600 dark:text-emerald-400">Sent!</span>
+                    <span className="text-sm text-emerald-600 dark:text-emerald-400">
+                      {titleCase("Sent!")}
+                    </span>
                   ) : null}
                   <button
                     type="button"
@@ -233,7 +244,7 @@ export default function MeetingsPage() {
                     disabled={deletingId === m.id || syncing}
                     className="btn-danger"
                   >
-                    {deletingId === m.id ? "Deleting…" : "Delete"}
+                    {deletingId === m.id ? titleCase("Deleting…") : titleCase("Delete")}
                   </button>
                 </div>
               </div>
@@ -241,32 +252,35 @@ export default function MeetingsPage() {
               <div className="p-5">
                 {m.status !== "completed" ? (
                   <p className="text-sm text-zinc-500">
-                    Waiting for Fireflies to process this meeting. On localhost, webhooks cannot reach your app — use{" "}
-                    <strong>Sync with Fireflies</strong> above to pull the transcript and summary.
+                    {titleCase("Waiting for the transcript to be ready. If it stays empty, use")}{" "}
+                    <strong>{titleCase("Sync transcripts")}</strong>{" "}
+                    {titleCase("above to pull the latest.")}
                   </p>
                 ) : (
                   <div className="grid gap-6 lg:grid-cols-2">
                     <div>
-                      <h3 className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Summary</h3>
+                      <h3 className="mb-2 text-xs tracking-wide text-zinc-500">{titleCase("Summary")}</h3>
                       <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950">
                         {m.summary ? (
                           <p className="whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
                             {m.summary}
                           </p>
                         ) : (
-                          <p className="text-sm italic text-zinc-400">No summary provided.</p>
+                          <p className="text-sm italic text-zinc-400">{titleCase("No summary provided.")}</p>
                         )}
                       </div>
                     </div>
                     <div>
-                      <h3 className="mb-2 text-xs uppercase tracking-wide text-zinc-500">Full Transcript</h3>
+                      <h3 className="mb-2 text-xs tracking-wide text-zinc-500">
+                        {titleCase("Full transcript")}
+                      </h3>
                       <div className="max-h-[400px] overflow-y-auto rounded-xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-950">
                         {m.transcript ? (
                           <p className="whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">
                             {m.transcript}
                           </p>
                         ) : (
-                          <p className="text-sm italic text-zinc-400">No transcript available.</p>
+                          <p className="text-sm italic text-zinc-400">{titleCase("No transcript available.")}</p>
                         )}
                       </div>
                     </div>

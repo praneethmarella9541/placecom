@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { titleCase } from "@/lib/title-case";
 import type { GroupedContact } from "@/lib/contact-grouping";
 import { IconSearch, IconUser, IconPhone, IconAtSign, IconUsers } from "@/components/Icons";
 
@@ -56,57 +57,93 @@ export function ResultsTable({ rows, className }: Props) {
     return { names, phones, emails, contacts };
   }, [rows]);
 
+  const summaryItems = [
+    {
+      icon: IconUsers,
+      value: totals.contacts,
+      label: titleCase("Contacts"),
+      iconWrap: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300",
+    },
+    {
+      icon: IconUser,
+      value: totals.names,
+      label: titleCase("Names"),
+      iconWrap: "bg-emerald-100/90 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300",
+    },
+    {
+      icon: IconPhone,
+      value: totals.phones,
+      label: titleCase("Phones"),
+      iconWrap: "bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300",
+    },
+    {
+      icon: IconAtSign,
+      value: totals.emails,
+      label: titleCase("Emails"),
+      iconWrap: "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300",
+    },
+  ] as const;
+
   return (
-    <div className={cn("space-y-5", className)}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="badge-emerald gap-1">
-            <IconUsers className="h-3 w-3" />
-            {totals.contacts} contacts
-          </span>
-          <span className="badge-emerald/80 gap-1">
-            <IconUser className="h-3 w-3" />
-            {totals.names} names
-          </span>
-          <span className="badge-blue gap-1">
-            <IconPhone className="h-3 w-3" />
-            {totals.phones} phones
-          </span>
-          <span className="badge-purple gap-1">
-            <IconAtSign className="h-3 w-3" />
-            {totals.emails} emails
-          </span>
-        </div>
-        <div className="relative">
-          <IconSearch className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+    <div className={cn("space-y-4", className)}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+        <div className="relative w-full sm:max-w-sm sm:shrink-0">
+          <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search results…"
-            className="input-field pl-9 sm:max-w-xs"
+            placeholder={titleCase("Search results…")}
+            className="input-field w-full pl-9"
             type="search"
+            aria-label={titleCase("Search results")}
           />
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-[var(--card)] shadow-sm dark:border-zinc-800">
+        <div
+          className="border-b border-zinc-200 bg-zinc-50/90 px-3 py-4 dark:border-zinc-800 dark:bg-zinc-900/50 sm:px-4 sm:py-5"
+          aria-label={titleCase("Extraction totals")}
+        >
+          <p className="mb-3 text-center text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+            {titleCase("Totals across loaded messages")}
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
+            {summaryItems.map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.label}
+                  className="flex flex-col items-center justify-center rounded-xl border border-zinc-200/90 bg-white px-2 py-4 text-center shadow-sm dark:border-zinc-700/80 dark:bg-zinc-950/80 sm:py-4"
+                >
+                  <div
+                    className={cn(
+                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+                      item.iconWrap
+                    )}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden />
+                  </div>
+                  <p className="mt-2 text-2xl font-bold tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50">
+                    {item.value.toLocaleString()}
+                  </p>
+                  <p className="mt-0.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">{item.label}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-zinc-200 text-left text-sm dark:divide-zinc-800">
-          <thead className="bg-zinc-50/80 text-xs uppercase tracking-wide text-zinc-500 dark:bg-zinc-900/50 dark:text-zinc-400">
+          <thead className="bg-zinc-50/80 text-xs font-medium tracking-wide text-zinc-500 dark:bg-zinc-900/50 dark:text-zinc-400">
             <tr>
-              <th className="px-4 py-3.5 font-medium">Subject</th>
-              <th className="px-4 py-3.5 font-medium">Sender</th>
-              <th className="min-w-[240px] px-4 py-3.5 font-medium">
-                Contacts (paired)
-              </th>
-              <th className="px-4 py-3.5 font-medium text-zinc-400 dark:text-zinc-500">
-                All names
-              </th>
-              <th className="px-4 py-3.5 font-medium text-zinc-400 dark:text-zinc-500">
-                All phones
-              </th>
-              <th className="px-4 py-3.5 font-medium text-zinc-400 dark:text-zinc-500">
-                All emails
-              </th>
+              <th className="px-4 py-3.5">{titleCase("Subject")}</th>
+              <th className="px-4 py-3.5">{titleCase("Sender")}</th>
+              <th className="min-w-[240px] px-4 py-3.5">{titleCase("Contacts (paired)")}</th>
+              <th className="px-4 py-3.5 text-zinc-400 dark:text-zinc-500">{titleCase("All names")}</th>
+              <th className="px-4 py-3.5 text-zinc-400 dark:text-zinc-500">{titleCase("All phones")}</th>
+              <th className="px-4 py-3.5 text-zinc-400 dark:text-zinc-500">{titleCase("All emails")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
@@ -131,7 +168,7 @@ export function ResultsTable({ rows, className }: Props) {
                         >
                           <div className="font-medium text-zinc-800 dark:text-zinc-100">
                             {c.name || (
-                              <span className="font-normal text-zinc-400">No name</span>
+                              <span className="font-normal text-zinc-400">{titleCase("No name")}</span>
                             )}
                           </div>
                           <div className="mt-0.5 text-zinc-600 dark:text-zinc-400">
@@ -197,9 +234,10 @@ export function ResultsTable({ rows, className }: Props) {
         {filtered.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
             <IconSearch className="h-8 w-8 text-zinc-300 dark:text-zinc-700" />
-            <p className="text-sm text-zinc-500">No rows match your search.</p>
+            <p className="text-sm text-zinc-500">{titleCase("No rows match your search.")}</p>
           </div>
         ) : null}
+        </div>
       </div>
     </div>
   );

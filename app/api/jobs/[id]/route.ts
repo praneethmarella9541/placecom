@@ -17,9 +17,7 @@ export async function GET(
 
   const { data: job, error } = await supabase
     .from("extraction_jobs")
-    .select(
-      "id, status, total_emails, processed_emails, openai_input_tokens, openai_output_tokens, openai_cost_usd, created_at"
-    )
+    .select("id, status, total_emails, processed_emails, created_at")
     .eq("id", id)
     .eq("user_id", user.id)
     .single();
@@ -69,9 +67,7 @@ export async function PATCH(
     .update(updates)
     .eq("id", id)
     .eq("user_id", user.id)
-    .select(
-      "id, status, total_emails, processed_emails, openai_input_tokens, openai_output_tokens, openai_cost_usd, created_at"
-    )
+    .select("id, status, total_emails, processed_emails, created_at")
     .single();
 
   if (error || !job) {

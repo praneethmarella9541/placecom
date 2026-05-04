@@ -14,10 +14,12 @@ export function getGoogleOAuthClientId(): string {
  * - gmail.send: send and reply (required for compose — users must re-consent after adding)
  * - calendar.readonly: list events for timeline/weekly views
  * - calendar.events: create recruiter meetings and add attendees
+ * - drive.readonly: list and open Drive files from the Drive page (/drive)
  *
  * Google must allow these scopes for your OAuth client or tokens will lack Gmail access
  * (403 ACCESS_TOKEN_SCOPE_INSUFFICIENT). Configure: Google Cloud Console → Google Auth
  * Platform → Data access (Scopes) — add the same Gmail URLs; enable Gmail API for the project.
+ * Enable the Google Drive API and add the Drive scope for file listing.
  * https://console.cloud.google.com/auth/scopes
  *
  * Omitting userinfo.profile reduces consent surface; add it back if you need
@@ -30,6 +32,7 @@ export const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/drive.readonly",
 ].join(" ");
 
 /** Last few characters for UI diagnostics (not sensitive, but avoids full dump). */

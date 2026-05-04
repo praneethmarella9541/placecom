@@ -22,7 +22,8 @@
     "react-dom": "^18",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.5.0",
-    "twilio": "^5.13.1"
+    "twilio": "^5.13.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^20",

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { titleCase } from "@/lib/title-case";
 import { IconDownload } from "@/components/Icons";
 
 type Props = { className?: string };
@@ -40,7 +41,7 @@ export function ExportButton({ className }: Props) {
       className={cn("btn-secondary", className)}
     >
       <IconDownload className="h-4 w-4" />
-      {loading ? "Preparing…" : "Export CSV"}
+      {loading ? titleCase("Preparing…") : titleCase("Export CSV")}
     </button>
   );
 }

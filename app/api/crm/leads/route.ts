@@ -35,11 +35,6 @@ export async function GET() {
     if (interData) allInteractions = interData;
   }
 
-  if (error) {
-    console.error("GET Leads error:", error);
-    return NextResponse.json({ error: "Database error: " + error.message }, { status: 500 });
-  }
-
   // Process the data to include `last_interaction_at`
   const processedLeads = (leads || []).map(lead => {
     let lastInteraction = lead.created_at; // Fallback to creation date

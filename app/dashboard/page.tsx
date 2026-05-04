@@ -113,14 +113,6 @@ export default function DashboardPage() {
     setProgressHint("");
     setProgressLabel("Connecting to Gmail…");
 
-    const { data: { session } } = await supabase.auth.getSession();
-    const accessToken = session?.provider_token;
-    if (!accessToken) {
-      setError("No Google access token in session. Sign out and sign in again.");
-      setPhase("error");
-      return;
-    }
-
     const maxEmails = parseMaxEmails(getMaxEmailsSetting());
     const labelFilter = getLabelSetting() as GmailLabelFilter;
 
@@ -156,7 +148,6 @@ export default function DashboardPage() {
           Accept: "application/x-ndjson",
         },
         body: JSON.stringify({
-          accessToken,
           maxEmails,
           labelFilter,
           stream: true,

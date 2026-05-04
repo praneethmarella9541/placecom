@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
@@ -18,6 +18,8 @@ import {
   IconX,
   IconUser,
   IconBroadcast,
+  IconMessageChat,
+  IconSms,
 } from "@/components/Icons";
 
 const links = [
@@ -28,11 +30,38 @@ const links = [
   { href: "/crm", label: "CRM", icon: IconUser },
   { href: "/calendar", label: "Calendar", icon: IconCalendar },
   { href: "/calls", label: "Calls", icon: IconPhone },
+  { href: "/broadcasting?channel=sms", label: "SMS", icon: IconSms },
+  { href: "/broadcasting?channel=whatsapp", label: "WhatsApp", icon: IconMessageChat },
   { href: "/meetings", label: "Meetings", icon: IconCalendar },
-];
+] as const;
 
-export function AppHeader() {
+function isNavActive(href: string, pathname: string, searchParams: URLSearchParams): boolean {
+  if (href === "/broadcasting?channel=whatsapp") {
+    return pathname === "/broadcasting" && searchParams.get("channel") === "whatsapp";
+  }
+  if (href === "/broadcasting?channel=sms") {
+    return pathname === "/broadcasting" && searchParams.get("channel") === "sms";
+  }
+  if (href === "/broadcasting") {
+    const ch = searchParams.get("channel");
+    return pathname === "/broadcasting" && ch !== "whatsapp" && ch !== "sms";
+  }
+  if (href.includes("?")) {
+    const [path, qs] = href.split("?");
+    if (pathname !== path) return false;
+    const want = new URLSearchParams(qs);
+    let match = true;
+    want.forEach((v, k) => {
+      if (searchParams.get(k) !== v) match = false;
+    });
+    return match;
+  }
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function AppHeaderInner() {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const supabase = createClient();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -57,7 +86,7 @@ export function AppHeader() {
           <nav className="hidden items-center gap-0.5 md:flex">
             {links.map((l) => {
               const Icon = l.icon;
-              const active = pathname === l.href || pathname.startsWith(l.href + "/");
+              const active = isNavActive(l.href, pathname, searchParams);
               return (
                 <Link
                   key={l.href}
@@ -65,7 +94,7 @@ export function AppHeader() {
                   className={cn(
                     "btn-ghost gap-1.5 text-[13px]",
                     active &&
-                      "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                      "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
                   )}
                 >
                   <Icon className="h-3.5 w-3.5 opacity-70" />
@@ -101,7 +130,7 @@ export function AppHeader() {
           <nav className="flex flex-col gap-1">
             {links.map((l) => {
               const Icon = l.icon;
-              const active = pathname === l.href || pathname.startsWith(l.href + "/");
+              const active = isNavActive(l.href, pathname, searchParams);
               return (
                 <Link
                   key={l.href}
@@ -110,7 +139,7 @@ export function AppHeader() {
                   className={cn(
                     "btn-ghost justify-start gap-2 py-2.5",
                     active &&
-                      "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
+                      "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300",
                   )}
                 >
                   <Icon className="h-4 w-4 opacity-70" />
@@ -130,5 +159,17 @@ export function AppHeader() {
         </div>
       ) : null}
     </header>
+  );
+}
+
+export function AppHeader() {
+  return (
+    <Suspense
+      fallback={
+        <header className="sticky top-0 z-40 h-[57px] border-b border-zinc-200/80 bg-white/70 backdrop-blur-xl dark:border-zinc-800/80 dark:bg-zinc-950/70" />
+      }
+    >
+      <AppHeaderInner />
+    </Suspense>
   );
 }

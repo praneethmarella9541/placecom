@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { AppHeader } from "@/components/AppHeader";
+import { MailboxSessionSync } from "@/components/MailboxSessionSync";
 
 export default async function AppShell({
   children,
@@ -18,6 +19,7 @@ export default async function AppShell({
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-black">
+      <MailboxSessionSync />
       <AppHeader />
       <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
     </div>

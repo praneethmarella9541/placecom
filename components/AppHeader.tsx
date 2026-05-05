@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import {
   IconMail,
   IconFolder,
@@ -22,7 +23,7 @@ import {
   IconSms,
 } from "@/components/Icons";
 
-const links = [
+const baseLinks = [
   { href: "/inbox", label: "Mail", icon: IconMail },
   { href: "/drive", label: "Drive", icon: IconFolder },
   { href: "/broadcasting", label: "Broadcasting", icon: IconBroadcast },
@@ -64,6 +65,23 @@ function AppHeaderInner() {
   const searchParams = useSearchParams();
   const supabase = createClient();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [me, setMe] = useState<MeMailboxResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/me/mailbox")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: MeMailboxResponse | null) => {
+        if (!cancelled && j) setMe(j);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const links =
+    me?.role === "admin" ? [...baseLinks, adminLink] : [...baseLinks];
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -104,11 +122,34 @@ function AppHeaderInner() {
             })}
           </nav>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
+          {me?.sessionEmail ? (
+            <div className="hidden min-w-0 max-w-[220px] text-right text-[11px] leading-snug text-zinc-500 lg:block dark:text-zinc-400">
+              <div className="truncate font-medium text-zinc-700 dark:text-zinc-200" title={me.sessionEmail}>
+                {me.displayUsername ? `${me.displayUsername}` : me.sessionEmail}
+              </div>
+              {me.mailboxEmail ? (
+                <div
+                  className="truncate text-emerald-700 dark:text-emerald-400"
+                  title={me.mailboxEmail}
+                >
+                  Mail: {me.mailboxEmail}
+                </div>
+              ) : me.role === "staff" ? (
+                <div className="truncate text-amber-700 dark:text-amber-400">
+                  Mail: not linked to admin
+                </div>
+              ) : me.role === "admin" && !me.hasStoredMailbox ? (
+                <div className="truncate text-amber-700 dark:text-amber-400">
+                  Open any page once to save mailbox session
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <ThemeToggle />
           <button
             type="button"
-            onClick={signOut}
+            onClick={() => void signOut()}
             className="btn-ghost hidden gap-1.5 text-[13px] sm:inline-flex"
           >
             <IconLogOut className="h-3.5 w-3.5 opacity-70" />
@@ -149,7 +190,7 @@ function AppHeaderInner() {
             })}
             <button
               type="button"
-              onClick={signOut}
+              onClick={() => void signOut()}
               className="btn-ghost justify-start gap-2 py-2.5 text-red-600 dark:text-red-400"
             >
               <IconLogOut className="h-4 w-4 opacity-70" />

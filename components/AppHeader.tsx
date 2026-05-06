@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase";
@@ -21,7 +21,11 @@ import {
   IconBroadcast,
   IconMessageChat,
   IconSms,
+  IconUsers,
+  IconSettings,
 } from "@/components/Icons";
+
+const adminLink = { href: "/admin/team", label: "Team", icon: IconUsers } as const;
 
 const baseLinks = [
   { href: "/inbox", label: "Mail", icon: IconMail },
@@ -34,6 +38,7 @@ const baseLinks = [
   { href: "/broadcasting?channel=sms", label: "SMS", icon: IconSms },
   { href: "/broadcasting?channel=whatsapp", label: "WhatsApp", icon: IconMessageChat },
   { href: "/meetings", label: "Meetings", icon: IconCalendar },
+  { href: "/settings", label: "Settings", icon: IconSettings },
 ] as const;
 
 function isNavActive(href: string, pathname: string, searchParams: URLSearchParams): boolean {

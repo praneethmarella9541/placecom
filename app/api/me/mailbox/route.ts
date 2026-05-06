@@ -3,6 +3,7 @@ import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
+import { normalizeRestrictedFeatures } from "@/lib/feature-access";
 
 export const runtime = "nodejs";
 
@@ -16,17 +17,28 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: profile, error: profileErr } = await supabase
+  let { data: profile, error: profileErr } = await supabase
     .from("profiles")
-    .select("role, mailbox_owner_id, display_username")
+    .select("role, mailbox_owner_id, display_username, restricted_features")
     .eq("id", user.id)
     .maybeSingle();
+
+  if (profileErr && /restricted_features/i.test(profileErr.message ?? "")) {
+    const fallback = await supabase
+      .from("profiles")
+      .select("role, mailbox_owner_id, display_username")
+      .eq("id", user.id)
+      .maybeSingle();
+    profile = fallback.data as typeof profile;
+    profileErr = fallback.error;
+  }
 
   if (profileErr && isMailboxMigrationNotApplied(profileErr)) {
     const body: MeMailboxResponse = {
       sessionEmail: user.email ?? null,
       displayUsername: null,
       role: "staff",
+      restrictedFeatures: [],
       mailboxOwnerId: null,
       mailboxEmail: null,
       hasStoredMailbox: false,
@@ -42,6 +54,7 @@ export async function GET() {
       sessionEmail: user.email ?? null,
       displayUsername: null,
       role: "staff",
+      restrictedFeatures: [],
       mailboxOwnerId: null,
       mailboxEmail: null,
       hasStoredMailbox: false,
@@ -76,6 +89,7 @@ export async function GET() {
     sessionEmail: user.email ?? null,
     displayUsername: (profile.display_username as string | null) ?? null,
     role,
+    restrictedFeatures: normalizeRestrictedFeatures(profile.restricted_features),
     mailboxOwnerId,
     mailboxEmail,
     hasStoredMailbox,

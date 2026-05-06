@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { normalizeRestrictedFeatures, pathToFeature } from "@/lib/feature-access";
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -27,8 +28,48 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user?.id) return supabaseResponse;
 
+  let { data: profile, error: profileErr } = await supabase
+    .from("profiles")
+    .select("role, restricted_features")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileErr && /restricted_features/i.test(profileErr.message ?? "")) {
+    const fallback = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle();
+    profile = fallback.data as typeof profile;
+    profileErr = fallback.error;
+  }
+  if (profileErr || !profile) return supabaseResponse;
+
+  if ((profile.role as string) !== "committee") return supabaseResponse;
+  const restricted = normalizeRestrictedFeatures(profile.restricted_features);
+  if (!restricted.length) return supabaseResponse;
+
+  const feature = pathToFeature(
+    request.nextUrl.pathname,
+    request.nextUrl.searchParams
+  );
+  if (!feature || !restricted.includes(feature)) return supabaseResponse;
+
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json(
+      { error: "This feature is disabled by your admin for committee access." },
+      { status: 403 }
+    );
+  }
+  const url = request.nextUrl.clone();
+  url.pathname = "/dashboard";
+  url.search = "";
+  return NextResponse.redirect(url);
   return supabaseResponse;
 }
 

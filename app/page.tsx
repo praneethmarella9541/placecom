@@ -64,7 +64,11 @@ export default function HomePage() {
       options: {
         redirectTo: `${origin}/auth/callback`,
         scopes: GOOGLE_OAUTH_SCOPES,
-        queryParams: { access_type: "offline", prompt: "consent" },
+        queryParams: {
+          access_type: "offline",
+          include_granted_scopes: "true",
+          prompt: "select_account",
+        },
       },
     });
     if (error) { console.error(error); alert(error.message); }

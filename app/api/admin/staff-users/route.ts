@@ -3,12 +3,18 @@ import { isValidEmail } from "@/lib/broadcast-recipients";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
+import { normalizeRestrictedFeatures } from "@/lib/feature-access";
 
 export const runtime = "nodejs";
 
 const MIN_PASSWORD_LEN = 8;
 
-type Body = { email?: string; password?: string };
+type Body = {
+  email?: string;
+  password?: string;
+  role?: "staff" | "committee";
+  restrictedFeatures?: string[];
+};
 
 /**
  * Admin-only: creates a staff auth user and links their profile to this admin's mailbox.
@@ -51,6 +57,9 @@ export async function POST(request: Request) {
 
   const email = body.email?.trim().toLowerCase() ?? "";
   const password = body.password ?? "";
+  const role = body.role === "committee" ? "committee" : "staff";
+  const restrictedFeatures =
+    role === "committee" ? normalizeRestrictedFeatures(body.restrictedFeatures) : [];
   if (!email || !isValidEmail(email)) {
     return NextResponse.json({ error: "A valid email is required." }, { status: 400 });
   }
@@ -78,6 +87,19 @@ export async function POST(request: Request) {
     );
   }
 
+  if (role === "committee") {
+    const { error: colErr } = await svc
+      .from("profiles")
+      .select("restricted_features")
+      .limit(1);
+    if (colErr && /restricted_features/i.test(colErr.message ?? "")) {
+      return NextResponse.json(
+        { error: "Database migration 0019_committee_feature_access.sql is required for committee access." },
+        { status: 503 }
+      );
+    }
+  }
+
   const { data: created, error: createErr } = await svc.auth.admin.createUser({
     email,
     password,
@@ -98,10 +120,11 @@ export async function POST(request: Request) {
   const newId = created.user.id;
   const displayUsername = email.split("@")[0]?.slice(0, 64) || "staff";
 
-  const { data: updated, error: profErr } = await svc
+  let { data: updated, error: profErr } = await svc
     .from("profiles")
     .update({
-      role: "staff",
+      role,
+      restricted_features: restrictedFeatures,
       mailbox_owner_id: user.id,
       display_username: displayUsername,
       updated_at: new Date().toISOString(),
@@ -109,6 +132,28 @@ export async function POST(request: Request) {
     .eq("id", newId)
     .select("id")
     .maybeSingle();
+  if (profErr && /restricted_features/i.test(profErr.message ?? "")) {
+    if (role === "committee") {
+      await svc.auth.admin.deleteUser(newId);
+      return NextResponse.json(
+        { error: "Database migration 0019_committee_feature_access.sql is required for committee access." },
+        { status: 503 }
+      );
+    }
+    const fallback = await svc
+      .from("profiles")
+      .update({
+        role,
+        mailbox_owner_id: user.id,
+        display_username: displayUsername,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", newId)
+      .select("id")
+      .maybeSingle();
+    updated = fallback.data;
+    profErr = fallback.error;
+  }
 
   if (profErr) {
     await svc.auth.admin.deleteUser(newId);
@@ -116,12 +161,30 @@ export async function POST(request: Request) {
   }
 
   if (!updated) {
-    const { error: insErr } = await svc.from("profiles").insert({
+    let { error: insErr } = await svc.from("profiles").insert({
       id: newId,
-      role: "staff",
+      role,
+      restricted_features: restrictedFeatures,
       mailbox_owner_id: user.id,
       display_username: displayUsername,
     });
+    if (insErr && /restricted_features/i.test(insErr.message ?? "")) {
+      if (role === "committee") {
+        await svc.auth.admin.deleteUser(newId);
+        return NextResponse.json(
+          { error: "Database migration 0019_committee_feature_access.sql is required for committee access." },
+          { status: 503 }
+        );
+      }
+      insErr = (
+        await svc.from("profiles").insert({
+          id: newId,
+          role,
+          mailbox_owner_id: user.id,
+          display_username: displayUsername,
+        })
+      ).error;
+    }
     if (insErr) {
       await svc.auth.admin.deleteUser(newId);
       return NextResponse.json(
@@ -135,5 +198,7 @@ export async function POST(request: Request) {
     ok: true,
     userId: newId,
     email,
+    role,
+    restrictedFeatures,
   });
 }

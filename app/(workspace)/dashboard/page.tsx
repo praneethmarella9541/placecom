@@ -504,18 +504,28 @@ export default function DashboardPage() {
               </p>
             </div>
           </div>
-          <button type="button" onClick={() => void runPipeline()} disabled={busy} className="btn-primary">
-            {busy ? (
-              <>
-                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                {titleCase("Working…")}
-              </>
-            ) : (
-              <>
-                <IconPlay className="h-4 w-4" /> {titleCase("Start extraction")}
-              </>
-            )}
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button type="button" onClick={() => void runPipeline()} disabled={busy} className="btn-primary">
+              {busy ? (
+                <>
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  {titleCase("Working…")}
+                </>
+              ) : (
+                <>
+                  <IconPlay className="h-4 w-4" /> {titleCase("Start extraction")}
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => void deleteAllExtractions()}
+              disabled={busy || deleting}
+              className="btn-danger"
+            >
+              {deleting ? titleCase("Deleting…") : titleCase("Delete all extracted data")}
+            </button>
+          </div>
         </div>
 
         {busy ? (
@@ -572,21 +582,6 @@ export default function DashboardPage() {
         ) : (
           <ResultsTable rows={rows} />
         )}
-
-        <div className="mt-6 border-t border-zinc-200 pt-6 dark:border-zinc-800">
-          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">{titleCase("Data")}</h2>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-            {titleCase("Remove every stored extraction job and row for your account.")}
-          </p>
-          <button
-            type="button"
-            onClick={() => void deleteAllExtractions()}
-            disabled={deleting}
-            className="btn-danger mt-4"
-          >
-            {deleting ? titleCase("Deleting…") : titleCase("Delete all extracted data")}
-          </button>
-        </div>
       </div>
     </div>
   );

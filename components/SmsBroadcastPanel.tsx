@@ -94,14 +94,6 @@ export function SmsBroadcastPanel() {
 
   return (
     <div className="card space-y-6 p-5 sm:p-6">
-      <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-100">
-        <IconBroadcast className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400" />
-        <p>
-          {titleCase(
-            "Each number gets the same SMS via Twilio from TWILIO_PHONE_NUMBER. Max 50 per batch, ~1600 characters. Trial accounts may only message verified numbers; US A2P 10DLC rules apply for long-code traffic to US recipients.",
-          )}
-        </p>
-      </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-4">

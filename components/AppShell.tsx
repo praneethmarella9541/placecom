@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getCachedAuthUser } from "@/lib/auth-user";
 import { AppHeader } from "@/components/AppHeader";
 import { MailboxSessionSync } from "@/components/MailboxSessionSync";
 
@@ -8,17 +8,14 @@ export default async function AppShell({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCachedAuthUser();
 
   if (!user) {
     redirect("/");
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-black">
+    <div className="min-h-screen bg-background dark:bg-black">
       <MailboxSessionSync />
       <AppHeader />
       <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>

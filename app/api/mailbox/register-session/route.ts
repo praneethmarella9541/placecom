@@ -45,17 +45,7 @@ export async function POST() {
 
   const refresh = session?.provider_refresh_token;
   const access = session?.provider_token;
-  if (!refresh) {
-    return NextResponse.json(
-      {
-        error:
-          "No Google refresh token in session. Sign out and sign in with Google again (offline access).",
-      },
-      { status: 400 }
-    );
-  }
-
-  const googleAccessExpiresAt = new Date(Date.now() + 50 * 60 * 1000).toISOString();
+  const googleAccessExpiresAt = access ? new Date(Date.now() + 50 * 60 * 1000).toISOString() : null;
 
   let svc: ReturnType<typeof createServiceSupabase>;
   try {
@@ -64,13 +54,35 @@ export async function POST() {
     return NextResponse.json({ skipped: true, reason: "service_role_unconfigured" });
   }
 
+  const { data: existing, error: existingErr } = await svc
+    .from("google_mailbox_credentials")
+    .select("refresh_token")
+    .eq("owner_user_id", user.id)
+    .maybeSingle();
+  if (existingErr && !isMailboxMigrationNotApplied(existingErr)) {
+    return NextResponse.json({ error: existingErr.message }, { status: 500 });
+  }
+
+  const effectiveRefresh =
+    (refresh && refresh.trim()) ||
+    ((existing?.refresh_token as string | null | undefined)?.trim() ?? null);
+  if (!effectiveRefresh && !access) {
+    return NextResponse.json(
+      {
+        error:
+          "No Google token in session. Sign out and sign in with Google again (offline access).",
+      },
+      { status: 400 },
+    );
+  }
+
   const { error: upErr } = await svc.from("google_mailbox_credentials").upsert(
     {
       owner_user_id: user.id,
       gmail_address: user.email ?? null,
-      refresh_token: refresh,
+      refresh_token: effectiveRefresh,
       access_token: access ?? null,
-      access_token_expires_at: access ? googleAccessExpiresAt : null,
+      access_token_expires_at: googleAccessExpiresAt,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "owner_user_id" }

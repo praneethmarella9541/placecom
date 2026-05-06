@@ -136,6 +136,22 @@ export async function resolveMailboxGoogleAccessToken(): Promise<MailboxTokenRes
       };
     } catch (e) {
       console.error(e);
+      /** Admin self-heal: if stored refresh token is stale/revoked but this admin is
+       * currently signed in with Google, allow current session token immediately. */
+      if (mailboxOwnerId === user.id) {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const token = session?.provider_token;
+        if (token) {
+          return {
+            ok: true,
+            accessToken: token,
+            sessionUserId: user.id,
+            mailboxOwnerId,
+          };
+        }
+      }
       return {
         ok: false,
         status: 401,

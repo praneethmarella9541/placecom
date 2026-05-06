@@ -31,6 +31,29 @@ type RecruiterRow = {
   source: string;
 };
 
+function parseEventInstant(iso?: string): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
+}
+
+function eventEndMs(e: EventRow): number | null {
+  return parseEventInstant(e.end?.dateTime || e.end?.date);
+}
+
+function eventStartMs(e: EventRow): number | null {
+  return parseEventInstant(e.start?.dateTime || e.start?.date);
+}
+
+/** Event has not ended yet (includes meetings in progress). */
+function isEventStillUpcoming(e: EventRow, now: number): boolean {
+  const end = eventEndMs(e);
+  if (end !== null) return end >= now;
+  const start = eventStartMs(e);
+  if (start !== null) return start >= now;
+  return false;
+}
+
 export default function CalendarPage() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [recruiters, setRecruiters] = useState<RecruiterRow[]>([]);
@@ -107,6 +130,14 @@ export default function CalendarPage() {
       })),
     [events]
   );
+
+  /** Sidebar list: only future / in-progress — not everything in the calendar fetch window (which includes past days). */
+  const upcomingEvents = useMemo(() => {
+    const now = Date.now();
+    return events
+      .filter((e) => isEventStillUpcoming(e, now))
+      .sort((a, b) => (eventStartMs(a) ?? 0) - (eventStartMs(b) ?? 0));
+  }, [events]);
 
   function toInputValue(date: Date): string {
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -237,9 +268,14 @@ export default function CalendarPage() {
           <div className="flex items-center gap-2 text-sm text-zinc-500">
             <IconCalendar className="h-4 w-4" /> {titleCase("No events in selected range.")}
           </div>
+        ) : upcomingEvents.length === 0 ? (
+          <div className="flex items-center gap-2 text-sm text-zinc-500">
+            <IconCalendar className="h-4 w-4" />{" "}
+            {titleCase("No upcoming events in this view — the visible range only includes past events.")}
+          </div>
         ) : (
           <ul className="space-y-2">
-            {events.slice(0, 20).map((e) => (
+            {upcomingEvents.slice(0, 20).map((e) => (
               <li key={e.id} className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-800">
                 <p className="font-medium text-zinc-900 dark:text-zinc-100">{e.summary || "(untitled)"}</p>
                 <p className="mt-1 text-xs text-zinc-500">

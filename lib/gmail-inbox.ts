@@ -379,6 +379,8 @@ export async function sendMailViaGmail(
   accessToken: string,
   options: {
     to: string;
+    cc?: string;
+    bcc?: string;
     subject: string;
     textBody: string;
     threadId?: string;
@@ -426,6 +428,8 @@ export async function sendMailViaGmail(
 
   const rawLines = [
     `To: ${options.to}`,
+    ...(options.cc ? [`Cc: ${options.cc}`] : []),
+    ...(options.bcc ? [`Bcc: ${options.bcc}`] : []),
     `Subject: ${subj}`,
     "MIME-Version: 1.0",
     `Content-Type: ${contentType}`,

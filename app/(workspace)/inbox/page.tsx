@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
@@ -191,6 +192,8 @@ export default function InboxPage() {
 
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeTo, setComposeTo] = useState("");
+  const [composeCc, setComposeCc] = useState("");
+  const [composeBcc, setComposeBcc] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
@@ -311,11 +314,24 @@ export default function InboxPage() {
       }));
       const res = await fetch("/api/gmail/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: composeTo.trim(), subject: composeSubject.trim(), textBody: composeBody.trim(), attachments: attachments.length ? attachments : undefined }),
+        body: JSON.stringify({
+          to: composeTo.trim(),
+          cc: composeCc.trim(),
+          bcc: composeBcc.trim(),
+          subject: composeSubject.trim(),
+          textBody: composeBody.trim(),
+          attachments: attachments.length ? attachments : undefined,
+        }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Send failed");
-      setComposeOpen(false); setComposeTo(""); setComposeSubject(""); setComposeBody(""); setComposeFiles([]);
+      setComposeOpen(false);
+      setComposeTo("");
+      setComposeCc("");
+      setComposeBcc("");
+      setComposeSubject("");
+      setComposeBody("");
+      setComposeFiles([]);
       void loadThreads({ append: false });
       void loadTracking();
     } catch (e) { alert(e instanceof Error ? e.message : "Send failed"); }
@@ -613,9 +629,10 @@ export default function InboxPage() {
       </div>
 
       {/* Compose modal */}
-      {composeOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true">
-          <div className="card w-full max-w-lg animate-[slideUp_0.2s_ease-out] overflow-hidden">
+      {composeOpen && typeof document !== "undefined"
+        ? createPortal(
+            <div className="fixed inset-0 z-[999] flex items-end justify-center bg-black/60 p-4 backdrop-blur-md sm:items-center" role="dialog" aria-modal="true">
+              <div className="card w-full max-w-lg animate-[slideUp_0.2s_ease-out] overflow-hidden">
             <div className="flex items-center justify-between border-b px-5 py-4">
               <h3 className="text-base font-semibold text-zinc-900 dark:text-zinc-50">
                 {titleCase("New message")}
@@ -630,6 +647,22 @@ export default function InboxPage() {
                 onChange={(e) => setComposeTo(e.target.value)}
                 className="input-field"
               />
+              <div className="grid gap-2 sm:grid-cols-2">
+                <input
+                  type="text"
+                  placeholder={titleCase("Cc")}
+                  value={composeCc}
+                  onChange={(e) => setComposeCc(e.target.value)}
+                  className="input-field"
+                />
+                <input
+                  type="text"
+                  placeholder={titleCase("Bcc")}
+                  value={composeBcc}
+                  onChange={(e) => setComposeBcc(e.target.value)}
+                  className="input-field"
+                />
+              </div>
               <input
                 type="text"
                 placeholder={titleCase("Subject")}
@@ -669,6 +702,8 @@ export default function InboxPage() {
                   type="button"
                   onClick={() => {
                     setComposeOpen(false);
+                    setComposeCc("");
+                    setComposeBcc("");
                     setComposeFiles([]);
                   }}
                   className="btn-ghost"
@@ -686,9 +721,11 @@ export default function InboxPage() {
                 </button>
               </div>
             </div>
-          </div>
-        </div>
-      ) : null}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

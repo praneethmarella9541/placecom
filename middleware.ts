@@ -1,6 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { normalizeRestrictedFeatures, pathToFeature } from "@/lib/feature-access";
+import {
+  firstAccessibleWorkspacePath,
+  normalizeRestrictedFeatures,
+  requestPathToFeature,
+} from "@/lib/feature-access";
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -54,7 +58,7 @@ export async function middleware(request: NextRequest) {
   const restricted = normalizeRestrictedFeatures(profile.restricted_features);
   if (!restricted.length) return supabaseResponse;
 
-  const feature = pathToFeature(
+  const feature = requestPathToFeature(
     request.nextUrl.pathname,
     request.nextUrl.searchParams
   );
@@ -66,11 +70,18 @@ export async function middleware(request: NextRequest) {
       { status: 403 }
     );
   }
+
+  const dest = firstAccessibleWorkspacePath(restricted);
   const url = request.nextUrl.clone();
-  url.pathname = "/dashboard";
-  url.search = "";
+  const parsed = new URL(dest, request.url);
+  if (url.pathname === parsed.pathname && url.search === parsed.search) {
+    url.pathname = "/";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+  url.pathname = parsed.pathname;
+  url.search = parsed.search;
   return NextResponse.redirect(url);
-  return supabaseResponse;
 }
 
 export const config = {

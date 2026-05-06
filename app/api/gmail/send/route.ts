@@ -15,6 +15,8 @@ type AttachmentPayload = {
 
 type Body = {
   to: string;
+  cc?: string;
+  bcc?: string;
   subject: string;
   textBody: string;
   threadId?: string;
@@ -42,6 +44,8 @@ export async function POST(request: Request) {
   }
 
   const to = body.to?.trim();
+  const cc = body.cc?.trim() || undefined;
+  const bcc = body.bcc?.trim() || undefined;
   const subject = body.subject?.trim() ?? "";
   const textBody = body.textBody ?? "";
   if (!to) {
@@ -80,6 +84,8 @@ export async function POST(request: Request) {
 
     const sent = await sendMailViaGmail(auth.accessToken, {
       to,
+      cc,
+      bcc,
       subject,
       textBody,
       threadId: body.threadId,

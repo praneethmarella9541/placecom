@@ -4,10 +4,10 @@
 
 @layer base {
   :root {
-    --background: #fafafa;
+    --background: #f9fafb;
     --foreground: #18181b;
     --card: #ffffff;
-    --card-border: #e4e4e7;
+    --card-border: #e5e7eb;
     --muted: #f4f4f5;
     --muted-fg: #71717a;
     --accent: #059669;
@@ -52,12 +52,16 @@
 
 @layer components {
   .card {
-    @apply rounded-2xl border bg-[var(--card)] shadow-sm;
-    border-color: var(--card-border);
+    @apply rounded-xl border border-[#E5E7EB] bg-[var(--card)] shadow-[0_1px_2px_rgba(15,23,42,0.04),0_1px_3px_rgba(15,23,42,0.06)] dark:border-zinc-800 dark:shadow-[0_1px_2px_rgba(0,0,0,0.2)];
   }
 
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all duration-150 hover:bg-emerald-500 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /** Primary CTA with subtle gradient (calls, key actions) */
+  .btn-primary-gradient {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-700 px-6 py-3 text-sm font-semibold text-white shadow-md shadow-emerald-900/15 transition-all duration-150 hover:from-emerald-500 hover:to-emerald-600 hover:shadow-lg active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 dark:shadow-emerald-950/40;
   }
 
   .btn-secondary {
@@ -73,7 +77,7 @@
   }
 
   .input-field {
-    @apply w-full rounded-xl border border-zinc-300 bg-white px-3.5 py-2.5 text-sm text-zinc-900 shadow-sm outline-none ring-emerald-500/30 transition-shadow placeholder:text-zinc-400 focus:border-emerald-400 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-emerald-600;
+    @apply w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2.5 text-sm text-zinc-900 shadow-sm outline-none ring-emerald-500/20 transition-all placeholder:text-zinc-400 focus:border-emerald-500/80 focus:shadow-[inset_0_1px_2px_rgba(15,23,42,0.06)] focus:ring-2 focus:ring-emerald-500/25 dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-emerald-500 dark:focus:shadow-[inset_0_1px_2px_rgba(0,0,0,0.25)] dark:focus:ring-emerald-500/30;
   }
 
   .badge {
@@ -94,6 +98,14 @@
 
   .badge-zinc {
     @apply badge bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300;
+  }
+
+  /* Admin team: collapsible row chevron */
+  details.team-member-details > summary .team-member-chevron {
+    transition: transform 0.2s ease;
+  }
+  details.team-member-details[open] > summary .team-member-chevron {
+    transform: rotate(180deg);
   }
 
   /* FullCalendar: capitalize weekday / month labels (calendar page wrapper). */

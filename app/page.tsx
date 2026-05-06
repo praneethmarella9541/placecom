@@ -22,6 +22,8 @@ export default function HomePage() {
   const supabase = createClient();
   const [ready, setReady] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
+  const [role, setRole] = useState<string | null>(null);
+  const [roleLoading, setRoleLoading] = useState(false);
   const [authErrorBanner, setAuthErrorBanner] = useState<string | null>(null);
   const [staffEmail, setStaffEmail] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
@@ -56,6 +58,35 @@ export default function HomePage() {
     });
     return () => subscription.unsubscribe();
   }, [supabase]);
+
+  useEffect(() => {
+    if (!signedIn) {
+      setRole(null);
+      setRoleLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setRoleLoading(true);
+    void fetch("/api/me/mailbox")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { role?: string } | null) => {
+        if (cancelled) return;
+        const nextRole = j?.role ?? null;
+        setRole(nextRole);
+        if (nextRole && nextRole !== "admin") {
+          window.location.replace("/inbox");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setRole(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRoleLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn]);
 
   async function signInWithGoogle() {
     const origin = window.location.origin;
@@ -116,7 +147,7 @@ export default function HomePage() {
       setStaffMsg(error.message);
       return;
     }
-    window.location.href = "/dashboard";
+    window.location.href = "/inbox";
   }
 
   if (!ready) {
@@ -130,6 +161,15 @@ export default function HomePage() {
   }
 
   if (signedIn) {
+    if (roleLoading || (role !== "admin" && role !== null)) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center gap-6 px-4">
+          <Skeleton className="h-14 w-72 rounded-2xl" />
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-12 w-56 rounded-xl" />
+        </div>
+      );
+    }
     return (
       <div className="relative flex min-h-screen flex-col items-center justify-center gap-8 overflow-hidden px-4">
         <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(ellipse_80%_60%_at_50%_20%,rgba(16,185,129,0.12),transparent)] dark:bg-[radial-gradient(ellipse_80%_60%_at_50%_15%,rgba(52,211,153,0.08),transparent)]" />

@@ -15,14 +15,10 @@ import {
   IconMessageChat,
   IconSms,
 } from "@/components/Icons";
-import { WhatsAppMessaging } from "@/components/WhatsAppMessaging";
 import { WhatsAppBroadcastPanel } from "@/components/WhatsAppBroadcastPanel";
 import { SmsBroadcastPanel } from "@/components/SmsBroadcastPanel";
-import { SmsMessaging } from "@/components/SmsMessaging";
 
 type Channel = "mail" | "sms" | "whatsapp";
-type WhatsAppSubView = "broadcast" | "chats";
-type SmsSubView = "broadcast" | "chats";
 
 type PendingFile = { file: File; base64: string };
 
@@ -78,9 +74,6 @@ function BroadcastingPageInner() {
     failed: { email: string; error: string }[];
   } | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
-
-  const [whatsappSubView, setWhatsappSubView] = useState<WhatsAppSubView>("broadcast");
-  const [smsSubView, setSmsSubView] = useState<SmsSubView>("chats");
 
   const mergeRecipients = useCallback((more: string[]) => {
     setRecipients((prev) => Array.from(new Set([...prev, ...more])));
@@ -178,57 +171,47 @@ function BroadcastingPageInner() {
 
   return (
     <div className={cn("mx-auto space-y-6", channel === "whatsapp" || channel === "sms" ? "max-w-5xl" : "max-w-4xl")}>
-      {channel !== "whatsapp" ? (
-        <>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-              {titleCase("Broadcasting")}
-            </h1>
-            <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-              {titleCase("Reach candidates by mail, SMS (Twilio), or WhatsApp — use the tabs below.")}
-            </p>
-          </div>
+      <>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+            {titleCase("Broadcasting")}
+          </h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            {titleCase("Reach candidates by mail, SMS (Twilio), or WhatsApp — use the tabs below.")}
+          </p>
+        </div>
 
-          <div className="inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/80">
-            {(
-              [
-                { key: "mail" as const, label: "Mail", icon: IconMail },
-                { key: "sms" as const, label: "SMS", icon: IconSms },
-                { key: "whatsapp" as const, label: "WhatsApp", icon: IconMessageChat },
-              ] as const
-            ).map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  onClick={() => selectChannel(tab.key)}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                    channel === tab.key
-                      ? "bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-400"
-                      : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                  )}
-                >
-                  <Icon className="h-4 w-4" />
-                  {titleCase(tab.label)}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      ) : null}
+        <div className="inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/80">
+          {(
+            [
+              { key: "mail" as const, label: "Mail", icon: IconMail },
+              { key: "sms" as const, label: "SMS", icon: IconSms },
+              { key: "whatsapp" as const, label: "WhatsApp", icon: IconMessageChat },
+            ] as const
+          ).map((tab) => {
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => selectChannel(tab.key)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                  channel === tab.key
+                    ? "bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-400"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {titleCase(tab.label)}
+              </button>
+            );
+          })}
+        </div>
+      </>
 
       {channel === "mail" ? (
         <div className="card space-y-6 p-5 sm:p-6">
-          <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-100">
-            <IconBroadcast className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400" />
-            <p>
-              {titleCase(
-                "Each recipient gets their own email (not visible to others). Uses your connected Gmail. Max 80 recipients per batch."
-              )}
-            </p>
-          </div>
 
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="space-y-4">
@@ -434,57 +417,9 @@ function BroadcastingPageInner() {
           </div>
         </div>
       ) : channel === "sms" ? (
-        <div className="space-y-4">
-          <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60">
-            {(
-              [
-                { key: "chats" as const, label: "Chats" },
-                { key: "broadcast" as const, label: "Broadcast" },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setSmsSubView(tab.key)}
-                className={cn(
-                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
-                  smsSubView === tab.key
-                    ? "bg-white text-sky-700 shadow-sm dark:bg-zinc-950 dark:text-sky-400"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                )}
-              >
-                {titleCase(tab.label)}
-              </button>
-            ))}
-          </div>
-          {smsSubView === "broadcast" ? <SmsBroadcastPanel /> : <SmsMessaging embedded />}
-        </div>
+        <SmsBroadcastPanel />
       ) : (
-        <div className="space-y-4">
-          <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60">
-            {(
-              [
-                { key: "broadcast" as const, label: "Broadcast" },
-                { key: "chats" as const, label: "Chats" },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setWhatsappSubView(tab.key)}
-                className={cn(
-                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
-                  whatsappSubView === tab.key
-                    ? "bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-400"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                )}
-              >
-                {titleCase(tab.label)}
-              </button>
-            ))}
-          </div>
-          {whatsappSubView === "broadcast" ? <WhatsAppBroadcastPanel /> : <WhatsAppMessaging embedded />}
-        </div>
+        <WhatsAppBroadcastPanel />
       )}
     </div>
   );

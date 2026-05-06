@@ -72,9 +72,21 @@ function hasSpeakerSegmentList(segs: TranscriptSegment[] | null): boolean {
 
 function statusClass(status: string): string {
   const s = status.toLowerCase();
-  if (s === "completed") return "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400";
-  if (s === "failed" || s === "busy" || s === "no-answer") return "bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400";
-  return "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+  if (s === "completed")
+    return "bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200/80 dark:bg-emerald-950/50 dark:text-emerald-200 dark:ring-emerald-800/60";
+  if (s === "failed" || s === "busy" || s === "no-answer")
+    return "bg-red-100 text-red-800 ring-1 ring-red-200/80 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900/50";
+  return "bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700";
+}
+
+function formatStatusLabel(status: string): string {
+  return titleCase(status.replace(/-/g, " "));
+}
+
+function EmptyDashCell() {
+  return (
+    <span className="text-xs font-medium tabular-nums text-zinc-400 dark:text-zinc-500">{titleCase("N/A")}</span>
+  );
 }
 
 export default function CallsPage() {
@@ -204,14 +216,17 @@ export default function CallsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-8">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h1 className="text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-2xl">
             {titleCase("Calls")}
           </h1>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            {titleCase("Place outbound calls and review recordings.")}
+          </p>
         </div>
-        <button type="button" onClick={() => void load({ syncRecordings: true })} className="btn-ghost">
+        <button type="button" onClick={() => void load({ syncRecordings: true })} className="btn-secondary shrink-0">
           <IconRefresh className="h-4 w-4" /> {titleCase("Refresh")}
         </button>
       </div>
@@ -222,23 +237,32 @@ export default function CallsPage() {
         </div>
       ) : null}
 
-      <div className="card p-5">
-        <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">
-          {titleCase("Make a call")}
-        </h2>
-        <div className="grid gap-3 md:grid-cols-2">
-          <input
-            className="input-field"
-            placeholder={titleCase("Your phone (agent) e.g. +9198...")}
-            value={agentPhone}
-            onChange={(e) => setAgentPhone(e.target.value)}
-          />
-          <input
-            className="input-field"
-            placeholder={titleCase("Recruiter phone (to) e.g. +1415...")}
-            value={toPhone}
-            onChange={(e) => setToPhone(e.target.value)}
-          />
+      <section className="card border-[#E5E7EB] p-8 dark:border-zinc-800">
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-900 dark:text-zinc-100">
+            {titleCase("Make a call")}
+          </h2>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            {titleCase("Agent and callee numbers, optional recruiter context.")}
+          </p>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="md:col-span-2 grid gap-4 sm:grid-cols-2">
+            <input
+              className="input-field"
+              placeholder={titleCase("Your phone (agent) e.g. +9198...")}
+              value={agentPhone}
+              onChange={(e) => setAgentPhone(e.target.value)}
+              aria-label={titleCase("Agent phone")}
+            />
+            <input
+              className="input-field"
+              placeholder={titleCase("Recruiter phone (to) e.g. +1415...")}
+              value={toPhone}
+              onChange={(e) => setToPhone(e.target.value)}
+              aria-label={titleCase("Callee phone")}
+            />
+          </div>
           <input
             className="input-field md:col-span-2"
             list="recruiter-emails-for-calls"
@@ -269,51 +293,88 @@ export default function CallsPage() {
             onChange={(e) => setNotes(e.target.value)}
           />
         </div>
-        <div className="mt-4">
-          <button type="button" onClick={() => void placeCall()} disabled={calling} className="btn-primary">
-            <IconPhone className="h-4 w-4" /> {calling ? titleCase("Calling...") : titleCase("Start call")}
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void placeCall()}
+            disabled={calling}
+            className="btn-primary-gradient px-8 py-3 text-[15px]"
+          >
+            <IconPhone className="h-5 w-5 opacity-95" />
+            {calling ? titleCase("Calling…") : titleCase("Start call")}
           </button>
         </div>
-      </div>
+      </section>
 
-      <div className="card p-5">
-        <h2 className="mb-4 text-base font-semibold text-zinc-900 dark:text-zinc-100">
-          {titleCase("Call logs")}
-        </h2>
+      <section className="card border-[#E5E7EB] p-8 dark:border-zinc-800">
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-900 dark:text-zinc-100">
+            {titleCase("Call logs")}
+          </h2>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            {titleCase("History, recordings, and transcripts.")}
+          </p>
+        </div>
         {loading ? (
           <p className="text-sm text-zinc-500">{titleCase("Loading call logs...")}</p>
         ) : logs.length === 0 ? (
           <p className="text-sm text-zinc-500">{titleCase("No calls yet.")}</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="-mx-2 overflow-x-auto rounded-lg border border-zinc-200/90 dark:border-zinc-800">
             <table className="w-full min-w-[1100px] text-left text-sm">
-              <thead className="text-xs tracking-wide text-zinc-500">
-                <tr>
-                  <th className="px-2 py-2">{titleCase("Time")}</th>
-                  <th className="px-2 py-2">{titleCase("To")}</th>
-                  <th className="px-2 py-2">{titleCase("Agent")}</th>
-                  <th className="px-2 py-2">{titleCase("Company")}</th>
-                  <th className="px-2 py-2">{titleCase("Status")}</th>
-                  <th className="px-2 py-2">{titleCase("Duration")}</th>
-                  <th className="px-2 py-2">{titleCase("Recording")}</th>
-                  <th className="px-2 py-2">{titleCase("Transcript")}</th>
-                  <th className="px-2 py-2">{titleCase("SID")}</th>
+              <thead>
+                <tr className="border-b border-zinc-200 bg-zinc-50/95 dark:border-zinc-800 dark:bg-zinc-900/60">
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("Time")}
+                  </th>
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("To")}
+                  </th>
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("Agent")}
+                  </th>
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("Company")}
+                  </th>
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("Status")}
+                  </th>
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("Duration")}
+                  </th>
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("Recording")}
+                  </th>
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("Transcript")}
+                  </th>
+                  <th className="px-4 py-3.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {titleCase("SID")}
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-zinc-100 bg-white dark:divide-zinc-800/80 dark:bg-zinc-950/20">
                 {logs.map((log) => (
-                  <tr key={log.id} className="border-t border-zinc-200 dark:border-zinc-800">
-                    <td className="px-2 py-2 text-zinc-700 dark:text-zinc-300">{formatDate(log.created_at)}</td>
-                    <td className="px-2 py-2">{log.to_number}</td>
-                    <td className="px-2 py-2">{log.agent_number}</td>
-                    <td className="px-2 py-2">{log.company_name || "-"}</td>
-                    <td className="px-2 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusClass(log.status)}`}>
-                        {log.status}
+                  <tr key={log.id} className="transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/40">
+                    <td className="whitespace-nowrap px-4 py-4 text-zinc-700 dark:text-zinc-300">
+                      {formatDate(log.created_at)}
+                    </td>
+                    <td className="px-4 py-4 font-medium text-zinc-900 dark:text-zinc-100">{log.to_number}</td>
+                    <td className="px-4 py-4 text-zinc-700 dark:text-zinc-300">{log.agent_number}</td>
+                    <td className="px-4 py-4 text-zinc-700 dark:text-zinc-300">
+                      {log.company_name?.trim() ? log.company_name : <EmptyDashCell />}
+                    </td>
+                    <td className="px-4 py-4 align-middle">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${statusClass(log.status)}`}
+                      >
+                        {formatStatusLabel(log.status)}
                       </span>
                     </td>
-                    <td className="px-2 py-2">{log.duration_seconds != null ? `${log.duration_seconds}s` : "-"}</td>
-                    <td className="px-2 py-2 align-top">
+                    <td className="px-4 py-4 tabular-nums text-zinc-700 dark:text-zinc-300">
+                      {log.duration_seconds != null ? `${log.duration_seconds}s` : <EmptyDashCell />}
+                    </td>
+                    <td className="px-4 py-4 align-top">
                       {log.recording_sid ? (
                         <div className="max-w-[220px] space-y-1">
                           <audio
@@ -331,16 +392,22 @@ export default function CallsPage() {
                           ) : null}
                         </div>
                       ) : (
-                        <span className="text-zinc-400">—</span>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-400 dark:text-zinc-500">
+                          <IconPhone className="h-3.5 w-3.5 opacity-50" />
+                          {titleCase("N/A")}
+                        </span>
                       )}
                     </td>
-                    <td className="max-w-[min(420px,44vw)] px-2 py-2 align-top text-xs text-zinc-700 dark:text-zinc-300">
+                    <td className="max-w-[min(420px,44vw)] px-4 py-4 align-top text-xs text-zinc-700 dark:text-zinc-300">
                       {log.transcript !== null ? (
                         <div className="max-h-52 overflow-y-auto rounded-md border border-zinc-200 bg-zinc-50 px-2 py-2 dark:border-zinc-700 dark:bg-zinc-900/50">
                           {hasSpeakerSegmentList(log.transcript_segments) && log.transcript_segments ? (
                             <ul className="space-y-2">
                               {log.transcript_segments.map((seg, idx) => (
-                                <li key={`${log.id}-seg-${idx}`} className="border-b border-zinc-200/80 pb-2 last:border-0 last:pb-0 dark:border-zinc-700/80">
+                                <li
+                                  key={`${log.id}-seg-${idx}`}
+                                  className="border-b border-zinc-200/80 pb-2 last:border-0 last:pb-0 dark:border-zinc-700/80"
+                                >
                                   <div className="mb-0.5 flex flex-wrap items-baseline gap-2">
                                     <span className="rounded bg-violet-100 px-1.5 py-0.5 font-medium text-violet-800 dark:bg-violet-950/60 dark:text-violet-200">
                                       {seg.speaker}
@@ -379,17 +446,20 @@ export default function CallsPage() {
                           )}
                         </div>
                       ) : (
-                        <span className="text-zinc-400">—</span>
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-zinc-400 dark:text-zinc-500">
+                          <IconPhone className="h-3.5 w-3.5 opacity-50" />
+                          {titleCase("N/A")}
+                        </span>
                       )}
                     </td>
-                    <td className="px-2 py-2 font-mono text-xs">{log.call_sid}</td>
+                    <td className="px-4 py-4 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">{log.call_sid}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

@@ -422,8 +422,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               replies to a specific message (about 7 days); the app links it to your stored thread.
             </li>
             <li>
-              Supabase: <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0012_whatsapp_messages.sql</code> +{" "}
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0013_whatsapp_message_actions.sql</code> +{" "}
+              Supabase: <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0016_whatsapp_messages.sql</code> +{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0017_whatsapp_message_actions.sql</code> +{" "}
               <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">SUPABASE_SERVICE_ROLE_KEY</code>.
             </li>
             <li>

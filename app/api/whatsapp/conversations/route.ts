@@ -23,7 +23,7 @@ export async function GET() {
   if (error) {
     if (error.message.includes("does not exist") || error.code === "42P01") {
       return NextResponse.json(
-        { error: "whatsapp_messages table missing. Apply migration 0012_whatsapp_messages.sql.", conversations: [] },
+        { error: "whatsapp_messages table missing. Apply migration 0016_whatsapp_messages.sql.", conversations: [] },
         { status: 503 },
       );
     }

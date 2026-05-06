@@ -26,6 +26,6 @@ export async function GET() {
     fromPreview: getWhatsAppFromAddress() ? "configured" : null,
     suggestedInboundWebhookUrl: suggestedWebhook,
     migrationHint:
-      "Apply supabase/migrations/0012_whatsapp_messages.sql and 0013_whatsapp_message_actions.sql for message history and actions.",
+      "Apply supabase/migrations/0016_whatsapp_messages.sql and 0017_whatsapp_message_actions.sql for message history and actions.",
   });
 }

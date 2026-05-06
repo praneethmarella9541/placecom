@@ -23,7 +23,7 @@ export async function GET() {
   if (error) {
     if (error.message.includes("does not exist") || error.code === "42P01") {
       return NextResponse.json(
-        { error: "sms_messages table missing. Apply migration 0014_sms_messages.sql.", conversations: [] },
+        { error: "sms_messages table missing. Apply migration 0018_sms_messages.sql.", conversations: [] },
         { status: 503 },
       );
     }

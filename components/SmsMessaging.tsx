@@ -245,7 +245,7 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
             </li>
             <li>
               Supabase: apply{" "}
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0014_sms_messages.sql</code> and set{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0018_sms_messages.sql</code> and set{" "}
               <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">SUPABASE_SERVICE_ROLE_KEY</code> on the server for inbound
               logging.
             </li>

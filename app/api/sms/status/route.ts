@@ -24,6 +24,6 @@ export async function GET() {
     sendConfigured: isTwilioConfigured(),
     fromPreview: from ? "configured" : null,
     suggestedInboundWebhookUrl: suggestedWebhook,
-    migrationHint: "Apply supabase/migrations/0014_sms_messages.sql for SMS chat history.",
+    migrationHint: "Apply supabase/migrations/0018_sms_messages.sql for SMS chat history.",
   });
 }

@@ -73,7 +73,7 @@ export async function resolveMailboxGoogleAccessToken(): Promise<MailboxTokenRes
       ok: false,
       status: 403,
       message:
-        role === "staff"
+        role !== "admin"
           ? "Your account is not linked to an admin mailbox yet."
           : "Admin profile is missing a mailbox owner id.",
     };

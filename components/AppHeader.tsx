@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
+import { pathToFeature } from "@/lib/feature-access";
 import {
   IconMail,
   IconFolder,
@@ -85,8 +86,15 @@ function AppHeaderInner() {
     };
   }, []);
 
-  const links =
-    me?.role === "admin" ? [...baseLinks, adminLink] : [...baseLinks];
+  const restricted = new Set(me?.restrictedFeatures ?? []);
+  const links = (me?.role === "admin" ? [...baseLinks, adminLink] : [...baseLinks]).filter(
+    (l) => {
+      if (me?.role !== "committee") return true;
+      const [path, qs = ""] = l.href.split("?");
+      const feature = pathToFeature(path, new URLSearchParams(qs));
+      return feature ? !restricted.has(feature) : true;
+    }
+  );
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -140,7 +148,7 @@ function AppHeaderInner() {
                 >
                   Mail: {me.mailboxEmail}
                 </div>
-              ) : me.role === "staff" ? (
+              ) : me.role !== "admin" ? (
                 <div className="truncate text-amber-700 dark:text-amber-400">
                   Mail: not linked to admin
                 </div>

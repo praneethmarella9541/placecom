@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { IconBroadcast, IconPlus, IconSend, IconX } from "@/components/Icons";
+import { IconPlus, IconSend, IconX } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
 import { normalizePhoneList } from "@/lib/broadcast-phones";
 

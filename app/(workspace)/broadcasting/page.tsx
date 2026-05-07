@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { normalizeEmailList } from "@/lib/broadcast-recipients";
 import {
-  IconBroadcast,
   IconMail,
   IconSend,
   IconPaperclip,

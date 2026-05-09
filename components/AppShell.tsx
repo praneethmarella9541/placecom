@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCachedAuthUser } from "@/lib/auth-user";
-import { AppHeader } from "@/components/AppHeader";
+import { WorkspaceChrome } from "@/components/WorkspaceChrome";
 import { MailboxSessionSync } from "@/components/MailboxSessionSync";
 
 export default async function AppShell({
@@ -15,10 +15,9 @@ export default async function AppShell({
   }
 
   return (
-    <div className="min-h-screen bg-background dark:bg-black">
+    <div className="min-h-screen bg-[var(--color-bg)]">
       <MailboxSessionSync />
-      <AppHeader />
-      <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
+      <WorkspaceChrome>{children}</WorkspaceChrome>
     </div>
   );
 }

@@ -10,12 +10,17 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
-        mono: ["var(--font-geist-mono)", "ui-monospace", "monospace"],
+        sans: ["var(--font-body)", "ui-sans-serif", "system-ui", "sans-serif"],
+        body: ["var(--font-body)", "ui-sans-serif", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       colors: {
-        background: "var(--background)",
-        foreground: "var(--foreground)",
+        background: "var(--color-bg)",
+        foreground: "var(--color-text)",
+        surface: "var(--color-surface)",
+        border: "var(--color-border)",
+        primary: "var(--color-primary)",
+        muted: "var(--color-text-muted)",
       },
       keyframes: {
         slideUp: {
@@ -41,6 +46,9 @@ const config: Config = {
         "pulse-soft": {
           "0%, 100%": { opacity: "0.4" },
           "50%": { opacity: "0.75" },
+        },
+        shimmer: {
+          "100%": { transform: "translateX(100%)" },
         },
       },
       animation: {

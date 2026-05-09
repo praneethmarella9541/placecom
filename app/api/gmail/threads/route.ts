@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { listThreadsPage, type MailFolder } from "@/lib/gmail-inbox";
+import {
+  listDraftsPage,
+  listThreadsPage,
+  type MailFolder,
+} from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 
 export const runtime = "nodejs";
@@ -14,7 +18,11 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const folderRaw = searchParams.get("folder") || "inbox";
   const folder: MailFolder =
-    folderRaw === "sent" ? "sent" : "inbox";
+    folderRaw === "sent"
+      ? "sent"
+      : folderRaw === "drafts"
+        ? "drafts"
+        : "inbox";
   const pageToken = searchParams.get("pageToken") || undefined;
   const searchQuery = searchParams.get("search")?.trim() || undefined;
   const maxResults = Math.min(
@@ -23,12 +31,19 @@ export async function GET(request: Request) {
   );
 
   try {
-    const page = await listThreadsPage(auth.accessToken, {
-      folder,
-      maxResults,
-      pageToken,
-      searchQuery,
-    });
+    const page =
+      folder === "drafts"
+        ? await listDraftsPage(auth.accessToken, {
+            maxResults,
+            pageToken,
+            searchQuery,
+          })
+        : await listThreadsPage(auth.accessToken, {
+            folder,
+            maxResults,
+            pageToken,
+            searchQuery,
+          });
     return NextResponse.json({
       folder,
       threads: page.threads,

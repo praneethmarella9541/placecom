@@ -15,6 +15,9 @@ export function getGoogleOAuthClientId(): string {
  * - calendar.readonly: list events for timeline/weekly views
  * - calendar.events: create recruiter meetings and add attendees
  * - drive.readonly: list and open Drive files from the Drive page (/drive)
+ * - contacts.readonly + contacts.other.readonly: People API — saved contacts & “Other contacts” for compose suggestions
+ *
+ * Enable **People API** in the same Google Cloud project (APIs & Services → Enable APIs).
  *
  * Google must allow these scopes for your OAuth client or tokens will lack Gmail access
  * (403 ACCESS_TOKEN_SCOPE_INSUFFICIENT). Configure: Google Cloud Console → Google Auth
@@ -33,6 +36,8 @@ export const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/contacts.readonly",
+  "https://www.googleapis.com/auth/contacts.other.readonly",
 ].join(" ");
 
 /** Last few characters for UI diagnostics (not sensitive, but avoids full dump). */

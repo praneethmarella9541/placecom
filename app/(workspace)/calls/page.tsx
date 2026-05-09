@@ -298,7 +298,7 @@ export default function CallsPage() {
             type="button"
             onClick={() => void placeCall()}
             disabled={calling}
-            className="btn-primary-gradient px-8 py-3 text-[15px]"
+            className="btn-primary gap-2 px-6 text-[15px] font-bold"
           >
             <IconPhone className="h-5 w-5 opacity-95" />
             {calling ? titleCase("Calling…") : titleCase("Start call")}

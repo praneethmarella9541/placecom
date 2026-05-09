@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Sparkles, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import type { GmailLabelFilter } from "@/lib/gmail";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
@@ -20,7 +21,6 @@ import { ProgressBar } from "@/components/ProgressBar";
 import type { ResultRow } from "@/components/ResultsTable";
 import { ResultsTable } from "@/components/ResultsTable";
 import { Skeleton } from "@/components/Skeleton";
-import { IconPlay, IconMail } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
 
 type Phase = "idle" | "fetching" | "extracting" | "done" | "error";
@@ -109,6 +109,10 @@ export default function DashboardPage() {
     }));
     setLoadingRows(false);
   }, [supabase]);
+
+  const kpiNames = useMemo(() => rows.reduce((a, r) => a + r.names.length, 0), [rows]);
+  const kpiPhones = useMemo(() => rows.reduce((a, r) => a + r.phones.length, 0), [rows]);
+  const kpiEmails = useMemo(() => rows.reduce((a, r) => a + r.emails.length, 0), [rows]);
 
   useEffect(() => { void loadExtractions(); }, [loadExtractions]);
 
@@ -413,47 +417,43 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {titleCase("Extraction")}
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            {titleCase("Extract names, phone numbers, and emails from Gmail.")}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <ExportButton />
-        </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        {[
+          { n: kpiNames, label: "Names Extracted" },
+          { n: kpiPhones, label: "Phones Found" },
+          { n: kpiEmails, label: "Emails Found" },
+        ].map((k) => (
+          <div key={k.label} className="surface-card rounded-[var(--radius-lg)] p-5 sm:p-6">
+            <p className="font-display text-[38px] font-extrabold leading-none text-[var(--color-primary)]">
+              {k.n}
+            </p>
+            <p className="mt-1 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
+              {titleCase(k.label)}
+            </p>
+          </div>
+        ))}
       </div>
 
       {!settingsReady ? (
-        <div className="card p-6">
-          <Skeleton className="h-6 w-40 rounded-lg" />
+        <div className="surface-card p-6">
+          <Skeleton className="skeleton-shimmer h-6 w-40 rounded-lg" />
           <div className="mt-4 space-y-4">
-            <Skeleton className="h-10 w-full rounded-xl" />
-            <Skeleton className="h-10 w-full rounded-xl" />
+            <Skeleton className="skeleton-shimmer h-10 w-full rounded-[var(--radius-md)]" />
+            <Skeleton className="skeleton-shimmer h-10 w-full rounded-[var(--radius-md)]" />
           </div>
         </div>
       ) : (
-        <div className="card p-6">
-          <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-            {titleCase("Gmail fetch")}
+        <div className="surface-card rounded-[var(--radius-lg)] p-6">
+          <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">
+            {titleCase("Extraction Settings")}
           </h2>
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-            {titleCase(
-              "How many messages to scan and which folder to read. Stored in this browser only."
-            )}
-          </p>
-          <div className="mt-5 space-y-5">
-            <div>
-              <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                {titleCase("How many emails to fetch")}
-              </label>
+          <div className="mt-4 flex flex-col gap-4 sm:flex-row">
+            <label className="block flex-1 text-[13px] font-medium text-[var(--color-text-muted)]">
+              {titleCase("Emails to Scan")}
               <select
                 value={maxEmails}
                 onChange={(e) => handleMaxEmailsChange(e.target.value as MaxEmailsOption)}
-                className="input-field mt-2"
+                className="input-field mt-2 h-[38px]"
               >
                 <option value="10">10</option>
                 <option value="50">50</option>
@@ -461,51 +461,41 @@ export default function DashboardPage() {
                 <option value="500">500</option>
                 <option value="all">{titleCase("All (up to 10,000)")}</option>
               </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                {titleCase("Gmail label")}
-              </label>
+            </label>
+            <label className="block flex-1 text-[13px] font-medium text-[var(--color-text-muted)]">
+              {titleCase("Gmail Label")}
               <select
                 value={label}
                 onChange={(e) => handleLabelChange(e.target.value as LabelOption)}
-                className="input-field mt-2"
+                className="input-field mt-2 h-[38px]"
               >
                 <option value="inbox">{titleCase("Inbox")}</option>
                 <option value="sent">{titleCase("Sent")}</option>
                 <option value="all">{titleCase("All mail")}</option>
               </select>
-            </div>
-            <button type="button" onClick={savePreferences} className="btn-primary">
-              {titleCase("Save preferences")}
+            </label>
+          </div>
+          <div className="mt-4 flex justify-end">
+            <button type="button" onClick={savePreferences} className="btn-ghost text-[13px]">
+              {titleCase("Save Preferences")}
             </button>
           </div>
         </div>
       )}
 
       {settingsMsg ? (
-        <p className="text-sm text-zinc-600 dark:text-zinc-400" role="status">
+        <p className="text-sm text-[var(--color-text-muted)]" role="status">
           {settingsMsg}
         </p>
       ) : null}
 
-      <div className="card p-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400">
-              <IconMail className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
-                {titleCase("Run extraction")}
-              </h2>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                {titleCase("Adjust volume and labels in Gmail fetch above.")}
-              </p>
-            </div>
-          </div>
+      <div className="surface-card rounded-[var(--radius-lg)] p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <p className="text-[13px] text-[var(--color-text-muted)]">
+            {titleCase("Fetch messages from Gmail and run extraction.")}
+          </p>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <button type="button" onClick={() => void runPipeline()} disabled={busy} className="btn-primary">
+            <button type="button" onClick={() => void runPipeline()} disabled={busy} className="btn-primary gap-2">
               {busy ? (
                 <>
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
@@ -513,17 +503,20 @@ export default function DashboardPage() {
                 </>
               ) : (
                 <>
-                  <IconPlay className="h-4 w-4" /> {titleCase("Start extraction")}
+                  <Sparkles className="h-4 w-4" strokeWidth={2} />
+                  {titleCase("Start Extraction")}
                 </>
               )}
             </button>
+            <ExportButton />
             <button
               type="button"
               onClick={() => void deleteAllExtractions()}
               disabled={busy || deleting}
-              className="btn-danger"
+              className="btn-ghost gap-2 text-[var(--color-danger)] hover:bg-red-50 hover:text-[var(--color-danger)] dark:hover:bg-red-950/30"
             >
-              {deleting ? titleCase("Deleting…") : titleCase("Delete all extracted data")}
+              <Trash2 className="h-4 w-4" strokeWidth={2} />
+              {deleting ? titleCase("Deleting…") : titleCase("Delete All Data")}
             </button>
           </div>
         </div>
@@ -541,43 +534,46 @@ export default function DashboardPage() {
         ) : null}
 
         {error ? (
-          <div className="mt-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-100" role="alert">
+          <div
+            className="mt-5 rounded-[var(--radius-lg)] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-100"
+            role="alert"
+          >
             {error}
           </div>
         ) : null}
 
         {phase === "done" && !error ? (
           <div className="mt-5 space-y-2">
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-100">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--color-primary-light)] bg-[var(--color-primary-light)] px-4 py-3 text-sm text-[var(--color-primary)]">
               {titleCase(`Extraction complete — ${progressMax} emails processed.`)}
             </div>
           </div>
         ) : null}
       </div>
 
-      <div className="card p-6">
-        <h2 className="mb-3 text-base font-semibold text-zinc-900 dark:text-zinc-100">
+      <div className="surface-card overflow-hidden rounded-[var(--radius-lg)]">
+        <h2 className="border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3 font-display text-[15px] font-bold text-[var(--color-text)]">
           {titleCase("Results")}
         </h2>
         {loadingRows ? (
-          <div className="space-y-3">
-            <Skeleton className="h-12 w-full rounded-xl" />
-            <Skeleton className="h-12 w-full rounded-xl" />
-            <Skeleton className="h-12 w-full rounded-xl" />
+          <div className="space-y-3 p-6">
+            <Skeleton className="skeleton-shimmer h-12 w-full rounded-[var(--radius-md)]" />
+            <Skeleton className="skeleton-shimmer h-12 w-full rounded-[var(--radius-md)]" />
+            <Skeleton className="skeleton-shimmer h-12 w-full rounded-[var(--radius-md)]" />
           </div>
         ) : rows.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-zinc-300 py-10 dark:border-zinc-700">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
-              <IconMail className="h-7 w-7 text-zinc-400" />
-            </div>
-            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          <div className="flex flex-col items-center px-6 py-16">
+            <Sparkles className="h-10 w-10 text-[var(--color-text-faint)]" strokeWidth={1.5} />
+            <p className="font-display mt-4 text-[17px] font-bold text-[var(--color-text)]">
               {titleCase("No extractions yet")}
             </p>
-            <p className="max-w-xs text-center text-xs text-zinc-500">
-              {titleCase(
-                "Run your first extraction above. Results will appear here with search, badges, and CSV export."
-              )}
+            <p className="mt-2 max-w-md text-center text-sm text-[var(--color-text-muted)]">
+              {titleCase("Configure settings above and run your first extraction.")}
             </p>
+            <button type="button" onClick={() => void runPipeline()} disabled={busy} className="btn-primary mt-5 gap-2">
+              <Sparkles className="h-4 w-4" strokeWidth={2} />
+              {titleCase("Start Extraction")}
+            </button>
           </div>
         ) : (
           <ResultsTable rows={rows} />

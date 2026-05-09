@@ -3,15 +3,18 @@ import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-export type MailFolder = "inbox" | "sent";
+export type MailFolder = "inbox" | "sent" | "drafts";
 
 export type ThreadListItem = {
+  /** Thread id — used to open `/api/gmail/threads/:id` (same as Gmail conversation). */
   id: string;
   snippet: string;
   subject: string;
   from: string;
   date: string;
   historyId?: string;
+  /** Present for drafts list rows — stable key when multiple drafts share a thread. */
+  draftId?: string;
 };
 
 export type ThreadListPage = {
@@ -19,26 +22,34 @@ export type ThreadListPage = {
   nextPageToken?: string;
 };
 
-const LABELS: Record<MailFolder, string[]> = {
+type ThreadListFolder = Exclude<MailFolder, "drafts">;
+
+const LABELS: Record<ThreadListFolder, string[]> = {
   inbox: ["INBOX"],
   sent: ["SENT"],
 };
 
-const QUERY: Record<MailFolder, string> = {
+const QUERY: Record<ThreadListFolder, string> = {
   inbox: "category:primary",
   sent: "",
 };
 
 async function fetchMessageMeta(
   accessToken: string,
-  messageId: string
-): Promise<{ subject: string; from: string; date: string }> {
-  const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`;
+  messageId: string,
+  opts?: { includeTo?: boolean }
+): Promise<{ subject: string; from: string; date: string; to?: string }> {
+  const params = new URLSearchParams({ format: "metadata" });
+  params.append("metadataHeaders", "Subject");
+  params.append("metadataHeaders", "From");
+  params.append("metadataHeaders", "Date");
+  if (opts?.includeTo) params.append("metadataHeaders", "To");
+  const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?${params.toString()}`;
   try {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (!res.ok) return { subject: "", from: "", date: "" };
+    if (!res.ok) return { subject: "", from: "", date: "", to: "" };
     const data = (await res.json()) as {
       internalDate?: string;
       payload?: { headers?: { name?: string; value?: string }[] };
@@ -54,16 +65,96 @@ async function fetchMessageMeta(
       const ms = parseInt(data.internalDate, 10);
       if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
     }
-    return { subject: get("Subject"), from: get("From"), date };
+    const to = opts?.includeTo ? get("To") : undefined;
+    return { subject: get("Subject"), from: get("From"), date, ...(to !== undefined ? { to } : {}) };
   } catch {
-    return { subject: "", from: "", date: "" };
+    return { subject: "", from: "", date: "", to: "" };
   }
+}
+
+/** Gmail drafts — synced via `users.drafts.list` (requires gmail.readonly). */
+export async function listDraftsPage(
+  accessToken: string,
+  options: {
+    maxResults: number;
+    pageToken?: string;
+    searchQuery?: string;
+  }
+): Promise<ThreadListPage> {
+  const params = new URLSearchParams({
+    maxResults: String(Math.min(Math.max(options.maxResults, 1), 100)),
+  });
+  if (options.pageToken) params.set("pageToken", options.pageToken);
+  const q = (options.searchQuery || "").trim();
+  if (q) params.set("q", q);
+
+  const url = `${GMAIL_API}/drafts?${params.toString()}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Gmail API (drafts list)"));
+  }
+
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail drafts list ${res.status}: ${text}`);
+  }
+
+  const data = (await res.json()) as {
+    drafts?: {
+      id: string;
+      message?: { id?: string; threadId?: string; snippet?: string };
+    }[];
+    nextPageToken?: string;
+  };
+
+  const raw = data.drafts || [];
+  const threads: ThreadListItem[] = await Promise.all(
+    raw.map(async (d) => {
+      const messageId = d.message?.id || "";
+      const threadId = d.message?.threadId || messageId;
+      const snippet = d.message?.snippet || "";
+      if (!messageId) {
+        return {
+          id: threadId,
+          snippet,
+          subject: "(no subject)",
+          from: "",
+          date: "",
+          draftId: d.id,
+        };
+      }
+      const meta = await fetchMessageMeta(accessToken, messageId, { includeTo: true });
+      const toLine = (meta.to || "").trim();
+      const displayLine = toLine || meta.from.trim() || "Draft";
+      return {
+        id: threadId,
+        snippet: snippet || meta.subject || "",
+        subject: meta.subject,
+        from: displayLine,
+        date: meta.date,
+        draftId: d.id,
+      };
+    })
+  );
+
+  return { threads, nextPageToken: data.nextPageToken };
 }
 
 export async function listThreadsPage(
   accessToken: string,
   options: {
-    folder: MailFolder;
+    folder: ThreadListFolder;
     maxResults: number;
     pageToken?: string;
     /** Gmail search terms (same syntax as Gmail search box), AND-ed with folder filters. */

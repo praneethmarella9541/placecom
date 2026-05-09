@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { IconRefresh, IconPlus, IconUser, IconPhone, IconMail, IconMenu, IconX, IconCalendar } from "@/components/Icons";
+import { UserPlus, ChevronRight, Users2, RefreshCw } from "lucide-react";
+import { IconPhone, IconMail, IconMenu, IconX, IconCalendar, IconUser } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
 
 type LeadScore = "Hot" | "Warm" | "Cold";
@@ -47,10 +48,28 @@ function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function getScoreColor(score: LeadScore) {
-  if (score === "Hot") return "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800/50";
-  if (score === "Warm") return "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-200 dark:border-orange-800/50";
-  return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 border-blue-200 dark:border-blue-800/50";
+function stageColumnBorder(stage: LeadStage, funnel: LeadType): string {
+  if (funnel === "New Lead") {
+    if (stage === "Awareness") return "border-l-[var(--color-blue)]";
+    if (stage === "Engagement") return "border-l-[var(--color-gold)]";
+    if (stage === "Conversion") return "border-l-[var(--color-success)]";
+    if (stage === "Retention") return "border-l-[var(--color-primary)]";
+  }
+  const i = REG_RECRUITER_STAGES.indexOf(stage);
+  const c = [
+    "border-l-[var(--color-blue)]",
+    "border-l-[var(--color-gold)]",
+    "border-l-[var(--color-success)]",
+    "border-l-[var(--color-primary)]",
+  ];
+  return c[Math.max(0, i) % 4] ?? "border-l-[var(--color-border)]";
+}
+
+function daysInStage(lead: LeadRow): number {
+  return Math.max(
+    0,
+    Math.floor((Date.now() - new Date(lead.stage_updated_at).getTime()) / (1000 * 60 * 60 * 24)),
+  );
 }
 
 export default function CRMPage() {
@@ -123,15 +142,6 @@ export default function CRMPage() {
       return true;
     });
   }, [leads, staffFilter, stalledOnly, activeFunnel]);
-
-  const funnelCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    CURRENT_STAGES.forEach(s => counts[s] = 0);
-    filteredLeads.forEach(l => {
-      if (counts[l.stage] !== undefined) counts[l.stage]++;
-    });
-    return counts;
-  }, [filteredLeads, CURRENT_STAGES]);
 
   const leadVelocity = useMemo(() => {
     const engagementLeads = filteredLeads.filter(l => l.stage === "Engagement" || l.stage === "JD Expected");
@@ -261,208 +271,245 @@ export default function CRMPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-            {titleCase("Marketing funnel CRM")}
+    <div className="space-y-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <h1 className="font-display text-[17px] font-bold text-[var(--color-text)]">
+            {titleCase("Marketing Funnel CRM")}
           </h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            {loading
-              ? titleCase("Loading leads…")
-              : titleCase("Manage corporate leads through the placement pipeline.")}
-          </p>
+          <div className="flex items-center gap-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-offset)] p-0.5">
+            <button
+              type="button"
+              onClick={() => setActiveFunnel("New Lead")}
+              className={`rounded-[var(--radius-md)] px-3 py-1.5 text-[13px] font-semibold transition-colors ${
+                activeFunnel === "New Lead"
+                  ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+            >
+              {titleCase("New Leads Pipeline")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveFunnel("Regular Recruiter")}
+              className={`rounded-[var(--radius-md)] px-3 py-1.5 text-[13px] font-semibold transition-colors ${
+                activeFunnel === "Regular Recruiter"
+                  ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+            >
+              {titleCase("Regular Recruiters")}
+            </button>
+          </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className="input-field h-[34px] min-w-[160px] text-[13px]"
+            value={staffFilter}
+            onChange={(e) => setStaffFilter(e.target.value)}
+          >
+            <option value="All">{titleCase("All staff")}</option>
+            {allStaffNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={stalledOnly}
+            onClick={() => setStalledOnly((v) => !v)}
+            className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] px-2 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+          >
+            <span
+              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
+                stalledOnly ? "bg-[var(--color-primary)]" : "bg-[var(--color-surface-offset)]"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                  stalledOnly ? "left-4" : "left-0.5"
+                }`}
+              />
+            </span>
+            {titleCase("Stalled leads")}
+          </button>
+          <button type="button" onClick={() => setIsAddLeadOpen(true)} className="btn-primary h-[34px] gap-2 px-3 text-[13px]">
+            <UserPlus className="h-4 w-4" strokeWidth={2} />
+            {titleCase("Add Lead")}
+          </button>
           <button
             type="button"
             disabled={loading}
             onClick={() => void loadLeads()}
-            className="btn-ghost disabled:opacity-50"
+            className="btn-ghost h-8 w-8 justify-center p-0 disabled:opacity-50"
+            title={titleCase("Refresh")}
           >
-            <IconRefresh className="h-4 w-4" /> {titleCase("Refresh")}
-          </button>
-          <button type="button" onClick={() => setIsAddLeadOpen(true)} className="btn-primary">
-            <IconPlus className="h-4 w-4" /> {titleCase("Add lead")}
+            <RefreshCw className="h-4 w-4" strokeWidth={2} />
           </button>
         </div>
       </div>
 
       {error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+        <div className="rounded-[var(--radius-lg)] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
           {error}
         </div>
       ) : null}
 
-      {/* Funnel Switcher */}
-      <div className="relative flex flex-wrap gap-x-1 border-b border-zinc-200 dark:border-zinc-800">
-        <button
-          type="button"
-          onClick={() => setActiveFunnel("New Lead")}
-          className={`relative py-3 px-4 text-sm font-semibold transition-colors sm:px-6 ${
-            activeFunnel === "New Lead"
-              ? "z-[1] -mb-px border-b-2 border-emerald-500 text-emerald-600 dark:text-emerald-400"
-              : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-          }`}
-        >
-          {titleCase("New leads pipeline")}
-        </button>
-        <button
-          type="button"
-          onClick={() => setActiveFunnel("Regular Recruiter")}
-          className={`relative py-3 px-4 text-sm font-semibold transition-colors sm:px-6 ${
-            activeFunnel === "Regular Recruiter"
-              ? "z-[1] -mb-px border-b-2 border-emerald-500 text-emerald-600 dark:text-emerald-400"
-              : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-          }`}
-        >
-          {titleCase("Regular recruiters")}
-        </button>
-      </div>
-
-      {/* Top Metrics Dashboard — horizontal scroll below lg so stage labels do not stack/overlap */}
-      <div className="scrollbar-thin -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-1 pt-0.5 sm:snap-none lg:mx-0 lg:grid lg:grid-cols-5 lg:gap-4 lg:overflow-x-visible lg:px-0 lg:pb-0">
-        {CURRENT_STAGES.map((stage, idx) => {
-          const stageAccent = ["border-l-orange-400", "border-l-emerald-500", "border-l-indigo-500"];
-          const borderAccent =
-            idx === 0 ? "" : `border-l-4 ${stageAccent[(idx - 1) % stageAccent.length]}`;
-          return (
-            <div
-              key={stage}
-              className={`card flex min-w-[158px] shrink-0 snap-center flex-col justify-between p-4 lg:min-w-0 ${borderAccent}`}
-            >
-              <p className="line-clamp-3 break-words text-[10px] font-semibold tracking-wider text-zinc-500">
-                {titleCase(stage)}
-              </p>
-              <p className="mt-2 text-3xl font-bold text-zinc-900 dark:text-white">{funnelCounts[stage]}</p>
-              <p className="mt-1 text-xs text-zinc-400">{titleCase("Total")}</p>
-            </div>
-          );
-        })}
-        <div className="card flex min-w-[158px] shrink-0 snap-center flex-col justify-between bg-zinc-900 p-4 shadow-xl dark:bg-zinc-800 lg:min-w-0">
-          <p className="text-[10px] font-semibold tracking-wider text-zinc-400">{titleCase("Velocity")}</p>
-          <p className="mt-2 text-3xl font-bold">
-            {leadVelocity}{" "}
-            <span className="text-lg font-normal text-zinc-400">{titleCase("days")}</span>
+      <div className="surface-card inline-flex flex-wrap items-center gap-4 rounded-[var(--radius-md)] px-4 py-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
+            {titleCase("Avg. Time in Engagement")}
           </p>
-          <p className="mt-1 text-xs leading-snug text-zinc-400">
-            {titleCase("Avg. time in engagement")}
+          <p className="font-display mt-1 text-lg font-bold text-[var(--color-primary)]">
+            {leadVelocity} {titleCase("Days")}
           </p>
         </div>
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          {loading ? titleCase("Loading leads…") : titleCase("Velocity across engagement-stage leads.")}
+        </p>
       </div>
 
-      {/* Placement Head Controls */}
-      <div className="flex flex-col sm:flex-row items-center justify-between bg-white dark:bg-zinc-950 p-3 rounded-xl border border-zinc-200 dark:border-zinc-800 gap-4 shadow-sm">
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            {titleCase("Staff view:")}
-          </label>
-          <select 
-            className="input-field py-1.5 min-w-[150px]"
-            value={staffFilter}
-            onChange={e => setStaffFilter(e.target.value)}
-          >
-            <option value="All">{titleCase("All staff")}</option>
-            {allStaffNames.map(name => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <input 
-            type="checkbox" 
-            id="stalledFilter"
-            checked={stalledOnly}
-            onChange={e => setStalledOnly(e.target.checked)}
-            className="rounded border-zinc-300 text-red-600 focus:ring-red-500"
-          />
-          <label htmlFor="stalledFilter" className="text-sm font-medium text-red-600 dark:text-red-400 flex items-center gap-1 cursor-pointer">
-            <span className="flex h-2 w-2 rounded-full bg-red-500"></span>
-            {titleCase("Show stalled leads (>3 days no activity)")}
-          </label>
-        </div>
-      </div>
-
-      {/* Kanban Board — minmax tracks + scroll so columns never shrink under min width (avoids border overlap) */}
+      {/* Kanban Board */}
       <div className="min-w-0 overflow-x-auto pb-4">
-        <div className="grid w-max min-w-full grid-cols-1 gap-4 pb-1 md:[grid-template-columns:repeat(2,minmax(280px,1fr))] xl:[grid-template-columns:repeat(4,minmax(280px,1fr))]">
-        {CURRENT_STAGES.map(stage => {
-          const stageLeads = filteredLeads.filter(l => l.stage === stage);
-          return (
-            <div key={stage} className="flex min-h-[500px] min-w-0 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
-              <div className="mb-4 flex items-start justify-between gap-3 px-1">
-                <h3 className="min-w-0 flex-1 break-words font-semibold leading-snug text-zinc-800 dark:text-zinc-200">
-                  {titleCase(stage)}
-                </h3>
-                <span className="shrink-0 rounded-full bg-zinc-200 px-2 py-1 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                  {stageLeads.length}
-                </span>
-              </div>
-              <div className="flex flex-col gap-3 flex-1">
-                {stageLeads.map(lead => (
-                  <div 
-                    key={lead.id} 
-                    className="card p-3 cursor-pointer hover:border-emerald-400 dark:hover:border-emerald-500 transition-colors shadow-sm bg-white dark:bg-zinc-950"
-                    onClick={() => {
-                      setActiveLead(lead);
-                      void loadInteractions(lead);
-                    }}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${getScoreColor(lead.score)}`}>
-                        {titleCase(lead.score)}
-                      </span>
-                      {stalledOnly || new Date(lead.last_interaction_at) < new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) ? (
-                         <span title={titleCase("Stalled lead")} className="h-2 w-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse"></span>
-                      ) : null}
-                    </div>
-                    <h4 className="font-semibold text-zinc-900 dark:text-zinc-100 line-clamp-1">{lead.company_name}</h4>
-                    {lead.contact_name && <p className="text-xs text-zinc-500 mt-1 line-clamp-1 flex items-center gap-1"><IconUser className="h-3 w-3" /> {lead.contact_name}</p>}
-                    
-                    {/* Regular Recruiter JD Counter */}
-                    {lead.lead_type === "Regular Recruiter" && (
-                      <div className="mt-3 flex items-center justify-between bg-zinc-50 dark:bg-zinc-900 rounded p-1.5 border border-zinc-200 dark:border-zinc-800" onClick={e => e.stopPropagation()}>
-                        <span className="text-[10px] font-medium text-zinc-500 tracking-wider">
-                          {titleCase("JDs rcvd:")}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <button onClick={() => handleUpdateJDCount(lead.id, lead.jd_count - 1)} className="w-5 h-5 flex items-center justify-center rounded bg-white border shadow-sm text-zinc-500 hover:text-zinc-900">-</button>
-                          <span className="text-xs font-bold w-4 text-center">{lead.jd_count}</span>
-                          <button onClick={() => handleUpdateJDCount(lead.id, lead.jd_count + 1)} className="w-5 h-5 flex items-center justify-center rounded bg-emerald-100 text-emerald-700 border border-emerald-200 shadow-sm hover:bg-emerald-200">+</button>
+        <div className="grid w-max min-w-full grid-cols-1 gap-4 pb-1 md:[grid-template-columns:repeat(2,minmax(260px,1fr))] xl:[grid-template-columns:repeat(4,minmax(260px,1fr))]">
+          {CURRENT_STAGES.map((stage) => {
+            const stageLeads = filteredLeads.filter((l) => l.stage === stage);
+            const borderAccent = stageColumnBorder(stage, activeFunnel);
+            return (
+              <div key={stage} className="flex min-h-[400px] min-w-[260px] flex-1 flex-col">
+                <div
+                  className={`surface-card rounded-b-none border-b-0 px-4 py-3 ${borderAccent} border-l-4`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-[13px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
+                      {titleCase(stage)}
+                    </h3>
+                    <span className="rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[12px] font-semibold text-[var(--color-text)]">
+                      {stageLeads.length}
+                    </span>
+                  </div>
+                </div>
+                <div className="surface-card flex flex-col gap-2.5 rounded-t-none border-t-0 bg-[var(--color-surface-offset)] p-3 shadow-none">
+                  {stageLeads.map((lead) => {
+                    const idx = CURRENT_STAGES.indexOf(lead.stage);
+                    const canAdvance = idx >= 0 && idx < CURRENT_STAGES.length - 1;
+                    return (
+                      <div
+                        key={lead.id}
+                        role="button"
+                        tabIndex={0}
+                        className="surface-card cursor-pointer p-4 transition-all duration-150 hover:-translate-y-px hover:shadow-[var(--shadow-md)]"
+                        onClick={() => {
+                          setActiveLead(lead);
+                          void loadInteractions(lead);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            setActiveLead(lead);
+                            void loadInteractions(lead);
+                          }
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="truncate text-[14px] font-bold text-[var(--color-text)]">{lead.company_name}</h4>
+                              {lead.score === "Hot" ? (
+                                <span className="shrink-0 rounded-full bg-[#fef3c7] px-2 py-0.5 text-[11px] font-bold uppercase text-[#92400e]">
+                                  HOT
+                                </span>
+                              ) : null}
+                            </div>
+                            {lead.contact_name ? (
+                              <p className="mt-1 truncate text-[13px] text-[var(--color-text-muted)]">{lead.contact_name}</p>
+                            ) : null}
+                          </div>
+                          {stalledOnly || new Date(lead.last_interaction_at) < new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) ? (
+                            <span title={titleCase("Stalled lead")} className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
+                          ) : null}
+                        </div>
+
+                        {lead.lead_type === "Regular Recruiter" && (
+                          <div
+                            className="mt-3 flex items-center justify-between rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-2"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
+                              {titleCase("JDs rcvd:")}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateJDCount(lead.id, lead.jd_count - 1)}
+                                className="flex h-6 w-6 items-center justify-center rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"
+                              >
+                                −
+                              </button>
+                              <span className="w-4 text-center text-xs font-bold">{lead.jd_count}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateJDCount(lead.id, lead.jd_count + 1)}
+                                className="flex h-6 w-6 items-center justify-center rounded border border-[var(--color-primary-light)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="mt-3 flex items-center justify-between border-t border-[var(--color-border)] pt-3">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[10px] font-bold text-[var(--color-primary)]">
+                              {lead.staff_name.slice(0, 1).toUpperCase()}
+                            </span>
+                            <span className="text-[12px] text-[var(--color-text-faint)]">
+                              {daysInStage(lead)}d {titleCase("in stage")}
+                            </span>
+                          </div>
+                          {canAdvance ? (
+                            <button
+                              type="button"
+                              className="btn-ghost h-8 w-8 shrink-0 justify-center p-0"
+                              title={titleCase("Advance stage")}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const next = CURRENT_STAGES[idx + 1];
+                                if (next) void handleUpdateLeadStage(lead.id, next);
+                              }}
+                            >
+                              <ChevronRight className="h-4 w-4" strokeWidth={2} />
+                            </button>
+                          ) : (
+                            <select
+                              className="max-w-[100px] cursor-pointer bg-transparent text-right text-[11px] text-[var(--color-text-muted)]"
+                              value={lead.stage}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => handleUpdateLeadStage(lead.id, e.target.value as LeadStage)}
+                            >
+                              {CURRENT_STAGES.map((s) => (
+                                <option key={s} value={s}>
+                                  {titleCase(s)}
+                                </option>
+                              ))}
+                            </select>
+                          )}
                         </div>
                       </div>
-                    )}
-
-                    <div className="flex items-center justify-between mt-3 pt-3 border-t border-zinc-100 dark:border-zinc-800">
-                      <p className="text-[10px] text-zinc-400 font-medium">
-                        {titleCase("Staff:")} {lead.staff_name}
-                      </p>
-                      {/* Stage Mover */}
-                      <select 
-                        className="text-[10px] bg-transparent text-zinc-500 border-none p-0 cursor-pointer focus:ring-0 w-[80px] text-right"
-                        value={lead.stage}
-                        onClick={e => e.stopPropagation()}
-                        onChange={(e) => handleUpdateLeadStage(lead.id, e.target.value as LeadStage)}
-                      >
-                        {CURRENT_STAGES.map((s) => (
-                          <option key={s} value={s}>
-                            {titleCase(`Move to ${s}`)}
-                          </option>
-                        ))}
-                      </select>
+                    );
+                  })}
+                  {stageLeads.length === 0 && (
+                    <div className="flex flex-col items-center justify-center rounded-[var(--radius-md)] border-2 border-dashed border-[var(--color-border)] py-8 text-center">
+                      <Users2 className="mb-2 h-6 w-6 text-[var(--color-text-faint)]" strokeWidth={1.5} />
+                      <p className="text-[13px] text-[var(--color-text-faint)]">{titleCase("No leads")}</p>
                     </div>
-                  </div>
-                ))}
-                {stageLeads.length === 0 && (
-                  <div className="border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl flex items-center justify-center p-6 text-zinc-400 text-sm">
-                    {titleCase("No leads")}
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
         </div>
       </div>
 

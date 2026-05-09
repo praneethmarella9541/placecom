@@ -1,8 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { IconSun, IconMoon } from "@/components/Icons";
-import { titleCase } from "@/lib/title-case";
+import { Moon, Sun } from "lucide-react";
+
+function applyTheme(dark: boolean) {
+  document.documentElement.classList.toggle("dark", dark);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  localStorage.setItem("placecom-theme", dark ? "dark" : "light");
+  try {
+    localStorage.setItem("theme", dark ? "dark" : "light");
+  } catch {
+    /* ignore */
+  }
+}
 
 export function ThemeToggle() {
   const [dark, setDark] = useState(false);
@@ -13,8 +23,7 @@ export function ThemeToggle() {
 
   function toggle() {
     const next = !document.documentElement.classList.contains("dark");
-    document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("theme", next ? "dark" : "light");
+    applyTheme(next);
     setDark(next);
   }
 
@@ -22,10 +31,10 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={toggle}
-      className="btn-ghost rounded-full p-2"
-      aria-label={titleCase("Toggle dark mode")}
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-offset)] text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-2)]"
+      aria-label="Toggle theme"
     >
-      {dark ? <IconSun className="h-[18px] w-[18px]" /> : <IconMoon className="h-[18px] w-[18px]" />}
+      {dark ? <Sun className="h-[18px] w-[18px]" strokeWidth={2} /> : <Moon className="h-[18px] w-[18px]" strokeWidth={2} />}
     </button>
   );
 }

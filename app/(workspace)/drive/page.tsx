@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Upload } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
@@ -45,6 +46,10 @@ export default function DrivePage() {
   const [driveSearch, setDriveSearch] = useState("");
 
   const [previewFile, setPreviewFile] = useState<DriveFileRow | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setDriveSearch(driveSearchInput.trim()), 400);
@@ -97,6 +102,36 @@ export default function DrivePage() {
     void loadDriveFiles({ append: false });
   }, [loadDriveFiles]);
 
+  const triggerUpload = useCallback(() => {
+    setUploadError(null);
+    fileInputRef.current?.click();
+  }, []);
+
+  async function onUploadFiles(files: FileList | null) {
+    if (!files?.length) return;
+    const file = files[0];
+    if (!file) return;
+    setUploadBusy(true);
+    setUploadError(null);
+    try {
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("parent", currentParentId);
+      const res = await fetch("/api/drive/upload", {
+        method: "POST",
+        body: fd,
+      });
+      const data = (await res.json()) as { error?: string; file?: DriveFileRow };
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      await loadDriveFiles({ append: false });
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setUploadBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div>
@@ -105,7 +140,7 @@ export default function DrivePage() {
         </h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
           {titleCase(
-            "Browse My Drive here. Open a file for preview and download inside this app (no Google Drive website)."
+            "Browse My Drive, upload files into the current folder, and open files for preview or download — without opening the Drive website.",
           )}
         </p>
       </div>
@@ -157,6 +192,22 @@ export default function DrivePage() {
               />
             </div>
           </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            onChange={(e) => void onUploadFiles(e.target.files)}
+          />
+          <button
+            type="button"
+            onClick={() => triggerUpload()}
+            disabled={uploadBusy}
+            className="btn-secondary shrink-0 gap-2 px-3 py-2 text-[13px]"
+            title={titleCase("Upload file to this folder")}
+          >
+            <Upload className="h-4 w-4 shrink-0" strokeWidth={2} />
+            {uploadBusy ? titleCase("Uploading…") : titleCase("Upload")}
+          </button>
           <button
             type="button"
             onClick={() => void loadDriveFiles({ append: false })}
@@ -166,6 +217,12 @@ export default function DrivePage() {
             <IconRefresh className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        {uploadError ? (
+          <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-[13px] text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+            {uploadError}
+          </div>
+        ) : null}
 
         {loadingDrive ? (
           <div className="space-y-2 p-4">

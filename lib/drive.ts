@@ -100,3 +100,75 @@ export async function listDriveFilesPage(
     nextPageToken: data.nextPageToken,
   };
 }
+
+const FORM_MIME = "application/vnd.google-apps.form";
+
+/**
+ * List Google Forms files from Drive (same account as the access token — mailbox admin when using Placecom mailbox).
+ */
+export async function listGoogleFormsPage(
+  accessToken: string,
+  options: {
+    pageSize: number;
+    pageToken?: string;
+    search?: string;
+  }
+): Promise<DriveListPage> {
+  const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
+  const base = `mimeType='${FORM_MIME}' and trashed=false`;
+  const t = (options.search || "").trim();
+  const q = t ? `${base} and name contains '${escapeDriveQFragment(t)}'` : base;
+
+  const params = new URLSearchParams({
+    pageSize: String(pageSize),
+    fields: "nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)",
+    orderBy: "modifiedTime desc,name_natural",
+    q,
+    includeItemsFromAllDrives: "true",
+    supportsAllDrives: "true",
+  });
+  if (options.pageToken) params.set("pageToken", options.pageToken);
+
+  const url = `${DRIVE_API}/files?${params.toString()}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (forms list)"));
+  }
+
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive forms list ${res.status}: ${text}`) as Error & {
+      code?: string;
+    };
+    if (
+      res.status === 403 &&
+      (text.includes("ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
+        (text.includes("insufficientPermissions") && text.includes("drive.googleapis.com")))
+    ) {
+      err.code = "DRIVE_INSUFFICIENT_SCOPE";
+      err.message =
+        "Drive access was not granted for this Google account. In Google Cloud Console: enable the Google Drive API and add the drive.readonly scope to your OAuth client; then sign out and sign in with Google again.";
+    }
+    throw err;
+  }
+
+  const data = (await res.json()) as {
+    files?: DriveFileRow[];
+    nextPageToken?: string;
+  };
+
+  return {
+    files: data.files || [],
+    nextPageToken: data.nextPageToken,
+  };
+}

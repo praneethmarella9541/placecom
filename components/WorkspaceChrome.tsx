@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   CalendarDays,
+  ClipboardList,
   FileText,
   Folder,
   Kanban,
@@ -39,6 +40,7 @@ const primaryNav = [
 
 const secondaryNav = [
   { href: "/drive", label: "Drive", Icon: Folder },
+  { href: "/forms", label: "Forms", Icon: ClipboardList },
   { href: "/broadcasting", label: "Broadcasting", Icon: Megaphone },
   { href: "/sms", label: "SMS", Icon: Smartphone },
   { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
@@ -70,6 +72,7 @@ function workspacePageTitle(pathname: string): string {
   if (pathname.startsWith("/calls")) return titleCase("Calls");
   if (pathname.startsWith("/meetings")) return titleCase("Meetings");
   if (pathname.startsWith("/drive")) return titleCase("Drive");
+  if (pathname.startsWith("/forms")) return titleCase("Forms");
   if (pathname.startsWith("/broadcasting")) return titleCase("Broadcasting");
   if (pathname.startsWith("/sms")) return titleCase("SMS");
   if (pathname.startsWith("/whatsapp")) return titleCase("WhatsApp");

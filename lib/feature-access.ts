@@ -1,6 +1,7 @@
 export const FEATURE_KEYS = [
   "inbox",
   "drive",
+  "forms",
   "broadcasting",
   "dashboard",
   "crm",
@@ -16,6 +17,7 @@ export type FeatureKey = (typeof FEATURE_KEYS)[number];
 export const FEATURE_LABELS: Record<FeatureKey, string> = {
   inbox: "Mail",
   drive: "Drive",
+  forms: "Forms",
   broadcasting: "Broadcasting",
   dashboard: "Extraction",
   crm: "CRM",
@@ -41,6 +43,7 @@ export function normalizeRestrictedFeatures(value: unknown): FeatureKey[] {
 export function pathToFeature(pathname: string, search: URLSearchParams): FeatureKey | null {
   if (pathname.startsWith("/inbox")) return "inbox";
   if (pathname.startsWith("/drive")) return "drive";
+  if (pathname.startsWith("/forms")) return "forms";
   if (pathname.startsWith("/dashboard")) return "dashboard";
   if (pathname.startsWith("/crm")) return "crm";
   if (pathname.startsWith("/calendar")) return "calendar";
@@ -77,6 +80,8 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/api/mailbox")) return "inbox";
 
   if (pathname.startsWith("/api/drive")) return "drive";
+
+  if (pathname.startsWith("/api/forms")) return "forms";
 
   if (
     pathname.startsWith("/api/extract") ||
@@ -125,6 +130,7 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
   const candidates: { path: string; search?: string }[] = [
     { path: "/inbox" },
     { path: "/drive" },
+    { path: "/forms" },
     { path: "/broadcasting" },
     { path: "/dashboard" },
     { path: "/crm" },

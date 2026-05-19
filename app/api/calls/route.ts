@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
 import { getTwilioClient } from "@/lib/twilio";
 
 export const runtime = "nodejs";
@@ -82,13 +81,6 @@ async function syncRecordingsFromTwilio(
     if (!upErr) wrote = true;
   }
   return wrote;
-}
-
-function httpsRecordingCallbackUrl(): string | undefined {
-  const base = getTwilioWebhookBaseUrl();
-  const callback = base ? `${base}/api/twilio/recording` : null;
-  if (callback?.startsWith("https://")) return callback;
-  return undefined;
 }
 
 async function syncCallStatuses(

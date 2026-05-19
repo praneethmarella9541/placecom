@@ -3,7 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
-// Service role client — no user session in a webhook
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -17,9 +16,10 @@ export async function POST(request: Request) {
   const form = await request.formData();
   const callerPhone   = form.get("From")?.toString() ?? "";
   const exotelCallSid = form.get("CallSid")?.toString() ?? "";
+  // Exotel sends collected DTMF digits as "digits" when using IVR collect input
+  const dtmfDigits    = form.get("digits")?.toString() ?? form.get("Digits")?.toString() ?? "";
 
-  // Find the most recent pending call registered in the last 5 minutes
-  const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  const since = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10-min window
 
   const { data: pending } = await supabaseAdmin
     .from("call_logs")
@@ -30,22 +30,33 @@ export async function POST(request: Request) {
     .limit(1)
     .maybeSingle();
 
-  if (!pending) {
-    return NextResponse.json({ error: "No pending call found" }, { status: 404 });
+  // Use pre-registered destination from DB, or fall back to DTMF digits
+  let destination = pending?.to_number ?? "";
+
+  if (!destination && dtmfDigits) {
+    // Prepend +91 if user entered a 10-digit Indian number without country code
+    destination = dtmfDigits.startsWith("+") ? dtmfDigits : `+91${dtmfDigits}`;
   }
 
-  // Update the log with Exotel's real call SID and agent's number
-  await supabaseAdmin
-    .from("call_logs")
-    .update({
-      call_sid: exotelCallSid || `exotel_${Date.now()}`,
-      agent_number: callerPhone,
-      status: "in-progress",
-      started_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", pending.id);
+  if (!destination) {
+    console.error("[calls/connect] No destination found — pending:", pending, "dtmf:", dtmfDigits);
+    return NextResponse.json({ error: "No destination found" }, { status: 404 });
+  }
 
-  // Return destination number to Exotel
-  return NextResponse.json({ to: pending.to_number });
+  // Update the call log
+  if (pending) {
+    await supabaseAdmin
+      .from("call_logs")
+      .update({
+        call_sid: exotelCallSid || `exotel_${Date.now()}`,
+        agent_number: callerPhone,
+        status: "in-progress",
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", pending.id);
+  }
+
+  // Return destination — Exotel accepts { "number": "..." } or { "to": "..." }
+  return NextResponse.json({ number: destination, to: destination });
 }

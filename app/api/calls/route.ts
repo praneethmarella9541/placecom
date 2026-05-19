@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
-import { getTwilioClient, getTwilioFromNumber, isTwilioConfigured } from "@/lib/twilio";
+import { getTwilioClient } from "@/lib/twilio";
 
 export const runtime = "nodejs";
 
@@ -40,7 +40,6 @@ async function firstUsableRecording(client: NonNullable<ReturnType<typeof getTwi
   }
 }
 
-/** Try recording sync once a call is no longer freshly queued (covers Twilio lag before "completed"). */
 function shouldAttemptRecordingSync(status: string): boolean {
   const s = String(status || "").toLowerCase();
   if (s === "queued" || s === "initiated") return false;
@@ -83,12 +82,6 @@ async function syncRecordingsFromTwilio(
     if (!upErr) wrote = true;
   }
   return wrote;
-}
-
-function buildBridgeTwiml(fromNumber: string, to: string): string {
-  // Recording is started on the outbound REST Call (record: true) so the file is tied to the
-  // same CallSid we store. Dial-only recording often lands on the child leg and is easy to miss.
-  return `<Response><Say voice="alice">Connecting your placement call now.</Say><Dial callerId="${fromNumber}"><Number>${to}</Number></Dial></Response>`;
 }
 
 function httpsRecordingCallbackUrl(): string | undefined {
@@ -179,90 +172,31 @@ export async function POST(request: Request) {
   const { supabase, user } = await getUserOr401();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
-  if (!isTwilioConfigured()) {
-    return NextResponse.json(
-      {
-        error:
-          "Twilio is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER.",
-      },
-      { status: 500 }
-    );
-  }
-
-  const body = (await request.json().catch(() => null)) as
-    | {
-        to?: string;
-        agentPhone?: string;
-        companyName?: string;
-        notes?: string;
-      }
-    | null;
-
+  const body = (await request.json().catch(() => null)) as { to?: string } | null;
   const to = body?.to?.trim() || "";
-  const agentPhone = body?.agentPhone?.trim() || "";
-  const companyName = body?.companyName?.trim() || "";
-  const notes = body?.notes?.trim() || "";
 
-  if (!validPhone(to) || !validPhone(agentPhone)) {
+  if (!validPhone(to)) {
     return NextResponse.json(
-      { error: "Provide valid E.164 phone numbers with +country code (e.g. +14155552671)." },
+      { error: "Provide a valid phone number with country code, e.g. +919876543210." },
       { status: 400 }
     );
   }
 
-  const client = getTwilioClient();
-  const fromNumber = getTwilioFromNumber();
-  if (!client || !fromNumber) {
-    return NextResponse.json({ error: "Twilio client not initialized." }, { status: 500 });
-  }
-
-  try {
-    // Click-to-call bridge:
-    // 1) Twilio first calls the agent.
-    // 2) After the agent answers, Twilio dials the recruiter and bridges audio.
-    const bridgeTwiml = buildBridgeTwiml(fromNumber, to);
-    const recordingCb = httpsRecordingCallbackUrl();
-    const bridgedCall = await client.calls.create({
-      to: agentPhone,
-      from: fromNumber,
-      twiml: bridgeTwiml,
-      record: true,
-      ...(recordingCb
-        ? {
-            recordingStatusCallback: recordingCb,
-            recordingStatusCallbackEvent: ["completed"] as const,
-          }
-        : {}),
-    });
-
-    const { error } = await supabase.from("call_logs").insert({
+  const { data, error } = await supabase
+    .from("call_logs")
+    .insert({
       user_id: user.id,
-      call_sid: bridgedCall.sid,
+      call_sid: `pending_${Date.now()}`,
       to_number: to,
-      from_number: fromNumber,
-      agent_number: agentPhone,
-      company_name: companyName || null,
-      notes: [notes, `bridge_to:${to}`]
-        .filter(Boolean)
-        .join(" | "),
-      status: bridgedCall.status || "queued",
+      from_number: process.env.EXOTEL_VIRTUAL_NUMBER ?? "",
+      status: "pending",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    });
-    if (error) throw new Error(error.message);
+    })
+    .select("id")
+    .single();
 
-    return NextResponse.json(
-      {
-        ok: true,
-        call: {
-          sid: bridgedCall.sid,
-          status: bridgedCall.status,
-        },
-      },
-      { status: 201 }
-    );
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to start call";
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+  return NextResponse.json({ ok: true, id: data.id }, { status: 201 });
 }

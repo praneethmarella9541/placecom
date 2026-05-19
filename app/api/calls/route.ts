@@ -16,13 +16,22 @@ async function getUserOr401(request?: Request) {
   const authHeader = request?.headers.get("Authorization") ?? "";
   if (authHeader.startsWith("Bearer ")) {
     const token = authHeader.slice(7);
+    // Pass the JWT directly to getUser() — most reliable way to verify a Bearer token
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { global: { headers: { Authorization: `Bearer ${token}` } } }
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
-    const { data: { user }, error } = await supabase.auth.getUser();
-    if (!error && user) return { supabase, user };
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (!error && user) {
+      // Re-create the client with the token set so RLS applies correctly
+      const authedSupabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+        { global: { headers: { Authorization: `Bearer ${token}` } } }
+      );
+      return { supabase: authedSupabase, user };
+    }
+    console.error("[auth] Bearer token rejected:", error?.message);
   }
 
   // Cookie-based auth — used by the web app

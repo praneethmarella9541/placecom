@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { getTwilioClient } from "@/lib/twilio";
 
@@ -10,12 +11,23 @@ function validPhone(input: string): boolean {
   return /^\+[1-9]\d{7,14}$/.test(input.replace(/\s+/g, ""));
 }
 
-async function getUserOr401() {
+async function getUserOr401(request?: Request) {
+  // Bearer token auth — used by the mobile app
+  const authHeader = request?.headers.get("Authorization") ?? "";
+  if (authHeader.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${token}` } } }
+    );
+    const { data: { user }, error } = await supabase.auth.getUser();
+    if (!error && user) return { supabase, user };
+  }
+
+  // Cookie-based auth — used by the web app
   const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
+  const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return { supabase, user: null as null };
   return { supabase, user };
 }
@@ -120,7 +132,7 @@ async function syncCallStatuses(
 }
 
 export async function GET(request: Request) {
-  const { supabase, user } = await getUserOr401();
+  const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const url = new URL(request.url);
@@ -161,7 +173,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const { supabase, user } = await getUserOr401();
+  const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
   const body = (await request.json().catch(() => null)) as { to?: string } | null;

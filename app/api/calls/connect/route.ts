@@ -111,10 +111,19 @@ async function resolveDestination(
   const incomingAgent = process.env.INCOMING_AGENT_NUMBER?.trim() ?? "";
   const defaultUserId = process.env.INCOMING_DEFAULT_USER_ID?.trim() ?? "";
 
-  // Detect incoming: Exotel says "incoming", OR the CalledNumber/To equals our virtual number
+  // Detect incoming: Exotel uses "incoming" or "inbound" depending on context.
+  // Fallback: CallTo equals our virtual number AND caller is NOT our agent.
+  const dir = direction.toLowerCase();
+  const incomingAgentNorm = incomingAgent ? normalizePhone(incomingAgent) : "";
+  const callerNorm = normalizePhone(callerPhone);
   const isIncoming =
-    direction.toLowerCase() === "incoming" ||
-    (calledNumber && normalizePhone(calledNumber) === normalizePhone(virtualNumber));
+    dir === "incoming" ||
+    dir === "inbound" ||
+    (
+      calledNumber &&
+      normalizePhone(calledNumber) === normalizePhone(virtualNumber) &&
+      callerNorm !== incomingAgentNorm
+    );
 
   if (isIncoming) {
     if (!incomingAgent) {

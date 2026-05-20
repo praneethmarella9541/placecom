@@ -49,19 +49,29 @@ export async function GET(
     fetchUrl = `https://api.exotel.com${fetchUrl.startsWith("/") ? "" : "/"}${fetchUrl}`;
   }
 
-  const upstream = await fetch(fetchUrl, {
-    headers: { Authorization: `Basic ${basic}` },
-  });
+  // Forward Range header so audio players can seek
+  const rangeHeader = request.headers.get("range");
+  const upstreamHeaders: Record<string, string> = { Authorization: `Basic ${basic}` };
+  if (rangeHeader) upstreamHeaders["Range"] = rangeHeader;
+
+  const upstream = await fetch(fetchUrl, { headers: upstreamHeaders });
 
   if (!upstream.ok || !upstream.body) {
     return NextResponse.json({ error: `Recording unavailable (${upstream.status})` }, { status: 502 });
   }
 
+  const respHeaders: Record<string, string> = {
+    "Content-Type": "audio/mpeg",
+    "Cache-Control": "private, max-age=3600",
+    "Accept-Ranges": "bytes",
+  };
+  const contentLength = upstream.headers.get("content-length");
+  if (contentLength) respHeaders["Content-Length"] = contentLength;
+  const contentRange = upstream.headers.get("content-range");
+  if (contentRange) respHeaders["Content-Range"] = contentRange;
+
   return new NextResponse(upstream.body, {
-    status: 200,
-    headers: {
-      "Content-Type": "audio/mpeg",
-      "Cache-Control": "private, max-age=3600",
-    },
+    status: upstream.status,
+    headers: respHeaders,
   });
 }

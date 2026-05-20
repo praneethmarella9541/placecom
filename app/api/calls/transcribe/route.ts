@@ -91,7 +91,7 @@ export async function POST(request: Request) {
     text: s.text?.trim() ?? "",
     start: s.start,
     end: s.end,
-  })) ?? [];
+  }));
 
   const { data: updated, error: upErr } = await svc
     .from("call_logs")

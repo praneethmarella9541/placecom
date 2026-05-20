@@ -8,17 +8,10 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-export async function GET() {
-  return NextResponse.json({ status: "Exotel connect webhook is live" });
-}
+async function resolveDestination(params: URLSearchParams | FormData, callerPhone: string, exotelCallSid: string) {
+  const dtmfDigits = params.get("digits")?.toString() ?? params.get("Digits")?.toString() ?? "";
 
-export async function POST(request: Request) {
-  const form = await request.formData();
-  const callerPhone   = form.get("From")?.toString() ?? "";
-  const exotelCallSid = form.get("CallSid")?.toString() ?? "";
-  const dtmfDigits    = form.get("digits")?.toString() ?? form.get("Digits")?.toString() ?? "";
-
-  // 3-minute window — tight enough to avoid stale rows
+  // 3-minute window — recent pending row
   const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
 
   const { data: pending } = await supabaseAdmin
@@ -38,15 +31,8 @@ export async function POST(request: Request) {
 
   console.log("[calls/connect] caller:", callerPhone, "| destination:", destination, "| pending row:", pending?.id ?? "none");
 
-  if (!destination) {
-    return new NextResponse(
-      `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
-      { status: 200, headers: { "Content-Type": "text/xml" } }
-    );
-  }
-
-  // Mark as in-progress and stamp the real Exotel call SID
-  if (pending) {
+  // Mark in-progress
+  if (destination && pending) {
     await supabaseAdmin
       .from("call_logs")
       .update({
@@ -59,15 +45,51 @@ export async function POST(request: Request) {
       .eq("id", pending.id);
   }
 
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Dial>
-    <Number>${destination}</Number>
-  </Dial>
-</Response>`;
+  return destination;
+}
 
-  return new NextResponse(xml, {
-    status: 200,
-    headers: { "Content-Type": "text/xml" },
-  });
+function buildResponse(destination: string) {
+  if (!destination) {
+    // No destination — empty destination array, Exotel will fall through
+    return NextResponse.json(
+      { destination: { numbers: [] } },
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
+  return NextResponse.json(
+    {
+      destination: { numbers: [destination] },
+      record: true,
+      recording_channels: "dual",
+      max_ringing_duration: 45,
+      max_conversation_duration: 3600,
+    },
+    { status: 200, headers: { "Content-Type": "application/json" } }
+  );
+}
+
+// Exotel Programmable Connect uses GET with query params
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const callerPhone   = url.searchParams.get("CallFrom") ?? url.searchParams.get("From") ?? "";
+  const exotelCallSid = url.searchParams.get("CallSid") ?? "";
+
+  // Health check (no Exotel params)
+  if (!callerPhone && !exotelCallSid) {
+    return NextResponse.json({ status: "Exotel connect webhook is live" });
+  }
+
+  const destination = await resolveDestination(url.searchParams, callerPhone, exotelCallSid);
+  return buildResponse(destination);
+}
+
+// Some Exotel configs send POST — keep it for safety
+export async function POST(request: Request) {
+  const form = await request.formData();
+  const callerPhone   = form.get("CallFrom")?.toString() ?? form.get("From")?.toString() ?? "";
+  const exotelCallSid = form.get("CallSid")?.toString() ?? "";
+
+  const destination = await resolveDestination(form, callerPhone, exotelCallSid);
+  return buildResponse(destination);
 }

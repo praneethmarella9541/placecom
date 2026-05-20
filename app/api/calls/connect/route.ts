@@ -18,7 +18,8 @@ export async function POST(request: Request) {
   const exotelCallSid = form.get("CallSid")?.toString() ?? "";
   const dtmfDigits    = form.get("digits")?.toString() ?? form.get("Digits")?.toString() ?? "";
 
-  const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  // 3-minute window — tight enough to avoid stale rows
+  const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
 
   const { data: pending } = await supabaseAdmin
     .from("call_logs")
@@ -35,14 +36,16 @@ export async function POST(request: Request) {
     destination = dtmfDigits.startsWith("+") ? dtmfDigits : `+91${dtmfDigits}`;
   }
 
+  console.log("[calls/connect] caller:", callerPhone, "| destination:", destination, "| pending row:", pending?.id ?? "none");
+
   if (!destination) {
-    console.error("[calls/connect] No destination found — pending:", pending, "dtmf:", dtmfDigits);
     return new NextResponse(
       `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
       { status: 200, headers: { "Content-Type": "text/xml" } }
     );
   }
 
+  // Mark as in-progress and stamp the real Exotel call SID
   if (pending) {
     await supabaseAdmin
       .from("call_logs")
@@ -56,7 +59,6 @@ export async function POST(request: Request) {
       .eq("id", pending.id);
   }
 
-  // Exotel requires ExoML XML — JSON is ignored and the call gets dropped
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Dial>

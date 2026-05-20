@@ -8,6 +8,60 @@ function validPhone(input: string): boolean {
   return /^\+[1-9]\d{7,14}$/.test(input.replace(/\s+/g, ""));
 }
 
+const DIAL_STATUS_MAP: Record<string, string> = {
+  completed:   "completed",
+  busy:        "busy",
+  "no-answer": "no-answer",
+  failed:      "failed",
+  canceled:    "failed",
+  cancelled:   "failed",
+};
+
+// Fetch one call's details from Exotel and persist to DB. Returns the updated row patch (or null if not terminal yet).
+async function refreshFromExotel(callSid: string): Promise<Record<string, unknown> | null> {
+  const sid      = process.env.EXOTEL_SID?.trim();
+  const apiKey   = process.env.EXOTEL_API_KEY?.trim();
+  const apiToken = process.env.EXOTEL_API_TOKEN?.trim();
+  if (!sid || !apiKey || !apiToken) return null;
+  if (!callSid || callSid.startsWith("pending_") || callSid.startsWith("exotel_")) return null;
+
+  const basic = Buffer.from(`${apiKey}:${apiToken}`).toString("base64");
+
+  try {
+    const detailsRes = await fetch(
+      `https://api.exotel.com/v1/Accounts/${sid}/Calls/${callSid}.json`,
+      { headers: { Authorization: `Basic ${basic}` } }
+    );
+    if (!detailsRes.ok) return null;
+    const json = await detailsRes.json();
+    const call = json?.Call ?? json?.TwilioResponse?.Call ?? null;
+    if (!call) return null;
+
+    const status = (call.Status ?? "").toLowerCase();
+    const mapped = DIAL_STATUS_MAP[status] ?? status;
+    // Only persist if call has finished
+    if (!["completed", "busy", "no-answer", "failed"].includes(mapped)) return null;
+
+    const updates: Record<string, unknown> = {
+      status: mapped,
+      updated_at: new Date().toISOString(),
+    };
+    if (call.Duration) updates.duration_seconds = parseInt(call.Duration, 10) || null;
+    if (call.StartTime) {
+      try { updates.started_at = new Date(call.StartTime).toISOString(); } catch {}
+    }
+    if (call.EndTime && call.EndTime !== "1970-01-01 05:30:00") {
+      try { updates.ended_at = new Date(call.EndTime).toISOString(); } catch {}
+    }
+    if (call.RecordingUrl) updates.recording_sid = call.RecordingUrl;
+
+    return updates;
+  } catch (e) {
+    console.error("[calls] refreshFromExotel failed:", (e as Error).message);
+    return null;
+  }
+}
+
 async function getUserOr401(request?: Request) {
   // Bearer token auth — used by the mobile app
   const authHeader = request?.headers.get("Authorization") ?? "";
@@ -51,7 +105,26 @@ export async function GET(request: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ logs: data || [] });
+  const rows = data ?? [];
+
+  // Auto-refresh any in-progress calls (the connect end-of-call hit may not fire reliably)
+  const stuck = rows.filter((r) => r.status === "in-progress" && r.call_sid);
+  if (stuck.length > 0) {
+    const svc = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    );
+    await Promise.all(
+      stuck.map(async (row) => {
+        const patch = await refreshFromExotel(row.call_sid);
+        if (!patch) return;
+        await svc.from("call_logs").update(patch).eq("id", row.id);
+        Object.assign(row, patch);
+      })
+    );
+  }
+
+  return NextResponse.json({ logs: rows });
 }
 
 export async function POST(request: Request) {

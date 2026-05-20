@@ -4,10 +4,15 @@ import { refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
+import type { AuthedRequest } from "@/lib/api-auth";
 
 const ACCESS_SKEW_MS = 120_000;
 
-/** Same behavior as pre–shared-mailbox code: Google access token from the Supabase session only. */
+export type MailboxTokenResult =
+  | { ok: true; accessToken: string; sessionUserId: string; mailboxOwnerId: string }
+  | { ok: false; status: number; message: string };
+
+/** Same behavior as pre–shared-mailbox code: Google access token from the cookie session only. */
 async function legacyGoogleAccessFromSession(
   supabase: ReturnType<typeof createServerSupabaseClient>,
   userId: string
@@ -27,46 +32,72 @@ async function legacyGoogleAccessFromSession(
   return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId: userId };
 }
 
-export type MailboxTokenResult =
-  | { ok: true; accessToken: string; sessionUserId: string; mailboxOwnerId: string }
-  | { ok: false; status: number; message: string };
-
 /**
  * Resolves a Google access token for Gmail/Drive/Calendar API calls.
  * - Admin: uses mailbox row for own user id (refresh token), else short-lived session token.
  * - Staff: uses mailbox row for `profiles.mailbox_owner_id` (the admin who connected Google).
+ *
+ * Accepts an optional pre-resolved auth context (for Bearer-token requests from mobile).
+ * If omitted, falls back to cookie-based auth (web).
  */
-export async function resolveMailboxGoogleAccessToken(): Promise<MailboxTokenResult> {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
+export async function resolveMailboxGoogleAccessToken(
+  authed?: AuthedRequest | null
+): Promise<MailboxTokenResult> {
+  let userId: string;
+  // queryClient is only populated when we have a cookie session (web).
+  // For Bearer requests we rely solely on the service role + DB-stored credentials.
+  let queryClient: ReturnType<typeof createServerSupabaseClient> | null = null;
 
-  if (userErr || !user?.id) {
-    return { ok: false, status: 401, message: "Not signed in" };
+  if (authed) {
+    userId = authed.user.id;
+  } else {
+    const supabase = createServerSupabaseClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+    if (userErr || !user?.id) {
+      return { ok: false, status: 401, message: "Not signed in" };
+    }
+    userId = user.id;
+    queryClient = supabase;
   }
 
-  const { data: profile, error: profileErr } = await supabase
+  let svc: ReturnType<typeof createServiceSupabase>;
+  try {
+    svc = createServiceSupabase();
+  } catch {
+    if (queryClient) return legacyGoogleAccessFromSession(queryClient, userId);
+    return { ok: false, status: 500, message: "Service role not configured." };
+  }
+
+  const profileSource = queryClient ?? svc;
+  const { data: profile, error: profileErr } = await profileSource
     .from("profiles")
     .select("role, mailbox_owner_id")
-    .eq("id", user.id)
+    .eq("id", userId)
     .maybeSingle();
 
   if (profileErr && isMailboxMigrationNotApplied(profileErr)) {
-    return legacyGoogleAccessFromSession(supabase, user.id);
+    if (queryClient) return legacyGoogleAccessFromSession(queryClient, userId);
+    return { ok: false, status: 500, message: "Mailbox migration not applied." };
   }
   if (profileErr) {
     return { ok: false, status: 500, message: profileErr.message };
   }
 
   if (!profile) {
-    return legacyGoogleAccessFromSession(supabase, user.id);
+    if (queryClient) return legacyGoogleAccessFromSession(queryClient, userId);
+    return {
+      ok: false,
+      status: 403,
+      message: "Profile not found — cannot resolve mailbox.",
+    };
   }
 
   const role = profile.role as string;
   const mailboxOwnerId =
-    role === "admin" ? user.id : (profile.mailbox_owner_id as string | null);
+    role === "admin" ? userId : (profile.mailbox_owner_id as string | null);
 
   if (!mailboxOwnerId) {
     return {
@@ -79,13 +110,6 @@ export async function resolveMailboxGoogleAccessToken(): Promise<MailboxTokenRes
     };
   }
 
-  let svc: ReturnType<typeof createServiceSupabase>;
-  try {
-    svc = createServiceSupabase();
-  } catch {
-    return legacyGoogleAccessFromSession(supabase, user.id);
-  }
-
   const { data: row, error: rowErr } = await svc
     .from("google_mailbox_credentials")
     .select("refresh_token, access_token, access_token_expires_at")
@@ -93,7 +117,8 @@ export async function resolveMailboxGoogleAccessToken(): Promise<MailboxTokenRes
     .maybeSingle();
 
   if (rowErr && isMailboxMigrationNotApplied(rowErr)) {
-    return legacyGoogleAccessFromSession(supabase, user.id);
+    if (queryClient) return legacyGoogleAccessFromSession(queryClient, userId);
+    return { ok: false, status: 500, message: "Mailbox migration not applied." };
   }
   if (rowErr) {
     return { ok: false, status: 500, message: rowErr.message };
@@ -107,7 +132,7 @@ export async function resolveMailboxGoogleAccessToken(): Promise<MailboxTokenRes
       return {
         ok: true,
         accessToken: row.access_token as string,
-        sessionUserId: user.id,
+        sessionUserId: userId,
         mailboxOwnerId,
       };
     }
@@ -131,25 +156,20 @@ export async function resolveMailboxGoogleAccessToken(): Promise<MailboxTokenRes
       return {
         ok: true,
         accessToken: refreshed.access_token,
-        sessionUserId: user.id,
+        sessionUserId: userId,
         mailboxOwnerId,
       };
     } catch (e) {
       console.error(e);
-      /** Admin self-heal: if stored refresh token is stale/revoked but this admin is
-       * currently signed in with Google, allow current session token immediately. */
-      if (mailboxOwnerId === user.id) {
+      // Admin self-heal (web only): if stored refresh token is stale but this admin is
+      // currently signed in with Google via cookie, use their session provider_token.
+      if (mailboxOwnerId === userId && queryClient) {
         const {
           data: { session },
-        } = await supabase.auth.getSession();
+        } = await queryClient.auth.getSession();
         const token = session?.provider_token;
         if (token) {
-          return {
-            ok: true,
-            accessToken: token,
-            sessionUserId: user.id,
-            mailboxOwnerId,
-          };
+          return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId };
         }
       }
       return {
@@ -161,13 +181,14 @@ export async function resolveMailboxGoogleAccessToken(): Promise<MailboxTokenRes
     }
   }
 
-  if (mailboxOwnerId === user.id) {
+  // No refresh token stored — last-resort cookie session lookup (web admin only).
+  if (mailboxOwnerId === userId && queryClient) {
     const {
       data: { session },
-    } = await supabase.auth.getSession();
+    } = await queryClient.auth.getSession();
     const token = session?.provider_token;
     if (token) {
-      return { ok: true, accessToken: token, sessionUserId: user.id, mailboxOwnerId };
+      return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId };
     }
   }
 

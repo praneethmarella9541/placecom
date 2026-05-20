@@ -3,6 +3,7 @@ import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createServiceSupabase } from "@/lib/supabase-service";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -31,7 +32,7 @@ function getAppUrl(): string {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken();
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -52,7 +53,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "to is required" }, { status: 400 });
   }
 
-  const supabase = createServerSupabaseClient();
+  // Use service role for tracking writes so this works for both cookie (web)
+  // and Bearer (mobile) requests.
+  let supabase;
+  try {
+    supabase = createServiceSupabase();
+  } catch {
+    supabase = createServerSupabaseClient();
+  }
 
   let trackRow: { id: string } | null = null;
   try {

@@ -6,10 +6,10 @@ import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: { id: string } }
 ) {
-  const auth = await requireGmailAccessToken();
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

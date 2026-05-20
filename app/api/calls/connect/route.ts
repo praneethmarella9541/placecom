@@ -192,10 +192,17 @@ async function resolveDestination(
   return { destination, isIncoming: false };
 }
 
+// Exotel App Bazaar "Fetch Number" sometimes prefers the national format
+// (e.g. 08056101540) over E.164 (+918056101540). Convert E.164 → national for IN numbers.
+function toExotelNumber(e164: string): string {
+  if (e164.startsWith("+91") && e164.length === 13) return "0" + e164.slice(3);
+  return e164;
+}
+
 function buildResponse(destination: string, asPlainText: boolean) {
   // App Bazaar "Fetch Number from URL" expects a plain-text body containing just the number.
   if (asPlainText) {
-    return new NextResponse(destination, {
+    return new NextResponse(toExotelNumber(destination), {
       status: 200,
       headers: { "Content-Type": "text/plain; charset=utf-8" },
     });

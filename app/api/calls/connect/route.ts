@@ -16,10 +16,9 @@ export async function POST(request: Request) {
   const form = await request.formData();
   const callerPhone   = form.get("From")?.toString() ?? "";
   const exotelCallSid = form.get("CallSid")?.toString() ?? "";
-  // Exotel sends collected DTMF digits as "digits" when using IVR collect input
   const dtmfDigits    = form.get("digits")?.toString() ?? form.get("Digits")?.toString() ?? "";
 
-  const since = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10-min window
+  const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
 
   const { data: pending } = await supabaseAdmin
     .from("call_logs")
@@ -30,20 +29,20 @@ export async function POST(request: Request) {
     .limit(1)
     .maybeSingle();
 
-  // Use pre-registered destination from DB, or fall back to DTMF digits
   let destination = pending?.to_number ?? "";
 
   if (!destination && dtmfDigits) {
-    // Prepend +91 if user entered a 10-digit Indian number without country code
     destination = dtmfDigits.startsWith("+") ? dtmfDigits : `+91${dtmfDigits}`;
   }
 
   if (!destination) {
     console.error("[calls/connect] No destination found — pending:", pending, "dtmf:", dtmfDigits);
-    return NextResponse.json({ error: "No destination found" }, { status: 404 });
+    return new NextResponse(
+      `<?xml version="1.0" encoding="UTF-8"?><Response></Response>`,
+      { status: 200, headers: { "Content-Type": "text/xml" } }
+    );
   }
 
-  // Update the call log
   if (pending) {
     await supabaseAdmin
       .from("call_logs")
@@ -57,6 +56,16 @@ export async function POST(request: Request) {
       .eq("id", pending.id);
   }
 
-  // Return destination — Exotel accepts { "number": "..." } or { "to": "..." }
-  return NextResponse.json({ number: destination, to: destination });
+  // Exotel requires ExoML XML — JSON is ignored and the call gets dropped
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial>
+    <Number>${destination}</Number>
+  </Dial>
+</Response>`;
+
+  return new NextResponse(xml, {
+    status: 200,
+    headers: { "Content-Type": "text/xml" },
+  });
 }

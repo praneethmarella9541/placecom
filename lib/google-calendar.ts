@@ -72,8 +72,9 @@ export async function listPrimaryCalendarEvents(
   return body.items || [];
 }
 
-export async function createPrimaryCalendarEvent(
+export async function createCalendarEvent(
   accessToken: string,
+  calendarId: string,
   input: {
     recruiterEmail: string;
     companyName: string;
@@ -82,8 +83,25 @@ export async function createPrimaryCalendarEvent(
     startDateTime: string;
     endDateTime: string;
     timeZone?: string;
+    /** Extra invitees (e.g. admin mailbox) when Meet is hosted on a dedicated calendar. */
+    extraAttendeeEmails?: string[];
   }
 ): Promise<CalendarEventItem> {
+  const seen = new Set<string>();
+  const attendees: { email: string }[] = [];
+  const add = (email: string) => {
+    const e = email.trim().toLowerCase();
+    if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || seen.has(e)) return;
+    seen.add(e);
+    attendees.push({ email: e });
+  };
+
+  add(input.recruiterEmail);
+  add("fred@fireflies.ai");
+  for (const email of input.extraAttendeeEmails ?? []) {
+    add(email);
+  }
+
   const payload = {
     summary: input.title?.trim() || `Placement Meeting - ${input.companyName}`,
     description: input.notes?.trim() || `Placement office recruiter meeting with ${input.companyName}.`,
@@ -95,10 +113,7 @@ export async function createPrimaryCalendarEvent(
       dateTime: input.endDateTime,
       timeZone: input.timeZone || "Asia/Kolkata",
     },
-    attendees: [
-      { email: input.recruiterEmail.trim() },
-      { email: "fred@fireflies.ai" }
-    ],
+    attendees,
     guestsCanInviteOthers: false,
     conferenceData: {
       createRequest: {
@@ -110,7 +125,8 @@ export async function createPrimaryCalendarEvent(
 
   let res: Response;
   try {
-    res = await fetch(`${CALENDAR_API}/calendars/primary/events?conferenceDataVersion=1`, {
+    const cal = encodeURIComponent(calendarId.trim() || "primary");
+    res = await fetch(`${CALENDAR_API}/calendars/${cal}/events?conferenceDataVersion=1`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -134,4 +150,12 @@ export async function createPrimaryCalendarEvent(
   }
 
   return (await res.json()) as CalendarEventItem;
+}
+
+/** Creates an event on the signed-in user's primary calendar. */
+export async function createPrimaryCalendarEvent(
+  accessToken: string,
+  input: Parameters<typeof createCalendarEvent>[2]
+): Promise<CalendarEventItem> {
+  return createCalendarEvent(accessToken, "primary", input);
 }

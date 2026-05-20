@@ -2,8 +2,14 @@ import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   CALENDAR_INSUFFICIENT_SCOPE,
-  createPrimaryCalendarEvent,
+  createCalendarEvent,
 } from "@/lib/google-calendar";
+import {
+  getMeetAdminInviteEmail,
+  getMeetOrganizerAccessToken,
+  getMeetOrganizerCalendarId,
+  hasMeetOrganizerRefreshToken,
+} from "@/lib/google-meet-organizer";
 
 export const runtime = "nodejs";
 
@@ -52,26 +58,37 @@ export async function POST(request: Request) {
     );
   }
 
+  const meetOrganizerEmail = getMeetOrganizerCalendarId();
+  const adminInviteEmail = getMeetAdminInviteEmail();
+
   try {
-    const event = await createPrimaryCalendarEvent(auth.accessToken, {
-      recruiterEmail,
-      companyName,
-      startDateTime,
-      endDateTime,
-      notes: body?.notes,
-      title: body?.title,
-    });
+    const useOrganizerToken = hasMeetOrganizerRefreshToken();
+    const calendarAccessToken = useOrganizerToken
+      ? await getMeetOrganizerAccessToken()
+      : auth.accessToken;
+    const calendarId = useOrganizerToken ? "primary" : meetOrganizerEmail;
+
+    const event = await createCalendarEvent(
+      calendarAccessToken,
+      calendarId,
+      {
+        recruiterEmail,
+        companyName,
+        startDateTime,
+        endDateTime,
+        notes: body?.notes,
+        title: body?.title,
+        extraAttendeeEmails: [adminInviteEmail],
+      }
+    );
 
     const hangoutLink = event.hangoutLink;
     if (hangoutLink) {
       try {
-        // The bot fred@fireflies.ai is now automatically invited via Google Calendar attendees array
-        // so we just need to register it in our DB for tracking
-        
         const { createServerSupabaseClient } = await import("@/lib/supabase-server");
         const supabase = createServerSupabaseClient();
         const { data: { user } } = await supabase.auth.getUser();
-        
+
         if (user) {
           await supabase.from("meeting_recordings").insert({
             user_id: user.id,
@@ -80,11 +97,18 @@ export async function POST(request: Request) {
           });
         }
       } catch (err) {
-        console.error("Failed to invite Fireflies bot:", err);
+        console.error("Failed to save meeting recording:", err);
       }
     }
 
-    return NextResponse.json({ event }, { status: 201 });
+    return NextResponse.json(
+      {
+        event,
+        meetOrganizerEmail,
+        adminInviteEmail,
+      },
+      { status: 201 }
+    );
   } catch (e) {
     const err = e as Error & { code?: string };
     if (err.code === "UNAUTHORIZED") {
@@ -103,8 +127,17 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
+    const msg = err.message || "Failed to create calendar event";
+    const needsShare =
+      !hasMeetOrganizerRefreshToken() &&
+      /notFound|forbidden|404|403/i.test(msg);
     return NextResponse.json(
-      { error: err.message || "Failed to create calendar event" },
+      {
+        error: msg,
+        hint: needsShare
+          ? `${meetOrganizerEmail} must share their Google Calendar with ${adminInviteEmail} (Make changes to events), or run npm run auth:meet-organizer signed in as ${meetOrganizerEmail}.`
+          : undefined,
+      },
       { status: 500 }
     );
   }

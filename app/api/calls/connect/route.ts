@@ -192,7 +192,7 @@ async function resolveDestination(
   return { destination, isIncoming: false };
 }
 
-function buildResponse(destination: string, _isIncoming: boolean) {
+function buildResponse(destination: string) {
   if (!destination) {
     return NextResponse.json(
       { destination: { numbers: [] } },
@@ -236,8 +236,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const { destination, isIncoming } = await resolveDestination(url.searchParams, callerPhone, exotelCallSid, direction, calledNumber);
-  return buildResponse(destination, isIncoming);
+  const { destination } = await resolveDestination(url.searchParams, callerPhone, exotelCallSid, direction, calledNumber);
+  return buildResponse(destination);
 }
 
 // Some Exotel configs send POST
@@ -266,6 +266,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const { destination, isIncoming } = await resolveDestination(params, callerPhone, exotelCallSid, direction, calledNumber);
-  return buildResponse(destination, isIncoming);
+  const { destination } = await resolveDestination(params, callerPhone, exotelCallSid, direction, calledNumber);
+  return buildResponse(destination);
 }

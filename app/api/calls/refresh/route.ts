@@ -13,7 +13,15 @@ const DIAL_STATUS_MAP: Record<string, string> = {
   cancelled:   "failed",
 };
 
-async function fetchExotelCall(callSid: string) {
+type ExotelCall = {
+  Status?: string;
+  Duration?: string | number;
+  StartTime?: string;
+  EndTime?: string;
+  RecordingUrl?: string;
+};
+
+async function fetchExotelCall(callSid: string): Promise<ExotelCall | null> {
   const sid      = process.env.EXOTEL_SID?.trim();
   const apiKey   = process.env.EXOTEL_API_KEY?.trim();
   const apiToken = process.env.EXOTEL_API_TOKEN?.trim();
@@ -54,11 +62,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, reason: "No Exotel CallSid yet" });
   }
 
-  let call: any;
+  let call: ExotelCall | null;
   try {
     call = await fetchExotelCall(row.call_sid);
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 502 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to fetch call";
+    return NextResponse.json({ error: msg }, { status: 502 });
   }
   if (!call) return NextResponse.json({ ok: false, reason: "Call not found in Exotel" });
 
@@ -69,7 +78,7 @@ export async function POST(request: Request) {
     status: mapped,
     updated_at: new Date().toISOString(),
   };
-  if (call.Duration) updates.duration_seconds = parseInt(call.Duration, 10) || null;
+  if (call.Duration != null) updates.duration_seconds = parseInt(String(call.Duration), 10) || null;
   if (call.StartTime) {
     try { updates.started_at = new Date(call.StartTime).toISOString(); } catch {}
   }

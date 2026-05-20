@@ -61,8 +61,9 @@ export async function POST(request: Request) {
   let audioBuf: Buffer;
   try {
     audioBuf = await fetchExotelRecording(row.recording_sid);
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? "Failed to fetch recording" }, { status: 502 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to fetch recording";
+    return NextResponse.json({ error: msg }, { status: 502 });
   }
 
   const openai = new OpenAI({ apiKey: openaiKey });
@@ -75,14 +76,17 @@ export async function POST(request: Request) {
       model: "whisper-1",
       response_format: "verbose_json",
     });
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message ?? "Transcription failed" }, { status: 500 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Transcription failed";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 
   const plain = transcription.text?.trim() ?? "";
   if (!plain) return NextResponse.json({ error: "Transcription produced no text" }, { status: 500 });
 
-  const segments = (transcription as any).segments?.map((s: any) => ({
+  type WhisperSegment = { text?: string; start?: number; end?: number };
+  const whisperSegments = (transcription as unknown as { segments?: WhisperSegment[] }).segments ?? [];
+  const segments = whisperSegments.map((s) => ({
     speaker: "Speaker",
     text: s.text?.trim() ?? "",
     start: s.start,

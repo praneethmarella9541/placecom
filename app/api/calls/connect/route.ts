@@ -36,7 +36,7 @@ async function fetchRecordingUrl(callSid: string): Promise<string | null> {
     const json = await res.json();
     // Response: { TwilioResponse: { RecordingList: { Recording: [...] | {} } } }
     const list = json?.TwilioResponse?.RecordingList?.Recording;
-    const recordings: any[] = Array.isArray(list) ? list : list ? [list] : [];
+    const recordings: Array<Record<string, unknown>> = Array.isArray(list) ? list : list ? [list] : [];
     if (recordings.length === 0) return null;
     // Return the first recording's URI (an S3 URL or API path)
     return recordings[0]?.Uri ?? recordings[0]?.RecordingUrl ?? null;

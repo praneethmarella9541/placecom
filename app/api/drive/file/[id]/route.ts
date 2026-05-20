@@ -26,7 +26,7 @@ export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
-  const auth = await requireGmailAccessToken();
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

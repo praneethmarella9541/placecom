@@ -5,7 +5,7 @@ import { listDriveFilesPage } from "@/lib/drive";
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  const auth = await requireGmailAccessToken();
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

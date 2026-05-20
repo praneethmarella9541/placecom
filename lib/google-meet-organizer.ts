@@ -10,6 +10,8 @@ export const DEFAULT_MEET_ORGANIZER_EMAIL = "g24072@astra.xlri.ac.in";
 export const DEFAULT_MEET_ADMIN_INVITE_EMAIL = "chetangalla248@gmail.com";
 
 const ACCESS_SKEW_MS = 120_000;
+const SESSION_ACCESS_MS = 50 * 60 * 1000;
+
 let cachedOrganizerAccess: { token: string; expiresAt: number } | null = null;
 
 export function getMeetOrganizerCalendarId(): string {
@@ -51,6 +53,32 @@ async function loadOrganizerCredentialsFromDb(): Promise<OrganizerCredentialRow 
   }
 }
 
+async function persistOrganizerAccessToken(
+  accessToken: string,
+  expiresInSeconds: number
+): Promise<void> {
+  try {
+    const svc = createServiceSupabase();
+    await svc
+      .from("google_mailbox_credentials")
+      .update({
+        access_token: accessToken,
+        access_token_expires_at: new Date(
+          Date.now() + expiresInSeconds * 1000
+        ).toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .ilike("gmail_address", getMeetOrganizerCalendarId());
+  } catch {
+    /* best-effort */
+  }
+}
+
+function cacheToken(token: string, expiresAtMs: number): string {
+  cachedOrganizerAccess = { token, expiresAt: expiresAtMs };
+  return token;
+}
+
 /** True when env refresh token exists or organizer signed in via app Google once. */
 export async function canUseMeetOrganizerToken(): Promise<boolean> {
   if (process.env.GOOGLE_MEET_ORGANIZER_REFRESH_TOKEN?.trim()) return true;
@@ -58,10 +86,24 @@ export async function canUseMeetOrganizerToken(): Promise<boolean> {
   return Boolean(row?.refresh_token || row?.access_token);
 }
 
-export async function getMeetOrganizerAccessToken(): Promise<string> {
+export type MeetOrganizerTokenOptions = {
+  /** Live Google access token from Supabase session (use when organizer is signed in). */
+  sessionProviderToken?: string | null;
+};
+
+export async function getMeetOrganizerAccessToken(
+  opts: MeetOrganizerTokenOptions = {}
+): Promise<string> {
   const now = Date.now();
   if (cachedOrganizerAccess && cachedOrganizerAccess.expiresAt > now + ACCESS_SKEW_MS) {
     return cachedOrganizerAccess.token;
+  }
+
+  const sessionToken = opts.sessionProviderToken?.trim();
+  if (sessionToken) {
+    cacheToken(sessionToken, now + SESSION_ACCESS_MS);
+    void persistOrganizerAccessToken(sessionToken, SESSION_ACCESS_MS / 1000);
+    return sessionToken;
   }
 
   const envRefresh = process.env.GOOGLE_MEET_ORGANIZER_REFRESH_TOKEN?.trim();
@@ -70,22 +112,30 @@ export async function getMeetOrganizerAccessToken(): Promise<string> {
   if (!envRefresh && row?.access_token && row.access_token_expires_at) {
     const exp = new Date(row.access_token_expires_at).getTime();
     if (!Number.isNaN(exp) && exp > now + ACCESS_SKEW_MS) {
-      return row.access_token;
+      return cacheToken(row.access_token, exp);
     }
   }
 
   const refresh = envRefresh || (row?.refresh_token as string | undefined);
   if (!refresh) {
     throw new Error(
-      `Meet organizer not connected. Sign in to this app with Google as ${getMeetOrganizerCalendarId()} once (no Cloud Console needed), then schedule again.`
+      `Meet organizer not connected. Sign in with Google as ${getMeetOrganizerCalendarId()} on this app, then try again.`
     );
   }
 
-  const refreshed = await refreshGoogleAccessToken(refresh);
-  const expiresIn = refreshed.expires_in ?? 3600;
-  cachedOrganizerAccess = {
-    token: refreshed.access_token,
-    expiresAt: now + expiresIn * 1000,
-  };
-  return cachedOrganizerAccess.token;
+  try {
+    const refreshed = await refreshGoogleAccessToken(refresh);
+    const expiresIn = refreshed.expires_in ?? 3600;
+    cacheToken(refreshed.access_token, now + expiresIn * 1000);
+    void persistOrganizerAccessToken(refreshed.access_token, expiresIn);
+    return refreshed.access_token;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/GOOGLE_OAUTH_CLIENT_SECRET/i.test(msg)) {
+      throw new Error(
+        `Meet organizer session expired. Sign in with Google as ${getMeetOrganizerCalendarId()} again (while logged into this app), then schedule immediately. Your friend can add GOOGLE_OAUTH_CLIENT_SECRET later for long-term refresh.`
+      );
+    }
+    throw e;
+  }
 }

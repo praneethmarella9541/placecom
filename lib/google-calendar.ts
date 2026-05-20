@@ -36,11 +36,13 @@ async function parseGoogleErrorBody(res: Response): Promise<string> {
   }
 }
 
-export async function listPrimaryCalendarEvents(
+export async function listCalendarEvents(
   accessToken: string,
+  calendarId: string,
   opts: { timeMin?: string; timeMax?: string; maxResults?: number } = {}
 ): Promise<CalendarEventItem[]> {
-  const u = new URL(`${CALENDAR_API}/calendars/primary/events`);
+  const cal = encodeURIComponent(calendarId.trim() || "primary");
+  const u = new URL(`${CALENDAR_API}/calendars/${cal}/events`);
   u.searchParams.set("singleEvents", "true");
   u.searchParams.set("orderBy", "startTime");
   u.searchParams.set("maxResults", String(opts.maxResults ?? 100));
@@ -70,6 +72,13 @@ export async function listPrimaryCalendarEvents(
 
   const body = (await res.json()) as { items?: CalendarEventItem[] };
   return body.items || [];
+}
+
+export async function listPrimaryCalendarEvents(
+  accessToken: string,
+  opts: { timeMin?: string; timeMax?: string; maxResults?: number } = {}
+): Promise<CalendarEventItem[]> {
+  return listCalendarEvents(accessToken, "primary", opts);
 }
 
 export async function createCalendarEvent(

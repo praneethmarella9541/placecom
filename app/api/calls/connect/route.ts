@@ -57,9 +57,12 @@ function buildResponse(destination: string) {
     );
   }
 
+  const virtualNumber = process.env.EXOTEL_VIRTUAL_NUMBER ?? "+919513886363";
+
   return NextResponse.json(
     {
       destination: { numbers: [destination] },
+      outgoing_phone_number: virtualNumber,
       record: true,
       recording_channels: "dual",
       max_ringing_duration: 45,

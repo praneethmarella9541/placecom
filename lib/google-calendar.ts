@@ -106,7 +106,6 @@ export async function createCalendarEvent(
   };
 
   add(input.recruiterEmail);
-  add("fred@fireflies.ai");
   for (const email of input.extraAttendeeEmails ?? []) {
     add(email);
   }

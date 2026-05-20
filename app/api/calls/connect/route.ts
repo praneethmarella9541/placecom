@@ -105,7 +105,7 @@ async function resolveDestination(
   exotelCallSid: string,
   direction: string,
   calledNumber: string
-) {
+): Promise<{ destination: string; isIncoming: boolean }> {
   const dtmfDigits = params.get("digits")?.toString() ?? params.get("Digits")?.toString() ?? "";
   const virtualNumber = process.env.EXOTEL_VIRTUAL_NUMBER ?? "+919513886363";
   const incomingAgent = process.env.INCOMING_AGENT_NUMBER?.trim() ?? "";
@@ -128,7 +128,7 @@ async function resolveDestination(
   if (isIncoming) {
     if (!incomingAgent) {
       console.error("[calls/connect] INCOMING but INCOMING_AGENT_NUMBER not set");
-      return "";
+      return { destination: "", isIncoming: true };
     }
     const from = normalizePhone(callerPhone);
     // Log the incoming call (idempotent on call_sid)
@@ -153,7 +153,7 @@ async function resolveDestination(
       }
     }
     console.log("[calls/connect] INCOMING | from:", from, "-> agent:", incomingAgent, "| sid:", exotelCallSid);
-    return incomingAgent;
+    return { destination: incomingAgent, isIncoming: true };
   }
 
   // Outbound flow: caller is the agent, look up pending row created by the mobile app
@@ -189,10 +189,18 @@ async function resolveDestination(
       .eq("id", pending.id);
   }
 
-  return destination;
+  return { destination, isIncoming: false };
 }
 
-function buildResponse(destination: string) {
+function buildResponse(destination: string, asPlainText: boolean) {
+  // App Bazaar "Fetch Number from URL" expects a plain-text body containing just the number.
+  if (asPlainText) {
+    return new NextResponse(destination, {
+      status: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+
   if (!destination) {
     return NextResponse.json(
       { destination: { numbers: [] } },
@@ -235,8 +243,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const destination = await resolveDestination(url.searchParams, callerPhone, exotelCallSid, direction, calledNumber);
-  return buildResponse(destination);
+  const { destination, isIncoming } = await resolveDestination(url.searchParams, callerPhone, exotelCallSid, direction, calledNumber);
+  return buildResponse(destination, isIncoming);
 }
 
 // Some Exotel configs send POST
@@ -265,6 +273,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const destination = await resolveDestination(params, callerPhone, exotelCallSid, direction, calledNumber);
-  return buildResponse(destination);
+  const { destination, isIncoming } = await resolveDestination(params, callerPhone, exotelCallSid, direction, calledNumber);
+  return buildResponse(destination, isIncoming);
 }

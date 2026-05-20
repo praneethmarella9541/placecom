@@ -32,31 +32,32 @@ export async function POST(request: Request) {
   const startTime    = params.get("StartTime") ?? params.get("start_time") ?? "";
   const endTime      = params.get("EndTime") ?? params.get("end_time") ?? "";
 
-  console.log("[calls/status] callSid:", callSid, "| status:", status, "| recordingUrl:", recordingUrl);
+  // Exotel also sends PreSignedRecordingUrl (5-min presigned S3 URL, available since Oct 2024)
+  // We prefer the base RecordingUrl (permanent S3 path) and fetch it ourselves with API credentials.
+  // RecordingUrl format: https://s3-ap-southeast-1.amazonaws.com/exotelrecordings/{sid}/{CallSid}.mp3
+  const preSignedUrl = params.get("PreSignedRecordingUrl") ?? "";
+
+  console.log("[calls/status] callSid:", callSid, "| status:", status, "| recordingUrl:", recordingUrl, "| preSignedUrl:", preSignedUrl ? "present" : "none");
 
   if (!callSid) {
     return NextResponse.json({ error: "Missing CallSid" }, { status: 400 });
   }
 
-  // Map Exotel statuses to our internal values
   const statusMap: Record<string, string> = {
-    completed:    "completed",
-    "no-answer":  "no-answer",
-    "no answer":  "no-answer",
-    busy:         "busy",
-    failed:       "failed",
-    canceled:     "failed",
-    cancelled:    "failed",
+    completed:   "completed",
+    "no-answer": "no-answer",
+    "no answer": "no-answer",
+    busy:        "busy",
+    failed:      "failed",
+    canceled:    "failed",
+    cancelled:   "failed",
   };
   const mappedStatus = statusMap[status.toLowerCase()] ?? status.toLowerCase();
 
-  // Extract recording SID from the recording URL
-  // Exotel URL: https://api.exotel.com/v1/Accounts/{sid}/Recordings/{recordingSid}
-  let recordingSid: string | null = null;
-  if (recordingUrl) {
-    const match = recordingUrl.match(/Recordings\/([^/?#.]+)/i);
-    if (match) recordingSid = match[1];
-  }
+  // Store the S3 recording URL directly in recording_sid column.
+  // The recording proxy fetches it using Exotel API credentials.
+  // Fall back to presigned URL if base URL is missing (presigned expires in 5 min, but better than nothing).
+  const storedRecordingUrl = recordingUrl || preSignedUrl || null;
 
   const updates: Record<string, unknown> = {
     status: mappedStatus,
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
 
   if (duration) updates.duration_seconds = parseInt(duration, 10) || null;
   if (recordingDuration) updates.recording_duration_seconds = parseInt(recordingDuration, 10) || null;
-  if (recordingSid) updates.recording_sid = recordingSid;
+  if (storedRecordingUrl) updates.recording_sid = storedRecordingUrl;
   if (startTime) updates.started_at = new Date(startTime).toISOString();
   if (endTime) updates.ended_at = new Date(endTime).toISOString();
 

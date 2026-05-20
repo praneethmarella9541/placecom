@@ -6,15 +6,14 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const maxDuration = 180;
 
-async function fetchExotelRecording(recordingSid: string): Promise<Buffer> {
-  const sid      = process.env.EXOTEL_SID?.trim();
+async function fetchExotelRecording(s3Url: string): Promise<Buffer> {
   const apiKey   = process.env.EXOTEL_API_KEY?.trim();
   const apiToken = process.env.EXOTEL_API_TOKEN?.trim();
-  if (!sid || !apiKey || !apiToken) throw new Error("Exotel credentials not configured");
+  if (!apiKey || !apiToken) throw new Error("Exotel credentials not configured");
 
-  const url = `https://api.exotel.com/v1/Accounts/${sid}/Recordings/${recordingSid}.mp3`;
+  // recording_sid stores the full S3 URL; fetch with Basic auth
   const basic = Buffer.from(`${apiKey}:${apiToken}`).toString("base64");
-  const res = await fetch(url, { headers: { Authorization: `Basic ${basic}` } });
+  const res = await fetch(s3Url, { headers: { Authorization: `Basic ${basic}` } });
   if (!res.ok) throw new Error(`Could not fetch recording (${res.status})`);
   return Buffer.from(await res.arrayBuffer());
 }

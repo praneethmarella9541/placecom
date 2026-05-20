@@ -18,35 +18,33 @@ export async function GET(
     return NextResponse.json({ error: "Missing recording ID" }, { status: 400 });
   }
 
-  const sid      = process.env.EXOTEL_SID?.trim();
   const apiKey   = process.env.EXOTEL_API_KEY?.trim();
   const apiToken = process.env.EXOTEL_API_TOKEN?.trim();
 
-  if (!sid || !apiKey || !apiToken) {
+  if (!apiKey || !apiToken) {
     return NextResponse.json({ error: "Exotel credentials not configured" }, { status: 500 });
   }
 
-  // Verify this recording belongs to the requesting user
+  // recording_sid stores the full S3 URL — look up by matching it in the DB
   const svc = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
   const { data: row } = await svc
     .from("call_logs")
-    .select("id")
+    .select("id, recording_sid")
     .eq("user_id", authed.user.id)
     .eq("recording_sid", recordingSid)
     .maybeSingle();
 
-  if (!row) {
+  if (!row?.recording_sid) {
     return NextResponse.json({ error: "Recording not found" }, { status: 404 });
   }
 
-  // Exotel recording URL: GET with Basic apiKey:apiToken auth
-  const recordingUrl = `https://api.exotel.com/v1/Accounts/${sid}/Recordings/${recordingSid}.mp3`;
+  // Fetch from S3 using Exotel Basic auth
   const basic = Buffer.from(`${apiKey}:${apiToken}`).toString("base64");
 
-  const upstream = await fetch(recordingUrl, {
+  const upstream = await fetch(row.recording_sid, {
     headers: { Authorization: `Basic ${basic}` },
   });
 

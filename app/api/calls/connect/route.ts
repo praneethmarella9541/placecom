@@ -90,10 +90,64 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
     .eq("call_sid", callSid);
 }
 
-async function resolveDestination(params: URLSearchParams | FormData, callerPhone: string, exotelCallSid: string) {
-  const dtmfDigits = params.get("digits")?.toString() ?? params.get("Digits")?.toString() ?? "";
+function normalizePhone(raw: string): string {
+  const cleaned = raw.replace(/[\s\-().]/g, "");
+  if (cleaned.startsWith("+")) return cleaned;
+  if (/^\d{10}$/.test(cleaned)) return `+91${cleaned}`;
+  if (/^0\d{10}$/.test(cleaned)) return `+91${cleaned.slice(1)}`;
+  if (/^\d{11,14}$/.test(cleaned)) return `+${cleaned}`;
+  return cleaned;
+}
 
-  // 3-minute window — recent pending row
+async function resolveDestination(
+  params: URLSearchParams | FormData,
+  callerPhone: string,
+  exotelCallSid: string,
+  direction: string,
+  calledNumber: string
+) {
+  const dtmfDigits = params.get("digits")?.toString() ?? params.get("Digits")?.toString() ?? "";
+  const virtualNumber = process.env.EXOTEL_VIRTUAL_NUMBER ?? "+919513886363";
+  const incomingAgent = process.env.INCOMING_AGENT_NUMBER?.trim() ?? "";
+  const defaultUserId = process.env.INCOMING_DEFAULT_USER_ID?.trim() ?? "";
+
+  // Detect incoming: Exotel says "incoming", OR the CalledNumber/To equals our virtual number
+  const isIncoming =
+    direction.toLowerCase() === "incoming" ||
+    (calledNumber && normalizePhone(calledNumber) === normalizePhone(virtualNumber));
+
+  if (isIncoming) {
+    if (!incomingAgent) {
+      console.error("[calls/connect] INCOMING but INCOMING_AGENT_NUMBER not set");
+      return "";
+    }
+    const from = normalizePhone(callerPhone);
+    // Log the incoming call (idempotent on call_sid)
+    if (defaultUserId && exotelCallSid) {
+      const { data: existing } = await supabaseAdmin
+        .from("call_logs")
+        .select("id")
+        .eq("call_sid", exotelCallSid)
+        .maybeSingle();
+      if (!existing) {
+        await supabaseAdmin.from("call_logs").insert({
+          user_id: defaultUserId,
+          call_sid: exotelCallSid,
+          to_number: incomingAgent,
+          from_number: from,
+          agent_number: incomingAgent,
+          status: "in-progress",
+          started_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+    console.log("[calls/connect] INCOMING | from:", from, "-> agent:", incomingAgent, "| sid:", exotelCallSid);
+    return incomingAgent;
+  }
+
+  // Outbound flow: caller is the agent, look up pending row created by the mobile app
   const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
 
   const { data: pending } = await supabaseAdmin
@@ -111,9 +165,8 @@ async function resolveDestination(params: URLSearchParams | FormData, callerPhon
     destination = dtmfDigits.startsWith("+") ? dtmfDigits : `+91${dtmfDigits}`;
   }
 
-  console.log("[calls/connect] caller:", callerPhone, "| destination:", destination, "| pending row:", pending?.id ?? "none");
+  console.log("[calls/connect] OUTBOUND | caller:", callerPhone, "| destination:", destination, "| pending row:", pending?.id ?? "none");
 
-  // Mark in-progress
   if (destination && pending) {
     await supabaseAdmin
       .from("call_logs")
@@ -159,6 +212,8 @@ export async function GET(request: Request) {
   const callerPhone   = url.searchParams.get("CallFrom") ?? url.searchParams.get("From") ?? "";
   const exotelCallSid = url.searchParams.get("CallSid") ?? "";
   const callType      = url.searchParams.get("CallType") ?? "";
+  const direction     = url.searchParams.get("Direction") ?? "";
+  const calledNumber  = url.searchParams.get("CallTo") ?? url.searchParams.get("To") ?? "";
 
   // Health check (no Exotel params)
   if (!callerPhone && !exotelCallSid) {
@@ -171,7 +226,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const destination = await resolveDestination(url.searchParams, callerPhone, exotelCallSid);
+  const destination = await resolveDestination(url.searchParams, callerPhone, exotelCallSid, direction, calledNumber);
   return buildResponse(destination);
 }
 
@@ -193,12 +248,14 @@ export async function POST(request: Request) {
   const callerPhone   = params.get("CallFrom") ?? params.get("From") ?? "";
   const exotelCallSid = params.get("CallSid") ?? "";
   const callType      = params.get("CallType") ?? "";
+  const direction     = params.get("Direction") ?? "";
+  const calledNumber  = params.get("CallTo") ?? params.get("To") ?? "";
 
   if (exotelCallSid && TERMINAL_CALL_TYPES.has(callType)) {
     await handleEndOfCall(params, exotelCallSid);
     return NextResponse.json({ ok: true });
   }
 
-  const destination = await resolveDestination(params, callerPhone, exotelCallSid);
+  const destination = await resolveDestination(params, callerPhone, exotelCallSid, direction, calledNumber);
   return buildResponse(destination);
 }

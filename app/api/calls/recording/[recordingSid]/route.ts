@@ -41,10 +41,15 @@ export async function GET(
     return NextResponse.json({ error: "Recording not found" }, { status: 404 });
   }
 
-  // Fetch from S3 using Exotel Basic auth
   const basic = Buffer.from(`${apiKey}:${apiToken}`).toString("base64");
 
-  const upstream = await fetch(row.recording_sid, {
+  // Stored value may be a full URL (S3 or api.exotel.com) or a bare API path
+  let fetchUrl = row.recording_sid;
+  if (!fetchUrl.startsWith("http")) {
+    fetchUrl = `https://api.exotel.com${fetchUrl.startsWith("/") ? "" : "/"}${fetchUrl}`;
+  }
+
+  const upstream = await fetch(fetchUrl, {
     headers: { Authorization: `Basic ${basic}` },
   });
 

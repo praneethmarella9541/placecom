@@ -5,10 +5,10 @@ import {
   createCalendarEvent,
 } from "@/lib/google-calendar";
 import {
+  canUseMeetOrganizerToken,
   getMeetAdminInviteEmail,
   getMeetOrganizerAccessToken,
   getMeetOrganizerCalendarId,
-  hasMeetOrganizerRefreshToken,
 } from "@/lib/google-meet-organizer";
 
 export const runtime = "nodejs";
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
   const adminInviteEmail = getMeetAdminInviteEmail();
 
   try {
-    const useOrganizerToken = hasMeetOrganizerRefreshToken();
+    const useOrganizerToken = await canUseMeetOrganizerToken();
     const calendarAccessToken = useOrganizerToken
       ? await getMeetOrganizerAccessToken()
       : auth.accessToken;
@@ -129,7 +129,7 @@ export async function POST(request: Request) {
     }
     const msg = err.message || "Failed to create calendar event";
     const needsShare =
-      !hasMeetOrganizerRefreshToken() &&
+      !(await canUseMeetOrganizerToken()) &&
       /notFound|forbidden|404|403/i.test(msg);
     return NextResponse.json(
       {

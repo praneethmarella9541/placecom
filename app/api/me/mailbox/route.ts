@@ -4,17 +4,21 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
+import { getAuthedRequest } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request: Request) {
+  // Try Bearer-token auth first (mobile), then fall back to cookie auth (web).
+  const authed = await getAuthedRequest(request);
+  let user = authed?.user ?? null;
   const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!user) {
+    const { data, error: userErr } = await supabase.auth.getUser();
+    if (userErr || !data.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    user = data.user;
   }
 
   let { data: profile, error: profileErr } = await supabase

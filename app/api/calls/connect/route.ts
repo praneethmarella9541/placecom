@@ -8,9 +8,13 @@ const supabaseAdmin = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Terminal CallType values Exotel sends on end-of-call hit
+// CallType values Exotel sends AFTER the call has ended.
+// IMPORTANT: 'call-attempt' is sent BEFORE the Connect applet's dial step
+// (it means "IVR only so far, no connect applet"), so it's NOT terminal —
+// treating it as terminal makes us return ok:true instead of the destination,
+// and Exotel then has nothing to dial.
 const TERMINAL_CALL_TYPES = new Set([
-  "completed", "incomplete", "client-hangup", "voicemail", "call-attempt",
+  "completed", "incomplete", "client-hangup", "voicemail",
 ]);
 
 const DIAL_STATUS_MAP: Record<string, string> = {

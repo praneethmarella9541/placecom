@@ -20,7 +20,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ formId: string }> }
 ) {
-  const auth = await requireGmailAccessToken();
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

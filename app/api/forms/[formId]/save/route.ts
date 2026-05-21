@@ -63,15 +63,23 @@ export async function POST(
     if (writeControl) payload.writeControl = writeControl;
 
     const updated = await batchUpdateGoogleForm(auth.accessToken, id, payload);
-    const form =
-      (updated.form as Record<string, unknown> | undefined) ||
-      (await getGoogleForm(auth.accessToken, id));
 
     // Ensure the form is published. If it was previously published, this is a no-op.
     try {
       await publishGoogleForm(auth.accessToken, id);
     } catch (pubErr) {
       console.warn("[forms] publish on save failed:", (pubErr as Error).message);
+    }
+
+    // Re-fetch after publish so responderUri reflects the public /d/e/{publishedId}/viewform URL.
+    // The form returned by batchUpdate still carries the pre-publish responderUri.
+    let form: Record<string, unknown>;
+    try {
+      form = await getGoogleForm(auth.accessToken, id);
+    } catch {
+      form =
+        (updated.form as Record<string, unknown> | undefined) ??
+        ({} as Record<string, unknown>);
     }
 
     return NextResponse.json({

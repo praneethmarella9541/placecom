@@ -93,15 +93,25 @@ export async function POST(request: Request) {
   }
 
   try {
-    const form = await createGoogleForm(auth.accessToken, { title });
+    const created = await createGoogleForm(auth.accessToken, { title });
     // Publish the form so the responderUri actually opens (unpublished forms 404).
+    let publishedResponderUri: string | undefined;
     try {
-      await publishGoogleForm(auth.accessToken, form.formId);
+      await publishGoogleForm(auth.accessToken, created.formId);
+      // Re-fetch — Google rewrites responderUri to the /d/e/{publishedId}/viewform
+      // public form URL only after publish. The URL from create points to the
+      // edit-style /d/{formId}/viewform which doesn't render for end users.
+      const fresh = await getGoogleForm(auth.accessToken, created.formId);
+      if (typeof fresh.responderUri === "string") {
+        publishedResponderUri = fresh.responderUri;
+      }
     } catch (pubErr) {
-      // Non-fatal: form was created. User can publish later via save flow.
       console.warn("[forms] publish on create failed:", (pubErr as Error).message);
     }
-    return NextResponse.json(form);
+    return NextResponse.json({
+      formId: created.formId,
+      responderUri: publishedResponderUri ?? created.responderUri,
+    });
   } catch (e) {
     const err = e as Error & { status?: number; body?: string; code?: string };
     const raw = err.body || err.message || "";

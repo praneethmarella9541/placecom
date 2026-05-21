@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createGoogleForm, getGoogleForm } from "@/lib/google-forms";
+import { createGoogleForm, getGoogleForm, publishGoogleForm } from "@/lib/google-forms";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { listGoogleFormsPage, type DriveFileRow } from "@/lib/drive";
 
@@ -94,6 +94,13 @@ export async function POST(request: Request) {
 
   try {
     const form = await createGoogleForm(auth.accessToken, { title });
+    // Publish the form so the responderUri actually opens (unpublished forms 404).
+    try {
+      await publishGoogleForm(auth.accessToken, form.formId);
+    } catch (pubErr) {
+      // Non-fatal: form was created. User can publish later via save flow.
+      console.warn("[forms] publish on create failed:", (pubErr as Error).message);
+    }
     return NextResponse.json(form);
   } catch (e) {
     const err = e as Error & { status?: number; body?: string; code?: string };

@@ -105,6 +105,52 @@ export async function getGoogleForm(
   }
 }
 
+/**
+ * Publishes a Google Form (makes it accessible via responderUri).
+ * Forms created via the API are unpublished by default; without this call,
+ * opening the responderUri shows "Sorry, unable to open the file at present."
+ */
+export async function publishGoogleForm(
+  accessToken: string,
+  formId: string,
+  opts: { isPublished?: boolean; isAcceptingResponses?: boolean } = {}
+): Promise<void> {
+  const isPublished = opts.isPublished ?? true;
+  const isAcceptingResponses = opts.isAcceptingResponses ?? true;
+  const url = `${FORMS_API}/forms/${encodeURIComponent(formId)}:setPublishSettings`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        publishSettings: {
+          publishState: { isPublished, isAcceptingResponses },
+        },
+      }),
+    });
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(e, "Google Forms API (publish)")
+    );
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Google Forms publish failed (${res.status}): ${text}`) as Error & {
+      status?: number;
+      body?: string;
+      code?: string;
+    };
+    err.status = res.status;
+    err.body = text;
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    throw err;
+  }
+}
+
 export async function batchUpdateGoogleForm(
   accessToken: string,
   formId: string,

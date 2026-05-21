@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { batchUpdateGoogleForm, getGoogleForm } from "@/lib/google-forms";
+import { batchUpdateGoogleForm, getGoogleForm, publishGoogleForm } from "@/lib/google-forms";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   buildBatchUpdateRequests,
@@ -66,6 +66,13 @@ export async function POST(
     const form =
       (updated.form as Record<string, unknown> | undefined) ||
       (await getGoogleForm(auth.accessToken, id));
+
+    // Ensure the form is published. If it was previously published, this is a no-op.
+    try {
+      await publishGoogleForm(auth.accessToken, id);
+    } catch (pubErr) {
+      console.warn("[forms] publish on save failed:", (pubErr as Error).message);
+    }
 
     return NextResponse.json({
       ok: true,

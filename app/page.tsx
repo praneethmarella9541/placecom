@@ -98,7 +98,10 @@ export default function HomePage() {
         queryParams: {
           access_type: "offline",
           include_granted_scopes: "true",
-          prompt: "select_account",
+          // 'consent' forces Google to re-issue a refresh_token. 'select_account'
+          // skips the consent screen and Google then omits the refresh_token on
+          // subsequent sign-ins — which is why long-lived sessions break.
+          prompt: "consent",
         },
       },
     });

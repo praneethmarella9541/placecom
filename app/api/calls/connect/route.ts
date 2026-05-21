@@ -225,6 +225,12 @@ export async function GET(request: Request) {
   const direction     = url.searchParams.get("Direction") ?? "";
   const calledNumber  = url.searchParams.get("CallTo") ?? url.searchParams.get("To") ?? "";
 
+  // Trace every Exotel hit so we can debug from Vercel logs
+  const allParams: Record<string, string> = {};
+  url.searchParams.forEach((v, k) => { allParams[k] = v; });
+  console.log("[calls/connect] GET params:", JSON.stringify(allParams));
+  console.log("[calls/connect] env: INCOMING_AGENT_NUMBER=", process.env.INCOMING_AGENT_NUMBER ?? "(unset)", "| INCOMING_DEFAULT_USER_ID set:", Boolean(process.env.INCOMING_DEFAULT_USER_ID));
+
   // Health check (no Exotel params)
   if (!callerPhone && !exotelCallSid) {
     return NextResponse.json({ status: "Exotel connect webhook is live" });
@@ -237,7 +243,9 @@ export async function GET(request: Request) {
   }
 
   const { destination } = await resolveDestination(url.searchParams, callerPhone, exotelCallSid, direction, calledNumber);
-  return buildResponse(destination);
+  const resp = buildResponse(destination);
+  console.log("[calls/connect] returning destination:", destination || "(empty)", "| status:", resp.status);
+  return resp;
 }
 
 // Some Exotel configs send POST

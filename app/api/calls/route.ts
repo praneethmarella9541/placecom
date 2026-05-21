@@ -124,7 +124,33 @@ export async function GET(request: Request) {
     );
   }
 
-  return NextResponse.json({ logs: rows });
+  // Derive direction + peer (the "other party" number, never our own).
+  // Incoming: from_number = external caller, to_number = our agent.
+  // Outbound: from_number = our virtual number, to_number = destination.
+  const virtualNumber = (process.env.EXOTEL_VIRTUAL_NUMBER ?? "").trim();
+  const incomingAgent = (process.env.INCOMING_AGENT_NUMBER ?? "").trim();
+  const norm = (s: string | null | undefined) =>
+    (s ?? "").replace(/[\s\-().]/g, "").replace(/^0/, "").replace(/^\+?91/, "").replace(/^\+/, "");
+  const virtualN = norm(virtualNumber);
+  const agentN = norm(incomingAgent);
+
+  const enriched = rows.map((r) => {
+    const fromN = norm(r.from_number);
+    const toN = norm(r.to_number);
+    let direction: "incoming" | "outbound" = "outbound";
+    if (virtualN && fromN === virtualN) {
+      direction = "outbound";
+    } else if (agentN && toN === agentN && fromN && fromN !== virtualN) {
+      direction = "incoming";
+    } else if (fromN && fromN !== virtualN && fromN !== agentN) {
+      // Fallback: if from_number is some external party, treat as incoming
+      direction = "incoming";
+    }
+    const peer_number = direction === "incoming" ? r.from_number : r.to_number;
+    return { ...r, direction, peer_number };
+  });
+
+  return NextResponse.json({ logs: enriched });
 }
 
 export async function POST(request: Request) {

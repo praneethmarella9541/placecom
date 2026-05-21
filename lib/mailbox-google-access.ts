@@ -160,7 +160,8 @@ export async function resolveMailboxGoogleAccessToken(
         mailboxOwnerId,
       };
     } catch (e) {
-      console.error(e);
+      const refreshErr = e instanceof Error ? e.message : String(e);
+      console.error("[mailbox-google-access] refresh failed:", refreshErr);
       // Admin self-heal (web only): if stored refresh token is stale but this admin is
       // currently signed in with Google via cookie, use their session provider_token.
       if (mailboxOwnerId === userId && queryClient) {
@@ -172,11 +173,15 @@ export async function resolveMailboxGoogleAccessToken(
           return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId };
         }
       }
+      // Surface the real Google error so we can tell invalid_grant (expired/revoked)
+      // from invalid_client (env mismatch) from network errors.
+      const isInvalidGrant = /invalid_grant/i.test(refreshErr);
       return {
         ok: false,
         status: 401,
-        message:
-          "Mailbox Google connection expired or was revoked. The admin must sign in with Google once to reconnect.",
+        message: isInvalidGrant
+          ? "Google refresh token expired or revoked. Sign in with Google again to reconnect."
+          : `Google token refresh failed: ${refreshErr.slice(0, 240)}`,
       };
     }
   }

@@ -178,3 +178,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: err.message || "Failed to save draft" }, { status: 500 });
   }
 }
+
+export async function DELETE(request: Request) {
+  const auth = await requireGmailAccessToken(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.message }, { status: auth.status });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const draftId = searchParams.get("draftId");
+  if (!draftId) {
+    return NextResponse.json({ error: "draftId required" }, { status: 400 });
+  }
+
+  const res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(draftId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${auth.accessToken}` },
+  });
+
+  // 204 No Content = success; 404 = already gone — both are fine
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text();
+    return NextResponse.json({ error: `Gmail error ${res.status}: ${text}` }, { status: res.status });
+  }
+
+  return NextResponse.json({ ok: true });
+}

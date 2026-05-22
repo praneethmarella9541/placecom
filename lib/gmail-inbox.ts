@@ -135,7 +135,7 @@ export async function listDraftsPage(
       const snippet = d.message?.snippet || "";
       if (!messageId) {
         return {
-          id: threadId,
+          id: d.id, // use draftId as the unique row id to avoid threadId collisions
           snippet,
           subject: "(no subject)",
           from: "",
@@ -147,7 +147,7 @@ export async function listDraftsPage(
       const toLine = (meta.to || "").trim();
       const displayLine = toLine || meta.from.trim() || "Draft";
       return {
-        id: threadId,
+        id: d.id, // use draftId as the unique row id to avoid threadId collisions
         snippet: snippet || meta.subject || "",
         subject: meta.subject,
         from: displayLine,

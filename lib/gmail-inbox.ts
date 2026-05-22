@@ -131,7 +131,6 @@ export async function listDraftsPage(
   const threads: ThreadListItem[] = await Promise.all(
     raw.map(async (d) => {
       const messageId = d.message?.id || "";
-      const threadId = d.message?.threadId || messageId;
       const snippet = d.message?.snippet || "";
       if (!messageId) {
         return {

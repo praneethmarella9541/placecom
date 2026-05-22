@@ -4,7 +4,6 @@ import { uploadBinaryToDrive } from "@/lib/drive-upload";
 
 export const runtime = "nodejs";
 
-/** Large uploads: tune in next.config if needed (Route Handler body buffering). */
 const MAX_BYTES = 50 * 1024 * 1024;
 
 function sanitizeFileName(name: string): string {

@@ -79,15 +79,20 @@ export async function GET(request: Request) {
   const get = (name: string) =>
     headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
 
-  // Extract plain text body from payload
-  function collectText(payload: unknown): string {
-    const p = payload as { mimeType?: string; body?: { data?: string }; parts?: unknown[] };
-    if (p.mimeType === 'text/plain' && p.body?.data) {
-      const b64 = p.body.data.replace(/-/g, '+').replace(/_/g, '/');
+  type MimePart = {
+    mimeType?: string;
+    filename?: string;
+    body?: { data?: string; attachmentId?: string; size?: number };
+    parts?: MimePart[];
+  };
+
+  function collectText(payload: MimePart): string {
+    if (payload.mimeType === 'text/plain' && payload.body?.data) {
+      const b64 = payload.body.data.replace(/-/g, '+').replace(/_/g, '/');
       return Buffer.from(b64, 'base64').toString('utf8');
     }
-    if (Array.isArray(p.parts)) {
-      for (const part of p.parts) {
+    if (Array.isArray(payload.parts)) {
+      for (const part of payload.parts) {
         const text = collectText(part);
         if (text) return text;
       }
@@ -95,15 +100,37 @@ export async function GET(request: Request) {
     return '';
   }
 
+  function collectAttachments(payload: MimePart): Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> {
+    const results: Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> = [];
+    if (payload.body?.attachmentId && payload.filename) {
+      results.push({
+        attachmentId: payload.body.attachmentId,
+        filename: payload.filename,
+        mimeType: payload.mimeType ?? 'application/octet-stream',
+        size: payload.body.size ?? 0,
+      });
+    }
+    if (Array.isArray(payload.parts)) {
+      for (const part of payload.parts) {
+        results.push(...collectAttachments(part));
+      }
+    }
+    return results;
+  }
+
+  const messageId = data.message?.id ?? '';
+  const payload = (data.message?.payload ?? {}) as MimePart;
+
   return NextResponse.json({
     draftId: data.id,
-    messageId: data.message?.id,
+    messageId,
     threadId: data.message?.threadId,
     to: get('To'),
     cc: get('Cc'),
     bcc: get('Bcc'),
     subject: get('Subject'),
-    textBody: collectText(data.message?.payload ?? {}),
+    textBody: collectText(payload),
+    attachments: collectAttachments(payload).map((a) => ({ ...a, messageId })),
   });
 }
 

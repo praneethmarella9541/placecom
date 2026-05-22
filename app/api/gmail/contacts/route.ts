@@ -4,8 +4,8 @@ import { requireGmailAccessToken } from "@/lib/gmail-auth";
 
 export const runtime = "nodejs";
 
-export async function GET() {
-  const auth = await requireGmailAccessToken();
+export async function GET(request: Request) {
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

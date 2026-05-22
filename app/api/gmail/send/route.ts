@@ -31,6 +31,45 @@ function getAppUrl(): string {
   return "http://localhost:3000";
 }
 
+function str(fd: FormData, key: string): string {
+  const v = fd.get(key);
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** Parse request body — supports both JSON and multipart/form-data (binary attachments). */
+async function parseBody(request: Request): Promise<Body> {
+  const ct = request.headers.get("content-type") ?? "";
+  if (ct.includes("multipart/form-data")) {
+    const fd = await request.formData();
+    const attachments: AttachmentPayload[] = [];
+    // Collect all file parts named "attachment"
+    for (const [key, value] of fd.entries()) {
+      if (key === "attachment" && value instanceof Blob) {
+        const filename =
+          typeof (value as File).name === "string" ? (value as File).name : "file";
+        const ab = await value.arrayBuffer();
+        const base64Data = Buffer.from(ab).toString("base64");
+        attachments.push({
+          filename,
+          mimeType: value.type || "application/octet-stream",
+          base64Data,
+        });
+      }
+    }
+    return {
+      to: str(fd, "to"),
+      cc: str(fd, "cc") || undefined,
+      bcc: str(fd, "bcc") || undefined,
+      subject: str(fd, "subject"),
+      textBody: str(fd, "textBody"),
+      threadId: str(fd, "threadId") || undefined,
+      inReplyToMessageId: str(fd, "inReplyToMessageId") || undefined,
+      attachments: attachments.length > 0 ? attachments : undefined,
+    };
+  }
+  return request.json() as Promise<Body>;
+}
+
 export async function POST(request: Request) {
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
@@ -39,9 +78,9 @@ export async function POST(request: Request) {
 
   let body: Body;
   try {
-    body = (await request.json()) as Body;
+    body = await parseBody(request);
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
   const to = body.to?.trim();

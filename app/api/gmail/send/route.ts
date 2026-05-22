@@ -44,7 +44,7 @@ async function parseBody(request: Request): Promise<Body> {
     const rawAttachments = fd.getAll("attachment");
     const attachments: AttachmentPayload[] = await Promise.all(
       rawAttachments
-        .filter((v): v is Blob => v instanceof Blob)
+        .filter((v): v is File => v instanceof File)
         .map(async (blob) => {
           const filename =
             typeof (blob as File).name === "string" ? (blob as File).name : "file";

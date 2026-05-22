@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 export async function GET(request: Request) {
-  const auth = await requireGmailAccessToken();
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

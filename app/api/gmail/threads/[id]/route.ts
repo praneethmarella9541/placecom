@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { getThreadMessages } from "@/lib/gmail-inbox";
+import { getThreadMessages, markThreadRead } from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 
 export const runtime = "nodejs";
@@ -21,6 +21,12 @@ export async function GET(
 
   try {
     const messages = await getThreadMessages(auth.accessToken, threadId);
+    // Best-effort: mark the thread as read on open. Fire-and-forget so the
+    // response isn't blocked or failed if the user hasn't re-consented to
+    // gmail.modify yet.
+    markThreadRead(auth.accessToken, threadId).catch((e) => {
+      console.warn("[gmail] mark-read failed:", e?.message ?? e);
+    });
     return NextResponse.json({ threadId, messages });
   } catch (e) {
     const err = e as Error & { code?: string };

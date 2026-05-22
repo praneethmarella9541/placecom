@@ -230,6 +230,37 @@ export async function listThreadsPage(
   return { threads, nextPageToken: data.nextPageToken };
 }
 
+/**
+ * Remove the UNREAD label from every message in a thread.
+ * Requires the gmail.modify scope.
+ */
+export async function markThreadRead(accessToken: string, threadId: string): Promise<void> {
+  const url = `${GMAIL_API}/threads/${encodeURIComponent(threadId)}/modify`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Gmail API (mark thread read)"));
+  }
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail mark-read ${res.status}: ${text}`);
+  }
+}
+
 type GmailHeader = { name?: string; value?: string };
 
 function getHeader(headers: GmailHeader[] | undefined, key: string): string {

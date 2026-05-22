@@ -10,8 +10,9 @@ export function getGoogleOAuthClientId(): string {
  * Minimal scopes for Supabase account linking + Gmail API token on the session.
  * - openid: OIDC
  * - userinfo.email: stable Google account id / email for Supabase user
- * - gmail.readonly: list/read threads and messages
- * - gmail.send: send and reply (required for compose — users must re-consent after adding)
+ * - gmail.modify: list/read threads and messages, plus mark-as-read on open
+ *   (supersedes gmail.readonly). Users must re-consent after this is added.
+ * - gmail.send: send and reply (required for compose)
  * - calendar.readonly: list events for timeline/weekly views
  * - calendar.events: create recruiter meetings and add attendees
  * - drive.readonly: list and open Drive files from the Drive page (/drive)
@@ -32,7 +33,7 @@ export function getGoogleOAuthClientId(): string {
 export const GOOGLE_OAUTH_SCOPES = [
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
-  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.modify",
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",

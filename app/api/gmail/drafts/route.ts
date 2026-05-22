@@ -45,6 +45,68 @@ function buildRaw(opts: {
   return toBase64Url(Buffer.from(mime, "utf8"));
 }
 
+export async function GET(request: Request) {
+  const auth = await requireGmailAccessToken(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.message }, { status: auth.status });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const draftId = searchParams.get("draftId");
+  if (!draftId) {
+    return NextResponse.json({ error: "draftId required" }, { status: 400 });
+  }
+
+  const res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=full`, {
+    headers: { Authorization: `Bearer ${auth.accessToken}` },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    return NextResponse.json({ error: `Gmail error ${res.status}: ${text}` }, { status: res.status });
+  }
+
+  const data = (await res.json()) as {
+    id: string;
+    message?: {
+      id: string;
+      threadId: string;
+      payload?: { headers?: { name: string; value: string }[]; parts?: unknown[]; body?: { data?: string } };
+    };
+  };
+
+  const headers = data.message?.payload?.headers ?? [];
+  const get = (name: string) =>
+    headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
+
+  // Extract plain text body from payload
+  function collectText(payload: unknown): string {
+    const p = payload as { mimeType?: string; body?: { data?: string }; parts?: unknown[] };
+    if (p.mimeType === 'text/plain' && p.body?.data) {
+      const b64 = p.body.data.replace(/-/g, '+').replace(/_/g, '/');
+      return Buffer.from(b64, 'base64').toString('utf8');
+    }
+    if (Array.isArray(p.parts)) {
+      for (const part of p.parts) {
+        const text = collectText(part);
+        if (text) return text;
+      }
+    }
+    return '';
+  }
+
+  return NextResponse.json({
+    draftId: data.id,
+    messageId: data.message?.id,
+    threadId: data.message?.threadId,
+    to: get('To'),
+    cc: get('Cc'),
+    bcc: get('Bcc'),
+    subject: get('Subject'),
+    textBody: collectText(data.message?.payload ?? {}),
+  });
+}
+
 type Body = {
   to?: string;
   cc?: string;

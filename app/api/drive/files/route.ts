@@ -27,10 +27,10 @@ export async function GET(request: Request) {
       search,
       parentId,
     });
-    return NextResponse.json({
-      files: page.files,
-      nextPageToken: page.nextPageToken,
-    });
+    return NextResponse.json(
+      { files: page.files, nextPageToken: page.nextPageToken },
+      { headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=300" } }
+    );
   } catch (e) {
     const err = e as Error & { code?: string };
     if (err.code === "UNAUTHORIZED") {

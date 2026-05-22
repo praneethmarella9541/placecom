@@ -44,11 +44,10 @@ export async function GET(request: Request) {
             pageToken,
             searchQuery,
           });
-    return NextResponse.json({
-      folder,
-      threads: page.threads,
-      nextPageToken: page.nextPageToken,
-    });
+    return NextResponse.json(
+      { folder, threads: page.threads, nextPageToken: page.nextPageToken },
+      { headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=300" } }
+    );
   } catch (e) {
     const err = e as Error & { code?: string };
     if (err.code === "UNAUTHORIZED") {

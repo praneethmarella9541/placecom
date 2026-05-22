@@ -1,27 +1,9 @@
 import { NextResponse } from "next/server";
 import { createGoogleForm, getGoogleForm, publishGoogleForm } from "@/lib/google-forms";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { listGoogleFormsPage, type DriveFileRow } from "@/lib/drive";
+import { listGoogleFormsPage } from "@/lib/drive";
 
 export const runtime = "nodejs";
-
-async function attachFormTitles(
-  accessToken: string,
-  files: DriveFileRow[]
-): Promise<(DriveFileRow & { formTitle: string | null })[]> {
-  return Promise.all(
-    files.map(async (f) => {
-      try {
-        const form = await getGoogleForm(accessToken, f.id);
-        const info = form.info as { title?: string } | undefined;
-        const t = typeof info?.title === "string" ? info.title.trim() : "";
-        return { ...f, formTitle: t || null };
-      } catch {
-        return { ...f, formTitle: null };
-      }
-    })
-  );
-}
 
 function insufficientFormsScope(body: string): boolean {
   return (
@@ -50,11 +32,12 @@ export async function GET(request: Request) {
       pageToken,
       search,
     });
-    const forms = await attachFormTitles(auth.accessToken, page.files);
-    return NextResponse.json({
-      forms,
-      nextPageToken: page.nextPageToken,
-    });
+    // formTitle comes from the Drive file name — no need to fetch each form
+    const forms = page.files.map((f) => ({ ...f, formTitle: null as null }));
+    return NextResponse.json(
+      { forms, nextPageToken: page.nextPageToken },
+      { headers: { "Cache-Control": "private, max-age=120, stale-while-revalidate=600" } }
+    );
   } catch (e) {
     const err = e as Error & { code?: string };
     if (err.code === "UNAUTHORIZED") {

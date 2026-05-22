@@ -214,16 +214,63 @@ export async function listThreadsPage(
 
   const threads: ThreadListItem[] = await Promise.all(
     rawThreads.map(async (t) => {
-      const meta = await fetchMessageMeta(accessToken, t.id);
-      return {
-        id: t.id,
-        snippet: t.snippet || "",
-        subject: meta.subject,
-        from: meta.from,
-        date: meta.date,
-        historyId: t.historyId,
-        unread: (meta.labelIds ?? []).includes("UNREAD"),
-      };
+      // Fetch the thread (metadata format) to get the last message's headers.
+      // We cannot use /messages/{t.id} because t.id is a thread id, not a message id.
+      try {
+        const params = new URLSearchParams({ format: "metadata" });
+        params.append("metadataHeaders", "Subject");
+        params.append("metadataHeaders", "From");
+        params.append("metadataHeaders", "Date");
+        const res = await fetch(
+          `${GMAIL_API}/threads/${encodeURIComponent(t.id)}?${params.toString()}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (!res.ok) throw new Error("thread meta fetch failed");
+        const td = (await res.json()) as {
+          messages?: {
+            id: string;
+            internalDate?: string;
+            labelIds?: string[];
+            payload?: { headers?: GmailHeader[] };
+          }[];
+        };
+        const msgs = td.messages || [];
+        // Subject comes from first message; From/Date from last message
+        const first = msgs[0];
+        const last = msgs[msgs.length - 1] ?? first;
+        const getH = (msg: typeof first, key: string) => {
+          const h = (msg?.payload?.headers || []).find(
+            (x) => (x.name || "").toLowerCase() === key.toLowerCase()
+          );
+          return (h?.value || "").trim();
+        };
+        const subject = getH(first, "Subject");
+        const from = getH(last, "From");
+        let date = getH(last, "Date");
+        if (last?.internalDate) {
+          const ms = parseInt(last.internalDate, 10);
+          if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
+        }
+        const allLabelIds = msgs.flatMap((m) => m.labelIds ?? []);
+        return {
+          id: t.id,
+          snippet: t.snippet || "",
+          subject,
+          from,
+          date,
+          historyId: t.historyId,
+          unread: allLabelIds.includes("UNREAD"),
+        };
+      } catch {
+        return {
+          id: t.id,
+          snippet: t.snippet || "",
+          subject: "",
+          from: "",
+          date: "",
+          historyId: t.historyId,
+        };
+      }
     })
   );
 

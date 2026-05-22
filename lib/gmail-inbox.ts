@@ -15,6 +15,8 @@ export type ThreadListItem = {
   historyId?: string;
   /** Present for drafts list rows — stable key when multiple drafts share a thread. */
   draftId?: string;
+  /** True if any message in the thread carries the Gmail UNREAD label. */
+  unread?: boolean;
 };
 
 export type ThreadListPage = {
@@ -38,7 +40,7 @@ async function fetchMessageMeta(
   accessToken: string,
   messageId: string,
   opts?: { includeTo?: boolean }
-): Promise<{ subject: string; from: string; date: string; to?: string }> {
+): Promise<{ subject: string; from: string; date: string; to?: string; labelIds?: string[] }> {
   const params = new URLSearchParams({ format: "metadata" });
   params.append("metadataHeaders", "Subject");
   params.append("metadataHeaders", "From");
@@ -49,9 +51,10 @@ async function fetchMessageMeta(
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (!res.ok) return { subject: "", from: "", date: "", to: "" };
+    if (!res.ok) return { subject: "", from: "", date: "", to: "", labelIds: [] };
     const data = (await res.json()) as {
       internalDate?: string;
+      labelIds?: string[];
       payload?: { headers?: { name?: string; value?: string }[] };
     };
     const headers = data.payload?.headers || [];
@@ -66,9 +69,15 @@ async function fetchMessageMeta(
       if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
     }
     const to = opts?.includeTo ? get("To") : undefined;
-    return { subject: get("Subject"), from: get("From"), date, ...(to !== undefined ? { to } : {}) };
+    return {
+      subject: get("Subject"),
+      from: get("From"),
+      date,
+      labelIds: data.labelIds ?? [],
+      ...(to !== undefined ? { to } : {}),
+    };
   } catch {
-    return { subject: "", from: "", date: "", to: "" };
+    return { subject: "", from: "", date: "", to: "", labelIds: [] };
   }
 }
 
@@ -213,6 +222,7 @@ export async function listThreadsPage(
         from: meta.from,
         date: meta.date,
         historyId: t.historyId,
+        unread: (meta.labelIds ?? []).includes("UNREAD"),
       };
     })
   );

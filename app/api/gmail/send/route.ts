@@ -41,21 +41,21 @@ async function parseBody(request: Request): Promise<Body> {
   const ct = request.headers.get("content-type") ?? "";
   if (ct.includes("multipart/form-data")) {
     const fd = await request.formData();
-    const attachments: AttachmentPayload[] = [];
-    // Collect all file parts named "attachment"
-    for (const [key, value] of fd.entries()) {
-      if (key === "attachment" && value instanceof Blob) {
-        const filename =
-          typeof (value as File).name === "string" ? (value as File).name : "file";
-        const ab = await value.arrayBuffer();
-        const base64Data = Buffer.from(ab).toString("base64");
-        attachments.push({
-          filename,
-          mimeType: value.type || "application/octet-stream",
-          base64Data,
-        });
-      }
-    }
+    const rawAttachments = fd.getAll("attachment");
+    const attachments: AttachmentPayload[] = await Promise.all(
+      rawAttachments
+        .filter((v): v is Blob => v instanceof Blob)
+        .map(async (blob) => {
+          const filename =
+            typeof (blob as File).name === "string" ? (blob as File).name : "file";
+          const ab = await blob.arrayBuffer();
+          return {
+            filename,
+            mimeType: blob.type || "application/octet-stream",
+            base64Data: Buffer.from(ab).toString("base64"),
+          };
+        })
+    );
     return {
       to: str(fd, "to"),
       cc: str(fd, "cc") || undefined,

@@ -72,6 +72,117 @@ export async function listPrimaryCalendarEvents(
   return body.items || [];
 }
 
+/**
+ * Generic create — accepts the same shape Google Calendar expects.
+ * Use this from the mobile app / web for arbitrary events.
+ */
+export async function createCalendarEvent(
+  accessToken: string,
+  input: {
+    summary: string;
+    description?: string;
+    location?: string;
+    start: { dateTime?: string; date?: string; timeZone?: string };
+    end: { dateTime?: string; date?: string; timeZone?: string };
+    attendees?: { email: string }[];
+  }
+): Promise<CalendarEventItem> {
+  let res: Response;
+  try {
+    res = await fetch(`${CALENDAR_API}/calendars/primary/events`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(input),
+    });
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(e, "Google Calendar API (create event)")
+    );
+  }
+  if (!res.ok) {
+    const msg = await parseGoogleErrorBody(res);
+    const err = new Error(`Google Calendar create failed: ${msg}`) as Error & {
+      code?: string;
+    };
+    err.code = toErrorCode(res.status);
+    throw err;
+  }
+  return (await res.json()) as CalendarEventItem;
+}
+
+export async function patchCalendarEvent(
+  accessToken: string,
+  eventId: string,
+  input: {
+    summary?: string;
+    description?: string;
+    location?: string;
+    start?: { dateTime?: string; date?: string; timeZone?: string };
+    end?: { dateTime?: string; date?: string; timeZone?: string };
+    attendees?: { email: string }[];
+  }
+): Promise<CalendarEventItem> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      }
+    );
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(e, "Google Calendar API (patch event)")
+    );
+  }
+  if (!res.ok) {
+    const msg = await parseGoogleErrorBody(res);
+    const err = new Error(`Google Calendar patch failed: ${msg}`) as Error & {
+      code?: string;
+    };
+    err.code = toErrorCode(res.status);
+    throw err;
+  }
+  return (await res.json()) as CalendarEventItem;
+}
+
+export async function deleteCalendarEvent(
+  accessToken: string,
+  eventId: string
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(e, "Google Calendar API (delete event)")
+    );
+  }
+  // 204 = success, 404/410 = already gone — treat both as ok
+  if (!res.ok && res.status !== 404 && res.status !== 410) {
+    const msg = await parseGoogleErrorBody(res);
+    const err = new Error(`Google Calendar delete failed: ${msg}`) as Error & {
+      code?: string;
+    };
+    err.code = toErrorCode(res.status);
+    throw err;
+  }
+}
+
 export async function createPrimaryCalendarEvent(
   accessToken: string,
   input: {

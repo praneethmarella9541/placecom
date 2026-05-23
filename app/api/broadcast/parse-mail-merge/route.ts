@@ -9,7 +9,7 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_ROWS = 80;
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken();
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

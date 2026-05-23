@@ -2,25 +2,43 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
+import { getAuthedRequest } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
+
+type RegisterBody = {
+  /** Mobile passes these explicitly (Bearer auth has no cookie session to read). */
+  providerRefreshToken?: string;
+  providerAccessToken?: string;
+};
 
 /**
  * Persists the admin's Google refresh token (from the Supabase session) so Gmail/Drive
  * keep working for days without asking the admin to re-consent. Staff use this row via
  * `profiles.mailbox_owner_id`.
+ *
+ * Web (cookie session): reads provider tokens from supabase.auth.getSession().
+ * Mobile (Bearer): pass providerRefreshToken / providerAccessToken in the body,
+ *   since the server can't read the mobile session.provider_* fields.
  */
-export async function POST() {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user?.id) {
+export async function POST(request: Request) {
+  const authed = await getAuthedRequest(request);
+  if (!authed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const user = authed.user;
+  const supabase = createServerSupabaseClient();
 
-  const { data: profile, error: profileErr } = await supabase
+  // Cookie session (web) — refresh token lives in supabase session.
+  // Bearer (mobile) — caller must pass tokens in the body.
+  let body: RegisterBody = {};
+  try {
+    body = (await request.json()) as RegisterBody;
+  } catch {
+    body = {};
+  }
+
+  const { data: profile, error: profileErr } = await authed.supabase
     .from("profiles")
     .select("role")
     .eq("id", user.id)
@@ -39,12 +57,17 @@ export async function POST() {
     return NextResponse.json({ skipped: true });
   }
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  const refresh = session?.provider_refresh_token;
-  const access = session?.provider_token;
+  // For cookie sessions the refresh token comes from supabase.auth's session.
+  // Bearer-authed mobile requests have no cookie, so they pass tokens in the body.
+  let refresh: string | null | undefined = body.providerRefreshToken?.trim() || undefined;
+  let access: string | null | undefined = body.providerAccessToken?.trim() || undefined;
+  if (!refresh && !access && !authed.isBearer) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    refresh = session?.provider_refresh_token ?? undefined;
+    access = session?.provider_token ?? undefined;
+  }
   const googleAccessExpiresAt = access ? new Date(Date.now() + 50 * 60 * 1000).toISOString() : null;
 
   let svc: ReturnType<typeof createServiceSupabase>;

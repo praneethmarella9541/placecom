@@ -19,8 +19,10 @@ import { WhatsAppMessaging } from "@/components/WhatsAppMessaging";
 import { WhatsAppBroadcastPanel } from "@/components/WhatsAppBroadcastPanel";
 import { SmsBroadcastPanel } from "@/components/SmsBroadcastPanel";
 import { SmsMessaging } from "@/components/SmsMessaging";
+import { MailMergePanel } from "@/components/MailMergePanel";
 
 type Channel = "mail" | "sms" | "whatsapp";
+type MailSubView = "broadcast" | "merge";
 type WhatsAppSubView = "broadcast" | "chats";
 type SmsSubView = "broadcast" | "chats";
 
@@ -79,6 +81,7 @@ function BroadcastingPageInner() {
   } | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
 
+  const [mailSubView, setMailSubView] = useState<MailSubView>("broadcast");
   const [whatsappSubView, setWhatsappSubView] = useState<WhatsAppSubView>("broadcast");
   const [smsSubView, setSmsSubView] = useState<SmsSubView>("chats");
 
@@ -220,6 +223,33 @@ function BroadcastingPageInner() {
       ) : null}
 
       {channel === "mail" ? (
+        <div className="space-y-4">
+          <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60">
+            {(
+              [
+                { key: "broadcast" as const, label: "Broadcast" },
+                { key: "merge" as const, label: "Mail merge" },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setMailSubView(tab.key)}
+                className={cn(
+                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                  mailSubView === tab.key
+                    ? "bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-400"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
+                )}
+              >
+                {titleCase(tab.label)}
+              </button>
+            ))}
+          </div>
+
+          {mailSubView === "merge" ? (
+            <MailMergePanel />
+          ) : (
         <div className="card space-y-6 p-5 sm:p-6">
           <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/25 dark:text-amber-100">
             <IconBroadcast className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400" />
@@ -432,6 +462,8 @@ function BroadcastingPageInner() {
               )}
             </button>
           </div>
+        </div>
+          )}
         </div>
       ) : channel === "sms" ? (
         <div className="space-y-4">

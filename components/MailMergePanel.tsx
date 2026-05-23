@@ -187,7 +187,9 @@ export function MailMergePanel() {
               {titleCase("Import CSV or Excel")}
             </label>
             <p className="mb-2 text-xs text-zinc-400">
-              {titleCase("Example columns: Email, Name, Phone, Company")}
+              {titleCase(
+                "First row = headers (Email required). Use {{name}} or {{Name}} — placeholders match column names, case-insensitive."
+              )}
             </p>
             <input
               ref={fileRef}

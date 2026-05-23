@@ -3,7 +3,8 @@
  * Field names are case-insensitive; use underscores in templates (e.g. {{first_name}}).
  */
 
-const PLACEHOLDER_RE = /\{\{?\s*([a-zA-Z0-9_]+)\s*\}?\}/g;
+const DOUBLE_BRACE_RE = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+const SINGLE_BRACE_RE = /\{\s*([a-zA-Z0-9_]+)\s*\}/g;
 
 /** Normalize spreadsheet header → merge key (e.g. "First Name" → first_name). */
 export function normalizeMergeFieldKey(header: string): string {
@@ -34,13 +35,19 @@ export type MailMergeRow = {
   fields: Record<string, string>;
 };
 
+function scanPlaceholders(template: string, found: Set<string>): void {
+  for (const re of [DOUBLE_BRACE_RE, SINGLE_BRACE_RE]) {
+    const copy = new RegExp(re.source, "g");
+    let m: RegExpExecArray | null;
+    while ((m = copy.exec(template)) !== null) {
+      found.add(normalizeMergeFieldKey(m[1]));
+    }
+  }
+}
+
 export function listPlaceholdersInTemplate(template: string): string[] {
   const found = new Set<string>();
-  let m: RegExpExecArray | null;
-  const re = new RegExp(PLACEHOLDER_RE.source, "g");
-  while ((m = re.exec(template)) !== null) {
-    found.add(normalizeMergeFieldKey(m[1]));
-  }
+  scanPlaceholders(template, found);
   return Array.from(found);
 }
 
@@ -57,10 +64,14 @@ function lookupField(fields: Record<string, string>, key: string): string {
 
 /** Fill template with row fields; unknown placeholders stay as-is. */
 export function mergeTemplate(template: string, fields: Record<string, string>): string {
-  return template.replace(PLACEHOLDER_RE, (match, rawKey: string) => {
-    const value = lookupField(fields, rawKey);
-    return value !== "" ? value : match;
-  });
+  let result = template;
+  for (const re of [DOUBLE_BRACE_RE, SINGLE_BRACE_RE]) {
+    result = result.replace(re, (match, rawKey: string) => {
+      const value = lookupField(fields, rawKey);
+      return value !== "" ? value : match;
+    });
+  }
+  return result;
 }
 
 function enrichDerivedFields(fields: Record<string, string>): Record<string, string> {
@@ -100,11 +111,12 @@ export function rowToMergeFields(
       fields.email = email;
       continue;
     }
+
+    fields[key] = value;
     if (NAME_HEADER_KEYS.has(key)) fields.name = value;
-    else if (FIRST_NAME_KEYS.has(key)) fields.first_name = value;
-    else if (LAST_NAME_KEYS.has(key)) fields.last_name = value;
-    else if (PHONE_HEADER_KEYS.has(key)) fields.phone = value;
-    else fields[key] = value;
+    if (FIRST_NAME_KEYS.has(key)) fields.first_name = value;
+    if (LAST_NAME_KEYS.has(key)) fields.last_name = value;
+    if (PHONE_HEADER_KEYS.has(key)) fields.phone = value;
   }
 
   if (!email && fields.email) email = fields.email;

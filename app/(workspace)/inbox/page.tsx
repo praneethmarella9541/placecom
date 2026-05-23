@@ -231,9 +231,8 @@ export default function InboxPage() {
   const [composeCcBccOpen, setComposeCcBccOpen] = useState(false);
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
-  const [draftLoading, setDraftLoading] = useState(false);
-  // Mirror of draftLoading for use inside useCallback without re-creating
-  // the handler every time the loading flag flips.
+  // In-flight guard for openDraft. A ref (vs state) keeps the useCallback
+  // identity stable so click handlers don't rebind on every flip.
   const draftLoadingRef = useRef(false);
   const [replyFiles, setReplyFiles] = useState<PendingFile[]>([]);
   const composeFileRef = useRef<HTMLInputElement>(null);
@@ -386,7 +385,6 @@ export default function InboxPage() {
   const openDraft = useCallback(async (draftId: string) => {
     if (draftLoadingRef.current) return;
     draftLoadingRef.current = true;
-    setDraftLoading(true);
     // Drafts open in the compose panel — clear any open thread view
     setSelectedId(null);
     setMessages(null);
@@ -414,7 +412,6 @@ export default function InboxPage() {
     } catch (e) {
       alert(e instanceof Error ? e.message : "Could not open draft");
     } finally {
-      setDraftLoading(false);
       draftLoadingRef.current = false;
     }
   }, []);

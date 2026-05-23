@@ -48,6 +48,12 @@ function senderName(from: string): string {
   if (atIdx > 0) return from.slice(0, atIdx);
   return from;
 }
+
+/** First letter/digit of a display name — skips quotes, punctuation, whitespace. */
+function avatarInitial(name: string): string {
+  const cleaned = name.replace(/[^\p{L}\p{N}]/gu, "");
+  return (cleaned.charAt(0) || "?").toUpperCase();
+}
 type AttachmentView = {
   attachmentId: string;
   filename: string;
@@ -581,7 +587,7 @@ export default function InboxPage() {
             <ul className="scrollbar-thin flex-1 divide-y divide-[var(--color-border)] overflow-y-auto">
               {threads.map((t) => {
                 const name = senderName(t.from);
-                const initial = name[0]?.toUpperCase() || "?";
+                const initial = avatarInitial(name);
                 const bg = avatarHue(name);
                 return (
                   <li key={t.draftId ?? t.id} className="relative">
@@ -689,7 +695,7 @@ export default function InboxPage() {
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-200/80 text-[10px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
-                          {(m.from || "?")[0]?.toUpperCase()}
+                          {avatarInitial(senderName(m.from || ""))}
                         </div>
                         <div>
                           <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{m.from}</p>

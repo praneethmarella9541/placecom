@@ -68,15 +68,27 @@ export function listPlaceholdersInTemplate(template: string): string[] {
   return Array.from(found);
 }
 
+const PLACEHOLDER_ALIASES: Record<string, string[]> = {
+  name: ["column_2", "field_2", "full_name", "contact_name"],
+  phone: ["column_3", "field_3", "mobile", "contact_number", "tel"],
+  company: ["column_4", "field_4", "organisation", "organization"],
+};
+
 function lookupField(fields: Record<string, string>, key: string): string {
   const k = normalizeMergeFieldKey(key);
-  if (fields[k] !== undefined) return fields[k];
+  if (fields[k] !== undefined && fields[k] !== "") return fields[k];
 
   const lowerMap: Record<string, string> = {};
   for (const [fk, fv] of Object.entries(fields)) {
+    if (fv === "") continue;
     lowerMap[normalizeMergeFieldKey(fk)] = fv;
   }
-  return lowerMap[k] ?? "";
+  if (lowerMap[k]) return lowerMap[k];
+
+  for (const alt of PLACEHOLDER_ALIASES[k] || []) {
+    if (lowerMap[alt]) return lowerMap[alt];
+  }
+  return "";
 }
 
 /** Fill template with row fields; unknown placeholders stay as-is. */

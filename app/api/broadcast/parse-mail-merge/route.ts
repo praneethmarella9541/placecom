@@ -79,6 +79,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       rows,
       columns: parsed.columns,
+      headerLabels: parsed.headerLabels,
       skipped: parsed.skipped,
       truncated,
       maxRows: MAX_ROWS,

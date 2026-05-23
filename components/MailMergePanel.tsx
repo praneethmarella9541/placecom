@@ -28,6 +28,7 @@ function formatBytes(bytes: number): string {
 export function MailMergePanel() {
   const [rows, setRows] = useState<MailMergeRow[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
+  const [headerLabels, setHeaderLabels] = useState<string[]>([]);
   const [importInfo, setImportInfo] = useState<string | null>(null);
   const [parseBusy, setParseBusy] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -86,6 +87,7 @@ export function MailMergePanel() {
         error?: string;
         headersFound?: string;
         detectedHeaders?: string[];
+        headerLabels?: string[];
         rows?: MailMergeRow[];
         columns?: string[];
         skipped?: number;
@@ -102,6 +104,7 @@ export function MailMergePanel() {
       const imported = data.rows || [];
       setRows(imported);
       setColumns(data.columns || []);
+      setHeaderLabels(data.headerLabels || data.detectedHeaders || []);
       setPreviewIndex(0);
       const parts = [
         `Loaded ${imported.length} recipient(s).`,
@@ -222,22 +225,25 @@ export function MailMergePanel() {
             ) : null}
           </div>
 
-          {columns.length > 0 ? (
+          {headerLabels.length > 0 ? (
             <div>
               <p className="mb-2 text-xs font-medium text-zinc-500">
-                {titleCase("Placeholders you can use")}
+                {titleCase("Columns detected — use these in {{braces}}")}
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {columns
-                  .filter((c) => c !== "email")
-                  .map((c) => (
+                {headerLabels.map((label, i) => {
+                  const key = columns[i] || label.toLowerCase();
+                  if (key === "email") return null;
+                  return (
                     <code
-                      key={c}
+                      key={`${label}-${i}`}
                       className="rounded-md bg-zinc-100 px-2 py-0.5 text-xs text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                      title={label}
                     >
-                      {`{{${c}}}`}
+                      {`{{${key}}}`}
                     </code>
-                  ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}
@@ -258,9 +264,14 @@ export function MailMergePanel() {
                     className="rounded-md bg-white px-2 py-1.5 text-xs dark:bg-zinc-950"
                   >
                     <span className="font-mono text-zinc-800 dark:text-zinc-200">{row.email}</span>
-                    {row.fields.name ? (
-                      <span className="ml-2 text-zinc-500">· {row.fields.name}</span>
-                    ) : null}
+                    {Object.entries(row.fields)
+                      .filter(([k, v]) => k !== "email" && v.trim())
+                      .slice(0, 3)
+                      .map(([k, v]) => (
+                        <span key={k} className="ml-2 text-zinc-500">
+                          · {v}
+                        </span>
+                      ))}
                   </li>
                 ))}
               </ul>

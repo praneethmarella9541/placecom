@@ -215,6 +215,8 @@ export default function InboxPage() {
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
   const [composeCcBccOpen, setComposeCcBccOpen] = useState(false);
   const [composeMinimized, setComposeMinimized] = useState(false);
+  const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+  const [draftLoading, setDraftLoading] = useState(false);
   const [replyFiles, setReplyFiles] = useState<PendingFile[]>([]);
   const composeFileRef = useRef<HTMLInputElement>(null);
   const replyFileRef = useRef<HTMLInputElement>(null);
@@ -241,6 +243,7 @@ export default function InboxPage() {
     if (!composeOpen) {
       setComposeCcBccOpen(false);
       setComposeMinimized(false);
+      setComposeDraftId(null);
       return;
     }
     if (composeCc.trim() || composeBcc.trim()) {
@@ -362,6 +365,40 @@ export default function InboxPage() {
     };
   }, [composeOpen]);
 
+  const openDraft = useCallback(async (draftId: string) => {
+    if (draftLoading) return;
+    setDraftLoading(true);
+    // Drafts open in the compose panel — clear any open thread view
+    setSelectedId(null);
+    setMessages(null);
+    setThreadError(null);
+    try {
+      const res = await fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`);
+      const data = (await res.json()) as {
+        error?: string;
+        to?: string;
+        cc?: string;
+        bcc?: string;
+        subject?: string;
+        textBody?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Failed to open draft");
+      setComposeDraftId(draftId);
+      setComposeTo(data.to ?? "");
+      setComposeCc(data.cc ?? "");
+      setComposeBcc(data.bcc ?? "");
+      setComposeSubject(data.subject ?? "");
+      setComposeBody(data.textBody ?? "");
+      setComposeFiles([]);
+      setComposeOpen(true);
+      setComposeMinimized(false);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not open draft");
+    } finally {
+      setDraftLoading(false);
+    }
+  }, []);
+
   const openThread = useCallback(async (threadId: string) => {
     setSelectedId(threadId);
     setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false);
@@ -423,7 +460,14 @@ export default function InboxPage() {
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Send failed");
+      // If this compose was an in-progress draft, drop it from Drafts.
+      if (composeDraftId) {
+        void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(composeDraftId)}`, {
+          method: "DELETE",
+        }).catch(() => {});
+      }
       setComposeOpen(false);
+      setComposeDraftId(null);
       setComposeTo("");
       setComposeCc("");
       setComposeBcc("");
@@ -543,7 +587,11 @@ export default function InboxPage() {
                   <li key={t.draftId ?? t.id} className="relative">
                     <button
                       type="button"
-                      onClick={() => void openThread(t.id)}
+                      onClick={() =>
+                        t.draftId
+                          ? void openDraft(t.draftId)
+                          : void openThread(t.id)
+                      }
                       className={cn(
                         "group flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--color-surface-offset)]",
                         selectedId === t.id &&
@@ -851,7 +899,7 @@ export default function InboxPage() {
                   {/* Title bar — Gmail-style dark chrome */}
                   <div className="flex shrink-0 items-center gap-1 bg-[#404040] px-2 py-1.5 text-white">
                     <h2 id="compose-dialog-title" className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium">
-                      {titleCase("New Message")}
+                      {composeDraftId ? titleCase("Edit Draft") : titleCase("New Message")}
                     </h2>
                     <button
                       type="button"

@@ -51,8 +51,17 @@ function senderName(from: string): string {
 
 /** First letter/digit of a display name — skips quotes, punctuation, whitespace. */
 function avatarInitial(name: string): string {
-  const cleaned = name.replace(/[^\p{L}\p{N}]/gu, "");
-  return (cleaned.charAt(0) || "?").toUpperCase();
+  for (let i = 0; i < name.length; i++) {
+    const ch = name.charAt(i);
+    // ASCII alphanumeric — covers the common case without needing the `u`
+    // regex flag (which requires an es2018+ TS target this project doesn't set).
+    if ((ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9")) {
+      return ch.toUpperCase();
+    }
+  }
+  // Non-ASCII names (Cyrillic, CJK, etc.): fall back to the first non-whitespace char.
+  const trimmed = name.trim();
+  return (trimmed.charAt(0) || "?").toUpperCase();
 }
 type AttachmentView = {
   attachmentId: string;
@@ -223,6 +232,9 @@ export default function InboxPage() {
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
+  // Mirror of draftLoading for use inside useCallback without re-creating
+  // the handler every time the loading flag flips.
+  const draftLoadingRef = useRef(false);
   const [replyFiles, setReplyFiles] = useState<PendingFile[]>([]);
   const composeFileRef = useRef<HTMLInputElement>(null);
   const replyFileRef = useRef<HTMLInputElement>(null);
@@ -372,7 +384,8 @@ export default function InboxPage() {
   }, [composeOpen]);
 
   const openDraft = useCallback(async (draftId: string) => {
-    if (draftLoading) return;
+    if (draftLoadingRef.current) return;
+    draftLoadingRef.current = true;
     setDraftLoading(true);
     // Drafts open in the compose panel — clear any open thread view
     setSelectedId(null);
@@ -402,6 +415,7 @@ export default function InboxPage() {
       alert(e instanceof Error ? e.message : "Could not open draft");
     } finally {
       setDraftLoading(false);
+      draftLoadingRef.current = false;
     }
   }, []);
 

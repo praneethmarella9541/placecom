@@ -111,66 +111,19 @@ async function resolveDestination(
   calledNumber: string
 ): Promise<{ destination: string; isIncoming: boolean }> {
   const dtmfDigits = params.get("digits")?.toString() ?? params.get("Digits")?.toString() ?? "";
-  const virtualNumber = process.env.EXOTEL_VIRTUAL_NUMBER ?? "+919513886363";
   const incomingAgent = process.env.INCOMING_AGENT_NUMBER?.trim() ?? "";
   const defaultUserId = process.env.INCOMING_DEFAULT_USER_ID?.trim() ?? "";
 
-  // Detect incoming: Exotel uses "incoming" or "inbound" depending on context.
-  // Fallback: CallTo equals our virtual number AND caller is NOT our agent.
-  const dir = direction.toLowerCase();
-  const incomingAgentNorm = incomingAgent ? normalizePhone(incomingAgent) : "";
-  const callerNorm = normalizePhone(callerPhone);
-  const isIncoming =
-    dir === "incoming" ||
-    dir === "inbound" ||
-    (
-      calledNumber &&
-      normalizePhone(calledNumber) === normalizePhone(virtualNumber) &&
-      callerNorm !== incomingAgentNorm
-    );
-
-  if (isIncoming) {
-    if (!incomingAgent) {
-      console.error("[calls/connect] INCOMING but INCOMING_AGENT_NUMBER not set");
-      return { destination: "", isIncoming: true };
-    }
-    const from = normalizePhone(callerPhone);
-    // Log the incoming call (idempotent on call_sid)
-    if (defaultUserId && exotelCallSid) {
-      const { data: existing } = await supabaseAdmin
-        .from("call_logs")
-        .select("id")
-        .eq("call_sid", exotelCallSid)
-        .maybeSingle();
-      if (!existing) {
-        await supabaseAdmin.from("call_logs").insert({
-          user_id: defaultUserId,
-          call_sid: exotelCallSid,
-          to_number: incomingAgent,
-          from_number: from,
-          agent_number: incomingAgent,
-          status: "in-progress",
-          started_at: new Date().toISOString(),
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
-      }
-    }
-    console.log("[calls/connect] INCOMING | from:", from, "-> agent:", incomingAgent, "| sid:", exotelCallSid);
-    return { destination: incomingAgent, isIncoming: true };
-  }
-
-  // Outbound flow: caller is the agent. Look up the pending row created by the
-  // mobile/web client for THIS caller specifically — matching by agent_number
-  // avoids picking up a different user's pending row when several are in flight.
-  const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
   const callerNormalized = normalizePhone(callerPhone);
 
-  // 1) Strict match: agent_number === caller's phone. Single-call scope, robust
-  //    even with parallel users.
+  // Step 1: look for a recent pending row this caller created. If one exists,
+  // this is definitively an outbound dial (the caller is a registered agent
+  // who just placed a call from the app). This check is the source of truth
+  // for outbound — it doesn't depend on env-coded agent numbers or on
+  // Exotel's Direction header (which has been inconsistent across configs).
+  const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
   let pending: { id: string; to_number: string } | null = null;
   if (callerNormalized) {
-    // Try exact match first, then the normalized form (handles +91 vs 0 prefix mismatches)
     const candidates = [callerPhone, callerNormalized, `+91${callerNormalized}`].filter(
       (v, i, arr) => v && arr.indexOf(v) === i
     );
@@ -186,51 +139,92 @@ async function resolveDestination(
     if (data) pending = { id: data.id as string, to_number: data.to_number as string };
   }
 
-  // 2) Fallback: most-recent pending row, no agent filter. Keeps the legacy
-  //    behavior for old mobile builds that don't send agentPhone yet.
-  if (!pending) {
-    const { data } = await supabaseAdmin
+  if (pending) {
+    // OUTBOUND path — caller is an agent dialing through our app
+    let destination = pending.to_number ?? "";
+    if (!destination && dtmfDigits) {
+      destination = dtmfDigits.startsWith("+") ? dtmfDigits : `+91${dtmfDigits}`;
+    }
+    console.log(
+      "[calls/connect] OUTBOUND | caller:",
+      callerPhone,
+      "| destination:",
+      destination,
+      "| pending row:",
+      pending.id
+    );
+    if (destination) {
+      await supabaseAdmin
+        .from("call_logs")
+        .update({
+          call_sid: exotelCallSid || `exotel_${Date.now()}`,
+          agent_number: callerPhone,
+          status: "in-progress",
+          started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", pending.id);
+    }
+    return { destination, isIncoming: false };
+  }
+
+  // Step 2: no pending row for this caller. Treat as INCOMING — someone
+  // external called our virtual number. Route to INCOMING_AGENT_NUMBER.
+  // Important guard: if the caller IS the incoming agent (i.e. they dialed
+  // their own routing number without first creating a pending row), do NOT
+  // route the call back to themselves — that's the bug we just fixed.
+  const incomingAgentNorm = incomingAgent ? normalizePhone(incomingAgent) : "";
+  if (incomingAgentNorm && callerNormalized && incomingAgentNorm === callerNormalized) {
+    console.warn(
+      "[calls/connect] caller is incoming-agent but has no pending row — refusing to loop call to self. caller:",
+      callerPhone
+    );
+    return { destination: "", isIncoming: false };
+  }
+
+  if (!incomingAgent) {
+    console.error(
+      "[calls/connect] no pending row matched and INCOMING_AGENT_NUMBER not set — cannot route. caller:",
+      callerPhone,
+      "| called:",
+      calledNumber,
+      "| direction:",
+      direction
+    );
+    return { destination: "", isIncoming: true };
+  }
+
+  // Log the incoming call (idempotent on call_sid)
+  const from = normalizePhone(callerPhone);
+  if (defaultUserId && exotelCallSid) {
+    const { data: existing } = await supabaseAdmin
       .from("call_logs")
-      .select("id, to_number")
-      .eq("status", "pending")
-      .gte("created_at", since)
-      .order("created_at", { ascending: false })
-      .limit(1)
+      .select("id")
+      .eq("call_sid", exotelCallSid)
       .maybeSingle();
-    if (data) pending = { id: data.id as string, to_number: data.to_number as string };
-  }
-
-  let destination = pending?.to_number ?? "";
-
-  if (!destination && dtmfDigits) {
-    destination = dtmfDigits.startsWith("+") ? dtmfDigits : `+91${dtmfDigits}`;
-  }
-
-  console.log(
-    "[calls/connect] OUTBOUND | caller:",
-    callerPhone,
-    "| caller-normalized:",
-    callerNormalized,
-    "| destination:",
-    destination,
-    "| pending row:",
-    pending?.id ?? "none (returning empty → Exotel will hang up)"
-  );
-
-  if (destination && pending) {
-    await supabaseAdmin
-      .from("call_logs")
-      .update({
-        call_sid: exotelCallSid || `exotel_${Date.now()}`,
-        agent_number: callerPhone,
+    if (!existing) {
+      await supabaseAdmin.from("call_logs").insert({
+        user_id: defaultUserId,
+        call_sid: exotelCallSid,
+        to_number: incomingAgent,
+        from_number: from,
+        agent_number: incomingAgent,
         status: "in-progress",
         started_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", pending.id);
+      });
+    }
   }
-
-  return { destination, isIncoming: false };
+  console.log(
+    "[calls/connect] INCOMING | from:",
+    from,
+    "-> agent:",
+    incomingAgent,
+    "| sid:",
+    exotelCallSid
+  );
+  return { destination: incomingAgent, isIncoming: true };
 }
 
 function buildResponse(destination: string) {

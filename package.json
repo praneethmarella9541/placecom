@@ -6,7 +6,9 @@
     "dev": "node --max-old-space-size=8192 ./node_modules/next/dist/bin/next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "auth:meet-organizer": "node scripts/authorize-meet-organizer.mjs",
+    "verify:meet-calendar": "node scripts/verify-meet-calendar.mjs"
   },
   "dependencies": {
     "@fullcalendar/daygrid": "^6.1.20",

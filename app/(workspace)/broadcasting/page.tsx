@@ -16,8 +16,10 @@ import {
 } from "@/components/Icons";
 import { WhatsAppBroadcastPanel } from "@/components/WhatsAppBroadcastPanel";
 import { SmsBroadcastPanel } from "@/components/SmsBroadcastPanel";
+import { MailMergePanel } from "@/components/MailMergePanel";
 
 type Channel = "mail" | "sms" | "whatsapp";
+type MailSubView = "broadcast" | "merge";
 
 type PendingFile = { file: File; base64: string };
 
@@ -73,6 +75,8 @@ function BroadcastingPageInner() {
     failed: { email: string; error: string }[];
   } | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  const [mailSubView, setMailSubView] = useState<MailSubView>("broadcast");
 
   const mergeRecipients = useCallback((more: string[]) => {
     setRecipients((prev) => Array.from(new Set([...prev, ...more])));
@@ -210,6 +214,33 @@ function BroadcastingPageInner() {
       </>
 
       {channel === "mail" ? (
+        <div className="space-y-4">
+          <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60">
+            {(
+              [
+                { key: "broadcast" as const, label: "Broadcast" },
+                { key: "merge" as const, label: "Mail merge" },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setMailSubView(tab.key)}
+                className={cn(
+                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
+                  mailSubView === tab.key
+                    ? "bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-400"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
+                )}
+              >
+                {titleCase(tab.label)}
+              </button>
+            ))}
+          </div>
+
+          {mailSubView === "merge" ? (
+            <MailMergePanel />
+          ) : (
         <div className="card space-y-6 p-5 sm:p-6">
 
           <div className="grid gap-6 lg:grid-cols-2">
@@ -414,6 +445,8 @@ function BroadcastingPageInner() {
               )}
             </button>
           </div>
+        </div>
+          )}
         </div>
       ) : channel === "sms" ? (
         <SmsBroadcastPanel />

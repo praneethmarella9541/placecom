@@ -18,6 +18,8 @@ export type CalendarEventItem = {
   hangoutLink?: string;
 };
 
+export type SendUpdates = "all" | "externalOnly" | "none";
+
 function toErrorCode(status: number): string {
   if (status === 401) return "UNAUTHORIZED";
   if (status === 403) return CALENDAR_INSUFFICIENT_SCOPE;
@@ -36,11 +38,17 @@ async function parseGoogleErrorBody(res: Response): Promise<string> {
   }
 }
 
-export async function listPrimaryCalendarEvents(
+/**
+ * List events from any Google Calendar (e.g. the Meet-organizer calendar).
+ * For the signed-in user's primary calendar, prefer listPrimaryCalendarEvents.
+ */
+export async function listCalendarEvents(
   accessToken: string,
+  calendarId: string,
   opts: { timeMin?: string; timeMax?: string; maxResults?: number } = {}
 ): Promise<CalendarEventItem[]> {
-  const u = new URL(`${CALENDAR_API}/calendars/primary/events`);
+  const cal = encodeURIComponent(calendarId.trim() || "primary");
+  const u = new URL(`${CALENDAR_API}/calendars/${cal}/events`);
   u.searchParams.set("singleEvents", "true");
   u.searchParams.set("orderBy", "startTime");
   u.searchParams.set("maxResults", String(opts.maxResults ?? 100));
@@ -72,15 +80,21 @@ export async function listPrimaryCalendarEvents(
   return body.items || [];
 }
 
-/**
- * Generic create — accepts the same shape Google Calendar expects.
- * Use this from the mobile app / web for arbitrary events.
- *
- * Pass `addMeet: true` to auto-create a Google Meet link on the event.
- * Requires the conferenceDataVersion=1 query param (set below).
- */
-export type SendUpdates = "all" | "externalOnly" | "none";
+export async function listPrimaryCalendarEvents(
+  accessToken: string,
+  opts: { timeMin?: string; timeMax?: string; maxResults?: number } = {}
+): Promise<CalendarEventItem[]> {
+  return listCalendarEvents(accessToken, "primary", opts);
+}
 
+/**
+ * Generic create — accepts the Google Calendar event shape directly.
+ * Used by POST /api/calendar/events from both web and mobile.
+ *
+ * Pass `addMeet: true` to auto-create a Google Meet link (requires
+ * the conferenceDataVersion=1 query param, set below).
+ * Pass `sendUpdates` to control attendee email notifications.
+ */
 export async function createCalendarEvent(
   accessToken: string,
   input: {
@@ -224,8 +238,19 @@ export async function deleteCalendarEvent(
   }
 }
 
-export async function createPrimaryCalendarEvent(
+/**
+ * Placement-meeting / recruiter-call create. Builds a structured event with
+ * Google Meet attached. The calendar id can be the user's "primary" or a
+ * dedicated Meet-organizer calendar id; when using a dedicated calendar,
+ * pass admin/owner email(s) via `extraAttendeeEmails` so they get invites.
+ *
+ * (Was named `createCalendarEvent` on the chetan branch — renamed to
+ * `createPlacementMeetingEvent` here so it doesn't collide with the generic
+ * `createCalendarEvent` above used by POST /api/calendar/events.)
+ */
+export async function createPlacementMeetingEvent(
   accessToken: string,
+  calendarId: string,
   input: {
     recruiterEmail: string;
     companyName: string;
@@ -234,8 +259,24 @@ export async function createPrimaryCalendarEvent(
     startDateTime: string;
     endDateTime: string;
     timeZone?: string;
+    /** Extra invitees (e.g. admin mailbox) when Meet is hosted on a dedicated calendar. */
+    extraAttendeeEmails?: string[];
   }
 ): Promise<CalendarEventItem> {
+  const seen = new Set<string>();
+  const attendees: { email: string }[] = [];
+  const add = (email: string) => {
+    const e = email.trim().toLowerCase();
+    if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || seen.has(e)) return;
+    seen.add(e);
+    attendees.push({ email: e });
+  };
+
+  add(input.recruiterEmail);
+  for (const email of input.extraAttendeeEmails ?? []) {
+    add(email);
+  }
+
   const payload = {
     summary: input.title?.trim() || `Placement Meeting - ${input.companyName}`,
     description: input.notes?.trim() || `Placement office recruiter meeting with ${input.companyName}.`,
@@ -247,10 +288,7 @@ export async function createPrimaryCalendarEvent(
       dateTime: input.endDateTime,
       timeZone: input.timeZone || "Asia/Kolkata",
     },
-    attendees: [
-      { email: input.recruiterEmail.trim() },
-      { email: "fred@fireflies.ai" }
-    ],
+    attendees,
     guestsCanInviteOthers: false,
     conferenceData: {
       createRequest: {
@@ -262,7 +300,8 @@ export async function createPrimaryCalendarEvent(
 
   let res: Response;
   try {
-    res = await fetch(`${CALENDAR_API}/calendars/primary/events?conferenceDataVersion=1`, {
+    const cal = encodeURIComponent(calendarId.trim() || "primary");
+    res = await fetch(`${CALENDAR_API}/calendars/${cal}/events?conferenceDataVersion=1`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -286,4 +325,12 @@ export async function createPrimaryCalendarEvent(
   }
 
   return (await res.json()) as CalendarEventItem;
+}
+
+/** Creates a placement-meeting event on the signed-in user's primary calendar. */
+export async function createPrimaryCalendarEvent(
+  accessToken: string,
+  input: Parameters<typeof createPlacementMeetingEvent>[2]
+): Promise<CalendarEventItem> {
+  return createPlacementMeetingEvent(accessToken, "primary", input);
 }

@@ -2,8 +2,16 @@ import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   CALENDAR_INSUFFICIENT_SCOPE,
-  createPrimaryCalendarEvent,
+  createPlacementMeetingEvent,
 } from "@/lib/google-calendar";
+import {
+  canUseMeetOrganizerToken,
+  getMeetAdminInviteEmail,
+  getMeetOrganizerAccessToken,
+  getMeetOrganizerCalendarId,
+  isMeetOrganizerAccountEmail,
+} from "@/lib/google-meet-organizer";
+import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 
@@ -12,9 +20,25 @@ function isValidEmail(email: string): boolean {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
-  if (!auth.ok) {
-    return NextResponse.json({ error: auth.message }, { status: auth.status });
+  // Auth identifies the *requesting* user. Calendar access token may come
+  // from a separate Meet-organizer account (if configured) or from the
+  // requesting user's own Google session (web cookies) / Bearer token (mobile).
+  const supabase = createServerSupabaseClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // Fall back to Bearer (mobile) when cookie session is absent.
+  let signedInUserEmail: string | null = user?.email ?? null;
+  if (!user) {
+    const bearerAuth = await requireGmailAccessToken(request);
+    if (!bearerAuth.ok) {
+      return NextResponse.json({ error: bearerAuth.message }, { status: bearerAuth.status });
+    }
+    // requireGmailAccessToken doesn't surface the email; that's fine — we
+    // only use it for Meet-organizer detection below, and Bearer-only callers
+    // won't match the organizer email anyway.
+    signedInUserEmail = null;
   }
 
   const body = (await request.json().catch(() => null)) as
@@ -52,44 +76,76 @@ export async function POST(request: Request) {
     );
   }
 
+  const meetOrganizerEmail = getMeetOrganizerCalendarId();
+  const adminInviteEmail = getMeetAdminInviteEmail();
+  const useOrganizerToken = await canUseMeetOrganizerToken();
+
   try {
-    const event = await createPrimaryCalendarEvent(auth.accessToken, {
-      recruiterEmail,
-      companyName,
-      startDateTime,
-      endDateTime,
-      notes: body?.notes,
-      title: body?.title,
-    });
+    let calendarAccessToken: string;
+    if (useOrganizerToken) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      calendarAccessToken = await getMeetOrganizerAccessToken({
+        sessionProviderToken: isMeetOrganizerAccountEmail(signedInUserEmail)
+          ? session?.provider_token
+          : null,
+      });
+    } else {
+      const auth = await requireGmailAccessToken(request);
+      if (!auth.ok) {
+        return NextResponse.json({ error: auth.message }, { status: auth.status });
+      }
+      calendarAccessToken = auth.accessToken;
+    }
+
+    const calendarId = useOrganizerToken ? "primary" : meetOrganizerEmail;
+
+    const event = await createPlacementMeetingEvent(
+      calendarAccessToken,
+      calendarId,
+      {
+        recruiterEmail,
+        companyName,
+        startDateTime,
+        endDateTime,
+        notes: body?.notes,
+        title: body?.title,
+        extraAttendeeEmails: [adminInviteEmail],
+      }
+    );
 
     const hangoutLink = event.hangoutLink;
-    if (hangoutLink) {
+    if (hangoutLink && user) {
       try {
-        // The bot fred@fireflies.ai is now automatically invited via Google Calendar attendees array
-        // so we just need to register it in our DB for tracking
-        
-        const { createServerSupabaseClient } = await import("@/lib/supabase-server");
-        const supabase = createServerSupabaseClient();
-        const { data: { user } } = await supabase.auth.getUser();
-        
-        if (user) {
-          await supabase.from("meeting_recordings").insert({
-            user_id: user.id,
-            meeting_url: hangoutLink,
-            attendee_email: recruiterEmail,
-          });
-        }
+        await supabase.from("meeting_recordings").insert({
+          user_id: user.id,
+          meeting_url: hangoutLink,
+          attendee_email: recruiterEmail,
+        });
       } catch (err) {
-        console.error("Failed to invite Fireflies bot:", err);
+        console.error("Failed to save meeting recording:", err);
       }
     }
 
-    return NextResponse.json({ event }, { status: 201 });
+    return NextResponse.json(
+      {
+        event,
+        meetOrganizerEmail,
+        adminInviteEmail,
+      },
+      { status: 201 }
+    );
   } catch (e) {
     const err = e as Error & { code?: string };
     if (err.code === "UNAUTHORIZED") {
       return NextResponse.json(
-        { error: "Google token expired. Sign in again." },
+        {
+          error:
+            isMeetOrganizerAccountEmail(signedInUserEmail)
+              ? "Google Calendar session expired. Sign out, sign in again with Google as g24072@astra.xlri.ac.in, then retry."
+              : "Google token expired. Sign in again.",
+        },
         { status: 401 }
       );
     }
@@ -103,8 +159,16 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
+    const msg = err.message || "Failed to create calendar event";
+    const needsShare =
+      !useOrganizerToken && /notFound|forbidden|404|403/i.test(msg);
     return NextResponse.json(
-      { error: err.message || "Failed to create calendar event" },
+      {
+        error: msg,
+        hint: needsShare
+          ? `${meetOrganizerEmail} must share their Google Calendar with ${adminInviteEmail} (Make changes to events), or sign in as ${meetOrganizerEmail} once.`
+          : undefined,
+      },
       { status: 500 }
     );
   }

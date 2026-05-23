@@ -61,6 +61,7 @@ type CreateBody = {
   start?: { dateTime?: string; date?: string; timeZone?: string };
   end?: { dateTime?: string; date?: string; timeZone?: string };
   attendees?: { email: string }[];
+  addMeet?: boolean;
 };
 
 export async function POST(request: Request) {
@@ -101,6 +102,7 @@ export async function POST(request: Request) {
       start: body.start,
       end: body.end,
       attendees: body.attendees,
+      addMeet: body.addMeet,
     });
     return NextResponse.json({ event }, { status: 201 });
   } catch (e) {

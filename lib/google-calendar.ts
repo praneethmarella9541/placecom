@@ -75,6 +75,9 @@ export async function listPrimaryCalendarEvents(
 /**
  * Generic create — accepts the same shape Google Calendar expects.
  * Use this from the mobile app / web for arbitrary events.
+ *
+ * Pass `addMeet: true` to auto-create a Google Meet link on the event.
+ * Requires the conferenceDataVersion=1 query param (set below).
  */
 export async function createCalendarEvent(
   accessToken: string,
@@ -85,17 +88,32 @@ export async function createCalendarEvent(
     start: { dateTime?: string; date?: string; timeZone?: string };
     end: { dateTime?: string; date?: string; timeZone?: string };
     attendees?: { email: string }[];
+    addMeet?: boolean;
   }
 ): Promise<CalendarEventItem> {
+  const { addMeet, ...rest } = input;
+  const payload: Record<string, unknown> = { ...rest };
+  if (addMeet) {
+    payload.conferenceData = {
+      createRequest: {
+        requestId: `meet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        conferenceSolutionKey: { type: "hangoutsMeet" },
+      },
+    };
+  }
+  const url = addMeet
+    ? `${CALENDAR_API}/calendars/primary/events?conferenceDataVersion=1`
+    : `${CALENDAR_API}/calendars/primary/events`;
+
   let res: Response;
   try {
-    res = await fetch(`${CALENDAR_API}/calendars/primary/events`, {
+    res = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify(payload),
     });
   } catch (e) {
     throw new Error(
@@ -123,21 +141,33 @@ export async function patchCalendarEvent(
     start?: { dateTime?: string; date?: string; timeZone?: string };
     end?: { dateTime?: string; date?: string; timeZone?: string };
     attendees?: { email: string }[];
+    addMeet?: boolean;
   }
 ): Promise<CalendarEventItem> {
+  const { addMeet, ...rest } = input;
+  const payload: Record<string, unknown> = { ...rest };
+  if (addMeet) {
+    payload.conferenceData = {
+      createRequest: {
+        requestId: `meet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        conferenceSolutionKey: { type: "hangoutsMeet" },
+      },
+    };
+  }
+  const url = addMeet
+    ? `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}?conferenceDataVersion=1`
+    : `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`;
+
   let res: Response;
   try {
-    res = await fetch(
-      `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`,
-      {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(input),
-      }
-    );
+    res = await fetch(url, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
   } catch (e) {
     throw new Error(
       describeUpstreamFetchError(e, "Google Calendar API (patch event)")

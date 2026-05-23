@@ -160,17 +160,45 @@ async function resolveDestination(
     return { destination: incomingAgent, isIncoming: true };
   }
 
-  // Outbound flow: caller is the agent, look up pending row created by the mobile app
+  // Outbound flow: caller is the agent. Look up the pending row created by the
+  // mobile/web client for THIS caller specifically — matching by agent_number
+  // avoids picking up a different user's pending row when several are in flight.
   const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  const callerNormalized = normalizePhone(callerPhone);
 
-  const { data: pending } = await supabaseAdmin
-    .from("call_logs")
-    .select("id, to_number")
-    .eq("status", "pending")
-    .gte("created_at", since)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // 1) Strict match: agent_number === caller's phone. Single-call scope, robust
+  //    even with parallel users.
+  let pending: { id: string; to_number: string } | null = null;
+  if (callerNormalized) {
+    // Try exact match first, then the normalized form (handles +91 vs 0 prefix mismatches)
+    const candidates = [callerPhone, callerNormalized, `+91${callerNormalized}`].filter(
+      (v, i, arr) => v && arr.indexOf(v) === i
+    );
+    const { data } = await supabaseAdmin
+      .from("call_logs")
+      .select("id, to_number, agent_number")
+      .eq("status", "pending")
+      .gte("created_at", since)
+      .in("agent_number", candidates)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data) pending = { id: data.id as string, to_number: data.to_number as string };
+  }
+
+  // 2) Fallback: most-recent pending row, no agent filter. Keeps the legacy
+  //    behavior for old mobile builds that don't send agentPhone yet.
+  if (!pending) {
+    const { data } = await supabaseAdmin
+      .from("call_logs")
+      .select("id, to_number")
+      .eq("status", "pending")
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (data) pending = { id: data.id as string, to_number: data.to_number as string };
+  }
 
   let destination = pending?.to_number ?? "";
 
@@ -178,7 +206,16 @@ async function resolveDestination(
     destination = dtmfDigits.startsWith("+") ? dtmfDigits : `+91${dtmfDigits}`;
   }
 
-  console.log("[calls/connect] OUTBOUND | caller:", callerPhone, "| destination:", destination, "| pending row:", pending?.id ?? "none");
+  console.log(
+    "[calls/connect] OUTBOUND | caller:",
+    callerPhone,
+    "| caller-normalized:",
+    callerNormalized,
+    "| destination:",
+    destination,
+    "| pending row:",
+    pending?.id ?? "none (returning empty → Exotel will hang up)"
+  );
 
   if (destination && pending) {
     await supabaseAdmin

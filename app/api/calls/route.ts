@@ -157,12 +157,23 @@ export async function POST(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
-  const body = (await request.json().catch(() => null)) as { to?: string } | null;
+  const body = (await request.json().catch(() => null)) as {
+    to?: string;
+    agentPhone?: string;
+  } | null;
   const to = body?.to?.trim() || "";
+  const agentPhone = body?.agentPhone?.trim() || "";
 
   if (!validPhone(to)) {
     return NextResponse.json(
       { error: "Provide a valid phone number with country code, e.g. +919876543210." },
+      { status: 400 }
+    );
+  }
+  // agent_number is also validated when present, so the webhook can match precisely
+  if (agentPhone && !validPhone(agentPhone)) {
+    return NextResponse.json(
+      { error: "Agent phone must include country code, e.g. +918056101540." },
       { status: 400 }
     );
   }
@@ -174,7 +185,10 @@ export async function POST(request: Request) {
       call_sid: `pending_${Date.now()}`,
       to_number: to,
       from_number: process.env.EXOTEL_VIRTUAL_NUMBER ?? "",
-      agent_number: "",
+      // agent_number holds the dialing user's phone so the Exotel connect
+      // webhook can match the right pending row when multiple users (or
+      // multiple attempts) are in flight.
+      agent_number: agentPhone,
       status: "pending",
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

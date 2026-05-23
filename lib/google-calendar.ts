@@ -79,6 +79,8 @@ export async function listPrimaryCalendarEvents(
  * Pass `addMeet: true` to auto-create a Google Meet link on the event.
  * Requires the conferenceDataVersion=1 query param (set below).
  */
+export type SendUpdates = "all" | "externalOnly" | "none";
+
 export async function createCalendarEvent(
   accessToken: string,
   input: {
@@ -89,9 +91,10 @@ export async function createCalendarEvent(
     end: { dateTime?: string; date?: string; timeZone?: string };
     attendees?: { email: string }[];
     addMeet?: boolean;
+    sendUpdates?: SendUpdates;
   }
 ): Promise<CalendarEventItem> {
-  const { addMeet, ...rest } = input;
+  const { addMeet, sendUpdates, ...rest } = input;
   const payload: Record<string, unknown> = { ...rest };
   if (addMeet) {
     payload.conferenceData = {
@@ -101,8 +104,12 @@ export async function createCalendarEvent(
       },
     };
   }
-  const url = addMeet
-    ? `${CALENDAR_API}/calendars/primary/events?conferenceDataVersion=1`
+  const params = new URLSearchParams();
+  if (addMeet) params.set("conferenceDataVersion", "1");
+  if (sendUpdates) params.set("sendUpdates", sendUpdates);
+  const qs = params.toString();
+  const url = qs
+    ? `${CALENDAR_API}/calendars/primary/events?${qs}`
     : `${CALENDAR_API}/calendars/primary/events`;
 
   let res: Response;
@@ -142,9 +149,10 @@ export async function patchCalendarEvent(
     end?: { dateTime?: string; date?: string; timeZone?: string };
     attendees?: { email: string }[];
     addMeet?: boolean;
+    sendUpdates?: SendUpdates;
   }
 ): Promise<CalendarEventItem> {
-  const { addMeet, ...rest } = input;
+  const { addMeet, sendUpdates, ...rest } = input;
   const payload: Record<string, unknown> = { ...rest };
   if (addMeet) {
     payload.conferenceData = {
@@ -154,9 +162,12 @@ export async function patchCalendarEvent(
       },
     };
   }
-  const url = addMeet
-    ? `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}?conferenceDataVersion=1`
-    : `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`;
+  const params = new URLSearchParams();
+  if (addMeet) params.set("conferenceDataVersion", "1");
+  if (sendUpdates) params.set("sendUpdates", sendUpdates);
+  const qs = params.toString();
+  const base = `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`;
+  const url = qs ? `${base}?${qs}` : base;
 
   let res: Response;
   try {
@@ -186,17 +197,17 @@ export async function patchCalendarEvent(
 
 export async function deleteCalendarEvent(
   accessToken: string,
-  eventId: string
+  eventId: string,
+  opts: { sendUpdates?: SendUpdates } = {}
 ): Promise<void> {
+  const base = `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`;
+  const url = opts.sendUpdates ? `${base}?sendUpdates=${opts.sendUpdates}` : base;
   let res: Response;
   try {
-    res = await fetch(
-      `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`,
-      {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${accessToken}` },
-      }
-    );
+    res = await fetch(url, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
   } catch (e) {
     throw new Error(
       describeUpstreamFetchError(e, "Google Calendar API (delete event)")

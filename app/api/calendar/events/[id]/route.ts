@@ -8,6 +8,8 @@ import {
 
 export const runtime = "nodejs";
 
+type SendUpdates = "all" | "externalOnly" | "none";
+
 type PatchBody = {
   summary?: string;
   description?: string;
@@ -16,6 +18,7 @@ type PatchBody = {
   end?: { dateTime?: string; date?: string; timeZone?: string };
   attendees?: { email: string }[];
   addMeet?: boolean;
+  sendUpdates?: SendUpdates;
 };
 
 function handleError(e: unknown) {
@@ -78,8 +81,12 @@ export async function DELETE(
   if (!id) {
     return NextResponse.json({ error: "Missing event id" }, { status: 400 });
   }
+  const { searchParams } = new URL(request.url);
+  const raw = searchParams.get("sendUpdates");
+  const sendUpdates: SendUpdates | undefined =
+    raw === "all" || raw === "externalOnly" || raw === "none" ? raw : undefined;
   try {
-    await deleteCalendarEvent(auth.accessToken, id);
+    await deleteCalendarEvent(auth.accessToken, id, { sendUpdates });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return handleError(e);

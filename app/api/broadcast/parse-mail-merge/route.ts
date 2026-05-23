@@ -51,10 +51,19 @@ export async function POST(request: Request) {
     }
 
     if (parsed.rows.length === 0) {
+      const headers =
+        parsed.headerLabels?.length > 0
+          ? parsed.headerLabels.join(", ")
+          : "(could not read row 1)";
+      const hint =
+        parsed.emailColumnIndex < 0
+          ? "Row 1 must be headers. Add a column named Email (or any column whose cells contain email addresses)."
+          : "Row 1 is headers, but no data rows had a valid email. Check addresses in your file.";
       return NextResponse.json(
         {
-          error:
-            "No valid rows found. Include a header row with an Email column plus any fields you want (Name, Phone, Company, etc.).",
+          error: `No valid rows found. ${hint}`,
+          detectedHeaders: parsed.headerLabels,
+          headersFound: headers,
         },
         { status: 400 }
       );

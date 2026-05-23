@@ -15,7 +15,24 @@ export function normalizeMergeFieldKey(header: string): string {
     .replace(/^_+|_+$/g, "");
 }
 
-const EMAIL_HEADER_KEYS = new Set(["email", "e_mail", "mail", "email_address"]);
+const EMAIL_HEADER_KEYS = new Set([
+  "email",
+  "e_mail",
+  "email_address",
+  "email_id",
+  "emailid",
+  "mail_id",
+  "mailid",
+  "candidate_email",
+  "official_email",
+  "work_email",
+  "personal_email",
+]);
+
+function headerLooksLikeEmailColumn(key: string): boolean {
+  if (EMAIL_HEADER_KEYS.has(key)) return true;
+  return key.includes("email");
+}
 const NAME_HEADER_KEYS = new Set(["name", "full_name", "fullname", "contact_name"]);
 const FIRST_NAME_KEYS = new Set(["first_name", "firstname", "given_name"]);
 const LAST_NAME_KEYS = new Set(["last_name", "lastname", "surname", "family_name"]);
@@ -92,25 +109,56 @@ function enrichDerivedFields(fields: Record<string, string>): Record<string, str
   return out;
 }
 
-/** Map header row + data row to merge fields with standard aliases. */
+/** Pick which column holds recipient email (header name or cell content). */
+export function resolveEmailColumnIndex(
+  headers: string[],
+  dataRows: string[][],
+  emailFromCell: (cell: string) => string | null
+): number {
+  for (let i = 0; i < headers.length; i++) {
+    const key = normalizeMergeFieldKey(headers[i] || "");
+    if (headerLooksLikeEmailColumn(key)) return i;
+  }
+
+  let bestIdx = -1;
+  let bestHits = 0;
+  for (let col = 0; col < headers.length; col++) {
+    let hits = 0;
+    let total = 0;
+    for (const row of dataRows.slice(0, 40)) {
+      const v = String(row[col] ?? "").trim();
+      if (!v) continue;
+      total++;
+      if (emailFromCell(v)) hits++;
+    }
+    if (total > 0 && hits >= Math.max(1, Math.ceil(total * 0.4)) && hits > bestHits) {
+      bestHits = hits;
+      bestIdx = col;
+    }
+  }
+  return bestIdx;
+}
+
+/** Map header row + data row to merge fields (row 1 = headers). */
 export function rowToMergeFields(
   headers: string[],
-  cells: string[]
+  cells: string[],
+  emailColumnIndex: number,
+  emailFromCell: (cell: string) => string | null
 ): Record<string, string> | null {
-  const fields: Record<string, string> = {};
-  let email = "";
+  const emailRaw = String(cells[emailColumnIndex] ?? "").trim();
+  const parsed = emailFromCell(emailRaw);
+  if (!parsed) return null;
+
+  const fields: Record<string, string> = { email: parsed };
 
   for (let i = 0; i < headers.length; i++) {
+    if (i === emailColumnIndex) continue;
+
     const rawHeader = headers[i]?.trim() || `column_${i + 1}`;
     const key = normalizeMergeFieldKey(rawHeader);
     const value = String(cells[i] ?? "").trim();
     if (!value) continue;
-
-    if (EMAIL_HEADER_KEYS.has(key) || (key.includes("email") && !email)) {
-      email = value.toLowerCase();
-      fields.email = email;
-      continue;
-    }
 
     fields[key] = value;
     if (NAME_HEADER_KEYS.has(key)) fields.name = value;
@@ -118,9 +166,6 @@ export function rowToMergeFields(
     if (LAST_NAME_KEYS.has(key)) fields.last_name = value;
     if (PHONE_HEADER_KEYS.has(key)) fields.phone = value;
   }
-
-  if (!email && fields.email) email = fields.email;
-  if (!email) return null;
 
   return enrichDerivedFields(fields);
 }

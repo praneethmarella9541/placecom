@@ -84,13 +84,21 @@ export function MailMergePanel() {
       const res = await fetch("/api/broadcast/parse-mail-merge", { method: "POST", body: fd });
       const data = (await res.json()) as {
         error?: string;
+        headersFound?: string;
+        detectedHeaders?: string[];
         rows?: MailMergeRow[];
         columns?: string[];
         skipped?: number;
         truncated?: boolean;
         maxRows?: number;
       };
-      if (!res.ok) throw new Error(data.error || "Import failed");
+      if (!res.ok) {
+        const extra =
+          data.headersFound || data.detectedHeaders?.length
+            ? ` Headers found: ${data.headersFound || data.detectedHeaders?.join(", ")}.`
+            : "";
+        throw new Error((data.error || "Import failed") + extra);
+      }
       const imported = data.rows || [];
       setRows(imported);
       setColumns(data.columns || []);
@@ -188,7 +196,7 @@ export function MailMergePanel() {
             </label>
             <p className="mb-2 text-xs text-zinc-400">
               {titleCase(
-                "First row = headers (Email required). Use {{name}} or {{Name}} — placeholders match column names, case-insensitive."
+                "Row 1 = column headers (Name, Phone, etc.). One column must be Email or contain email addresses in each row."
               )}
             </p>
             <input

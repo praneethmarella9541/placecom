@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken();
+  const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

@@ -409,6 +409,36 @@ export default function InboxPage() {
     void loadLabels();
   }, [loadLabels]);
 
+  // Folder + label counts. Refreshed alongside the thread list so a bulk
+  // archive/delete updates the badges. Browser caches the response 30 s
+  // so the request is cheap.
+  const [labelCounts, setLabelCounts] = useState<Record<string, { total: number; unread: number }>>({});
+  const loadCounts = useCallback(async () => {
+    if (allLabels.length === 0) return;
+    const ids = [
+      "INBOX",
+      "SENT",
+      "DRAFT",
+      "STARRED",
+      "CATEGORY_PERSONAL",
+      "CATEGORY_PROMOTIONS",
+      "CATEGORY_SOCIAL",
+      "CATEGORY_UPDATES",
+      "CATEGORY_FORUMS",
+      ...allLabels.filter((l) => l.type === "user").map((l) => l.id),
+    ];
+    try {
+      const res = await fetch(`/api/gmail/folder-counts?ids=${encodeURIComponent(ids.join(","))}`);
+      if (!res.ok) return;
+      const j = (await res.json()) as { counts?: Record<string, { total: number; unread: number }> };
+      setLabelCounts(j.counts ?? {});
+    } catch { /* ignore */ }
+  }, [allLabels]);
+
+  useEffect(() => { void loadCounts(); }, [loadCounts]);
+  // Refresh counts after the list reloads (bulk actions, refresh).
+  useEffect(() => { if (!loadingList) void loadCounts(); }, [loadingList, loadCounts]);
+
   useEffect(() => {
     void loadTracking();
   }, [loadTracking]);
@@ -821,11 +851,21 @@ export default function InboxPage() {
               </button>
               <div className="flex flex-1 items-center gap-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-offset)] p-0.5">
                 {[
-                  { key: "inbox" as const, label: "Inbox", icon: IconInbox },
-                  { key: "sent" as const, label: "Sent", icon: IconSend },
-                  { key: "drafts" as const, label: "Drafts", icon: FilePen },
+                  { key: "inbox" as const, label: "Inbox", icon: IconInbox, countId: "INBOX" },
+                  { key: "sent" as const, label: "Sent", icon: IconSend, countId: "SENT" },
+                  { key: "drafts" as const, label: "Drafts", icon: FilePen, countId: "DRAFT" },
                 ].map((f) => {
                   const Icon = f.icon;
+                  const count = labelCounts[f.countId];
+                  // Show unread for inbox (more useful), total for drafts/sent.
+                  const badge =
+                    f.key === "inbox"
+                      ? count?.unread && count.unread > 0
+                        ? count.unread
+                        : null
+                      : count?.total && count.total > 0
+                        ? count.total
+                        : null;
                   return (
                     <button
                       key={f.key}
@@ -845,6 +885,11 @@ export default function InboxPage() {
                       )}
                     >
                       <Icon className="h-3.5 w-3.5" /> {titleCase(f.label)}
+                      {badge !== null && (
+                        <span className="ml-0.5 text-[10px] tabular-nums opacity-70">
+                          {badge > 999 ? `${Math.floor(badge / 1000)}k` : badge}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -876,27 +921,35 @@ export default function InboxPage() {
               <div className="-mx-1 mt-2 flex gap-1 overflow-x-auto">
                 {(
                   [
-                    { key: "primary" as const, label: "Primary" },
-                    { key: "promotions" as const, label: "Promotions" },
-                    { key: "social" as const, label: "Social" },
-                    { key: "updates" as const, label: "Updates" },
-                    { key: "forums" as const, label: "Forums" },
+                    { key: "primary" as const, label: "Primary", countId: "CATEGORY_PERSONAL" },
+                    { key: "promotions" as const, label: "Promotions", countId: "CATEGORY_PROMOTIONS" },
+                    { key: "social" as const, label: "Social", countId: "CATEGORY_SOCIAL" },
+                    { key: "updates" as const, label: "Updates", countId: "CATEGORY_UPDATES" },
+                    { key: "forums" as const, label: "Forums", countId: "CATEGORY_FORUMS" },
                   ]
-                ).map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => setCategory(t.key)}
-                    className={cn(
-                      "shrink-0 rounded-full px-3 py-1 text-[12px] font-medium transition-colors",
-                      category === t.key
-                        ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                        : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
-                    )}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+                ).map((t) => {
+                  const unread = labelCounts[t.countId]?.unread ?? 0;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => setCategory(t.key)}
+                      className={cn(
+                        "shrink-0 rounded-full px-3 py-1 text-[12px] font-medium transition-colors",
+                        category === t.key
+                          ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                          : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+                      )}
+                    >
+                      {t.label}
+                      {unread > 0 && (
+                        <span className="ml-1 text-[10px] font-bold opacity-80">
+                          {unread > 99 ? "99+" : unread} new
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -918,21 +971,30 @@ export default function InboxPage() {
                 {allLabels
                   .filter((l) => l.type === "user")
                   .slice(0, 12)
-                  .map((l) => (
-                    <button
-                      key={l.id}
-                      type="button"
-                      onClick={() => setFilterLabelId(filterLabelId === l.id ? null : l.id)}
-                      className={cn(
-                        "rounded-full border px-2 py-[2px] text-[11px] font-medium",
-                        filterLabelId === l.id
-                          ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                          : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
-                      )}
-                    >
-                      {l.name}
-                    </button>
-                  ))}
+                  .map((l) => {
+                    const c = labelCounts[l.id];
+                    const unread = c?.unread ?? 0;
+                    return (
+                      <button
+                        key={l.id}
+                        type="button"
+                        onClick={() => setFilterLabelId(filterLabelId === l.id ? null : l.id)}
+                        className={cn(
+                          "flex items-center gap-1 rounded-full border px-2 py-[2px] text-[11px] font-medium",
+                          filterLabelId === l.id
+                            ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                            : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+                        )}
+                      >
+                        {l.name}
+                        {unread > 0 && (
+                          <span className="rounded-full bg-[var(--color-primary)] px-1.5 py-[1px] text-[9px] font-bold text-white">
+                            {unread > 99 ? "99+" : unread}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
               </div>
             )}
           </div>

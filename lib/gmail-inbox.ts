@@ -17,10 +17,16 @@ export type ThreadListItem = {
   draftId?: string;
   /** True if any message in the thread carries the Gmail UNREAD label. */
   unread?: boolean;
+  /** True if any message in the thread is starred. Rendered as a star icon
+   *  in the row rather than a chip. */
+  starred?: boolean;
+  /** Heuristic: at least one message's Content-Type is multipart/mixed
+   *  (i.e. it has an attachment). Cheap because we already fetch the
+   *  Content-Type header in the metadata call. */
+  hasAttachments?: boolean;
   /** Unique label ids across all messages in the thread. The UI maps these
    *  through the labels list to render chips. Excludes folder-state labels
-   *  (INBOX/SENT/DRAFT/etc.) because those are already conveyed by the
-   *  folder tab the row appears under. */
+   *  (INBOX/SENT/DRAFT/etc.) AND STARRED (which has its own icon). */
   labelIds?: string[];
 };
 
@@ -228,6 +234,8 @@ export async function listThreadsPage(
         params.append("metadataHeaders", "Subject");
         params.append("metadataHeaders", "From");
         params.append("metadataHeaders", "Date");
+        // Used to derive hasAttachments cheaply (multipart/mixed → has files).
+        params.append("metadataHeaders", "Content-Type");
         const res = await fetch(
           `${GMAIL_API}/threads/${encodeURIComponent(t.id)}?${params.toString()}`,
           { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -260,6 +268,8 @@ export async function listThreadsPage(
         }
         const allLabelIds = Array.from(new Set(msgs.flatMap((m) => m.labelIds ?? [])));
         // Strip folder-state labels — the row's folder tab already conveys this.
+        // STARRED is also stripped from chips because it has its own star icon
+        // in the UI (Gmail does the same; star is not rendered as a chip).
         const FOLDER_LABELS = new Set([
           "INBOX",
           "SENT",
@@ -268,8 +278,17 @@ export async function listThreadsPage(
           "SPAM",
           "UNREAD",
           "CHAT",
+          "STARRED",
         ]);
         const userVisibleLabelIds = allLabelIds.filter((id) => !FOLDER_LABELS.has(id));
+        // hasAttachments — any message whose top-level Content-Type starts
+        // with multipart/mixed (Gmail's signal for "has attachments").
+        const hasAttachments = msgs.some((m) => {
+          const ct = (m.payload?.headers || []).find(
+            (h) => (h.name || "").toLowerCase() === "content-type"
+          )?.value || "";
+          return /^multipart\/mixed/i.test(ct);
+        });
         return {
           id: t.id,
           snippet: t.snippet || "",
@@ -279,6 +298,8 @@ export async function listThreadsPage(
           labelIds: userVisibleLabelIds,
           historyId: t.historyId,
           unread: allLabelIds.includes("UNREAD"),
+          starred: allLabelIds.includes("STARRED"),
+          hasAttachments,
         };
       } catch {
         return {

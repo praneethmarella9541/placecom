@@ -24,14 +24,6 @@ import {
   IconSearch,
 } from "@/components/Icons";
 
-function avatarHue(seed: string): string {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) {
-    h = seed.charCodeAt(i) + ((h << 5) - h);
-  }
-  return `hsl(${Math.abs(h) % 360} 42% 44%)`;
-}
-
 type Folder = "inbox" | "sent" | "drafts";
 type ThreadRow = {
   id: string;
@@ -41,6 +33,9 @@ type ThreadRow = {
   date: string;
   draftId?: string;
   labelIds?: string[];
+  unread?: boolean;
+  starred?: boolean;
+  hasAttachments?: boolean;
 };
 
 type GmailLabel = {
@@ -235,6 +230,13 @@ export default function InboxPage() {
   // Optional filter — restricts the thread list to a single user label
   // (intersected with the folder).
   const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
+
+  // Multi-select state (Gmail-style row checkboxes).
+  const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
+  const allSelected =
+    threads.length > 0 && threads.every((t) => selectedThreadIds.has(t.id));
+  // Per-row action busy state (for the optimistic star toggle / row-quick-actions).
+  const [rowBusy, setRowBusy] = useState<Set<string>>(new Set());
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MsgView[] | null>(null);
@@ -524,6 +526,114 @@ export default function InboxPage() {
   );
 
   // Create a new Gmail label and immediately apply it to the open thread.
+  // Toggle the STARRED label on a thread (optimistic). Used by the row star
+  // icon — separate from the labels picker because Gmail treats star as a
+  // first-class affordance, not a chip.
+  const toggleThreadStar = useCallback(
+    async (threadId: string, nextStarred: boolean) => {
+      setRowBusy((s) => new Set(s).add(threadId));
+      const prevRows = threads;
+      setThreads((rows) =>
+        rows.map((r) => (r.id === threadId ? { ...r, starred: nextStarred } : r))
+      );
+      try {
+        const res = await fetch(
+          `/api/gmail/threads/${encodeURIComponent(threadId)}/labels`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(
+              nextStarred ? { add: ["STARRED"] } : { remove: ["STARRED"] }
+            ),
+          }
+        );
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
+      } catch (e) {
+        setThreads(prevRows);
+        alert(e instanceof Error ? e.message : "Could not update star");
+      } finally {
+        setRowBusy((s) => {
+          const next = new Set(s);
+          next.delete(threadId);
+          return next;
+        });
+      }
+    },
+    [threads]
+  );
+
+  // Row quick-actions: archive (remove INBOX), trash (add TRASH), and
+  // mark-read/unread. Optimistic — removes the row from the list immediately
+  // for archive/trash, rolls back on failure.
+  const performRowAction = useCallback(
+    async (threadId: string, action: "archive" | "trash" | "markRead" | "markUnread") => {
+      setRowBusy((s) => new Set(s).add(threadId));
+      const prevRows = threads;
+      const removeFromList = action === "archive" || action === "trash";
+      if (removeFromList) {
+        setThreads((rows) => rows.filter((r) => r.id !== threadId));
+      } else {
+        setThreads((rows) =>
+          rows.map((r) =>
+            r.id === threadId ? { ...r, unread: action === "markUnread" } : r
+          )
+        );
+      }
+      const body =
+        action === "archive"
+          ? { remove: ["INBOX"] }
+          : action === "trash"
+            ? { add: ["TRASH"], remove: ["INBOX"] }
+            : action === "markRead"
+              ? { remove: ["UNREAD"] }
+              : { add: ["UNREAD"] };
+      try {
+        const res = await fetch(
+          `/api/gmail/threads/${encodeURIComponent(threadId)}/labels`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
+      } catch (e) {
+        setThreads(prevRows);
+        alert(e instanceof Error ? e.message : "Action failed");
+      } finally {
+        setRowBusy((s) => {
+          const next = new Set(s);
+          next.delete(threadId);
+          return next;
+        });
+      }
+    },
+    [threads]
+  );
+
+  const toggleRowSelection = useCallback((threadId: string) => {
+    setSelectedThreadIds((s) => {
+      const next = new Set(s);
+      if (next.has(threadId)) next.delete(threadId);
+      else next.add(threadId);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedThreadIds((s) => {
+      if (s.size === threads.length && threads.length > 0) return new Set();
+      return new Set(threads.map((t) => t.id));
+    });
+  }, [threads]);
+
+  // Clear selection whenever the underlying list shifts (folder change, refresh,
+  // label filter change) — selection ids would otherwise reference rows that
+  // are no longer visible.
+  useEffect(() => {
+    setSelectedThreadIds(new Set());
+  }, [folder, mailSearch, filterLabelId]);
+
   const createAndApplyLabel = useCallback(
     async (name: string) => {
       try {
@@ -719,6 +829,31 @@ export default function InboxPage() {
             )}
           </div>
 
+          {/* Gmail-style toolbar above the list — select-all + count.
+              Once 1+ rows are selected this slot becomes the bulk-action
+              toolbar (Increment 2). */}
+          {threads.length > 0 && (
+            <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px]">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleSelectAll}
+                className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-primary)]"
+                aria-label="Select all"
+                title={allSelected ? "Deselect all" : "Select all"}
+              />
+              {selectedThreadIds.size > 0 ? (
+                <span className="text-[var(--color-text-muted)]">
+                  {selectedThreadIds.size} selected
+                </span>
+              ) : (
+                <span className="text-[var(--color-text-faint)]">
+                  {threads.length} message{threads.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+          )}
+
           {loadingList ? (
             <div className="space-y-2 p-4">
               {[...Array(6)].map((_, i) => (
@@ -747,66 +882,168 @@ export default function InboxPage() {
               </p>
             </div>
           ) : (
-            <ul className="scrollbar-thin flex-1 divide-y divide-[var(--color-border)] overflow-y-auto">
+            <ul className="scrollbar-thin flex-1 overflow-y-auto">
               {threads.map((t) => {
                 const name = senderName(t.from);
-                const initial = avatarInitial(name);
-                const bg = avatarHue(name);
+                const isSelected = selectedThreadIds.has(t.id);
+                const isOpen = selectedId === t.id;
+                const isUnread = Boolean(t.unread);
+                const isStarred = Boolean(t.starred);
+                const isBusy = rowBusy.has(t.id);
+                const chips = (t.labelIds ?? [])
+                  .map((id) => labelsById.get(id))
+                  .filter((l): l is GmailLabel => !!l && l.surfaced)
+                  .slice(0, 3);
                 return (
-                  <li key={t.draftId ?? t.id} className="relative">
+                  <li
+                    key={t.draftId ?? t.id}
+                    className={cn(
+                      "group relative flex items-center gap-2 border-b border-[var(--color-border)] pl-2 pr-3 text-[13px] transition-colors",
+                      isOpen
+                        ? "border-l-[3px] border-l-[var(--color-primary)] bg-[var(--color-primary-light)] pl-[5px]"
+                        : isSelected
+                          ? "bg-[var(--color-primary-light)]"
+                          : isUnread
+                            ? "bg-[var(--color-surface)]"
+                            : "bg-[var(--color-surface-offset)]",
+                      "hover:bg-[var(--color-primary-light)] hover:shadow-sm",
+                    )}
+                  >
+                    {/* Checkbox */}
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleRowSelection(t.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[var(--color-primary)]"
+                      aria-label="Select"
+                    />
+                    {/* Star */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void toggleThreadStar(t.id, !isStarred);
+                      }}
+                      disabled={isBusy}
+                      className={cn(
+                        "shrink-0 p-0.5 text-[16px] leading-none transition-colors",
+                        isStarred
+                          ? "text-yellow-500"
+                          : "text-[var(--color-text-faint)] opacity-60 hover:text-yellow-500 hover:opacity-100"
+                      )}
+                      aria-label={isStarred ? "Unstar" : "Star"}
+                      title={isStarred ? "Unstar" : "Star"}
+                    >
+                      {isStarred ? "★" : "☆"}
+                    </button>
+
+                    {/* Click target — sender + subject + snippet on one row */}
                     <button
                       type="button"
                       onClick={() =>
-                        t.draftId
-                          ? void openDraft(t.draftId)
-                          : void openThread(t.id)
+                        t.draftId ? void openDraft(t.draftId) : void openThread(t.id)
                       }
+                      className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left"
+                    >
+                      {/* Sender — fixed width like Gmail */}
+                      <span
+                        className={cn(
+                          "w-[180px] shrink-0 truncate",
+                          isUnread
+                            ? "font-bold text-[var(--color-text)]"
+                            : "text-[var(--color-text-muted)]"
+                        )}
+                      >
+                        {name}
+                      </span>
+                      {/* Subject + snippet on one line, separated by an em-dash */}
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        {chips.length > 0 && (
+                          <span className="flex shrink-0 items-center gap-1">
+                            {chips.map((l) => (
+                              <LabelChip key={l.id} label={l} />
+                            ))}
+                          </span>
+                        )}
+                        <span
+                          className={cn(
+                            "min-w-0 truncate",
+                            isUnread
+                              ? "font-semibold text-[var(--color-text)]"
+                              : "text-[var(--color-text-muted)]"
+                          )}
+                        >
+                          {t.subject || "(no subject)"}
+                          {t.snippet ? (
+                            <span className="font-normal text-[var(--color-text-faint)]">
+                              {" "}
+                              — {t.snippet}
+                            </span>
+                          ) : null}
+                        </span>
+                      </span>
+                    </button>
+
+                    {/* Attachment paperclip */}
+                    {t.hasAttachments && (
+                      <span
+                        className="shrink-0 text-[var(--color-text-faint)] group-hover:hidden"
+                        title="Has attachment"
+                        aria-label="Has attachment"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.49" />
+                        </svg>
+                      </span>
+                    )}
+                    {/* Date — hidden on hover so quick-actions take its place */}
+                    <time
                       className={cn(
-                        "group flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[var(--color-surface-offset)]",
-                        selectedId === t.id &&
-                          "border-l-[3px] border-l-[var(--color-primary)] bg-[var(--color-primary-light)] pl-[13px]",
+                        "shrink-0 text-[11px] tabular-nums",
+                        isUnread
+                          ? "font-bold text-[var(--color-text)]"
+                          : "text-[var(--color-text-faint)]",
+                        "group-hover:hidden"
                       )}
                     >
-                      <div
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[14px] font-bold text-white"
-                        style={{ backgroundColor: bg }}
+                      {t.date ? formatDate(t.date) : ""}
+                    </time>
+
+                    {/* Hover quick-actions — visible only on hover */}
+                    <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+                      <RowAction
+                        title="Mark as read"
+                        onClick={() => void performRowAction(t.id, isUnread ? "markRead" : "markUnread")}
+                        disabled={isBusy}
                       >
-                        {initial}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <p
-                            className={cn(
-                              "truncate text-[14px] text-[var(--color-text)]",
-                              selectedId === t.id ? "font-semibold" : "font-medium",
-                            )}
-                          >
-                            {name}
-                          </p>
-                          <time className="shrink-0 text-[12px] tabular-nums text-[var(--color-text-faint)]">
-                            {t.date ? formatDate(t.date) : ""}
-                          </time>
-                        </div>
-                        <p className="truncate text-[13px] font-medium text-[var(--color-text-muted)]">
-                          {t.subject || "(no subject)"}
-                        </p>
-                        <p className="truncate text-[12px] text-[var(--color-text-faint)]">{t.snippet}</p>
-                        {(() => {
-                          const chips = (t.labelIds ?? [])
-                            .map((id) => labelsById.get(id))
-                            .filter((l): l is GmailLabel => !!l && l.surfaced)
-                            .slice(0, 3);
-                          if (chips.length === 0) return null;
-                          return (
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {chips.map((l) => (
-                                <LabelChip key={l.id} label={l} />
-                              ))}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </button>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                          <polyline points="22,6 12,13 2,6" />
+                        </svg>
+                      </RowAction>
+                      <RowAction
+                        title="Archive"
+                        onClick={() => void performRowAction(t.id, "archive")}
+                        disabled={isBusy}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="21 8 21 21 3 21 3 8" />
+                          <rect x="1" y="3" width="22" height="5" />
+                          <line x1="10" y1="12" x2="14" y2="12" />
+                        </svg>
+                      </RowAction>
+                      <RowAction
+                        title="Delete"
+                        onClick={() => void performRowAction(t.id, "trash")}
+                        disabled={isBusy}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      </RowAction>
+                    </div>
                   </li>
                 );
               })}
@@ -1313,5 +1550,34 @@ export default function InboxPage() {
           )
         : null}
     </>
+  );
+}
+
+/** Tiny icon button used in the per-row hover quick-action cluster. */
+function RowAction({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="flex h-7 w-7 items-center justify-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] disabled:opacity-50"
+    >
+      {children}
+    </button>
   );
 }

@@ -4,9 +4,10 @@ import { createServiceSupabase } from "@/lib/supabase-service";
 
 export const runtime = "nodejs";
 
-// 14-day analytics window (today inclusive). Keep it small so the response
-// is fast and the charts stay readable.
-const WINDOW_DAYS = 14;
+// Default 14-day analytics window when ?from/?to aren't passed. Capped at
+// 180 days so the response stays bounded.
+const DEFAULT_WINDOW_DAYS = 14;
+const MAX_WINDOW_DAYS = 180;
 
 type CallRow = {
   user_id: string;
@@ -66,12 +67,11 @@ function dayKey(iso: string): string {
   return iso.slice(0, 10);
 }
 
-function emptySeries(): DaySeriesPoint[] {
-  const today = new Date();
+/** Build a zero-filled day series from `fromUtc` to `toUtc` inclusive. */
+function emptySeries(fromUtc: Date, toUtc: Date): DaySeriesPoint[] {
   const series: DaySeriesPoint[] = [];
-  for (let i = WINDOW_DAYS - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setUTCDate(d.getUTCDate() - i);
+  const d = new Date(fromUtc);
+  while (d.getTime() <= toUtc.getTime()) {
     series.push({
       date: d.toISOString().slice(0, 10),
       callsIn: 0,
@@ -79,8 +79,17 @@ function emptySeries(): DaySeriesPoint[] {
       messages: 0,
       tokens: 0,
     });
+    d.setUTCDate(d.getUTCDate() + 1);
   }
   return series;
+}
+
+/** Parse YYYY-MM-DD into a UTC midnight Date, or null if invalid. */
+function parseDateOnly(s: string | null): Date | null {
+  if (!s) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(`${s}T00:00:00.000Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 // Same convention as /api/calls: if from_number matches our virtual number,
@@ -127,13 +136,36 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const requestedUserId = searchParams.get("userId") || null;
 
-  // Window start (00:00 UTC, WINDOW_DAYS-1 days ago).
-  const since = new Date();
-  since.setUTCHours(0, 0, 0, 0);
-  since.setUTCDate(since.getUTCDate() - (WINDOW_DAYS - 1));
-  const sinceIso = since.toISOString();
+  // Window: `?from=YYYY-MM-DD&to=YYYY-MM-DD` (both UTC midnights, inclusive).
+  // Defaults to the last DEFAULT_WINDOW_DAYS ending today. Clamps to
+  // MAX_WINDOW_DAYS so a runaway range doesn't time the query out.
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const defaultFrom = new Date(today);
+  defaultFrom.setUTCDate(defaultFrom.getUTCDate() - (DEFAULT_WINDOW_DAYS - 1));
 
-  // Build the team roster (admin + their team), then optionally narrow to one.
+  const fromParam = parseDateOnly(searchParams.get("from"));
+  const toParam = parseDateOnly(searchParams.get("to"));
+  let fromUtc = fromParam ?? defaultFrom;
+  let toUtc = toParam ?? today;
+  if (fromUtc.getTime() > toUtc.getTime()) {
+    [fromUtc, toUtc] = [toUtc, fromUtc];
+  }
+  // Clamp range length
+  const maxSpan = (MAX_WINDOW_DAYS - 1) * 24 * 60 * 60 * 1000;
+  if (toUtc.getTime() - fromUtc.getTime() > maxSpan) {
+    fromUtc = new Date(toUtc.getTime() - maxSpan);
+  }
+  // Query upper bound is exclusive next-day-midnight so `lt` catches all of `toUtc`
+  const queryUpperIso = new Date(toUtc.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  const sinceIso = fromUtc.toISOString();
+  const windowDays =
+    Math.round((toUtc.getTime() - fromUtc.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+
+  // Build the team roster — admins are excluded from analytics output
+  // (the admin sees their team's activity, not their own row in the table).
+  // For the per-user `?userId=…` request we still allow the admin's own
+  // userId so the admin can drill into themselves if they go via direct URL.
   const { data: profiles, error: profileErr } = await svc
     .from("profiles")
     .select("id, role, display_username, mailbox_owner_id")
@@ -143,14 +175,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: profileErr.message }, { status: 500 });
   }
 
-  const teamUserIds = (profiles ?? []).map((p) => p.id as string);
-  if (requestedUserId && !teamUserIds.includes(requestedUserId)) {
+  const teamProfiles = (profiles ?? []).filter(
+    (p) => requestedUserId ? p.id === requestedUserId : (p.role as string) !== "admin"
+  );
+  const teamUserIds = teamProfiles.map((p) => p.id as string);
+  if (requestedUserId && !(profiles ?? []).some((p) => p.id === requestedUserId)) {
     return NextResponse.json({ error: "User not in your team" }, { status: 403 });
   }
-  const userIdsForQuery = requestedUserId ? [requestedUserId] : teamUserIds;
-  if (userIdsForQuery.length === 0) {
-    return NextResponse.json({ users: [], windowDays: WINDOW_DAYS });
+  if (teamUserIds.length === 0) {
+    return NextResponse.json({
+      users: [],
+      windowDays,
+      from: fromUtc.toISOString().slice(0, 10),
+      to: toUtc.toISOString().slice(0, 10),
+    });
   }
+  const userIdsForQuery = teamUserIds;
 
   // Email lookup (auth.admin.listUsers is paged; team size is small).
   const emailById = new Map<string, string | null>();
@@ -164,35 +204,41 @@ export async function GET(request: Request) {
   }
 
   // Pull activity rows scoped to the team window. We do per-query .in() filters
-  // so RLS-bypass (service role) is targeted, not table-wide.
+  // so RLS-bypass (service role) is targeted, not table-wide. Upper bound
+  // (`lt`) is exclusive next-day-midnight so `toUtc` itself is included.
   const [callsRes, smsRes, waRes, emailsRes, jobsRes] = await Promise.all([
     svc
       .from("call_logs")
       .select("user_id, status, from_number, to_number, duration_seconds, created_at")
       .in("user_id", userIdsForQuery)
-      .gte("created_at", sinceIso),
+      .gte("created_at", sinceIso)
+      .lt("created_at", queryUpperIso),
     svc
       .from("sms_messages")
       .select("user_id, direction, created_at")
       .in("user_id", userIdsForQuery)
       .eq("direction", "outbound")
-      .gte("created_at", sinceIso),
+      .gte("created_at", sinceIso)
+      .lt("created_at", queryUpperIso),
     svc
       .from("whatsapp_messages")
       .select("user_id, direction, created_at")
       .in("user_id", userIdsForQuery)
       .eq("direction", "outbound")
-      .gte("created_at", sinceIso),
+      .gte("created_at", sinceIso)
+      .lt("created_at", queryUpperIso),
     svc
       .from("email_tracking")
       .select("user_id, sent_at")
       .in("user_id", userIdsForQuery)
-      .gte("sent_at", sinceIso),
+      .gte("sent_at", sinceIso)
+      .lt("sent_at", queryUpperIso),
     svc
       .from("extraction_jobs")
       .select("user_id, openai_input_tokens, openai_output_tokens, openai_cost_usd, created_at")
       .in("user_id", userIdsForQuery)
-      .gte("created_at", sinceIso),
+      .gte("created_at", sinceIso)
+      .lt("created_at", queryUpperIso),
   ]);
 
   // Surface the first hard error if any; missing tables (e.g. migration not
@@ -214,8 +260,8 @@ export async function GET(request: Request) {
     .replace(/^\+/, "");
 
   const result: UserAnalytics[] = userIdsForQuery.map((uid) => {
-    const profile = (profiles ?? []).find((p) => p.id === uid);
-    const series = emptySeries();
+    const profile = teamProfiles.find((p) => p.id === uid);
+    const series = emptySeries(fromUtc, toUtc);
     const dayIdx = new Map(series.map((s, i) => [s.date, i]));
 
     const totals = {
@@ -305,7 +351,8 @@ export async function GET(request: Request) {
 
   return NextResponse.json({
     users: result,
-    windowDays: WINDOW_DAYS,
-    since: sinceIso,
+    windowDays,
+    from: fromUtc.toISOString().slice(0, 10),
+    to: toUtc.toISOString().slice(0, 10),
   });
 }

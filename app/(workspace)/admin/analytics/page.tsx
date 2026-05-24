@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { titleCase } from "@/lib/title-case";
+import { DateRangePicker, rangeEndingToday, type DateRange } from "@/components/DateRangePicker";
 
 type DayPoint = {
   date: string;
@@ -65,34 +66,35 @@ export default function AdminAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState(14);
+  const [range, setRange] = useState<DateRange>(() => rangeEndingToday(14));
+
+  const load = useCallback(async (r: DateRange) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = `?from=${r.from}&to=${r.to}`;
+      const res = await fetch(`/api/admin/analytics${qs}`);
+      const j = (await res.json().catch(() => ({}))) as {
+        users?: UserAnalytics[];
+        windowDays?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(j.error ?? "Failed to load analytics");
+        return;
+      }
+      setUsers(j.users ?? []);
+      if (j.windowDays) setWindowDays(j.windowDays);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load analytics");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/admin/analytics");
-        const j = (await res.json().catch(() => ({}))) as {
-          users?: UserAnalytics[];
-          windowDays?: number;
-          error?: string;
-        };
-        if (cancelled) return;
-        if (!res.ok) {
-          setError(j.error ?? "Failed to load analytics");
-          return;
-        }
-        setUsers(j.users ?? []);
-        if (j.windowDays) setWindowDays(j.windowDays);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load analytics");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void load(range);
+  }, [load, range]);
 
   const sorted = useMemo(
     () => [...users].sort((a, b) => (b.totals.callsIn + b.totals.callsOut) - (a.totals.callsIn + a.totals.callsOut)),
@@ -101,21 +103,24 @@ export default function AdminAnalyticsPage() {
 
   return (
     <div className="space-y-5 p-6">
-      <header className="flex items-end justify-between gap-4">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-[var(--color-text)]">
             {titleCase("Team Analytics")}
           </h1>
           <p className="text-sm text-[var(--color-text-muted)]">
-            Last {windowDays} days · per-user activity across calls, messages and AI usage.
+            {windowDays} day{windowDays === 1 ? "" : "s"} · per-user activity across calls, messages and AI usage.
           </p>
         </div>
-        <Link
-          href="/admin/team"
-          className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
-        >
-          ← Team
-        </Link>
+        <div className="flex flex-wrap items-end gap-3">
+          <DateRangePicker value={range} onChange={setRange} />
+          <Link
+            href="/admin/team"
+            className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+          >
+            ← Team
+          </Link>
+        </div>
       </header>
 
       {loading && <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>}

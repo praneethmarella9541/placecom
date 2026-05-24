@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { titleCase } from "@/lib/title-case";
+import { DateRangePicker, rangeEndingToday, type DateRange } from "@/components/DateRangePicker";
 
 type DayPoint = {
   date: string;
@@ -292,19 +293,21 @@ export default function AdminUserAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState(14);
+  const [range, setRange] = useState<DateRange>(() => rangeEndingToday(14));
 
-  useEffect(() => {
-    if (!userId) return;
-    let cancelled = false;
-    (async () => {
+  const load = useCallback(
+    async (r: DateRange) => {
+      if (!userId) return;
+      setLoading(true);
+      setError(null);
       try {
-        const res = await fetch(`/api/admin/analytics?userId=${encodeURIComponent(userId)}`);
+        const qs = `?userId=${encodeURIComponent(userId)}&from=${r.from}&to=${r.to}`;
+        const res = await fetch(`/api/admin/analytics${qs}`);
         const j = (await res.json().catch(() => ({}))) as {
           users?: UserAnalytics[];
           windowDays?: number;
           error?: string;
         };
-        if (cancelled) return;
         if (!res.ok) {
           setError(j.error ?? "Failed to load analytics");
           return;
@@ -312,15 +315,17 @@ export default function AdminUserAnalyticsPage() {
         setUser((j.users ?? [])[0] ?? null);
         if (j.windowDays) setWindowDays(j.windowDays);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load analytics");
+        setError(e instanceof Error ? e.message : "Failed to load analytics");
       } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [userId]);
+    },
+    [userId]
+  );
+
+  useEffect(() => {
+    void load(range);
+  }, [load, range]);
 
   const totalCalls = user ? user.totals.callsIn + user.totals.callsOut : 0;
   const totalTokens = user ? user.totals.tokensIn + user.totals.tokensOut : 0;
@@ -347,7 +352,7 @@ export default function AdminUserAnalyticsPage() {
 
   return (
     <div className="space-y-5 p-6">
-      <header className="flex items-end justify-between gap-4">
+      <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <Link
             href="/admin/analytics"
@@ -360,10 +365,11 @@ export default function AdminUserAnalyticsPage() {
           </h1>
           {user && (
             <p className="text-sm text-[var(--color-text-muted)]">
-              {user.email ?? "—"} · {user.role} · last {windowDays} days
+              {user.email ?? "—"} · {user.role} · {windowDays} day{windowDays === 1 ? "" : "s"}
             </p>
           )}
         </div>
+        <DateRangePicker value={range} onChange={setRange} />
       </header>
 
       {loading && <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>}

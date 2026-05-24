@@ -231,6 +231,24 @@ export default function InboxPage() {
   // (intersected with the folder).
   const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
 
+  // Inbox category sub-tabs (Primary / Promotions / Social / Updates / Forums).
+  // Each maps to a CATEGORY_* system label; the API filters INBOX rows to
+  // those carrying the chosen category. Only shown when folder = inbox.
+  type CategoryKey = "primary" | "promotions" | "social" | "updates" | "forums";
+  const CATEGORY_LABEL: Record<CategoryKey, string> = {
+    primary: "CATEGORY_PERSONAL",
+    promotions: "CATEGORY_PROMOTIONS",
+    social: "CATEGORY_SOCIAL",
+    updates: "CATEGORY_UPDATES",
+    forums: "CATEGORY_FORUMS",
+  };
+  const [category, setCategory] = useState<CategoryKey>("primary");
+  // Effective label-id passed to the API: when in inbox and no user-label
+  // filter is set, use the category label; otherwise use whatever the user
+  // explicitly filtered to.
+  const effectiveLabelId =
+    filterLabelId ?? (folder === "inbox" ? CATEGORY_LABEL[category] : null);
+
   // Multi-select state (Gmail-style row checkboxes).
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const allSelected =
@@ -358,7 +376,7 @@ export default function InboxPage() {
       const params = new URLSearchParams({ folder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
-      if (filterLabelId) params.set("labelId", filterLabelId);
+      if (effectiveLabelId) params.set("labelId", effectiveLabelId);
       try {
         const res = await fetch(`/api/gmail/threads?${params.toString()}`);
         const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
@@ -369,7 +387,7 @@ export default function InboxPage() {
         setListError(e instanceof Error ? e.message : "Failed to load");
         if (!opts.append) setThreads([]);
       } finally { setLoadingList(false); }
-    },     [folder, mailSearch, filterLabelId]
+    },     [folder, mailSearch, effectiveLabelId]
   );
 
   useEffect(() => {
@@ -692,7 +710,7 @@ export default function InboxPage() {
   // are no longer visible.
   useEffect(() => {
     setSelectedThreadIds(new Set());
-  }, [folder, mailSearch, filterLabelId]);
+  }, [folder, mailSearch, effectiveLabelId]);
 
   const createAndApplyLabel = useCallback(
     async (name: string) => {
@@ -851,6 +869,36 @@ export default function InboxPage() {
                 autoComplete="off"
               />
             </div>
+
+            {/* Inbox category sub-tabs — only when on Inbox AND no user-label
+                filter is active (filter takes precedence, like Gmail). */}
+            {folder === "inbox" && !filterLabelId && (
+              <div className="-mx-1 mt-2 flex gap-1 overflow-x-auto">
+                {(
+                  [
+                    { key: "primary" as const, label: "Primary" },
+                    { key: "promotions" as const, label: "Promotions" },
+                    { key: "social" as const, label: "Social" },
+                    { key: "updates" as const, label: "Updates" },
+                    { key: "forums" as const, label: "Forums" },
+                  ]
+                ).map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => setCategory(t.key)}
+                    className={cn(
+                      "shrink-0 rounded-full px-3 py-1 text-[12px] font-medium transition-colors",
+                      category === t.key
+                        ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                        : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Label filter — only user labels (system labels would crowd the rail). */}
             {allLabels.some((l) => l.type === "user") && folder !== "drafts" && (

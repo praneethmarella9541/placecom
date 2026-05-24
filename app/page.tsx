@@ -73,7 +73,10 @@ export default function HomePage() {
         if (cancelled) return;
         const nextRole = j?.role ?? null;
         setRole(nextRole);
-        if (nextRole && nextRole !== "admin") {
+        // Once signed in, everyone (admin, staff, committee) lands on /inbox
+        // by default. The old "Open mail / Go to extraction" choice screen
+        // was an extra step for admins; mail is the more common destination.
+        if (nextRole) {
           window.location.replace("/inbox");
         }
       })
@@ -167,7 +170,11 @@ export default function HomePage() {
   }
 
   if (signedIn) {
-    if (roleLoading || (role !== "admin" && role !== null)) {
+    // Always show the skeleton while we resolve the role and redirect to
+    // /inbox. The full welcome card below is dead code now but kept as a
+    // fallback in case /api/me/mailbox returns no role (e.g. profile row
+    // missing) so the user still has a way forward.
+    if (roleLoading || role !== null) {
       return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[var(--color-bg)] px-4">
           <Skeleton className="skeleton-shimmer h-14 w-72 rounded-[var(--radius-xl)]" />

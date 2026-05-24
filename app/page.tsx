@@ -160,13 +160,11 @@ export default function HomePage() {
   }
 
   if (!ready) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[var(--color-bg)] px-4">
-        <Skeleton className="skeleton-shimmer h-14 w-72 rounded-[var(--radius-xl)]" />
-        <Skeleton className="skeleton-shimmer h-5 w-48 rounded-md" />
-        <Skeleton className="skeleton-shimmer h-12 w-56 rounded-[var(--radius-md)]" />
-      </div>
-    );
+    // We don't yet know if there's a session. Show the inbox-shape
+    // skeleton — for the common case (returning signed-in users) this
+    // is exactly what they'll land on. For first-time visitors who'll
+    // see the marketing page, this flashes for ~100ms and is fine.
+    return <PostSigninInboxSkeleton />;
   }
 
   if (signedIn) {
@@ -175,13 +173,11 @@ export default function HomePage() {
     // fallback in case /api/me/mailbox returns no role (e.g. profile row
     // missing) so the user still has a way forward.
     if (roleLoading || role !== null) {
-      return (
-        <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-[var(--color-bg)] px-4">
-          <Skeleton className="skeleton-shimmer h-14 w-72 rounded-[var(--radius-xl)]" />
-          <Skeleton className="skeleton-shimmer h-5 w-48 rounded-md" />
-          <Skeleton className="skeleton-shimmer h-12 w-56 rounded-[var(--radius-md)]" />
-        </div>
-      );
+      // This skeleton mirrors the workspace shell + inbox layout the user
+      // is about to land on: a left nav rail, a 300px thread-list column,
+      // and the main reading pane. Honest preview = no perceived jank when
+      // the real layout swaps in.
+      return <PostSigninInboxSkeleton />;
     }
     return (
       <div className="relative flex min-h-screen flex-col items-center justify-center gap-8 overflow-hidden bg-[var(--color-bg)] px-4">
@@ -386,6 +382,95 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Skeleton shown while we redirect a signed-in user to /inbox.
+ * Mirrors the workspace chrome (220px left nav) + inbox (thread list +
+ * reader pane) so the user sees the shape they're about to land on
+ * instead of a generic centered card.
+ */
+function PostSigninInboxSkeleton() {
+  return (
+    <div className="flex min-h-screen bg-[var(--color-bg)]">
+      {/* Left nav rail (matches WorkspaceChrome aside) */}
+      <aside className="hidden w-[220px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
+        {/* Logo bar */}
+        <div className="flex h-[52px] items-center gap-2 border-b border-[var(--color-border)] px-4">
+          <Skeleton className="skeleton-shimmer h-7 w-7 rounded-md" />
+          <Skeleton className="skeleton-shimmer h-4 w-24 rounded-md" />
+        </div>
+        {/* Nav links */}
+        <div className="flex flex-1 flex-col gap-1 px-3 py-3">
+          {Array.from({ length: 9 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-3 py-2">
+              <Skeleton className="skeleton-shimmer h-[18px] w-[18px] rounded" />
+              <Skeleton
+                className="skeleton-shimmer h-3 rounded"
+                style={{ width: `${[60, 50, 80, 65, 55, 70, 90, 75, 65][i]}%` }}
+              />
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      {/* Main area */}
+      <main className="flex flex-1 flex-col">
+        {/* Top breadcrumb / header bar (matches WorkspaceChrome) */}
+        <div className="flex h-[52px] items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 md:px-6">
+          <Skeleton className="skeleton-shimmer h-4 w-32 rounded" />
+          <Skeleton className="skeleton-shimmer h-8 w-8 rounded-full" />
+        </div>
+
+        {/* Inbox: thread list (300px) + reader pane */}
+        <div className="flex flex-1 flex-col lg:flex-row">
+          {/* Thread list column */}
+          <div className="flex w-full shrink-0 flex-col gap-3 border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:w-[300px]">
+            {/* Compose button + folder tabs */}
+            <Skeleton className="skeleton-shimmer h-[34px] w-28 rounded-[var(--radius-md)]" />
+            <div className="flex gap-1 rounded-[var(--radius-md)] bg-[var(--color-surface-offset)] p-0.5">
+              <Skeleton className="skeleton-shimmer h-7 flex-1 rounded" />
+              <Skeleton className="skeleton-shimmer h-7 flex-1 rounded" />
+              <Skeleton className="skeleton-shimmer h-7 flex-1 rounded" />
+            </div>
+            {/* Search */}
+            <Skeleton className="skeleton-shimmer h-9 w-full rounded-[var(--radius-md)]" />
+
+            {/* Thread rows */}
+            <div className="flex flex-col gap-3 pt-1">
+              {Array.from({ length: 7 }).map((_, i) => (
+                <div key={i} className="flex items-start gap-3">
+                  <Skeleton className="skeleton-shimmer h-9 w-9 shrink-0 rounded-full" />
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <Skeleton
+                        className="skeleton-shimmer h-3 rounded"
+                        style={{ width: `${[55, 70, 45, 65, 60, 80, 50][i]}%` }}
+                      />
+                      <Skeleton className="skeleton-shimmer h-3 w-10 rounded" />
+                    </div>
+                    <Skeleton
+                      className="skeleton-shimmer h-3 rounded"
+                      style={{ width: `${[85, 70, 90, 60, 80, 75, 95][i]}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Reader pane — empty state placeholder */}
+          <div className="hidden flex-1 items-center justify-center bg-[var(--color-bg)] p-8 lg:flex">
+            <div className="flex flex-col items-center gap-3">
+              <Skeleton className="skeleton-shimmer h-14 w-14 rounded-[var(--radius-lg)]" />
+              <Skeleton className="skeleton-shimmer h-4 w-48 rounded" />
+              <Skeleton className="skeleton-shimmer h-3 w-32 rounded" />
+            </div>
+          </div>
+        </div>
+      </main>
     </div>
   );
 }

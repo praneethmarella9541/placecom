@@ -704,52 +704,6 @@ export default function InboxPage() {
   // Row quick-actions: archive (remove INBOX), trash (add TRASH), and
   // mark-read/unread. Optimistic — removes the row from the list immediately
   // for archive/trash, rolls back on failure.
-  const performRowAction = useCallback(
-    async (threadId: string, action: "archive" | "trash" | "markRead" | "markUnread") => {
-      setRowBusy((s) => new Set(s).add(threadId));
-      const prevRows = threads;
-      const removeFromList = action === "archive" || action === "trash";
-      if (removeFromList) {
-        setThreads((rows) => rows.filter((r) => r.id !== threadId));
-      } else {
-        setThreads((rows) =>
-          rows.map((r) =>
-            r.id === threadId ? { ...r, unread: action === "markUnread" } : r
-          )
-        );
-      }
-      const body =
-        action === "archive"
-          ? { remove: ["INBOX"] }
-          : action === "trash"
-            ? { add: ["TRASH"], remove: ["INBOX"] }
-            : action === "markRead"
-              ? { remove: ["UNREAD"] }
-              : { add: ["UNREAD"] };
-      try {
-        const res = await fetch(
-          `/api/gmail/threads/${encodeURIComponent(threadId)}/labels`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          }
-        );
-        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
-      } catch (e) {
-        setThreads(prevRows);
-        alert(e instanceof Error ? e.message : "Action failed");
-      } finally {
-        setRowBusy((s) => {
-          const next = new Set(s);
-          next.delete(threadId);
-          return next;
-        });
-      }
-    },
-    [threads]
-  );
-
   /** Bulk-action for the toolbar above the list. Removes rows for archive
    *  and trash; updates unread/starred state for the other actions. */
   const performBulkAction = useCallback(

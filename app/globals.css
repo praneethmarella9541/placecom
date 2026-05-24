@@ -258,7 +258,17 @@
   }
 }
 
+@keyframes progress-bar {
+  0%   { width: 0%; opacity: 1; }
+  60%  { width: 85%; }
+  100% { width: 85%; }
+}
+
 @layer utilities {
+  .animate-progress-bar {
+    animation: progress-bar 1.8s ease-out forwards;
+  }
+
   .text-balance {
     text-wrap: balance;
   }

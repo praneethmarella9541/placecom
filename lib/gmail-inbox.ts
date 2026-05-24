@@ -431,10 +431,22 @@ function collectAttachments(payload: Record<string, unknown>, messageId: string)
   return attachments;
 }
 
+// Labels that represent folder/state — excluded from the returned labelIds
+// so callers only see meaningful user/category labels.
+const FOLDER_LABEL_IDS = new Set([
+  "INBOX", "SENT", "DRAFT", "TRASH", "SPAM", "UNREAD",
+]);
+
+export type GetThreadResult = {
+  messages: ThreadMessageView[];
+  /** Union of all labelIds across messages in the thread, excluding folder/state labels. */
+  labelIds: string[];
+};
+
 export async function getThreadMessages(
   accessToken: string,
   threadId: string
-): Promise<ThreadMessageView[]> {
+): Promise<GetThreadResult> {
   const url = `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?format=full`;
   let res: Response;
   try {
@@ -462,6 +474,7 @@ export async function getThreadMessages(
       id: string;
       threadId?: string;
       internalDate?: string;
+      labelIds?: string[];
       payload?: Record<string, unknown>;
     }[];
   };
@@ -473,10 +486,17 @@ export async function getThreadMessages(
     return ta - tb;
   });
 
-  const out: ThreadMessageView[] = [];
-  const messages = sorted;
+  // Collect union of all label ids across messages — extract here so the
+  // route doesn't need a second Gmail round-trip to get them.
+  const labelIdSet = new Set<string>();
+  for (const m of rawMsgs) {
+    for (const id of m.labelIds ?? []) {
+      if (!FOLDER_LABEL_IDS.has(id)) labelIdSet.add(id);
+    }
+  }
 
-  for (const m of messages) {
+  const messages: ThreadMessageView[] = [];
+  for (const m of sorted) {
     const payload = m.payload || {};
     const headers = (payload.headers as GmailHeader[]) || [];
     const subject = getHeader(headers, "Subject");
@@ -492,7 +512,7 @@ export async function getThreadMessages(
     const body = collectParts(payload, "text/plain").join("\n\n").trim();
     const bodyHtml = collectParts(payload, "text/html").join("").trim();
     const attachments = collectAttachments(payload, m.id);
-    out.push({
+    messages.push({
       id: m.id,
       threadId: m.threadId || data.id,
       subject,
@@ -506,7 +526,7 @@ export async function getThreadMessages(
     });
   }
 
-  return out;
+  return { messages, labelIds: Array.from(labelIdSet) };
 }
 
 function toBase64Url(buf: Buffer): string {

@@ -237,6 +237,7 @@ export default function InboxPage() {
     threads.length > 0 && threads.every((t) => selectedThreadIds.has(t.id));
   // Per-row action busy state (for the optimistic star toggle / row-quick-actions).
   const [rowBusy, setRowBusy] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MsgView[] | null>(null);
@@ -611,6 +612,65 @@ export default function InboxPage() {
     [threads]
   );
 
+  /** Bulk-action for the toolbar above the list. Removes rows for archive
+   *  and trash; updates unread/starred state for the other actions. */
+  const performBulkAction = useCallback(
+    async (action: "archive" | "trash" | "markRead" | "markUnread" | "star") => {
+      const ids = Array.from(selectedThreadIds);
+      if (ids.length === 0) return;
+      const prevRows = threads;
+      const removeFromList = action === "archive" || action === "trash";
+      if (removeFromList) {
+        setThreads((rows) => rows.filter((r) => !selectedThreadIds.has(r.id)));
+      } else if (action === "markRead" || action === "markUnread") {
+        setThreads((rows) =>
+          rows.map((r) =>
+            selectedThreadIds.has(r.id) ? { ...r, unread: action === "markUnread" } : r
+          )
+        );
+      } else if (action === "star") {
+        setThreads((rows) =>
+          rows.map((r) => (selectedThreadIds.has(r.id) ? { ...r, starred: true } : r))
+        );
+      }
+      const body =
+        action === "archive"
+          ? { add: [] as string[], remove: ["INBOX"] }
+          : action === "trash"
+            ? { add: ["TRASH"], remove: ["INBOX"] }
+            : action === "markRead"
+              ? { add: [] as string[], remove: ["UNREAD"] }
+              : action === "markUnread"
+                ? { add: ["UNREAD"], remove: [] as string[] }
+                : { add: ["STARRED"], remove: [] as string[] };
+      setBulkBusy(true);
+      try {
+        const res = await fetch("/api/gmail/threads/batch-modify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ threadIds: ids, ...body }),
+        });
+        const j = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          succeeded?: number;
+          requested?: number;
+          failed?: { threadId: string; error: string }[];
+        };
+        if (!res.ok) throw new Error(j.error || "Bulk action failed");
+        if ((j.failed?.length ?? 0) > 0) {
+          alert(`${j.failed!.length} of ${j.requested} failed. First error: ${j.failed![0].error}`);
+        }
+        setSelectedThreadIds(new Set());
+      } catch (e) {
+        setThreads(prevRows);
+        alert(e instanceof Error ? e.message : "Bulk action failed");
+      } finally {
+        setBulkBusy(false);
+      }
+    },
+    [selectedThreadIds, threads]
+  );
+
   const toggleRowSelection = useCallback((threadId: string) => {
     setSelectedThreadIds((s) => {
       const next = new Set(s);
@@ -829,11 +889,10 @@ export default function InboxPage() {
             )}
           </div>
 
-          {/* Gmail-style toolbar above the list — select-all + count.
-              Once 1+ rows are selected this slot becomes the bulk-action
-              toolbar (Increment 2). */}
+          {/* Gmail-style toolbar above the list — select-all + count, or
+              bulk-action toolbar when 1+ rows are selected. */}
           {threads.length > 0 && (
-            <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px]">
+            <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px]">
               <input
                 type="checkbox"
                 checked={allSelected}
@@ -843,9 +902,67 @@ export default function InboxPage() {
                 title={allSelected ? "Deselect all" : "Select all"}
               />
               {selectedThreadIds.size > 0 ? (
-                <span className="text-[var(--color-text-muted)]">
-                  {selectedThreadIds.size} selected
-                </span>
+                <>
+                  <span className="text-[var(--color-text-muted)]">
+                    {selectedThreadIds.size} selected
+                  </span>
+                  <div className="ml-2 flex items-center gap-0.5">
+                    <RowAction
+                      title="Mark as read"
+                      onClick={() => void performBulkAction("markRead")}
+                      disabled={bulkBusy}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+                        <polyline points="22,6 12,13 2,6" />
+                      </svg>
+                    </RowAction>
+                    <RowAction
+                      title="Mark as unread"
+                      onClick={() => void performBulkAction("markUnread")}
+                      disabled={bulkBusy}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 12V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12" />
+                        <polyline points="22,6 12,13 2,6" />
+                        <circle cx="19" cy="19" r="3" />
+                      </svg>
+                    </RowAction>
+                    <RowAction
+                      title="Archive"
+                      onClick={() => void performBulkAction("archive")}
+                      disabled={bulkBusy}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="21 8 21 21 3 21 3 8" />
+                        <rect x="1" y="3" width="22" height="5" />
+                        <line x1="10" y1="12" x2="14" y2="12" />
+                      </svg>
+                    </RowAction>
+                    <RowAction
+                      title="Delete"
+                      onClick={() => void performBulkAction("trash")}
+                      disabled={bulkBusy}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </RowAction>
+                    <RowAction
+                      title="Star"
+                      onClick={() => void performBulkAction("star")}
+                      disabled={bulkBusy}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </RowAction>
+                  </div>
+                  {bulkBusy && (
+                    <span className="ml-auto text-[var(--color-text-muted)]">Working…</span>
+                  )}
+                </>
               ) : (
                 <span className="text-[var(--color-text-faint)]">
                   {threads.length} message{threads.length !== 1 ? "s" : ""}

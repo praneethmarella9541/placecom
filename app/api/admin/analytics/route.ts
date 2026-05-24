@@ -192,21 +192,21 @@ export async function GET(request: Request) {
   }
   const userIdsForQuery = teamUserIds;
 
-  // Email lookup (auth.admin.listUsers is paged; team size is small).
-  const emailById = new Map<string, string | null>();
-  try {
-    const users = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    for (const u of users.data.users ?? []) {
-      emailById.set(u.id, u.email ?? null);
-    }
-  } catch {
-    // Non-fatal — caller will just see null emails.
-  }
+  // Pull activity rows + emails in one parallel batch. Switching from
+  // auth.admin.listUsers (which pages through ALL auth users) to per-team
+  // getUserById calls cuts the slow path: we only fetch the team's emails,
+  // and these run alongside the activity queries.
+  const emailPromises = userIdsForQuery.map((uid) =>
+    svc.auth.admin
+      .getUserById(uid)
+      .then((r) => [uid, r.data.user?.email ?? null] as const)
+      .catch(() => [uid, null] as const)
+  );
 
   // Pull activity rows scoped to the team window. We do per-query .in() filters
   // so RLS-bypass (service role) is targeted, not table-wide. Upper bound
   // (`lt`) is exclusive next-day-midnight so `toUtc` itself is included.
-  const [callsRes, smsRes, waRes, emailsRes, jobsRes] = await Promise.all([
+  const [callsRes, smsRes, waRes, emailsRes, jobsRes, ...emailEntries] = await Promise.all([
     svc
       .from("call_logs")
       .select("user_id, status, from_number, to_number, duration_seconds, created_at")
@@ -239,7 +239,10 @@ export async function GET(request: Request) {
       .in("user_id", userIdsForQuery)
       .gte("created_at", sinceIso)
       .lt("created_at", queryUpperIso),
+    ...emailPromises,
   ]);
+
+  const emailById = new Map<string, string | null>(emailEntries);
 
   // Surface the first hard error if any; missing tables (e.g. migration not
   // applied) give a friendlier message than a 500.
@@ -349,10 +352,20 @@ export async function GET(request: Request) {
     };
   });
 
-  return NextResponse.json({
-    users: result,
-    windowDays,
-    from: fromUtc.toISOString().slice(0, 10),
-    to: toUtc.toISOString().slice(0, 10),
-  });
+  return NextResponse.json(
+    {
+      users: result,
+      windowDays,
+      from: fromUtc.toISOString().slice(0, 10),
+      to: toUtc.toISOString().slice(0, 10),
+    },
+    {
+      headers: {
+        // Short browser cache + 60s stale-while-revalidate so switching
+        // between the overview and a detail page (and back) feels instant
+        // without holding onto stale data for long.
+        "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+      },
+    }
+  );
 }

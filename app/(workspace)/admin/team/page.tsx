@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { IconChevronDown } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
 import { FEATURE_KEYS, FEATURE_LABELS, type FeatureKey } from "@/lib/feature-access";
@@ -166,9 +167,17 @@ export default function AdminTeamPage() {
   return (
     <div className="mx-auto max-w-lg space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-          {titleCase("Team & shared mailbox")}
-        </h1>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+            {titleCase("Team & shared mailbox")}
+          </h1>
+          <Link
+            href="/admin/analytics"
+            className="shrink-0 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {titleCase("View analytics →")}
+          </Link>
+        </div>
         <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
           {titleCase(
             "Create staff accounts here. Each person gets their own login and automatically uses your connected Gmail. Tell them the password you set, or have them change it later in Supabase if you prefer."
@@ -390,6 +399,12 @@ export default function AdminTeamPage() {
                   </div>
 
                   <div className="flex flex-col gap-2">
+                    <Link
+                      href={`/admin/analytics/${member.id}`}
+                      className="w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-center text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    >
+                      {titleCase("View analytics →")}
+                    </Link>
                     <button
                       type="button"
                       onClick={() => void saveMember(member)}

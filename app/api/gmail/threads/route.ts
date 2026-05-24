@@ -25,6 +25,7 @@ export async function GET(request: Request) {
         : "inbox";
   const pageToken = searchParams.get("pageToken") || undefined;
   const searchQuery = searchParams.get("search")?.trim() || undefined;
+  const labelId = searchParams.get("labelId")?.trim() || undefined;
   const maxResults = Math.min(
     50,
     Math.max(5, parseInt(searchParams.get("maxResults") || "25", 10) || 25)
@@ -43,6 +44,7 @@ export async function GET(request: Request) {
             maxResults,
             pageToken,
             searchQuery,
+            labelId,
           });
     return NextResponse.json(
       { folder, threads: page.threads, nextPageToken: page.nextPageToken },

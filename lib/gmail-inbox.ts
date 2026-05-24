@@ -17,6 +17,11 @@ export type ThreadListItem = {
   draftId?: string;
   /** True if any message in the thread carries the Gmail UNREAD label. */
   unread?: boolean;
+  /** Unique label ids across all messages in the thread. The UI maps these
+   *  through the labels list to render chips. Excludes folder-state labels
+   *  (INBOX/SENT/DRAFT/etc.) because those are already conveyed by the
+   *  folder tab the row appears under. */
+  labelIds?: string[];
 };
 
 export type ThreadListPage = {
@@ -167,9 +172,12 @@ export async function listThreadsPage(
     pageToken?: string;
     /** Gmail search terms (same syntax as Gmail search box), AND-ed with folder filters. */
     searchQuery?: string;
+    /** Optional additional label id to filter by (intersected with folder labels). */
+    labelId?: string;
   }
 ): Promise<ThreadListPage> {
-  const labels = LABELS[options.folder];
+  const labels = [...LABELS[options.folder]];
+  if (options.labelId && !labels.includes(options.labelId)) labels.push(options.labelId);
   const baseQ = QUERY[options.folder];
   const userQ = (options.searchQuery || "").trim();
   const q = [baseQ, userQ].filter(Boolean).join(" ");
@@ -250,13 +258,25 @@ export async function listThreadsPage(
           const ms = parseInt(last.internalDate, 10);
           if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
         }
-        const allLabelIds = msgs.flatMap((m) => m.labelIds ?? []);
+        const allLabelIds = Array.from(new Set(msgs.flatMap((m) => m.labelIds ?? [])));
+        // Strip folder-state labels — the row's folder tab already conveys this.
+        const FOLDER_LABELS = new Set([
+          "INBOX",
+          "SENT",
+          "DRAFT",
+          "TRASH",
+          "SPAM",
+          "UNREAD",
+          "CHAT",
+        ]);
+        const userVisibleLabelIds = allLabelIds.filter((id) => !FOLDER_LABELS.has(id));
         return {
           id: t.id,
           snippet: t.snippet || "",
           subject,
           from,
           date,
+          labelIds: userVisibleLabelIds,
           historyId: t.historyId,
           unread: allLabelIds.includes("UNREAD"),
         };

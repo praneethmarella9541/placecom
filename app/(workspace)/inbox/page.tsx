@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { LabelChip } from "@/components/LabelChip";
+import { LabelPicker } from "@/components/LabelPicker";
 import { createPortal } from "react-dom";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractEmailAddress } from "@/lib/email-parse";
@@ -38,6 +40,17 @@ type ThreadRow = {
   from: string;
   date: string;
   draftId?: string;
+  labelIds?: string[];
+};
+
+type GmailLabel = {
+  id: string;
+  name: string;
+  type: "system" | "user";
+  surfaced: boolean;
+  isSystem: boolean;
+  isCategory: boolean;
+  color?: { backgroundColor?: string; textColor?: string };
 };
 
 function senderName(from: string): string {
@@ -212,10 +225,23 @@ export default function InboxPage() {
   const [mailSearchInput, setMailSearchInput] = useState("");
   const [mailSearch, setMailSearch] = useState("");
 
+  // Labels — loaded once, kept in a map by id for O(1) lookup from rows.
+  const [allLabels, setAllLabels] = useState<GmailLabel[]>([]);
+  const labelsById = useMemo(() => {
+    const m = new Map<string, GmailLabel>();
+    for (const l of allLabels) m.set(l.id, l);
+    return m;
+  }, [allLabels]);
+  // Optional filter — restricts the thread list to a single user label
+  // (intersected with the folder).
+  const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MsgView[] | null>(null);
+  const [threadLabelIds, setThreadLabelIds] = useState<string[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
+  const [labelBusy, setLabelBusy] = useState(false);
 
   const [replyText, setReplyText] = useState("");
   const [sendBusy, setSendBusy] = useState(false);
@@ -329,6 +355,7 @@ export default function InboxPage() {
       const params = new URLSearchParams({ folder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
+      if (filterLabelId) params.set("labelId", filterLabelId);
       try {
         const res = await fetch(`/api/gmail/threads?${params.toString()}`);
         const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
@@ -339,12 +366,27 @@ export default function InboxPage() {
         setListError(e instanceof Error ? e.message : "Failed to load");
         if (!opts.append) setThreads([]);
       } finally { setLoadingList(false); }
-    },     [folder, mailSearch]
+    },     [folder, mailSearch, filterLabelId]
   );
 
   useEffect(() => {
     void loadThreads({ append: false });
   }, [loadThreads]);
+
+  // Fetch the user's labels once on mount; rare-change data, so we don't
+  // poll. Refreshed only after a successful "create label" action.
+  const loadLabels = useCallback(async () => {
+    try {
+      const res = await fetch("/api/gmail/labels");
+      if (!res.ok) return;
+      const j = (await res.json()) as { labels?: GmailLabel[] };
+      setAllLabels(j.labels ?? []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    void loadLabels();
+  }, [loadLabels]);
 
   useEffect(() => {
     void loadTracking();
@@ -419,16 +461,90 @@ export default function InboxPage() {
   const openThread = useCallback(async (threadId: string) => {
     setSelectedId(threadId);
     setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false);
+    setThreadLabelIds([]);
     setLoadingThread(true);
     try {
       const res = await fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`);
-      const data = (await res.json()) as { error?: string; messages?: MsgView[] };
+      const data = (await res.json()) as { error?: string; messages?: MsgView[]; labelIds?: string[] };
       if (!res.ok) throw new Error(data.error || "Failed to open thread");
       setMessages(data.messages || []);
+      setThreadLabelIds(data.labelIds ?? []);
       void loadTracking();
     } catch (e) { setThreadError(e instanceof Error ? e.message : "Error"); }
     finally { setLoadingThread(false); }
   }, [loadTracking]);
+
+  // Add or remove a label on the currently-open thread. Optimistic — flips
+  // local chips immediately and rolls back if the server rejects.
+  const toggleThreadLabel = useCallback(
+    async (labelId: string, nextChecked: boolean) => {
+      if (!selectedId) return;
+      const prev = threadLabelIds;
+      setThreadLabelIds((cur) =>
+        nextChecked ? Array.from(new Set([...cur, labelId])) : cur.filter((id) => id !== labelId)
+      );
+      // Mirror on the row in the list too
+      setThreads((rows) =>
+        rows.map((r) =>
+          r.id === selectedId
+            ? {
+                ...r,
+                labelIds: nextChecked
+                  ? Array.from(new Set([...(r.labelIds ?? []), labelId]))
+                  : (r.labelIds ?? []).filter((id) => id !== labelId),
+              }
+            : r
+        )
+      );
+      setLabelBusy(true);
+      try {
+        const res = await fetch(
+          `/api/gmail/threads/${encodeURIComponent(selectedId)}/labels`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(
+              nextChecked ? { add: [labelId] } : { remove: [labelId] }
+            ),
+          }
+        );
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
+      } catch (e) {
+        // Roll back
+        setThreadLabelIds(prev);
+        setThreads((rows) =>
+          rows.map((r) => (r.id === selectedId ? { ...r, labelIds: r.labelIds } : r))
+        );
+        alert(e instanceof Error ? e.message : "Could not update labels");
+      } finally {
+        setLabelBusy(false);
+      }
+    },
+    [selectedId, threadLabelIds]
+  );
+
+  // Create a new Gmail label and immediately apply it to the open thread.
+  const createAndApplyLabel = useCallback(
+    async (name: string) => {
+      try {
+        const res = await fetch("/api/gmail/labels", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        const j = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          label?: GmailLabel;
+        };
+        if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
+        setAllLabels((prev) => [...prev, j.label!]);
+        if (selectedId) await toggleThreadLabel(j.label.id, true);
+      } catch (e) {
+        alert(e instanceof Error ? e.message : "Could not create label");
+      }
+    },
+    [selectedId, toggleThreadLabel]
+  );
 
   async function sendReply() {
     if (!selectedId || !messages?.length || !replyText.trim()) return;
@@ -565,6 +681,42 @@ export default function InboxPage() {
                 autoComplete="off"
               />
             </div>
+
+            {/* Label filter — only user labels (system labels would crowd the rail). */}
+            {allLabels.some((l) => l.type === "user") && folder !== "drafts" && (
+              <div className="mt-3 flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  onClick={() => setFilterLabelId(null)}
+                  className={cn(
+                    "rounded-full border px-2 py-[2px] text-[11px] font-medium",
+                    filterLabelId === null
+                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                      : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+                  )}
+                >
+                  All
+                </button>
+                {allLabels
+                  .filter((l) => l.type === "user")
+                  .slice(0, 12)
+                  .map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      onClick={() => setFilterLabelId(filterLabelId === l.id ? null : l.id)}
+                      className={cn(
+                        "rounded-full border px-2 py-[2px] text-[11px] font-medium",
+                        filterLabelId === l.id
+                          ? "border-[var(--color-primary)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                          : "border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+                      )}
+                    >
+                      {l.name}
+                    </button>
+                  ))}
+              </div>
+            )}
           </div>
 
           {loadingList ? (
@@ -639,6 +791,20 @@ export default function InboxPage() {
                           {t.subject || "(no subject)"}
                         </p>
                         <p className="truncate text-[12px] text-[var(--color-text-faint)]">{t.snippet}</p>
+                        {(() => {
+                          const chips = (t.labelIds ?? [])
+                            .map((id) => labelsById.get(id))
+                            .filter((l): l is GmailLabel => !!l && l.surfaced)
+                            .slice(0, 3);
+                          if (chips.length === 0) return null;
+                          return (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {chips.map((l) => (
+                                <LabelChip key={l.id} label={l} />
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </button>
                   </li>
@@ -681,9 +847,34 @@ export default function InboxPage() {
           ) : messages && messages.length ? (
             <>
               <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-6 py-5">
-                <h2 className="font-display text-xl font-bold text-[var(--color-text)]">
-                  {messages[0]?.subject || "(no subject)"}
-                </h2>
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="font-display text-xl font-bold text-[var(--color-text)]">
+                    {messages[0]?.subject || "(no subject)"}
+                  </h2>
+                  <LabelPicker
+                    allLabels={allLabels}
+                    selected={new Set(threadLabelIds)}
+                    onToggle={(id, checked) => void toggleThreadLabel(id, checked)}
+                    onCreate={createAndApplyLabel}
+                    busy={labelBusy}
+                  />
+                </div>
+                {threadLabelIds.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {threadLabelIds
+                      .map((id) => labelsById.get(id))
+                      .filter((l): l is GmailLabel => !!l && l.surfaced)
+                      .map((l) => (
+                        <LabelChip
+                          key={l.id}
+                          label={l}
+                          onRemove={
+                            labelBusy ? undefined : () => void toggleThreadLabel(l.id, false)
+                          }
+                        />
+                      ))}
+                  </div>
+                )}
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[13px]">
                   <span className="font-semibold text-[var(--color-text)]">{senderName(messages[0]?.from || "")}</span>
                   <span className="text-[var(--color-text-muted)]">

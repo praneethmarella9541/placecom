@@ -23,6 +23,7 @@ import {
   IconPaperclip,
   IconDownload,
   IconSearch,
+  IconFile,
 } from "@/components/Icons";
 
 type Folder = "inbox" | "sent" | "drafts" | "starred";
@@ -122,24 +123,188 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+/** MIME types that browsers can render inline without a plugin. */
+function isPreviewable(mimeType: string): boolean {
+  return /^image\/|^video\/|^audio\/|^text\/(plain|html|csv)|^application\/pdf/.test(mimeType);
+}
+
+function attachmentUrl(messageId: string, a: AttachmentView, download = false): string {
+  const base = `/api/gmail/attachment?messageId=${encodeURIComponent(messageId)}&attachmentId=${encodeURIComponent(a.attachmentId)}&filename=${encodeURIComponent(a.filename)}&mimeType=${encodeURIComponent(a.mimeType)}`;
+  return download ? `${base}&download=1` : base;
+}
+
+function FileTypeIcon({ mimeType }: { mimeType: string }) {
+  if (mimeType.startsWith("image/")) return <span className="text-base">🖼</span>;
+  if (mimeType.startsWith("video/")) return <span className="text-base">🎬</span>;
+  if (mimeType.startsWith("audio/")) return <span className="text-base">🎵</span>;
+  if (mimeType === "application/pdf") return <span className="text-base">📄</span>;
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.endsWith(".xlsx")) return <span className="text-base">📊</span>;
+  if (mimeType.includes("word") || mimeType.endsWith(".docx")) return <span className="text-base">📝</span>;
+  if (mimeType.includes("zip") || mimeType.includes("compressed")) return <span className="text-base">🗜</span>;
+  return <IconFile className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />;
+}
+
+function AttachmentPreviewModal({
+  attachment,
+  messageId,
+  onClose,
+}: {
+  attachment: AttachmentView;
+  messageId: string;
+  onClose: () => void;
+}) {
+  const url = attachmentUrl(messageId, attachment);
+  const downloadUrl = attachmentUrl(messageId, attachment, true);
+  const mime = attachment.mimeType;
+
+  const renderPreview = () => {
+    if (mime.startsWith("image/")) {
+      return (
+        <img
+          src={url}
+          alt={attachment.filename}
+          className="max-h-full max-w-full object-contain rounded"
+          onError={(e) => { (e.target as HTMLImageElement).alt = "Preview unavailable"; }}
+        />
+      );
+    }
+    if (mime.startsWith("video/")) {
+      return (
+        <video controls className="max-h-full max-w-full rounded" src={url}>
+          Your browser does not support video preview.
+        </video>
+      );
+    }
+    if (mime.startsWith("audio/")) {
+      return (
+        <div className="flex flex-col items-center gap-4 p-8">
+          <span className="text-5xl">🎵</span>
+          <p className="text-sm font-medium text-[var(--color-text)]">{attachment.filename}</p>
+          <audio controls src={url} className="w-full max-w-sm" />
+        </div>
+      );
+    }
+    if (mime === "application/pdf" || mime.startsWith("text/")) {
+      return (
+        <iframe
+          src={url}
+          title={attachment.filename}
+          className="h-full w-full rounded border-0"
+          sandbox="allow-same-origin allow-scripts"
+        />
+      );
+    }
+    // Fallback — can't preview
+    return (
+      <div className="flex flex-col items-center gap-4 p-12 text-center">
+        <span className="text-6xl"><FileTypeIcon mimeType={mime} /></span>
+        <p className="text-sm text-[var(--color-text-muted)]">
+          Preview not available for this file type.
+        </p>
+        <a href={downloadUrl} download={attachment.filename} className="btn-primary">
+          <IconDownload className="h-4 w-4" /> Download to open
+        </a>
+      </div>
+    );
+  };
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[200] flex flex-col bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      {/* Header */}
+      <div
+        className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-white/10 px-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <FileTypeIcon mimeType={mime} />
+          <span className="truncate text-sm font-medium text-white">{attachment.filename}</span>
+          <span className="shrink-0 text-xs text-white/50">{formatBytes(attachment.size)}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <a
+            href={downloadUrl}
+            download={attachment.filename}
+            className="flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white hover:bg-white/20 transition-colors"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <IconDownload className="h-3.5 w-3.5" /> Download
+          </a>
+          <button
+            onClick={onClose}
+            className="rounded-full p-1.5 text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+          >
+            <IconX className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Preview area */}
+      <div
+        className="flex flex-1 items-center justify-center overflow-hidden p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {renderPreview()}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function AttachmentChips({ attachments, messageId }: { attachments: AttachmentView[]; messageId: string }) {
+  const [preview, setPreview] = useState<AttachmentView | null>(null);
   if (!attachments.length) return null;
   return (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {attachments.map((a, i) => (
-        <a
-          key={i}
-          href={`/api/gmail/attachment?messageId=${encodeURIComponent(messageId)}&attachmentId=${encodeURIComponent(a.attachmentId)}&filename=${encodeURIComponent(a.filename)}&mimeType=${encodeURIComponent(a.mimeType)}`}
-          download={a.filename}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-2.5 py-1.5 text-[12px] text-[var(--color-text)] transition-colors hover:border-[var(--color-primary)]/30 hover:bg-[var(--color-primary-light)]"
-        >
-          <IconPaperclip className="h-3 w-3 text-zinc-400" />
-          <span className="max-w-[150px] truncate">{a.filename}</span>
-          <span className="text-zinc-400">({formatBytes(a.size)})</span>
-          <IconDownload className="h-3 w-3 text-zinc-400" />
-        </a>
-      ))}
-    </div>
+    <>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {attachments.map((a, i) => {
+          const canPreview = isPreviewable(a.mimeType);
+          return (
+            <div key={i} className="flex items-stretch rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-offset)] overflow-hidden text-[12px] text-[var(--color-text)]">
+              {/* Preview / open button */}
+              {canPreview ? (
+                <button
+                  type="button"
+                  onClick={() => setPreview(a)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-[var(--color-primary-light)] transition-colors"
+                  title="Preview"
+                >
+                  <FileTypeIcon mimeType={a.mimeType} />
+                  <span className="max-w-[150px] truncate">{a.filename}</span>
+                  <span className="text-[var(--color-text-faint)]">({formatBytes(a.size)})</span>
+                  <IconEye className="h-3 w-3 text-[var(--color-text-faint)]" />
+                </button>
+              ) : (
+                <span className="flex items-center gap-1.5 px-2.5 py-1.5">
+                  <FileTypeIcon mimeType={a.mimeType} />
+                  <span className="max-w-[150px] truncate">{a.filename}</span>
+                  <span className="text-[var(--color-text-faint)]">({formatBytes(a.size)})</span>
+                </span>
+              )}
+              {/* Download button — always visible */}
+              <a
+                href={attachmentUrl(messageId, a, true)}
+                download={a.filename}
+                className="flex items-center border-l border-[var(--color-border)] px-2 hover:bg-[var(--color-surface-offset)] transition-colors"
+                title="Download"
+              >
+                <IconDownload className="h-3 w-3 text-[var(--color-text-faint)]" />
+              </a>
+            </div>
+          );
+        })}
+      </div>
+
+      {preview && (
+        <AttachmentPreviewModal
+          attachment={preview}
+          messageId={messageId}
+          onClose={() => setPreview(null)}
+        />
+      )}
+    </>
   );
 }
 

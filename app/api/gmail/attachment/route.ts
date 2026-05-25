@@ -50,12 +50,22 @@ export async function GET(request: Request) {
   const base64 = data.data.replace(/-/g, "+").replace(/_/g, "/");
   const buffer = Buffer.from(base64, "base64");
 
+  // Serve inline so the browser can render images, PDFs, video, audio, text.
+  // The client passes ?download=1 when it explicitly wants a forced download.
+  const forceDownload = searchParams.get("download") === "1";
+  const disposition = forceDownload
+    ? `attachment; filename="${encodeURIComponent(filename)}"`
+    : `inline; filename="${encodeURIComponent(filename)}"`;
+
   return new Response(buffer, {
     status: 200,
     headers: {
       "Content-Type": mimeType,
-      "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+      "Content-Disposition": disposition,
       "Content-Length": String(buffer.byteLength),
+      // Allow preview in <iframe> / <img> from same origin
+      "X-Frame-Options": "SAMEORIGIN",
+      "Cache-Control": "private, max-age=300",
     },
   });
 }

@@ -131,7 +131,7 @@ function AttachmentChips({ attachments, messageId }: { attachments: AttachmentVi
           key={i}
           href={`/api/gmail/attachment?messageId=${encodeURIComponent(messageId)}&attachmentId=${encodeURIComponent(a.attachmentId)}&filename=${encodeURIComponent(a.filename)}&mimeType=${encodeURIComponent(a.mimeType)}`}
           download={a.filename}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-[12px] text-zinc-700 transition-colors hover:border-emerald-300 hover:bg-emerald-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:border-emerald-700 dark:hover:bg-emerald-950/30"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-2.5 py-1.5 text-[12px] text-[var(--color-text)] transition-colors hover:border-[var(--color-primary)]/30 hover:bg-[var(--color-primary-light)]"
         >
           <IconPaperclip className="h-3 w-3 text-zinc-400" />
           <span className="max-w-[150px] truncate">{a.filename}</span>
@@ -195,7 +195,7 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
 
   if (!html) {
     return (
-      <pre className="mt-3 whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-zinc-700 dark:text-zinc-300">
+      <pre className="mt-3 whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-[var(--color-text)]">
         {plain || "(empty body)"}
       </pre>
     );
@@ -1503,7 +1503,7 @@ export default function InboxPage() {
                     <article key={m.id} className="surface-card rounded-[var(--radius-lg)] p-5 shadow-[var(--shadow-sm)] md:p-6">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-zinc-200/80 text-[10px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-[var(--nucleus-mist)] to-[var(--color-surface-offset)] text-[10px] font-bold text-[var(--color-text-muted)]">
                             {avatarInitial(senderName(m.from || ""))}
                           </div>
                           <div>
@@ -1517,14 +1517,14 @@ export default function InboxPage() {
                             if (!tr) return null;
                             if (tr.opened) {
                               return (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400" title={`Opened ${tr.open_count}x`}>
+                                <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]" title={`Opened ${tr.open_count}x`}>
                                   <IconEye className="h-3 w-3" />
                                   Opened{tr.open_count > 1 ? ` ${tr.open_count}x` : ""} · {timeAgo(tr.opened_at)}
                                 </span>
                               );
                             }
                             return (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
                                 <IconCheck className="h-3 w-3" />
                                 {titleCase("Sent")}
                               </span>

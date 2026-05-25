@@ -210,11 +210,11 @@ export default function HomePage() {
   }
 
   const checklist = [
-    "Shared Gmail inbox for the whole team",
-    "Auto-extract contacts from any email",
-    "Kanban CRM with 4-stage pipeline",
-    "Outbound calls with recordings & transcripts",
-    "Calendar sync + AI meeting summaries",
+    "Shared inbox for the whole placement team",
+    "Auto-extract recruiter contacts from every email",
+    "Kanban CRM with intelligent stage tracking",
+    "Outbound calls with recordings & AI transcripts",
+    "Calendar sync + meeting summaries that write themselves",
   ];
 
   return (
@@ -224,43 +224,73 @@ export default function HomePage() {
       </div>
 
       <div className="flex min-h-screen flex-col md:flex-row">
-        {/* Left hero */}
-        <div className="flex flex-col bg-[var(--color-primary)] px-8 pb-10 pt-16 text-white md:min-h-screen md:w-1/2 md:justify-between md:p-12">
-          <div>
+        {/* Left hero — deep indigo with orbital glow */}
+        <div
+          className="relative flex flex-col overflow-hidden bg-[var(--nucleus-deep)] px-8 pb-10 pt-16 text-white md:min-h-screen md:w-1/2 md:justify-between md:p-12"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 20% 30%, rgba(99,102,241,0.30), transparent 55%), radial-gradient(circle at 80% 80%, rgba(14,165,233,0.18), transparent 50%)",
+          }}
+        >
+          {/* Decorative orbital rings */}
+          <svg
+            aria-hidden
+            className="pointer-events-none absolute -right-32 -top-32 h-[520px] w-[520px] opacity-25"
+            viewBox="0 0 400 400"
+          >
+            <circle cx="200" cy="200" r="180" stroke="white" strokeOpacity="0.15" strokeWidth="1" strokeDasharray="3 6" fill="none" />
+            <circle cx="200" cy="200" r="140" stroke="white" strokeOpacity="0.18" strokeWidth="1" fill="none" />
+            <circle cx="200" cy="200" r="100" stroke="white" strokeOpacity="0.22" strokeWidth="1" fill="none" />
+            <circle cx="200" cy="200" r="55" fill="url(#nucleusGlow)" opacity="0.5" />
+            <defs>
+              <radialGradient id="nucleusGlow" cx="0.5" cy="0.5" r="0.5">
+                <stop offset="0%" stopColor="#a5b4fc" stopOpacity="1" />
+                <stop offset="100%" stopColor="#4f46e5" stopOpacity="0" />
+              </radialGradient>
+            </defs>
+          </svg>
+
+          <div className="relative z-10">
             <PlacecomLogo inverted />
-            <h2 className="font-display mt-12 max-w-xl text-[44px] font-extrabold leading-[1.1] tracking-tight">
-              Your Placement Team&apos;s Command Centre.
+            <h2 className="font-display mt-14 max-w-xl text-[44px] font-extrabold leading-[1.05] tracking-tight md:text-[52px]">
+              The placement team&apos;s{" "}
+              <span className="bg-gradient-to-r from-[#c7d2fe] via-white to-[#a5b4fc] bg-clip-text text-transparent">
+                command center
+              </span>
+              .
             </h2>
-            <p className="mt-4 max-w-[380px] text-base opacity-75">
-              Mail, extraction, CRM, calls, calendar, and meeting notes in one workspace.
+            <p className="mt-5 max-w-[420px] text-base leading-relaxed text-white/75">
+              Mail, extraction, CRM, calls, calendar, and meeting notes — every tool the team needs, gathered around one nucleus.
             </p>
-            <ul className="mt-10 flex flex-col gap-4 text-base">
+            <ul className="mt-10 flex flex-col gap-3.5 text-[15px]">
               {checklist.map((line) => (
-                <li key={line} className="flex items-start gap-3">
-                  <CheckCircle2 className="mt-0.5 h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} />
+                <li key={line} className="flex items-start gap-3 text-white/90">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-[#a5b4fc]" strokeWidth={2.5} />
+                  </span>
                   <span>{line}</span>
                 </li>
               ))}
             </ul>
           </div>
-          <p className="mt-12 text-sm opacity-60 md:mt-auto">
-            Built with Next.js · Supabase · Google Workspace
+          <p className="relative z-10 mt-12 text-xs uppercase tracking-[0.15em] text-white/45 md:mt-auto">
+            Powered by Next.js · Supabase · Google Workspace
           </p>
         </div>
 
         {/* Right auth */}
         <div className="flex flex-1 flex-col items-center justify-center px-4 py-12 md:py-16">
-          <div className="surface-card-xl w-full max-w-[400px] p-8 md:p-10">
-            <h1 className="font-display text-center text-2xl font-extrabold text-[var(--color-text)]">
-              Sign in to Placecom
+          <div className="w-full max-w-[420px] rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-[var(--shadow-md)] md:p-10">
+            <h1 className="font-display text-center text-2xl font-extrabold tracking-tight text-[var(--color-text)]">
+              Welcome back
             </h1>
             <p className="mt-2 text-center text-sm text-[var(--color-text-muted)]">
-              Choose your login method below.
+              Sign in to your workspace.
             </p>
 
             {authErrorBanner ? (
               <div
-                className="mt-6 rounded-[var(--radius-lg)] border border-red-200 bg-red-50 px-4 py-3 text-left text-sm text-red-950 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-50"
+                className="mt-6 rounded-[var(--radius-lg)] border border-[rgba(228,0,20,0.3)] bg-[var(--color-danger-light)] px-4 py-3 text-left text-sm text-[var(--color-danger)]"
                 role="alert"
               >
                 <p className="font-semibold">{titleCase("Sign-in failed")}</p>
@@ -269,13 +299,13 @@ export default function HomePage() {
             ) : null}
 
             <div className="mt-8">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
-                Admin Access
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-faint)]">
+                For Admins
               </p>
               <button
                 type="button"
                 onClick={() => void signInWithGoogle()}
-                className="flex h-[42px] w-full items-center justify-center gap-2.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-offset)]"
+                className="flex h-[44px] w-full items-center justify-center gap-2.5 rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] transition-all hover:-translate-y-px hover:border-[var(--color-text-muted)] hover:shadow-sm"
               >
                 <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden>
                   <path
@@ -309,8 +339,8 @@ export default function HomePage() {
             </div>
 
             <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
-                Staff Login
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-faint)]">
+                For Staff & Committee
               </p>
               <input
                 type="email"
@@ -373,11 +403,6 @@ export default function HomePage() {
                 <p className="mt-4 text-center text-xs text-[var(--color-text-muted)]">{staffMsg}</p>
               ) : null}
 
-              <p className="mt-4 text-center text-[11px] leading-snug text-[var(--color-text-faint)]">
-                {titleCase(
-                  "Use http://localhost:3000 consistently (not 127.0.0.1). Add both URLs in Supabase Authentication → URL configuration if needed."
-                )}
-              </p>
             </div>
           </div>
         </div>

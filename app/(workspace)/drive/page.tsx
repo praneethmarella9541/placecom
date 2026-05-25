@@ -156,7 +156,7 @@ export default function DrivePage() {
           <button
             type="button"
             onClick={() => navigateToDepth(0)}
-            className="rounded-md px-2 py-1 font-medium text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+            className="rounded-md px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
           >
             {titleCase("My Drive")}
           </button>
@@ -307,7 +307,7 @@ export default function DrivePage() {
         {driveNextPageToken ? (
           <button
             type="button"
-            className="border-t p-3 text-center text-xs font-medium text-emerald-600 hover:bg-zinc-50 dark:text-emerald-400 dark:hover:bg-zinc-900/50"
+            className="border-t p-3 text-center text-xs font-medium text-indigo-600 hover:bg-zinc-50 dark:text-indigo-400 dark:hover:bg-zinc-900/50"
             onClick={() => void loadDriveFiles({ append: true, pageToken: driveNextPageToken })}
           >
             {titleCase("Load more")}

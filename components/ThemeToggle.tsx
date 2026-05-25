@@ -6,8 +6,8 @@ import { Moon, Sun } from "lucide-react";
 function applyTheme(dark: boolean) {
   document.documentElement.classList.toggle("dark", dark);
   document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
-  localStorage.setItem("placecom-theme", dark ? "dark" : "light");
   try {
+    localStorage.setItem("nucleus-theme", dark ? "dark" : "light");
     localStorage.setItem("theme", dark ? "dark" : "light");
   } catch {
     /* ignore */

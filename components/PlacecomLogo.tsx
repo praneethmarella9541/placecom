@@ -2,44 +2,93 @@ import { cn } from "@/lib/utils";
 
 type LogoProps = {
   className?: string;
-  /** Wordmark color */
+  /** Wordmark color override (rarely needed — gradient is default) */
   wordmarkClassName?: string;
-  /** True = white logo for on-teal backgrounds */
+  /** True = white logo for on-indigo backgrounds */
   inverted?: boolean;
+  /** Size of the mark (default 28) */
+  size?: number;
 };
 
-export function PlacecomMark({ className, inverted }: { className?: string; inverted?: boolean }) {
+/**
+ * The Nucleus mark — atomic orbits around a central nucleus.
+ * Inspired by the mobile app's brand mark.
+ */
+export function PlacecomMark({
+  className,
+  inverted,
+  size = 28,
+}: {
+  className?: string;
+  inverted?: boolean;
+  size?: number;
+}) {
+  const stroke = inverted ? "#ffffff" : "var(--nucleus-bright)";
+  const dashStroke = inverted ? "rgba(255,255,255,0.55)" : "var(--nucleus-mist)";
+  const nucleus = inverted ? "#ffffff" : "var(--nucleus-bright)";
+  const accent = inverted ? "rgba(255,255,255,0.85)" : "var(--nucleus-aurora)";
+
   return (
     <svg
-      className={cn("shrink-0", className)}
-      width="28"
-      height="28"
+      className={cn("shrink-0 drop-shadow-[0_2px_10px_rgba(79,70,229,0.25)]", className)}
+      width={size}
+      height={size}
       viewBox="0 0 32 32"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
       aria-hidden
     >
-      <rect width="32" height="32" rx="8" fill={inverted ? "#ffffff" : "#0d7c78"} />
-      <path
-        d="M9 10h6c3.3 0 5 1.7 5 4.2 0 2.2-1.2 3.6-3.2 4l3.7 5.8H17l-3.2-5.2H12v5.2H9V10zm3 6.2h2.8c1.4 0 2.2-.6 2.2-1.8 0-1.2-.8-1.8-2.3-1.8H12v3.6z"
-        fill={inverted ? "#0d7c78" : "#ffffff"}
+      {/* Outer dashed orbit */}
+      <circle
+        cx="16"
+        cy="16"
+        r="14"
+        stroke={dashStroke}
+        strokeWidth="1"
+        strokeDasharray="2 3"
+        fill="none"
       />
+      {/* Middle solid orbit */}
+      <circle
+        cx="16"
+        cy="16"
+        r="10"
+        stroke={stroke}
+        strokeWidth="1.25"
+        strokeOpacity="0.7"
+        fill="none"
+      />
+      {/* Inner orbit */}
+      <circle
+        cx="16"
+        cy="16"
+        r="6.5"
+        stroke={stroke}
+        strokeWidth="1.25"
+        strokeOpacity="0.85"
+        fill="none"
+      />
+      {/* Nucleus core */}
+      <circle cx="16" cy="16" r="3.5" fill={nucleus} />
+      {/* Orbiting particles */}
+      <circle cx="26" cy="6" r="1.4" fill={accent} />
+      <circle cx="6" cy="22" r="1.2" fill={accent} />
     </svg>
   );
 }
 
-export function PlacecomLogo({ className, wordmarkClassName, inverted }: LogoProps) {
+export function PlacecomLogo({ className, wordmarkClassName, inverted, size }: LogoProps) {
   return (
-    <span className={cn("inline-flex items-center gap-2", className)}>
-      <PlacecomMark inverted={inverted} />
+    <span className={cn("inline-flex items-center gap-2.5", className)}>
+      <PlacecomMark inverted={inverted} size={size} />
       <span
         className={cn(
-          "font-display text-lg font-extrabold leading-none tracking-tight",
-          inverted ? "text-white" : "text-[var(--color-primary)]",
+          "font-display text-base font-bold leading-none tracking-tight md:text-lg md:font-extrabold",
+          inverted ? "text-white" : "nucleus-wordmark",
           wordmarkClassName,
         )}
       >
-        Placecom
+        The Nucleus
       </span>
     </span>
   );

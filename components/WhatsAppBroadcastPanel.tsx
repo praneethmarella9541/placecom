@@ -201,7 +201,7 @@ export function WhatsAppBroadcastPanel() {
         </div>
       ) : null}
       {sendResult ? (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+        <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 px-4 py-3 text-sm text-indigo-900 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-100">
           <p className="font-medium">
             {titleCase(`Sent: ${sendResult.sent}`)}
             {sendResult.failed.length > 0 ? ` · ${titleCase(`Failed: ${sendResult.failed.length}`)}` : ""}

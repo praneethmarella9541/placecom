@@ -30,10 +30,10 @@ export function ProgressBar({ value, max, className, label, hint, indeterminate 
           )}
         </div>
       ) : null}
-      <div className="h-2.5 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-offset)]">
         <div
           className={cn(
-            "h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500 transition-[width] duration-500 ease-out",
+            "h-full rounded-full bg-gradient-to-r from-[var(--nucleus-bright)] to-[var(--nucleus-aurora)] transition-[width] duration-500 ease-out",
             indeterminate && "w-2/5 animate-[pulse_1.5s_ease-in-out_infinite]"
           )}
           style={!indeterminate ? { width: `${pct}%` } : undefined}

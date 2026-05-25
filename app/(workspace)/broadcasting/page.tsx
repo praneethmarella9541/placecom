@@ -201,7 +201,7 @@ function BroadcastingPageInner() {
                 className={cn(
                   "inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
                   channel === tab.key
-                    ? "bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-400"
+                    ? "bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-400"
                     : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
                 )}
               >
@@ -229,7 +229,7 @@ function BroadcastingPageInner() {
                 className={cn(
                   "rounded-md px-4 py-2 text-sm font-medium transition-colors",
                   mailSubView === tab.key
-                    ? "bg-white text-emerald-700 shadow-sm dark:bg-zinc-950 dark:text-emerald-400"
+                    ? "bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-400"
                     : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
                 )}
               >
@@ -406,7 +406,7 @@ function BroadcastingPageInner() {
             </div>
           ) : null}
           {sendResult ? (
-            <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 px-4 py-3 text-sm text-indigo-900 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-100">
               <p className="font-medium">
                 {titleCase(`Sent: ${sendResult.sent}`)}
                 {sendResult.failed.length > 0

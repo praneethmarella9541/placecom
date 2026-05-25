@@ -161,13 +161,13 @@ export default function MeetingsPage() {
       </div>
 
       {syncInfo ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-100">
           {syncInfo}
         </div>
       ) : null}
 
       {deleteSuccess ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-100">
           {titleCase(
             "Meeting deleted — summary and transcript were removed from your account."
           )}
@@ -199,7 +199,7 @@ export default function MeetingsPage() {
                     <span
                       className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                         m.status === "completed"
-                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+                          ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400"
                           : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
                       }`}
                     >
@@ -234,7 +234,7 @@ export default function MeetingsPage() {
                     </button>
                   ) : null}
                   {sendSuccessId === m.id ? (
-                    <span className="text-sm text-emerald-600 dark:text-emerald-400">
+                    <span className="text-sm text-indigo-600 dark:text-indigo-400">
                       {titleCase("Sent!")}
                     </span>
                   ) : null}

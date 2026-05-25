@@ -90,7 +90,7 @@ function CallsPerDayChart({ series }: { series: DayPoint[] }) {
             <span className="h-2 w-2 rounded-sm bg-[var(--color-primary)]" /> Outgoing
           </span>
           <span className="flex items-center gap-1">
-            <span className="h-2 w-2 rounded-sm bg-emerald-500" /> Incoming
+            <span className="h-2 w-2 rounded-sm bg-indigo-500" /> Incoming
           </span>
         </div>
       </div>

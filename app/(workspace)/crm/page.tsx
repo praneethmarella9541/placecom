@@ -628,7 +628,7 @@ export default function CRMPage() {
                 <p className="text-sm text-zinc-500">
                   {activeLead.contact_name || titleCase("No contact person")}
                 </p>
-                {activeLead.email && <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium mt-0.5">{activeLead.email}</p>}
+                {activeLead.email && <p className="text-xs text-indigo-600 dark:text-indigo-400 font-medium mt-0.5">{activeLead.email}</p>}
               </div>
               <button onClick={() => setActiveLead(null)} className="btn-ghost p-2 rounded-full"><IconX className="h-5 w-5" /></button>
             </div>
@@ -672,7 +672,7 @@ export default function CRMPage() {
                     onClick={() => setActivePanelTab("History")}
                     className={`relative px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
                       activePanelTab === "History"
-                        ? "z-[1] -mb-px border-b-2 border-emerald-500 text-zinc-900 dark:text-white"
+                        ? "z-[1] -mb-px border-b-2 border-indigo-500 text-zinc-900 dark:text-white"
                         : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                     }`}
                   >
@@ -683,7 +683,7 @@ export default function CRMPage() {
                     onClick={() => setActivePanelTab("Meetings")}
                     className={`relative flex items-center gap-1.5 px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
                       activePanelTab === "Meetings"
-                        ? "z-[1] -mb-px border-b-2 border-emerald-500 text-zinc-900 dark:text-white"
+                        ? "z-[1] -mb-px border-b-2 border-indigo-500 text-zinc-900 dark:text-white"
                         : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                     }`}
                   >
@@ -712,7 +712,7 @@ export default function CRMPage() {
                               <span className="font-bold text-slate-900 dark:text-white text-sm">
                                 {titleCase(i.interaction_type)}
                               </span>
-                              <time className="font-caveat font-medium text-emerald-600 dark:text-emerald-400 text-xs">{new Date(i.created_at).toLocaleDateString()}</time>
+                              <time className="font-caveat font-medium text-indigo-600 dark:text-indigo-400 text-xs">{new Date(i.created_at).toLocaleDateString()}</time>
                             </div>
                             <div className="text-slate-500 dark:text-slate-400 text-xs whitespace-pre-wrap">{i.notes}</div>
                           </div>
@@ -742,7 +742,7 @@ export default function CRMPage() {
                         <div key={m.id} className="p-4 rounded-xl border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 shadow-sm">
                           <div className="flex items-center justify-between mb-2">
                             <span className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-1.5">
-                              <IconCalendar className="h-4 w-4 text-emerald-600" /> {titleCase("Meeting notes")}
+                              <IconCalendar className="h-4 w-4 text-indigo-600" /> {titleCase("Meeting notes")}
                             </span>
                             <time className="text-xs font-medium text-zinc-500">{new Date(m.created_at).toLocaleDateString()}</time>
                           </div>
@@ -753,7 +753,7 @@ export default function CRMPage() {
                               <span className="italic text-zinc-400">{titleCase("Processing summary...")}</span>
                             )}
                           </div>
-                          <a href={m.meeting_url} target="_blank" rel="noreferrer" className="mt-3 text-xs text-emerald-600 hover:text-emerald-700 font-medium flex items-center gap-1">
+                          <a href={m.meeting_url} target="_blank" rel="noreferrer" className="mt-3 text-xs text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1">
                             {titleCase("View transcript →")}
                           </a>
                         </div>

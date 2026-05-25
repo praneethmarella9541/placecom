@@ -73,7 +73,7 @@ function hasSpeakerSegmentList(segs: TranscriptSegment[] | null): boolean {
 function statusClass(status: string): string {
   const s = status.toLowerCase();
   if (s === "completed")
-    return "bg-emerald-100 text-emerald-900 ring-1 ring-emerald-200/80 dark:bg-emerald-950/50 dark:text-emerald-200 dark:ring-emerald-800/60";
+    return "bg-indigo-100 text-indigo-900 ring-1 ring-indigo-200/80 dark:bg-indigo-950/50 dark:text-indigo-200 dark:ring-indigo-800/60";
   if (s === "failed" || s === "busy" || s === "no-answer")
     return "bg-red-100 text-red-800 ring-1 ring-red-200/80 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900/50";
   return "bg-zinc-100 text-zinc-700 ring-1 ring-zinc-200/80 dark:bg-zinc-800 dark:text-zinc-300 dark:ring-zinc-700";

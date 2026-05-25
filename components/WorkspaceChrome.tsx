@@ -76,7 +76,7 @@ function workspacePageTitle(pathname: string): string {
   if (pathname.startsWith("/broadcasting")) return titleCase("Broadcasting");
   if (pathname.startsWith("/sms")) return titleCase("SMS");
   if (pathname.startsWith("/whatsapp")) return titleCase("WhatsApp");
-  return titleCase("Placecom");
+  return titleCase("The Nucleus");
 }
 
 function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
@@ -141,9 +141,9 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-[var(--color-bg)] pb-[56px] font-body md:pb-0">
       {/* Desktop sidebar */}
-      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-[220px] flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
-        <div className="flex h-[52px] shrink-0 items-center border-b border-[var(--color-border)] px-4">
-          <Link href="/dashboard" className="flex items-center gap-2">
+      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-[230px] flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
+        <div className="flex h-[56px] shrink-0 items-center border-b border-[var(--color-border)] px-5">
+          <Link href="/dashboard" className="flex items-center gap-2.5" aria-label="The Nucleus — home">
             <PlacecomLogo />
           </Link>
         </div>
@@ -208,7 +208,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
         </nav>
         <div className="shrink-0 border-t border-[var(--color-border)] p-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[12px] font-bold text-white">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--nucleus-bright)] to-[var(--nucleus-core)] text-[12px] font-bold text-white shadow-sm">
               {initials}
             </div>
             <div className="min-w-0 flex-1">
@@ -231,14 +231,14 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* Top header */}
-      <header className="fixed left-0 right-0 top-0 z-30 flex h-[52px] items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/80 px-4 backdrop-blur-[10px] md:left-[220px] md:px-6">
-        <h1 className="font-display text-[17px] font-bold text-[var(--color-text)]">{pageTitle}</h1>
+      <header className="fixed left-0 right-0 top-0 z-30 flex h-[56px] items-center justify-between border-b border-[var(--color-border)] nucleus-backdrop px-4 md:left-[230px] md:px-6">
+        <h1 className="font-display text-[18px] font-bold tracking-tight text-[var(--color-text)]">{pageTitle}</h1>
         <div className="flex shrink-0 items-center gap-2">
           <ThemeToggle />
         </div>
       </header>
 
-      <main className="min-h-[calc(100vh-52px)] px-4 pb-4 pt-[calc(52px+16px)] md:ml-[220px] md:px-6 md:pb-6 md:pt-[calc(52px+24px)]">
+      <main className="min-h-[calc(100vh-56px)] px-4 pb-4 pt-[calc(56px+16px)] md:ml-[230px] md:px-6 md:pb-6 md:pt-[calc(56px+24px)]">
         {children}
       </main>
 
@@ -277,7 +277,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
         <div className="fixed inset-0 z-50 md:hidden">
           <button
             type="button"
-            className="absolute inset-0 bg-black/40"
+            className="absolute inset-0 bg-[#0d1021]/45 backdrop-blur-sm"
             aria-label="Close menu"
             onClick={() => setMoreOpen(false)}
           />

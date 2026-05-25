@@ -35,7 +35,7 @@ export default function AdminTeamPage() {
       m.includes("member updated") ||
       m.includes("team member removed")
     ) {
-      return "text-emerald-700 dark:text-emerald-400";
+      return "text-indigo-700 dark:text-indigo-400";
     }
     return "text-red-600 dark:text-red-400";
   }

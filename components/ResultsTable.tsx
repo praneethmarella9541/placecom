@@ -62,13 +62,13 @@ export function ResultsTable({ rows, className }: Props) {
       icon: IconUsers,
       value: totals.contacts,
       label: titleCase("Contacts"),
-      iconWrap: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300",
+      iconWrap: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300",
     },
     {
       icon: IconUser,
       value: totals.names,
       label: titleCase("Names"),
-      iconWrap: "bg-emerald-100/90 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300",
+      iconWrap: "bg-indigo-100/90 text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300",
     },
     {
       icon: IconPhone,

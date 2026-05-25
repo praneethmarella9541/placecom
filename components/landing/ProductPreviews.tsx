@@ -21,7 +21,7 @@ function WindowChrome({
       className={cn(
         "flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-zinc-200/90 bg-zinc-50 shadow-lg shadow-zinc-900/5 ring-1 ring-black/5 dark:border-zinc-700/90 dark:bg-zinc-900 dark:shadow-black/30 dark:ring-white/5",
         emphasized &&
-          "z-10 border-emerald-200/60 shadow-2xl shadow-emerald-900/10 ring-2 ring-emerald-500/20 dark:border-emerald-800/40 dark:shadow-emerald-950/20 dark:ring-emerald-500/15",
+          "z-10 border-indigo-200/60 shadow-2xl shadow-indigo-900/10 ring-2 ring-indigo-500/20 dark:border-indigo-800/40 dark:shadow-indigo-950/20 dark:ring-indigo-500/15",
         className
       )}
     >
@@ -29,7 +29,7 @@ function WindowChrome({
         <span className="flex gap-1">
           <span className="h-2 w-2 rounded-full bg-red-400/90" />
           <span className="h-2 w-2 rounded-full bg-amber-400/90" />
-          <span className="h-2 w-2 rounded-full bg-emerald-400/90" />
+          <span className="h-2 w-2 rounded-full bg-indigo-400/90" />
         </span>
         <div className="min-w-0 flex-1 rounded-md bg-white/90 px-2 py-0.5 text-center text-[10px] font-medium text-zinc-500 shadow-sm dark:bg-zinc-950/80 dark:text-zinc-400">
           <span className="block truncate">{url}</span>
@@ -56,7 +56,7 @@ function PreviewExtraction() {
       </div>
       <div className="grid grid-cols-3 gap-1">
         {[
-          { n: "128", l: "Names", c: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300" },
+          { n: "128", l: "Names", c: "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300" },
           { n: "54", l: "Phones", c: "bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300" },
           { n: "203", l: "Emails", c: "bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300" },
         ].map((s) => (
@@ -67,7 +67,7 @@ function PreviewExtraction() {
         ))}
       </div>
       <div className="flex flex-wrap gap-0.5">
-        <span className="rounded bg-emerald-100 px-1 py-0.5 text-[7px] font-medium text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+        <span className="rounded bg-indigo-100 px-1 py-0.5 text-[7px] font-medium text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300">
           {titleCase("42 contacts")}
         </span>
         <span className="rounded bg-blue-100 px-1 py-0.5 text-[7px] font-medium text-blue-800 dark:bg-blue-950/60 dark:text-blue-300">
@@ -119,12 +119,12 @@ function PreviewMail() {
             {titleCase("Inbox & sent · compose")}
           </p>
         </div>
-        <span className="shrink-0 rounded-md bg-emerald-600 px-1.5 py-0.5 text-[7px] font-semibold text-white">
+        <span className="shrink-0 rounded-md bg-indigo-600 px-1.5 py-0.5 text-[7px] font-semibold text-white">
           {titleCase("Compose")}
         </span>
       </div>
       <div className="flex gap-0.5 rounded-lg border border-zinc-200 p-0.5 dark:border-zinc-800">
-        <span className="flex-1 rounded bg-emerald-50 py-1 text-center text-[7px] font-medium text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+        <span className="flex-1 rounded bg-indigo-50 py-1 text-center text-[7px] font-medium text-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-300">
           {titleCase("Inbox")}
         </span>
         <span className="flex-1 py-1 text-center text-[7px] text-zinc-500">{titleCase("Sent")}</span>

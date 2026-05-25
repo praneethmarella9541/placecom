@@ -360,14 +360,14 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
       )}
     >
       {/* Top chrome */}
-      <header className="flex shrink-0 items-center gap-2 border-b border-zinc-200 bg-emerald-700 px-3 py-2.5 text-white dark:border-emerald-900 dark:bg-emerald-950">
+      <header className="flex shrink-0 items-center gap-2 border-b border-zinc-200 bg-indigo-700 px-3 py-2.5 text-white dark:border-indigo-900 dark:bg-indigo-950">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/20">
             <IconMessageChat className="h-5 w-5 text-white" />
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">{titleCase("WhatsApp")}</p>
-            <p className="truncate text-[11px] text-emerald-100/90">
+            <p className="truncate text-[11px] text-indigo-100/90">
               {status?.sendConfigured ? titleCase("Twilio connected") : titleCase("Check configuration")}
               {status?.sandbox != null ? ` · ${status.sandbox ? "Sandbox" : "Live"}` : ""}
             </p>
@@ -376,7 +376,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
         <button
           type="button"
           onClick={() => void loadConversations()}
-          className="rounded-lg p-2 text-emerald-100 transition hover:bg-white/10"
+          className="rounded-lg p-2 text-indigo-100 transition hover:bg-white/10"
           title={titleCase("Refresh chats")}
         >
           <IconRefresh className="h-4 w-4" />
@@ -386,7 +386,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
           onClick={() => setSetupOpen((v) => !v)}
           className={cn(
             "rounded-lg p-2 transition hover:bg-white/10",
-            setupOpen ? "bg-white/20 text-white" : "text-emerald-100",
+            setupOpen ? "bg-white/20 text-white" : "text-indigo-100",
           )}
           title={titleCase("Setup & webhook")}
         >
@@ -465,10 +465,10 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                   onClick={() => selectPeer(c.peer_e164)}
                   className={cn(
                     "flex w-full items-center gap-3 border-b border-zinc-100 px-3 py-2.5 text-left transition dark:border-zinc-800/80",
-                    peer === c.peer_e164 ? "bg-emerald-100/90 dark:bg-emerald-950/50" : "hover:bg-white dark:hover:bg-zinc-900",
+                    peer === c.peer_e164 ? "bg-indigo-100/90 dark:bg-indigo-950/50" : "hover:bg-white dark:hover:bg-zinc-900",
                   )}
                 >
-                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-xs font-bold text-white">
+                  <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
                     {peerInitials(c.peer_e164)}
                   </span>
                   <span className="min-w-0 flex-1">
@@ -644,7 +644,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                       onClick={() => toggleSelected(m.id)}
                       aria-label={titleCase("Toggle select")}
                     >
-                      {selected ? <IconCheck className="h-4 w-4 text-emerald-600" /> : null}
+                      {selected ? <IconCheck className="h-4 w-4 text-indigo-600" /> : null}
                     </button>
                   ) : null;
                   return (
@@ -658,7 +658,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                         "group flex w-full max-w-full items-start gap-1.5 rounded-lg transition-[box-shadow] duration-300",
                         outbound ? "justify-end" : "justify-start",
                         highlightMessageId === m.id &&
-                          "ring-2 ring-emerald-500 ring-offset-2 ring-offset-[#efeae2] dark:ring-offset-zinc-900",
+                          "ring-2 ring-indigo-500 ring-offset-2 ring-offset-[#efeae2] dark:ring-offset-zinc-900",
                       )}
                     >
                       {!outbound ? selectToggle : null}
@@ -682,9 +682,9 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                         className={cn(
                           "relative max-w-[min(85%,20rem)] rounded-lg px-2.5 py-1.5 text-base leading-relaxed shadow-sm",
                           outbound
-                            ? "rounded-br-sm bg-[#dcf8c6] text-zinc-900 dark:bg-emerald-800 dark:text-emerald-50"
+                            ? "rounded-br-sm bg-[#dcf8c6] text-zinc-900 dark:bg-indigo-800 dark:text-indigo-50"
                             : "rounded-bl-sm border border-zinc-200/80 bg-white text-zinc-900 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100",
-                          selectMode && selected && "ring-2 ring-emerald-500 ring-offset-1 dark:ring-offset-zinc-900",
+                          selectMode && selected && "ring-2 ring-indigo-500 ring-offset-1 dark:ring-offset-zinc-900",
                         )}
                       >
                         {m.is_starred ? (
@@ -708,28 +708,28 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                         {replyRef ? (
                           <button
                             type="button"
-                            className="mb-2 w-full rounded-lg border border-emerald-600/35 bg-emerald-50/80 px-2 py-1.5 text-left transition hover:bg-emerald-100/90 dark:border-emerald-400/30 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/55"
+                            className="mb-2 w-full rounded-lg border border-indigo-600/35 bg-indigo-50/80 px-2 py-1.5 text-left transition hover:bg-indigo-100/90 dark:border-indigo-400/30 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/55"
                             onClick={(e) => {
                               e.stopPropagation();
                               scrollToQuotedMessage(replyRef.id);
                             }}
                           >
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-900/80 dark:text-emerald-100/90">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-900/80 dark:text-indigo-100/90">
                               {titleCase("Replied to")}{" "}
-                              <span className="normal-case text-emerald-950 dark:text-emerald-50">
+                              <span className="normal-case text-indigo-950 dark:text-indigo-50">
                                 {String(replyRef.direction || "").toLowerCase() === "outbound"
                                   ? titleCase("You")
                                   : titleCase("Contact")}
                               </span>
-                              <span className="mx-1 font-normal text-emerald-800/60 dark:text-emerald-200/60">·</span>
-                              <span className="font-normal normal-case text-emerald-900/85 dark:text-emerald-100/85">
+                              <span className="mx-1 font-normal text-indigo-800/60 dark:text-indigo-200/60">·</span>
+                              <span className="font-normal normal-case text-indigo-900/85 dark:text-indigo-100/85">
                                 {formatDate(replyRef.created_at)}
                               </span>
                             </p>
                             <p className="mt-0.5 line-clamp-2 text-xs font-medium text-zinc-800 dark:text-zinc-200">
                               {replyRef.body || "—"}
                             </p>
-                            <p className="mt-1 text-[10px] text-emerald-800/80 dark:text-emerald-200/80">
+                            <p className="mt-1 text-[10px] text-indigo-800/80 dark:text-indigo-200/80">
                               {titleCase("View in chat")}
                             </p>
                           </button>
@@ -743,7 +743,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                           className={cn(
                             "mt-0.5 text-[10px]",
                             outbound
-                              ? "text-right text-emerald-800/70 dark:text-emerald-200/70"
+                              ? "text-right text-indigo-800/70 dark:text-indigo-200/70"
                               : "text-left text-zinc-400",
                           )}
                         >
@@ -1001,25 +1001,25 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
             className="relative shrink-0 border-t border-zinc-200 bg-zinc-100/95 p-2 dark:border-zinc-800 dark:bg-zinc-900/95"
           >
             {replyTo ? (
-              <div className="mb-2 flex items-start gap-2 rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-3 py-2 text-xs dark:border-emerald-900/50 dark:bg-emerald-950/40">
-                <IconReply className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+              <div className="mb-2 flex items-start gap-2 rounded-xl border border-indigo-200/80 bg-indigo-50/90 px-3 py-2 text-xs dark:border-indigo-900/50 dark:bg-indigo-950/40">
+                <IconReply className="mt-0.5 h-4 w-4 shrink-0 text-indigo-700 dark:text-indigo-400" />
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-emerald-900 dark:text-emerald-100">
+                  <p className="font-semibold text-indigo-900 dark:text-indigo-100">
                     {titleCase("Replying to")}{" "}
                     <span className="font-normal">
                       {String(replyTo.direction || "").toLowerCase() === "outbound"
                         ? titleCase("you")
                         : titleCase("contact")}
                     </span>
-                    <span className="ml-1 text-[10px] font-normal text-emerald-800/80 dark:text-emerald-200/80">
+                    <span className="ml-1 text-[10px] font-normal text-indigo-800/80 dark:text-indigo-200/80">
                       · {formatDate(replyTo.created_at)}
                     </span>
                   </p>
-                  <p className="line-clamp-2 text-emerald-800/90 dark:text-emerald-200/90">{replyTo.body || "—"}</p>
+                  <p className="line-clamp-2 text-indigo-800/90 dark:text-indigo-200/90">{replyTo.body || "—"}</p>
                 </div>
                 <button
                   type="button"
-                  className="shrink-0 rounded p-1 text-emerald-800 hover:bg-emerald-100 dark:text-emerald-200 dark:hover:bg-emerald-900/50"
+                  className="shrink-0 rounded p-1 text-indigo-800 hover:bg-indigo-100 dark:text-indigo-200 dark:hover:bg-indigo-900/50"
                   onClick={() => setReplyTo(null)}
                   aria-label={titleCase("Clear reply")}
                 >

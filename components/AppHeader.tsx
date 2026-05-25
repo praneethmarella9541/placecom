@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { pathToFeature } from "@/lib/feature-access";
 import {
@@ -136,8 +137,8 @@ function AppHeaderInner() {
         mobileOpen ? "z-[100]" : "z-40",
       )}
     >
-      <div className="border-b border-zinc-200/90 bg-white/90 backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/85">
-        <div className="mx-auto flex h-[52px] max-w-6xl items-center justify-between gap-3 px-4">
+      <div className="border-b border-[var(--color-border)] nucleus-backdrop">
+        <div className="mx-auto flex h-[56px] max-w-6xl items-center justify-between gap-3 px-4">
           <div className="flex min-h-0 flex-1 items-center gap-2.5">
             <button
               type="button"
@@ -149,12 +150,10 @@ function AppHeaderInner() {
             </button>
             <Link
               href="/dashboard"
-              className="flex items-center gap-2.5 text-[15px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50"
+              className="flex items-center gap-2.5 leading-none"
+              aria-label="The Nucleus — home"
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-xs font-bold text-white shadow-sm shadow-emerald-900/10">
-                G
-              </span>
-              <span className="hidden sm:inline">Placecom</span>
+              <PlacecomLogo />
             </Link>
           </div>
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
@@ -166,20 +165,20 @@ function AppHeaderInner() {
                   onClick={() => setUserMenuOpen((v) => !v)}
                   aria-expanded={userMenuOpen}
                   aria-haspopup="menu"
-                  className="flex max-w-[min(100vw-8rem,260px)] items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  className="flex max-w-[min(100vw-8rem,260px)] items-center gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-offset)]"
                 >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-200 to-zinc-300 text-xs font-semibold text-zinc-700 dark:from-zinc-600 dark:to-zinc-700 dark:text-zinc-100">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--nucleus-bright)] to-[var(--nucleus-core)] text-xs font-semibold text-white shadow-sm">
                     {(me.displayUsername || me.sessionEmail).slice(0, 1).toUpperCase()}
                   </span>
                   <span className="hidden min-w-0 flex-1 flex-col text-left text-[13px] leading-tight sm:flex">
-                    <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">
+                    <span className="truncate font-medium text-[var(--color-text)]">
                       {me.displayUsername || me.sessionEmail.split("@")[0]}
                     </span>
-                    <span className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">{me.sessionEmail}</span>
+                    <span className="truncate text-[11px] text-[var(--color-text-muted)]">{me.sessionEmail}</span>
                   </span>
                   <IconChevronDown
                     className={cn(
-                      "hidden h-4 w-4 shrink-0 text-zinc-400 transition-transform sm:block",
+                      "hidden h-4 w-4 shrink-0 text-[var(--color-text-faint)] transition-transform sm:block",
                       userMenuOpen && "rotate-180",
                     )}
                   />
@@ -187,28 +186,31 @@ function AppHeaderInner() {
                 {userMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute right-0 top-full z-50 mt-1.5 w-[min(calc(100vw-2rem),17rem)] rounded-xl border border-zinc-200/90 bg-white py-1 shadow-lg shadow-zinc-900/10 ring-1 ring-black/5 dark:border-zinc-700 dark:bg-zinc-900 dark:shadow-black/40"
+                    className="absolute right-0 top-full z-50 mt-1.5 w-[min(calc(100vw-2rem),17rem)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
                   >
-                    <div className="border-b border-zinc-100 px-3 py-2.5 dark:border-zinc-800">
-                      <p className="truncate text-xs font-medium text-zinc-900 dark:text-zinc-100" title={me.sessionEmail}>
+                    <div className="border-b border-[var(--color-border)] px-3 py-2.5">
+                      <p className="truncate text-xs font-semibold text-[var(--color-text)]" title={me.sessionEmail}>
                         {me.displayUsername || me.sessionEmail}
                       </p>
-                      <p className="mt-0.5 truncate text-[11px] text-zinc-500 dark:text-zinc-400" title={me.sessionEmail}>
+                      <p className="mt-0.5 truncate text-[11px] text-[var(--color-text-muted)]" title={me.sessionEmail}>
                         {me.sessionEmail}
                       </p>
-                      <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                        {titleCase(`Role: ${me.role}`)}
+                      <p className="mt-1 text-[11px] uppercase tracking-wider text-[var(--color-text-faint)]">
+                        {titleCase(`Role · ${me.role}`)}
                       </p>
                       {me.mailboxEmail ? (
-                        <p className="mt-2 truncate text-[11px] text-emerald-700 dark:text-emerald-400" title={me.mailboxEmail}>
+                        <p
+                          className="mt-2 truncate text-[11px] text-[var(--color-primary)]"
+                          title={me.mailboxEmail}
+                        >
                           Mail: {me.mailboxEmail}
                         </p>
                       ) : me.role !== "admin" ? (
-                        <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400">
+                        <p className="mt-2 text-[11px] text-[var(--color-warning)]">
                           {titleCase("Mail: not linked to admin")}
                         </p>
                       ) : me.role === "admin" && !me.hasStoredMailbox ? (
-                        <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400">
+                        <p className="mt-2 text-[11px] text-[var(--color-warning)]">
                           {titleCase("Open any page once to save mailbox session")}
                         </p>
                       ) : null}
@@ -216,7 +218,7 @@ function AppHeaderInner() {
                     <button
                       type="button"
                       role="menuitem"
-                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-100 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-offset)]"
                       onClick={() => {
                         setUserMenuOpen(false);
                         void signOut();
@@ -238,32 +240,33 @@ function AppHeaderInner() {
           <button
             type="button"
             aria-label="Close menu backdrop"
-            className="fixed inset-0 z-40 bg-black/45 dark:bg-black/55"
+            className="fixed inset-0 z-40 bg-[#0d1021]/45 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
           />
           <aside
-            className="fixed inset-y-0 left-0 z-50 flex w-[min(21rem,85vw)] flex-col border-r border-zinc-200 bg-white shadow-[4px_0_10px_rgba(0,0,0,0.05)] dark:border-zinc-700 dark:bg-zinc-900 dark:shadow-[4px_0_10px_rgba(0,0,0,0.35)]"
+            className="fixed inset-y-0 left-0 z-50 flex w-[min(21rem,85vw)] flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="nav-sidebar-title"
           >
-            <div className="flex min-h-[3.5rem] shrink-0 items-center justify-between border-b border-[#e5e7eb] px-4 dark:border-zinc-700">
-              <p
-                id="nav-sidebar-title"
-                className="text-sm font-semibold leading-none text-zinc-900 dark:text-zinc-100"
-              >
-                {titleCase("Navigation")}
-              </p>
+            <div className="flex min-h-[3.5rem] shrink-0 items-center justify-between border-b border-[var(--color-border)] px-4">
+              <PlacecomLogo />
               <button
                 type="button"
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-zinc-600 transition-colors hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
                 onClick={() => setMobileOpen(false)}
                 aria-label="Close menu"
               >
                 <IconX className="h-5 w-5" />
               </button>
             </div>
-            <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto py-3">
+            <p
+              id="nav-sidebar-title"
+              className="px-5 pt-4 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-faint)]"
+            >
+              {titleCase("Navigation")}
+            </p>
+            <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-3">
               {links.map((l) => {
                 const Icon = l.icon;
                 const active = isNavActive(l.href, pathname, searchParams);
@@ -274,24 +277,32 @@ function AppHeaderInner() {
                     prefetch
                     onClick={() => setMobileOpen(false)}
                     className={cn(
-                      "mx-2 flex min-h-11 items-center gap-4 px-3 py-2 text-[14px] font-medium transition-colors",
+                      "mx-1 flex min-h-11 items-center gap-3.5 rounded-lg px-3 py-2.5 text-[14px] font-medium transition-all",
                       active
-                        ? "rounded-full bg-emerald-50 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
-                        : "rounded-lg text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800 dark:hover:text-zinc-50",
+                        ? "bg-[var(--color-primary-light)] text-[var(--color-primary)] shadow-sm"
+                        : "text-[var(--color-text)] hover:bg-[var(--color-surface-offset)]",
                     )}
                   >
-                    <span className="flex w-6 shrink-0 justify-center text-zinc-500 dark:text-zinc-400">
+                    <span
+                      className={cn(
+                        "flex w-6 shrink-0 justify-center",
+                        active ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]",
+                      )}
+                    >
                       <Icon className="h-[18px] w-[18px]" />
                     </span>
                     <span className="truncate">{titleCase(l.label)}</span>
+                    {active && (
+                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--color-primary)]" />
+                    )}
                   </Link>
                 );
               })}
-              <div className="mx-3 my-2 border-t border-[#e5e7eb] dark:border-zinc-700" />
+              <div className="mx-3 my-2 border-t border-[var(--color-border)]" />
               <button
                 type="button"
                 onClick={() => void signOut()}
-                className="mx-2 flex min-h-11 items-center gap-4 rounded-lg px-3 py-2 text-left text-[14px] font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                className="mx-1 flex min-h-11 items-center gap-3.5 rounded-lg px-3 py-2.5 text-left text-[14px] font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger-light)]"
               >
                 <span className="flex w-6 shrink-0 justify-center">
                   <IconLogOut className="h-[18px] w-[18px] opacity-80" />
@@ -311,7 +322,7 @@ export function AppHeader() {
     <Suspense
       fallback={
         <header className="sticky top-0 z-40">
-          <div className="h-[52px] border-b border-zinc-200/90 bg-white/90 backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/85" />
+          <div className="h-[56px] border-b border-[var(--color-border)] nucleus-backdrop" />
         </header>
       }
     >

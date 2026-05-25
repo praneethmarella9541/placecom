@@ -238,7 +238,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      <main className="min-h-[calc(100vh-56px)] px-4 pb-4 pt-[calc(56px+16px)] md:ml-[230px] md:px-6 md:pb-6 md:pt-[calc(56px+24px)]">
+      <main className="min-h-[calc(100vh-56px)] px-4 pb-4 pt-[calc(56px+12px)] md:ml-[230px] md:px-6 md:pb-6 md:pt-[calc(56px+16px)]">
         {children}
       </main>
 

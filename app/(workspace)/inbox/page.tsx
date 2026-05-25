@@ -922,7 +922,7 @@ export default function InboxPage() {
         Left rail  : Compose + Inbox/Sent/Drafts + Labels  (desktop only)
         Right area : Category tabs (top) + search + thread list OR thread detail
     ──────────────────────────────────────────────────────────────────────── */}
-    <div className="-mx-4 flex h-[calc(100vh-52px-32px)] overflow-hidden md:-mx-6 md:h-[calc(100vh-52px-48px)]">
+    <div className="-mx-4 -mt-3 flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-4">
 
       {/* ══ LEFT RAIL — desktop only ══ */}
       <aside className="hidden w-[200px] shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">

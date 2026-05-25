@@ -22,16 +22,29 @@ function escapeDriveQFragment(s: string): string {
 }
 
 /**
- * List children of a folder (My Drive root uses parentId `"root"`).
- * Matches Google Drive’s folder tree: same parent, folders first via `orderBy`.
+ * Build the Drive `q` query string.
+ *
+ * Two distinct modes — matches Google Drive's UX:
+ *
+ * 1. **Browse mode (no search):** show children of the current folder.
+ * 2. **Search mode (has search):** ignore folder context, search the ENTIRE
+ *    Drive — same as typing in Google Drive's search bar. OR-joins
+ *    `name contains` with `fullText contains` so it matches both
+ *    filenames and file contents (PDFs, Docs, Sheets, etc.).
  */
 function buildFilesListQ(parentId: string, search: string | undefined): string {
-  const pid = escapeDriveQFragment(parentId);
-  const inFolder = `'${pid}' in parents and trashed = false`;
   const t = (search || "").trim();
-  if (!t) return inFolder;
+
+  if (!t) {
+    const pid = escapeDriveQFragment(parentId);
+    return `'${pid}' in parents and trashed = false`;
+  }
+
   const esc = escapeDriveQFragment(t);
-  return `${inFolder} and name contains '${esc}'`;
+  // For multi-word queries, wrap in quotes for fullText so Drive does a
+  // phrase match rather than splitting tokens.
+  const fullTextTerm = t.includes(" ") ? `"${esc}"` : esc;
+  return `(name contains '${esc}' or fullText contains '${fullTextTerm}') and trashed = false`;
 }
 
 export async function listDriveFilesPage(
@@ -40,20 +53,27 @@ export async function listDriveFilesPage(
     pageSize: number;
     pageToken?: string;
     search?: string;
-    /** Google Drive folder id, or `"root"` for My Drive root. */
+    /** Google Drive folder id, or `"root"` for My Drive root. Ignored in search mode. */
     parentId: string;
   }
 ): Promise<DriveListPage> {
   const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
   const parentId = options.parentId.trim() || "root";
+  const hasSearch = (options.search || "").trim().length > 0;
+  // Browse mode: folders first, then recent. Search mode: recent first
+  // (matches Google Drive's "Most relevant" default which surfaces recent
+  // edits prominently — Drive API doesn't expose a relevance sort).
+  const orderBy = hasSearch
+    ? "modifiedTime desc,name_natural"
+    : "folder,modifiedTime desc,name_natural";
   const params = new URLSearchParams({
     pageSize: String(pageSize),
     fields: "nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink)",
-    // `folder` puts folders first (same as Drive list view), then recent files.
-    orderBy: "folder,modifiedTime desc,name_natural",
+    orderBy,
     q: buildFilesListQ(parentId, options.search),
     includeItemsFromAllDrives: "true",
     supportsAllDrives: "true",
+    corpora: "user",
   });
   if (options.pageToken) params.set("pageToken", options.pageToken);
 

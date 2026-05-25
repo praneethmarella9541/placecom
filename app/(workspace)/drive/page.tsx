@@ -91,11 +91,17 @@ export default function DrivePage() {
   function enterFolder(id: string, name: string) {
     setPathStack((prev) => [...prev, { id, name }]);
     setDriveNextPageToken(undefined);
+    // Match Google Drive: opening a folder exits search mode and shows
+    // the folder's normal contents.
+    setDriveSearchInput("");
+    setDriveSearch("");
   }
 
   function navigateToDepth(endIndexExclusive: number) {
     setPathStack((prev) => prev.slice(0, endIndexExclusive));
     setDriveNextPageToken(undefined);
+    setDriveSearchInput("");
+    setDriveSearch("");
   }
 
   useEffect(() => {
@@ -149,34 +155,66 @@ export default function DrivePage() {
         className="card flex flex-col overflow-hidden"
         style={{ minHeight: "calc(100vh - 220px)" }}
       >
-        <nav
-          className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b border-zinc-100 px-3 py-2.5 text-[13px] dark:border-zinc-800"
-          aria-label="Drive folder path"
-        >
-          <button
-            type="button"
-            onClick={() => navigateToDepth(0)}
-            className="rounded-md px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+        {/* Breadcrumbs — hidden while a search is active because search is
+            drive-wide, not folder-scoped (same UX as Google Drive). */}
+        {!driveSearch && (
+          <nav
+            className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b border-zinc-100 px-3 py-2.5 text-[13px] dark:border-zinc-800"
+            aria-label="Drive folder path"
           >
-            {titleCase("My Drive")}
-          </button>
-          {pathStack.map((crumb, index) => (
-            <span key={crumb.id} className="flex items-center gap-1">
-              <IconChevronRight className="h-3 w-3 shrink-0 text-zinc-300 dark:text-zinc-600" />
-              <button
-                type="button"
-                onClick={() => navigateToDepth(index + 1)}
-                className={`max-w-[200px] truncate rounded-md px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
-                  index === pathStack.length - 1
-                    ? "font-semibold text-zinc-900 dark:text-zinc-100"
-                    : "font-medium text-zinc-600 dark:text-zinc-400"
-                }`}
-              >
-                {crumb.name}
-              </button>
+            <button
+              type="button"
+              onClick={() => navigateToDepth(0)}
+              className="rounded-md px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+            >
+              {titleCase("My Drive")}
+            </button>
+            {pathStack.map((crumb, index) => (
+              <span key={crumb.id} className="flex items-center gap-1">
+                <IconChevronRight className="h-3 w-3 shrink-0 text-zinc-300 dark:text-zinc-600" />
+                <button
+                  type="button"
+                  onClick={() => navigateToDepth(index + 1)}
+                  className={`max-w-[200px] truncate rounded-md px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
+                    index === pathStack.length - 1
+                      ? "font-semibold text-zinc-900 dark:text-zinc-100"
+                      : "font-medium text-zinc-600 dark:text-zinc-400"
+                  }`}
+                >
+                  {crumb.name}
+                </button>
+              </span>
+            ))}
+          </nav>
+        )}
+
+        {/* Search results banner — replaces breadcrumbs when searching */}
+        {driveSearch && (
+          <div
+            className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2.5 text-[13px] dark:border-zinc-800"
+            aria-live="polite"
+          >
+            <span className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+              <IconSearch className="h-3.5 w-3.5 shrink-0" />
+              <span>
+                {titleCase("Searching all of Drive for")}{" "}
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                  &ldquo;{driveSearch}&rdquo;
+                </span>
+              </span>
             </span>
-          ))}
-        </nav>
+            <button
+              type="button"
+              onClick={() => {
+                setDriveSearchInput("");
+                setDriveSearch("");
+              }}
+              className="rounded-md px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+            >
+              {titleCase("Clear search")}
+            </button>
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-2 border-b border-zinc-100 p-1.5 dark:border-zinc-800">
           <div className="min-w-0 flex-1 px-2 py-1">
@@ -186,7 +224,7 @@ export default function DrivePage() {
                 type="search"
                 value={driveSearchInput}
                 onChange={(e) => setDriveSearchInput(e.target.value)}
-                placeholder={titleCase("Search in this folder")}
+                placeholder={titleCase("Search in Drive (matches name + file contents)")}
                 className="input-field w-full py-2 pl-9 pr-3 text-sm"
                 autoComplete="off"
               />

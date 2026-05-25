@@ -33,9 +33,7 @@ export async function GET(
       { threadId, messages, labelIds },
       {
         headers: {
-          // Cache in the browser for 2 min; serve stale up to 10 min while
-          // revalidating in the background. Makes re-opening the same thread instant.
-          "Cache-Control": "private, max-age=120, stale-while-revalidate=600",
+          "Cache-Control": "no-store",
         },
       }
     );

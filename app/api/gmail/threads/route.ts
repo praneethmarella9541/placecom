@@ -48,7 +48,7 @@ export async function GET(request: Request) {
           });
     return NextResponse.json(
       { folder, threads: page.threads, nextPageToken: page.nextPageToken },
-      { headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=300" } }
+      { headers: { "Cache-Control": "no-store" } }
     );
   } catch (e) {
     const err = e as Error & { code?: string };

@@ -398,7 +398,7 @@ export default function InboxPage() {
       if (mailSearch) params.set("search", mailSearch);
       if (effectiveLabelId) params.set("labelId", effectiveLabelId);
       try {
-        const res = await fetch(`/api/gmail/threads?${params.toString()}`);
+        const res = await fetch(`/api/gmail/threads?${params.toString()}`, { cache: "no-store" });
         const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
         if (!res.ok) throw new Error(data.error || "Failed to load inbox");
         const incoming = data.threads || [];
@@ -573,7 +573,7 @@ export default function InboxPage() {
   // openThread can clone + consume it without starting a new request.
   const prefetchThread = useCallback((threadId: string) => {
     if (prefetchCache.current.has(threadId)) return; // already in-flight or done
-    const promise = fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`);
+    const promise = fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`, { cache: "no-store" });
     prefetchCache.current.set(threadId, promise);
     // Auto-evict after 60 s so stale data doesn't accumulate.
     setTimeout(() => prefetchCache.current.delete(threadId), 60_000);
@@ -602,7 +602,7 @@ export default function InboxPage() {
       // Reuse prefetch response if hover already started the fetch; otherwise start fresh.
       const inflight = prefetchCache.current.get(threadId);
       prefetchCache.current.delete(threadId); // consume — each Response body can only be read once
-      const res = inflight ? await inflight : await fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`);
+      const res = inflight ? await inflight : await fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`, { cache: "no-store" });
       const data = (await res.json()) as {
         error?: string; messages?: MsgView[]; labelIds?: string[];
       };

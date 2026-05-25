@@ -70,12 +70,22 @@ export default function DrivePage() {
       if (driveSearch) params.set("search", driveSearch);
       try {
         const res = await fetch(`/api/drive/files?${params.toString()}`);
-        const data = (await res.json()) as {
-          error?: string;
-          files?: DriveFileRow[];
-          nextPageToken?: string;
-        };
-        if (!res.ok) throw new Error(data.error || "Failed to load Drive");
+        // Parse defensively: a 5xx may return an HTML error page (not JSON),
+        // and the raw "Unexpected token '<'" exception is useless to the user.
+        // Read text first, then attempt JSON, so we always have a fallback.
+        const raw = await res.text();
+        let data: { error?: string; files?: DriveFileRow[]; nextPageToken?: string } = {};
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch {
+          // Non-JSON response (HTML error page, auth redirect, etc.)
+          throw new Error(
+            res.status === 401 || res.status === 403
+              ? "Sign-in needed for Drive. Please refresh or sign in again."
+              : `Drive request failed (${res.status}). Please try again.`
+          );
+        }
+        if (!res.ok) throw new Error(data.error || `Failed to load Drive (${res.status})`);
         setDriveFiles((prev) => (opts.append ? [...prev, ...(data.files || [])] : data.files || []));
         setDriveNextPageToken(data.nextPageToken);
       } catch (e) {
@@ -127,8 +137,14 @@ export default function DrivePage() {
         method: "POST",
         body: fd,
       });
-      const data = (await res.json()) as { error?: string; file?: DriveFileRow };
-      if (!res.ok) throw new Error(data.error || "Upload failed");
+      const raw = await res.text();
+      let data: { error?: string; file?: DriveFileRow } = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error(`Upload failed (${res.status}). Please try again.`);
+      }
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
       await loadDriveFiles({ append: false });
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
@@ -139,27 +155,13 @@ export default function DrivePage() {
   }
 
   return (
-    <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
-          {titleCase("Drive")}
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          {titleCase(
-            "Browse My Drive, upload files into the current folder, and open files for preview or download — without opening the Drive website.",
-          )}
-        </p>
-      </div>
-
-      <div
-        className="card flex flex-col overflow-hidden"
-        style={{ minHeight: "calc(100vh - 220px)" }}
-      >
+    <div className="-mx-4 -mt-3 flex h-[calc(100vh-56px)] flex-col overflow-hidden md:-mx-6 md:-mt-4">
+      <div className="flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
         {/* Breadcrumbs — hidden while a search is active because search is
             drive-wide, not folder-scoped (same UX as Google Drive). */}
         {!driveSearch && (
           <nav
-            className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b border-zinc-100 px-3 py-2.5 text-[13px] dark:border-zinc-800"
+            className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b border-[var(--color-border)] px-3 py-2.5 text-[13px]"
             aria-label="Drive folder path"
           >
             <button
@@ -191,7 +193,7 @@ export default function DrivePage() {
         {/* Search results banner — replaces breadcrumbs when searching */}
         {driveSearch && (
           <div
-            className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2.5 text-[13px] dark:border-zinc-800"
+            className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2.5 text-[13px]"
             aria-live="polite"
           >
             <span className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
@@ -216,7 +218,7 @@ export default function DrivePage() {
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-2 border-b border-zinc-100 p-1.5 dark:border-zinc-800">
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] p-1.5">
           <div className="min-w-0 flex-1 px-2 py-1">
             <div className="relative">
               <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -224,7 +226,7 @@ export default function DrivePage() {
                 type="search"
                 value={driveSearchInput}
                 onChange={(e) => setDriveSearchInput(e.target.value)}
-                placeholder={titleCase("Search in Drive (matches name + file contents)")}
+                placeholder={titleCase("Search Drive")}
                 className="input-field w-full py-2 pl-9 pr-3 text-sm"
                 autoComplete="off"
               />
@@ -367,7 +369,7 @@ export default function DrivePage() {
             aria-modal="true"
             aria-labelledby="drive-preview-title"
           >
-            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <h2 id="drive-preview-title" className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-50">
                   {previewFile.name}
@@ -400,7 +402,7 @@ export default function DrivePage() {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 p-4 dark:border-zinc-800">
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 p-4">
               <a
                 href={`/api/drive/file/${encodeURIComponent(previewFile.id)}?mode=download`}
                 className="btn-primary gap-2"

@@ -13,7 +13,6 @@ import {
   Megaphone,
   Menu,
   MessageCircle,
-  Phone,
   Sparkles,
   Smartphone,
   Users,
@@ -34,7 +33,6 @@ const primaryNav = [
   { href: "/dashboard", label: "Extraction", Icon: Sparkles },
   { href: "/crm", label: "CRM", Icon: Kanban },
   { href: "/calendar", label: "Calendar", Icon: CalendarDays },
-  { href: "/calls", label: "Calls", Icon: Phone },
   { href: "/meetings", label: "Meetings", Icon: FileText },
 ] as const;
 
@@ -69,7 +67,6 @@ function workspacePageTitle(pathname: string): string {
   if (pathname.startsWith("/dashboard")) return titleCase("Extraction");
   if (pathname.startsWith("/crm")) return titleCase("CRM");
   if (pathname.startsWith("/calendar")) return titleCase("Calendar");
-  if (pathname.startsWith("/calls")) return titleCase("Calls");
   if (pathname.startsWith("/meetings")) return titleCase("Meetings");
   if (pathname.startsWith("/drive")) return titleCase("Drive");
   if (pathname.startsWith("/forms")) return titleCase("Forms");

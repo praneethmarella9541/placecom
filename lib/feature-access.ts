@@ -6,7 +6,6 @@ export const FEATURE_KEYS = [
   "dashboard",
   "crm",
   "calendar",
-  "calls",
   "meetings",
   "sms",
   "whatsapp",
@@ -22,7 +21,6 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   dashboard: "Extraction",
   crm: "CRM",
   calendar: "Calendar",
-  calls: "Calls",
   meetings: "Meetings",
   sms: "SMS",
   whatsapp: "WhatsApp",
@@ -47,7 +45,6 @@ export function pathToFeature(pathname: string, search: URLSearchParams): Featur
   if (pathname.startsWith("/dashboard")) return "dashboard";
   if (pathname.startsWith("/crm")) return "crm";
   if (pathname.startsWith("/calendar")) return "calendar";
-  if (pathname.startsWith("/calls")) return "calls";
   if (pathname.startsWith("/meetings")) return "meetings";
   if (pathname.startsWith("/broadcasting")) {
     const channel = search.get("channel");
@@ -96,14 +93,6 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";
 
-  if (
-    pathname.startsWith("/api/calls") ||
-    pathname.startsWith("/api/twilio/voice") ||
-    pathname.startsWith("/api/twilio/recording")
-  ) {
-    return "calls";
-  }
-
   if (pathname.startsWith("/api/meetings")) return "meetings";
 
   if (pathname.startsWith("/api/sms") || pathname.startsWith("/api/twilio/sms")) return "sms";
@@ -135,7 +124,6 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
     { path: "/dashboard" },
     { path: "/crm" },
     { path: "/calendar" },
-    { path: "/calls" },
     { path: "/sms" },
     { path: "/whatsapp" },
     { path: "/meetings" },

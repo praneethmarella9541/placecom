@@ -60,21 +60,20 @@ export async function listDriveFilesPage(
   const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
   const parentId = options.parentId.trim() || "root";
   const hasSearch = (options.search || "").trim().length > 0;
-  // Browse mode: folders first, then recent. Search mode: recent first
-  // (matches Google Drive's "Most relevant" default which surfaces recent
-  // edits prominently — Drive API doesn't expose a relevance sort).
-  const orderBy = hasSearch
-    ? "modifiedTime desc,name_natural"
-    : "folder,modifiedTime desc,name_natural";
   const params = new URLSearchParams({
     pageSize: String(pageSize),
     fields: "nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink)",
-    orderBy,
     q: buildFilesListQ(parentId, options.search),
     includeItemsFromAllDrives: "true",
     supportsAllDrives: "true",
     corpora: "user",
   });
+  // Drive API rejects orderBy when the query uses `fullText contains` —
+  // results come back in descending relevance order automatically. So we
+  // only set orderBy in browse mode (no search).
+  if (!hasSearch) {
+    params.set("orderBy", "folder,modifiedTime desc,name_natural");
+  }
   if (options.pageToken) params.set("pageToken", options.pageToken);
 
   const url = `${DRIVE_API}/files?${params.toString()}`;

@@ -1,9 +1,17 @@
 /**
  * Public Google OAuth Web Client ID (same one configured in Supabase Auth → Google).
- * Used for client-side hints (preconnect, diagnostics). Not a secret.
+ * Must be set as NEXT_PUBLIC_GOOGLE_CLIENT_ID in .env — used for token refresh on the server.
+ * Throws immediately if missing so misconfiguration surfaces as a clear startup error
+ * rather than a cryptic "Could not determine client ID" from Google's token endpoint.
  */
 export function getGoogleOAuthClientId(): string {
-  return process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim() ?? "";
+  const id = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();
+  if (!id) {
+    throw new Error(
+      "NEXT_PUBLIC_GOOGLE_CLIENT_ID is not set. Add it to .env — it must match the OAuth client ID configured in Google Cloud Console and Supabase Auth."
+    );
+  }
+  return id;
 }
 
 /**

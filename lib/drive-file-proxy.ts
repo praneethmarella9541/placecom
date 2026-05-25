@@ -1,11 +1,36 @@
 const DRIVE_FILES = "https://www.googleapis.com/drive/v3/files";
 
-/** Types we can reasonably show inside an iframe via this app’s proxy. */
+/** Microsoft Office + OpenDocument formats — browsers can't render these
+ * inline, but Google Drive's hosted viewer can. */
+const OFFICE_MIME_TYPES = new Set([
+  // Excel
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  // PowerPoint
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  // Word
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  // OpenDocument
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.oasis.opendocument.spreadsheet",
+  "application/vnd.oasis.opendocument.presentation",
+  // Misc
+  "application/rtf",
+]);
+
+export function isOfficeMimeType(mimeType: string): boolean {
+  return OFFICE_MIME_TYPES.has(mimeType);
+}
+
+/** Types we can reasonably show inside an iframe. */
 export function supportsInAppPreview(mimeType: string): boolean {
   if (!mimeType || mimeType === "application/vnd.google-apps.folder") return false;
   if (mimeType.startsWith("image/")) return true;
   if (mimeType === "application/pdf") return true;
   if (mimeType.startsWith("text/")) return true;
+  // Google Workspace native — we export to PDF and stream via our proxy
   if (
     mimeType === "application/vnd.google-apps.document" ||
     mimeType === "application/vnd.google-apps.spreadsheet" ||
@@ -14,6 +39,8 @@ export function supportsInAppPreview(mimeType: string): boolean {
   ) {
     return true;
   }
+  // Office / OpenDocument formats — rendered by Drive's hosted viewer
+  if (isOfficeMimeType(mimeType)) return true;
   if (mimeType === "application/vnd.google-apps.form" || mimeType === "application/vnd.google-apps.script") {
     return false;
   }

@@ -253,14 +253,18 @@ export async function createPlacementMeetingEvent(
   calendarId: string,
   input: {
     recruiterEmail: string;
-    companyName: string;
-    title?: string;
+    /** Meeting title — required. */
+    title: string;
     notes?: string;
     startDateTime: string;
     endDateTime: string;
     timeZone?: string;
-    /** Extra invitees (e.g. admin mailbox) when Meet is hosted on a dedicated calendar. */
+    /** Extra invitees added to the event. */
     extraAttendeeEmails?: string[];
+    /** Whether to attach a Google Meet conference. Defaults to true. */
+    addMeet?: boolean;
+    /** Whether to send invite emails to attendees. Defaults to "all". */
+    sendUpdates?: SendUpdates;
   }
 ): Promise<CalendarEventItem> {
   const seen = new Set<string>();
@@ -277,9 +281,11 @@ export async function createPlacementMeetingEvent(
     add(email);
   }
 
-  const payload = {
-    summary: input.title?.trim() || `Placement Meeting - ${input.companyName}`,
-    description: input.notes?.trim() || `Placement office recruiter meeting with ${input.companyName}.`,
+  const wantMeet = input.addMeet !== false; // default true
+  const sendUpdates: SendUpdates = input.sendUpdates ?? "all"; // default: send emails
+  const payload: Record<string, unknown> = {
+    summary: input.title.trim(),
+    description: input.notes?.trim() || undefined,
     start: {
       dateTime: input.startDateTime,
       timeZone: input.timeZone || "Asia/Kolkata",
@@ -290,18 +296,23 @@ export async function createPlacementMeetingEvent(
     },
     attendees,
     guestsCanInviteOthers: false,
-    conferenceData: {
-      createRequest: {
-        requestId: `meet-${Date.now()}`,
-        conferenceSolutionKey: { type: "hangoutsMeet" },
+    ...(wantMeet && {
+      conferenceData: {
+        createRequest: {
+          requestId: `meet-${Date.now()}`,
+          conferenceSolutionKey: { type: "hangoutsMeet" },
+        },
       },
-    },
+    }),
   };
 
   let res: Response;
   try {
     const cal = encodeURIComponent(calendarId.trim() || "primary");
-    res = await fetch(`${CALENDAR_API}/calendars/${cal}/events?conferenceDataVersion=1`, {
+    const qp = new URLSearchParams();
+    if (wantMeet) qp.set("conferenceDataVersion", "1");
+    qp.set("sendUpdates", sendUpdates);
+    res = await fetch(`${CALENDAR_API}/calendars/${cal}/events?${qp.toString()}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,

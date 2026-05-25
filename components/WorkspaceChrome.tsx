@@ -1,123 +1,333 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   CalendarDays,
+  ChevronDown,
   ClipboardList,
   FileText,
   Folder,
   Kanban,
+  LogOut,
   Mail,
   Megaphone,
   Menu,
   MessageCircle,
-  Sparkles,
   Smartphone,
+  Sparkles,
   Users,
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
-import { titleCase } from "@/lib/title-case";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { pathToFeature } from "@/lib/feature-access";
 
+/* ─── nav config ──────────────────────────────────────────── */
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 
 const primaryNav = [
-  { href: "/inbox", label: "Mail", Icon: Mail },
+  { href: "/inbox",     label: "Mail",       Icon: Mail },
   { href: "/dashboard", label: "Extraction", Icon: Sparkles },
-  { href: "/crm", label: "CRM", Icon: Kanban },
-  { href: "/calendar", label: "Calendar", Icon: CalendarDays },
-  { href: "/meetings", label: "Meetings", Icon: FileText },
+  { href: "/crm",       label: "CRM",        Icon: Kanban },
+  { href: "/calendar",  label: "Calendar",   Icon: CalendarDays },
+  { href: "/meetings",  label: "Meetings",   Icon: FileText },
 ] as const;
 
 const secondaryNav = [
-  { href: "/drive", label: "Drive", Icon: Folder },
-  { href: "/forms", label: "Forms", Icon: ClipboardList },
-  { href: "/broadcasting", label: "Broadcasting", Icon: Megaphone },
-  { href: "/sms", label: "SMS", Icon: Smartphone },
-  { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
+  { href: "/drive",         label: "Drive",        Icon: Folder },
+  { href: "/forms",         label: "Forms",        Icon: ClipboardList },
+  { href: "/broadcasting",  label: "Broadcasting", Icon: Megaphone },
+  { href: "/sms",           label: "SMS",          Icon: Smartphone },
+  { href: "/whatsapp",      label: "WhatsApp",     Icon: MessageCircle },
 ] as const;
 
+/* ─── helpers ─────────────────────────────────────────────── */
 function isNavActive(href: string, pathname: string, searchParams: URLSearchParams): boolean {
-  if (href === "/broadcasting") {
-    return pathname === "/broadcasting";
-  }
+  if (href === "/broadcasting") return pathname === "/broadcasting";
   if (href.includes("?")) {
     const [path, qs] = href.split("?");
     if (pathname !== path) return false;
     const want = new URLSearchParams(qs);
     let match = true;
-    want.forEach((v, k) => {
-      if (searchParams.get(k) !== v) match = false;
-    });
+    want.forEach((v, k) => { if (searchParams.get(k) !== v) match = false; });
     return match;
   }
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-function workspacePageTitle(pathname: string): string {
-  if (pathname.startsWith("/admin")) return titleCase("Team");
-  if (pathname.startsWith("/inbox")) return titleCase("Mail");
-  if (pathname.startsWith("/dashboard")) return titleCase("Extraction");
-  if (pathname.startsWith("/crm")) return titleCase("CRM");
-  if (pathname.startsWith("/calendar")) return titleCase("Calendar");
-  if (pathname.startsWith("/meetings")) return titleCase("Meetings");
-  if (pathname.startsWith("/drive")) return titleCase("Drive");
-  if (pathname.startsWith("/forms")) return titleCase("Forms");
-  if (pathname.startsWith("/broadcasting")) return titleCase("Broadcasting");
-  if (pathname.startsWith("/sms")) return titleCase("SMS");
-  if (pathname.startsWith("/whatsapp")) return titleCase("WhatsApp");
-  return titleCase("The Nucleus");
+/* ─── NavItem ─────────────────────────────────────────────── */
+function NavItem({
+  href,
+  label,
+  Icon,
+  active,
+  size = "md",
+  onClick,
+}: {
+  href: string;
+  label: string;
+  Icon: React.ElementType;
+  active: boolean;
+  size?: "md" | "sm";
+  onClick?: () => void;
+}) {
+  return (
+    <Link
+      href={href}
+      prefetch
+      onClick={onClick}
+      className={cn(
+        "group relative flex items-center gap-3 rounded-lg px-3 transition-all duration-150",
+        size === "md" ? "py-2.5 text-[13.5px]" : "py-2 text-[13px]",
+        active
+          ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
+          : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]",
+      )}
+    >
+      {/* Active indicator bar */}
+      {active && (
+        <span className="absolute left-0 top-1/2 h-[52%] w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--color-primary)]" />
+      )}
+      <Icon
+        className={cn(
+          "shrink-0 transition-colors duration-150",
+          size === "md" ? "h-[17px] w-[17px]" : "h-[16px] w-[16px]",
+          active
+            ? "text-[var(--color-primary)]"
+            : "text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]",
+        )}
+        strokeWidth={active ? 2.5 : 2}
+      />
+      <span className="truncate leading-none">{label}</span>
+    </Link>
+  );
 }
 
-function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const supabase = createClient();
-  const [me, setMe] = useState<MeMailboxResponse | null>(null);
-  const [moreOpen, setMoreOpen] = useState(false);
+/* ─── UserProfile ─────────────────────────────────────────── */
+function UserProfile({
+  displayName,
+  email,
+  initials,
+  onSignOut,
+}: {
+  displayName: string;
+  email: string;
+  initials: string;
+  onSignOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: PointerEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-150",
+          open
+            ? "bg-[var(--color-surface-offset)]"
+            : "hover:bg-[var(--color-surface-offset)]",
+        )}
+      >
+        {/* Avatar */}
+        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--nucleus-bright)] to-[var(--nucleus-core)] text-[11px] font-bold uppercase text-white shadow-sm">
+          {initials}
+          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--color-surface)] bg-[var(--color-success)]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-semibold leading-tight text-[var(--color-text)]">
+            {displayName}
+          </p>
+          <p className="truncate text-[11px] leading-tight text-[var(--color-text-faint)]" title={email}>
+            {email}
+          </p>
+        </div>
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-[var(--color-text-faint)] transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div className="animate-slide-down absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)]">
+          <div className="border-b border-[var(--color-border)] px-4 py-3">
+            <p className="truncate text-[12px] font-semibold text-[var(--color-text)]">{displayName}</p>
+            <p className="truncate text-[11px] text-[var(--color-text-muted)]">{email}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setOpen(false); onSignOut(); }}
+            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-[13px] font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger-light)]"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            Sign out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Sidebar ─────────────────────────────────────────────── */
+function Sidebar({
+  links,
+  pathname,
+  searchParams,
+  displayName,
+  email,
+  initials,
+  onSignOut,
+  onClick,
+}: {
+  links: { primary: typeof primaryNav[number][]; secondary: typeof secondaryNav[number][]; admin: typeof adminLink | null };
+  pathname: string;
+  searchParams: URLSearchParams;
+  displayName: string;
+  email: string;
+  initials: string;
+  onSignOut: () => void;
+  onClick?: () => void;
+}) {
+  return (
+    <aside className="flex h-full flex-col">
+      {/* Logo */}
+      <div className="flex h-14 shrink-0 items-center px-4">
+        <Link href="/inbox" aria-label="The Nucleus — home">
+          <PlacecomLogo />
+        </Link>
+      </div>
+
+      {/* Nav */}
+      <nav className="scrollbar-thin flex flex-1 flex-col overflow-y-auto px-2 py-1">
+        {/* Primary */}
+        <div className="flex flex-col gap-0.5">
+          {links.primary.map(({ href, label, Icon }) => (
+            <NavItem
+              key={href}
+              href={href}
+              label={label}
+              Icon={Icon}
+              active={isNavActive(href, pathname, searchParams)}
+              onClick={onClick}
+            />
+          ))}
+        </div>
+
+        {/* Divider */}
+        <div className="my-3 px-2">
+          <div className="h-px bg-[var(--color-border)]" />
+        </div>
+
+        {/* Secondary */}
+        <div className="flex flex-col gap-0.5">
+          {links.secondary.map(({ href, label, Icon }) => (
+            <NavItem
+              key={href}
+              href={href}
+              label={label}
+              Icon={Icon}
+              active={isNavActive(href, pathname, searchParams)}
+              size="sm"
+              onClick={onClick}
+            />
+          ))}
+          {links.admin && (
+            <NavItem
+              href={links.admin.href}
+              label={links.admin.label}
+              Icon={links.admin.Icon}
+              active={pathname.startsWith(links.admin.href)}
+              size="sm"
+              onClick={onClick}
+            />
+          )}
+        </div>
+
+        <div className="flex-1" />
+
+        {/* Theme toggle row */}
+        <div className="mb-2 flex items-center justify-between rounded-lg px-3 py-2">
+          <span className="text-[12px] font-medium text-[var(--color-text-faint)]">Appearance</span>
+          <ThemeToggle />
+        </div>
+      </nav>
+
+      {/* User profile footer */}
+      <div className="shrink-0 border-t border-[var(--color-border)] px-2 py-2">
+        <UserProfile
+          displayName={displayName}
+          email={email}
+          initials={initials}
+          onSignOut={onSignOut}
+        />
+      </div>
+    </aside>
+  );
+}
+
+/* ─── Main component ──────────────────────────────────────── */
+function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
+  const pathname   = usePathname();
+  const searchParams = useSearchParams();
+  const supabase   = createClient();
+
+  const [me, setMe]             = useState<MeMailboxResponse | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  /* fetch me */
   useEffect(() => {
     let cancelled = false;
     void fetch("/api/me/mailbox")
       .then((r) => (r.ok ? r.json() : null))
-      .then((j: MeMailboxResponse | null) => {
-        if (!cancelled && j) setMe(j);
-      })
+      .then((j: MeMailboxResponse | null) => { if (!cancelled && j) setMe(j); })
       .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
+
+  /* close mobile drawer on navigation */
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
+
+  /* lock body scroll when drawer open */
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [mobileOpen]);
 
   const links = useMemo(() => {
     const restricted = new Set(me?.restrictedFeatures ?? []);
-    const secondaryFiltered = secondaryNav.filter((l) => {
-      if (me?.role !== "committee") return true;
-      const feature = pathToFeature(l.href, searchParams);
-      return feature ? !restricted.has(feature) : true;
-    });
-    const primaryFiltered = primaryNav.filter((l) => {
-      if (me?.role !== "committee") return true;
-      const feature = pathToFeature(l.href, searchParams);
-      return feature ? !restricted.has(feature) : true;
-    });
-    const admin =
-      me?.role === "admin"
-        ? adminLink
-        : null;
-    return { primary: primaryFiltered, secondary: secondaryFiltered, admin };
+    const filter = <T extends { href: string }>(arr: readonly T[]) =>
+      arr.filter((l) => {
+        if (me?.role !== "committee") return true;
+        const feature = pathToFeature(l.href, searchParams);
+        return feature ? !restricted.has(feature) : true;
+      });
+    return {
+      primary:   filter(primaryNav) as typeof primaryNav[number][],
+      secondary: filter(secondaryNav) as typeof secondaryNav[number][],
+      admin:     me?.role === "admin" ? adminLink : null,
+    };
   }, [me?.role, me?.restrictedFeatures, searchParams]);
-
-  useEffect(() => {
-    setMoreOpen(false);
-  }, [pathname]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -125,230 +335,97 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
   }
 
   const displayName = me?.displayUsername || me?.sessionEmail?.split("@")[0] || "User";
-  const email = me?.sessionEmail || "";
-  const initials = (displayName || email || "?")
-    .split(/\s+/)
-    .map((s) => s[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
+  const email       = me?.sessionEmail || "";
+  const initials    = (displayName || email || "?")
+    .split(/\s+/).map((s) => s[0]).join("").slice(0, 2).toUpperCase();
 
-  const pageTitle = workspacePageTitle(pathname);
+  const sidebarProps = { links, pathname, searchParams, displayName, email, initials, onSignOut: () => void signOut() };
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg)] pb-[56px] font-body md:pb-0">
-      {/* Desktop sidebar */}
-      <aside className="fixed left-0 top-0 z-40 hidden h-screen w-[230px] flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
-        <div className="flex h-[56px] shrink-0 items-center border-b border-[var(--color-border)] px-5">
-          <Link href="/dashboard" className="flex items-center gap-2.5" aria-label="The Nucleus — home">
-            <PlacecomLogo />
-          </Link>
-        </div>
-        <nav className="scrollbar-thin flex flex-1 flex-col gap-0.5 overflow-y-auto py-3">
-          {links.primary.map(({ href, label, Icon }) => {
-            const active = isNavActive(href, pathname, searchParams);
-            return (
-              <Link
-                key={href}
-                href={href}
-                prefetch
-                className={cn(
-                  "relative mx-2 flex items-center gap-3 rounded-[var(--radius-md)] px-4 py-2.5 text-[14px] font-medium transition-colors",
-                  active
-                    ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)] before:absolute before:left-0 before:top-1/2 before:h-[60%] before:w-[2.5px] before:-translate-y-1/2 before:rounded-full before:bg-[var(--color-primary)] before:content-['']"
-                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]",
-                )}
-              >
-                <Icon className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2} />
-                <span className="truncate">{titleCase(label)}</span>
-              </Link>
-            );
-          })}
-          <div className="mx-4 my-3 border-t border-[var(--color-border)]" />
-          <p className="mb-1 px-6 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
-            {titleCase("Workspace")}
-          </p>
-          {links.secondary.map(({ href, label, Icon }) => {
-            const active = isNavActive(href, pathname, searchParams);
-            return (
-              <Link
-                key={href}
-                href={href}
-                prefetch
-                className={cn(
-                  "relative mx-2 flex items-center gap-3 rounded-[var(--radius-md)] px-4 py-2 text-[13px] font-medium transition-colors",
-                  active
-                    ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)] before:absolute before:left-0 before:top-1/2 before:h-[60%] before:w-[2.5px] before:-translate-y-1/2 before:rounded-full before:bg-[var(--color-primary)] before:content-['']"
-                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
-                )}
-              >
-                <Icon className="h-[17px] w-[17px] shrink-0 opacity-90" strokeWidth={2} />
-                <span className="truncate">{titleCase(label)}</span>
-              </Link>
-            );
-          })}
-          {links.admin ? (
-            <Link
-              href={links.admin.href}
-              prefetch
-              className={cn(
-                "relative mx-2 mt-1 flex items-center gap-3 rounded-[var(--radius-md)] px-4 py-2 text-[13px] font-medium transition-colors",
-                pathname.startsWith(links.admin.href)
-                  ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)] before:absolute before:left-0 before:top-1/2 before:h-[60%] before:w-[2.5px] before:-translate-y-1/2 before:rounded-full before:bg-[var(--color-primary)] before:content-['']"
-                  : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
-              )}
-            >
-              <links.admin.Icon className="h-[17px] w-[17px] shrink-0 opacity-90" strokeWidth={2} />
-              <span className="truncate">{titleCase(links.admin.label)}</span>
-            </Link>
-          ) : null}
-        </nav>
-        <div className="shrink-0 border-t border-[var(--color-border)] p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--nucleus-bright)] to-[var(--nucleus-core)] text-[12px] font-bold text-white shadow-sm">
-              {initials}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-medium text-[var(--color-text)]">{displayName}</p>
-              {email ? (
-                <p className="truncate text-[12px] text-[var(--color-text-muted)]" title={email}>
-                  {email}
-                </p>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => void signOut()}
-                className="mt-2 text-[12px] font-medium text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-danger)]"
-              >
-                {titleCase("Sign out")}
-              </button>
-            </div>
-          </div>
-        </div>
+    <div className="flex min-h-screen bg-[var(--color-bg)]">
+
+      {/* ── Desktop sidebar ──────────────────────────────────── */}
+      <aside
+        className="fixed inset-y-0 left-0 z-40 hidden w-[220px] border-r border-[var(--color-border)] bg-[var(--color-surface)] md:block"
+        aria-label="Main navigation"
+      >
+        <Sidebar {...sidebarProps} />
       </aside>
 
-      {/* Top header */}
-      <header className="fixed left-0 right-0 top-0 z-30 flex h-[56px] items-center justify-between border-b border-[var(--color-border)] nucleus-backdrop px-4 md:left-[230px] md:px-6">
-        <h1 className="font-display text-[18px] font-bold tracking-tight text-[var(--color-text)]">{pageTitle}</h1>
-        <div className="flex shrink-0 items-center gap-2">
-          <ThemeToggle />
-        </div>
-      </header>
-
-      <main className="min-h-[calc(100vh-56px)] px-4 pb-4 pt-[calc(56px+12px)] md:ml-[230px] md:px-6 md:pb-6 md:pt-[calc(56px+16px)]">
-        {children}
-      </main>
-
-      {/* Mobile bottom bar */}
-      <nav
-        className="fixed bottom-0 left-0 right-0 z-40 flex h-[56px] items-center justify-around border-t border-[var(--color-border)] bg-[var(--color-surface)] px-1 md:hidden"
-        aria-label="Primary navigation"
-      >
-        {links.primary.slice(0, 5).map(({ href, Icon }) => {
-          const active = isNavActive(href, pathname, searchParams);
-          return (
-            <Link
-              key={href}
-              href={href}
-              prefetch
-              className={cn(
-                "flex h-11 w-11 items-center justify-center rounded-[var(--radius-md)] transition-colors",
-                active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)]",
-              )}
-            >
-              <Icon className="h-[20px] w-[20px]" strokeWidth={2} />
-            </Link>
-          );
-        })}
+      {/* ── Mobile header bar ─────────────────────────────────── */}
+      <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-[var(--color-border)] nucleus-backdrop px-4 md:hidden">
         <button
           type="button"
-          onClick={() => setMoreOpen(true)}
-          className="flex h-11 w-11 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)]"
-          aria-label="More navigation"
+          aria-label="Open navigation"
+          onClick={() => setMobileOpen(true)}
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-all hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)] active:scale-90"
         >
-          <Menu className="h-[20px] w-[20px]" strokeWidth={2} />
+          <Menu className="h-5 w-5" strokeWidth={2} />
         </button>
-      </nav>
+        <Link href="/inbox" className="flex-1">
+          <PlacecomLogo />
+        </Link>
+        <ThemeToggle />
+      </header>
 
-      {moreOpen ? (
+      {/* ── Mobile drawer overlay ─────────────────────────────── */}
+      {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
+          {/* Backdrop */}
           <button
             type="button"
-            className="absolute inset-0 bg-[#0d1021]/45 backdrop-blur-sm"
-            aria-label="Close menu"
-            onClick={() => setMoreOpen(false)}
+            aria-label="Close navigation"
+            className="animate-backdrop-in absolute inset-0 bg-[var(--nucleus-deep)]/50 backdrop-blur-sm"
+            onClick={() => setMobileOpen(false)}
           />
-          <div className="absolute bottom-0 left-0 right-0 max-h-[70vh] overflow-y-auto rounded-t-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-md)]">
-            <div className="mb-3 flex items-center justify-between">
-              <span className="font-display text-[15px] font-bold">{titleCase("More")}</span>
-              <button type="button" onClick={() => setMoreOpen(false)} className="rounded-[var(--radius-md)] p-2 hover:bg-[var(--color-surface-offset)]">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            {links.primary.slice(5).map(({ href, label, Icon }) => {
-              const active = isNavActive(href, pathname, searchParams);
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                  prefetch
-                  onClick={() => setMoreOpen(false)}
-                  className={cn(
-                    "mb-1 flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-3 text-[14px] font-medium",
-                    active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text)]",
-                  )}
-                >
-                  <Icon className="h-[18px] w-[18px]" strokeWidth={2} />
-                  {titleCase(label)}
-                </Link>
-              );
-            })}
-            <div className="my-2 border-t border-[var(--color-border)] pt-2">
-              {links.secondary.map(({ href, label, Icon }) => {
-                const active = isNavActive(href, pathname, searchParams);
-                return (
-                  <Link
-                    key={href}
-                    href={href}
-                    prefetch
-                    onClick={() => setMoreOpen(false)}
-                    className={cn(
-                      "mb-1 flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 text-[14px]",
-                      active ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]" : "text-[var(--color-text-muted)]",
-                    )}
-                  >
-                    <Icon className="h-[17px] w-[17px]" strokeWidth={2} />
-                    {titleCase(label)}
-                  </Link>
-                );
-              })}
-              {links.admin ? (
-                <Link
-                  href={links.admin.href}
-                  prefetch
-                  onClick={() => setMoreOpen(false)}
-                  className={cn(
-                    "mb-1 flex items-center gap-3 rounded-[var(--radius-md)] px-3 py-2.5 text-[14px]",
-                    pathname.startsWith(links.admin.href)
-                      ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                      : "text-[var(--color-text-muted)]",
-                  )}
-                >
-                  <links.admin.Icon className="h-[17px] w-[17px]" strokeWidth={2} />
-                  {titleCase(links.admin.label)}
-                </Link>
-              ) : null}
-            </div>
+          {/* Drawer */}
+          <div
+            className="animate-drawer-in absolute inset-y-0 left-0 w-[280px] border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Close button */}
+            <button
+              type="button"
+              aria-label="Close navigation"
+              onClick={() => setMobileOpen(false)}
+              className="absolute right-3 top-3.5 flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-all hover:bg-[var(--color-surface-offset)] active:scale-90"
+            >
+              <X className="h-4 w-4" strokeWidth={2} />
+            </button>
+            <Sidebar {...sidebarProps} onClick={() => setMobileOpen(false)} />
           </div>
         </div>
-      ) : null}
+      )}
+
+      {/* ── Main content ──────────────────────────────────────── */}
+      <main
+        key={pathname}
+        className={cn(
+          "flex-1 animate-fade-up min-h-screen",
+          // Desktop: push right of sidebar, with generous padding
+          "md:ml-[220px] md:px-6 md:py-6",
+          // Mobile: account for top header + side padding
+          "pt-[calc(56px+16px)] px-4 pb-6 md:pt-6",
+        )}
+        style={{ animationDuration: "0.25s" }}
+      >
+        {children}
+      </main>
     </div>
   );
 }
 
 export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[var(--color-bg)] pt-[52px]" />}>
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen bg-[var(--color-bg)]">
+          <div className="hidden w-[220px] shrink-0 border-r border-[var(--color-border)] bg-[var(--color-surface)] md:block" />
+          <div className="flex-1" />
+        </div>
+      }
+    >
       <WorkspaceChromeInner>{children}</WorkspaceChromeInner>
     </Suspense>
   );

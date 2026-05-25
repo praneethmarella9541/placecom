@@ -3,62 +3,19 @@ import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   CALENDAR_INSUFFICIENT_SCOPE,
   createCalendarEvent,
-  listCalendarEvents,
   listPrimaryCalendarEvents,
 } from "@/lib/google-calendar";
-import {
-  canUseMeetOrganizerToken,
-  getMeetOrganizerAccessToken,
-  isMeetOrganizerAccountEmail,
-} from "@/lib/google-meet-organizer";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  // Identify the signed-in user. Cookie session (web) first; if absent we
-  // accept Bearer (mobile) further down via requireGmailAccessToken.
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  const useOrganizerCalendar = await canUseMeetOrganizerToken();
-  let accessToken: string;
-  const calendarId = "primary";
-
-  if (useOrganizerCalendar) {
-    // Meet-organizer path needs a real cookie user (we read session.provider_token).
-    // Bearer-only callers (mobile) fall back to their own Gmail token below.
-    if (!user) {
-      const auth = await requireGmailAccessToken(request);
-      if (!auth.ok) {
-        return NextResponse.json({ error: auth.message }, { status: auth.status });
-      }
-      accessToken = auth.accessToken;
-    } else {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      try {
-        accessToken = await getMeetOrganizerAccessToken({
-          sessionProviderToken: isMeetOrganizerAccountEmail(user.email)
-            ? session?.provider_token
-            : null,
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Meet organizer token unavailable";
-        return NextResponse.json({ error: msg }, { status: 401 });
-      }
-    }
-  } else {
-    // Standard path — works for both cookie (web) and Bearer (mobile) thanks to
-    // requireGmailAccessToken(request).
-    const auth = await requireGmailAccessToken(request);
-    if (!auth.ok) {
-      return NextResponse.json({ error: auth.message }, { status: auth.status });
-    }
-    accessToken = auth.accessToken;
+  // Always list the signed-in user's own primary calendar.
+  // The Meet-organizer token is only for *creating* meetings on a shared
+  // host calendar — it must never override the calendar view, otherwise
+  // every user sees the organizer account's events instead of their own.
+  const auth = await requireGmailAccessToken(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
 
   const { searchParams } = new URL(request.url);
@@ -70,31 +27,17 @@ export async function GET(request: Request) {
   );
 
   try {
-    // If we ended up on the organizer path AND have a cookie user signed in
-    // as the organizer email, list from "primary" of that token; otherwise
-    // list from the signed-in user's primary calendar.
-    const events =
-      useOrganizerCalendar && user
-        ? await listCalendarEvents(accessToken, calendarId, {
-            timeMin,
-            timeMax,
-            maxResults,
-          })
-        : await listPrimaryCalendarEvents(accessToken, {
-            timeMin,
-            timeMax,
-            maxResults,
-          });
+    const events = await listPrimaryCalendarEvents(auth.accessToken, {
+      timeMin,
+      timeMax,
+      maxResults,
+    });
     return NextResponse.json({ events });
   } catch (e) {
     const err = e as Error & { code?: string };
     if (err.code === "UNAUTHORIZED") {
       return NextResponse.json(
-        {
-          error: isMeetOrganizerAccountEmail(user?.email)
-            ? "Google Calendar session expired. Sign out, sign in again with Google as g24072@astra.xlri.ac.in."
-            : "Google token expired. Sign in again.",
-        },
+        { error: "Google token expired. Sign in again." },
         { status: 401 }
       );
     }

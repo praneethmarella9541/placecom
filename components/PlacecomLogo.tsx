@@ -79,8 +79,12 @@ export function PlacecomMark({
 
 export function PlacecomLogo({ className, wordmarkClassName, inverted, size }: LogoProps) {
   return (
-    <span className={cn("inline-flex items-center gap-2.5", className)}>
-      <PlacecomMark inverted={inverted} size={size} />
+    <span className={cn("group inline-flex items-center gap-2.5 transition-opacity duration-150 hover:opacity-85", className)}>
+      <PlacecomMark
+        inverted={inverted}
+        size={size}
+        className="transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12"
+      />
       <span
         className={cn(
           "font-display text-base font-bold leading-none tracking-tight md:text-lg md:font-extrabold",

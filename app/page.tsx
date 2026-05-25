@@ -232,10 +232,10 @@ export default function HomePage() {
               "radial-gradient(circle at 20% 30%, rgba(99,102,241,0.30), transparent 55%), radial-gradient(circle at 80% 80%, rgba(14,165,233,0.18), transparent 50%)",
           }}
         >
-          {/* Decorative orbital rings */}
+          {/* Decorative orbital rings — animated */}
           <svg
             aria-hidden
-            className="pointer-events-none absolute -right-32 -top-32 h-[520px] w-[520px] opacity-25"
+            className="pointer-events-none absolute -right-32 -top-32 h-[520px] w-[520px] animate-float-orb opacity-25"
             viewBox="0 0 400 400"
           >
             <circle cx="200" cy="200" r="180" stroke="white" strokeOpacity="0.15" strokeWidth="1" strokeDasharray="3 6" fill="none" />
@@ -249,22 +249,43 @@ export default function HomePage() {
               </radialGradient>
             </defs>
           </svg>
+          {/* Floating accent orb — bottom left */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full opacity-20"
+            style={{
+              background: "radial-gradient(circle, rgba(14,165,233,0.6) 0%, transparent 70%)",
+              animation: "float-orb 8s ease-in-out infinite reverse",
+            }}
+          />
 
           <div className="relative z-10">
-            <PlacecomLogo inverted />
-            <h2 className="font-display mt-14 max-w-xl text-[44px] font-extrabold leading-[1.05] tracking-tight md:text-[52px]">
+            <div className="animate-fade-up" style={{ animationDelay: "0ms" }}>
+              <PlacecomLogo inverted />
+            </div>
+            <h2
+              className="font-display mt-14 max-w-xl text-[44px] font-extrabold leading-[1.05] tracking-tight md:text-[52px] animate-fade-up"
+              style={{ animationDelay: "80ms" }}
+            >
               The placement team&apos;s{" "}
-              <span className="bg-gradient-to-r from-[#c7d2fe] via-white to-[#a5b4fc] bg-clip-text text-transparent">
+              <span className="bg-gradient-to-r from-[#c7d2fe] via-white to-[#a5b4fc] bg-clip-text text-transparent animate-gradient-x">
                 command center
               </span>
               .
             </h2>
-            <p className="mt-5 max-w-[420px] text-base leading-relaxed text-white/75">
-              Mail, extraction, CRM, calls, calendar, and meeting notes — every tool the team needs, gathered around one nucleus.
+            <p
+              className="mt-5 max-w-[420px] text-base leading-relaxed text-white/75 animate-fade-up"
+              style={{ animationDelay: "160ms" }}
+            >
+              Mail, extraction, CRM, calendar, and meeting notes — every tool the team needs, gathered around one nucleus.
             </p>
             <ul className="mt-10 flex flex-col gap-3.5 text-[15px]">
-              {checklist.map((line) => (
-                <li key={line} className="flex items-start gap-3 text-white/90">
+              {checklist.map((line, i) => (
+                <li
+                  key={line}
+                  className="flex items-start gap-3 text-white/90 animate-fade-up"
+                  style={{ animationDelay: `${240 + i * 60}ms` }}
+                >
                   <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
                     <CheckCircle2 className="h-3.5 w-3.5 text-[#a5b4fc]" strokeWidth={2.5} />
                   </span>
@@ -273,14 +294,14 @@ export default function HomePage() {
               ))}
             </ul>
           </div>
-          <p className="relative z-10 mt-12 text-xs uppercase tracking-[0.15em] text-white/45 md:mt-auto">
+          <p className="relative z-10 mt-12 animate-fade-in text-xs uppercase tracking-[0.15em] text-white/45 md:mt-auto" style={{ animationDelay: "700ms" }}>
             Powered by Next.js · Supabase · Google Workspace
           </p>
         </div>
 
         {/* Right auth */}
         <div className="flex flex-1 flex-col items-center justify-center px-4 py-12 md:py-16">
-          <div className="w-full max-w-[420px] rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-[var(--shadow-md)] md:p-10">
+          <div className="w-full max-w-[420px] animate-slide-in-right rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-[var(--shadow-md)] md:p-10" style={{ animationDelay: "120ms" }}>
             <h1 className="font-display text-center text-2xl font-extrabold tracking-tight text-[var(--color-text)]">
               Welcome back
             </h1>
@@ -420,73 +441,79 @@ export default function HomePage() {
 function PostSigninInboxSkeleton() {
   return (
     <div className="flex min-h-screen bg-[var(--color-bg)]">
-      {/* Left nav rail (matches WorkspaceChrome aside) */}
+      {/* Left nav sidebar (matches WorkspaceChrome aside — 220px, no top header) */}
       <aside className="hidden w-[220px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
-        {/* Logo bar */}
-        <div className="flex h-[52px] items-center gap-2 border-b border-[var(--color-border)] px-4">
-          <Skeleton className="skeleton-shimmer h-7 w-7 rounded-md" />
-          <Skeleton className="skeleton-shimmer h-4 w-24 rounded-md" />
+        {/* Logo */}
+        <div className="flex h-14 items-center gap-2.5 px-4">
+          <Skeleton className="skeleton-shimmer h-7 w-7 rounded-lg" />
+          <Skeleton className="skeleton-shimmer h-4 w-24 rounded" />
         </div>
-        {/* Nav links */}
-        <div className="flex flex-1 flex-col gap-1 px-3 py-3">
-          {Array.from({ length: 9 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 px-3 py-2">
-              <Skeleton className="skeleton-shimmer h-[18px] w-[18px] rounded" />
+        {/* Primary nav links */}
+        <div className="flex flex-col gap-0.5 px-2 pt-1">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2.5">
+              <Skeleton className="skeleton-shimmer h-[17px] w-[17px] rounded" />
               <Skeleton
                 className="skeleton-shimmer h-3 rounded"
-                style={{ width: `${[60, 50, 80, 65, 55, 70, 90, 75, 65][i]}%` }}
+                style={{ width: `${[55, 65, 40, 60, 55][i]}%` }}
               />
             </div>
           ))}
         </div>
+        <div className="mx-4 my-3 h-px bg-[var(--color-border)]" />
+        {/* Secondary nav links */}
+        <div className="flex flex-col gap-0.5 px-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2">
+              <Skeleton className="skeleton-shimmer h-[16px] w-[16px] rounded" />
+              <Skeleton
+                className="skeleton-shimmer h-3 rounded"
+                style={{ width: `${[45, 38, 70, 42][i]}%` }}
+              />
+            </div>
+          ))}
+        </div>
+        {/* User profile footer */}
+        <div className="mt-auto border-t border-[var(--color-border)] px-2 py-2">
+          <div className="flex items-center gap-3 rounded-lg px-3 py-2.5">
+            <Skeleton className="skeleton-shimmer h-8 w-8 shrink-0 rounded-full" />
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Skeleton className="skeleton-shimmer h-3 w-20 rounded" />
+              <Skeleton className="skeleton-shimmer h-2.5 w-28 rounded" />
+            </div>
+          </div>
+        </div>
       </aside>
 
-      {/* Main area */}
+      {/* Main area — inbox layout (no top header on desktop) */}
       <main className="flex flex-1 flex-col">
-        {/* Top breadcrumb / header bar (matches WorkspaceChrome) */}
-        <div className="flex h-[52px] items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 md:px-6">
-          <Skeleton className="skeleton-shimmer h-4 w-32 rounded" />
-          <Skeleton className="skeleton-shimmer h-8 w-8 rounded-full" />
-        </div>
-
-        {/* Inbox: thread list (300px) + reader pane */}
+        {/* Inbox: thread list (300px) + reader pane — fills full height */}
         <div className="flex flex-1 flex-col lg:flex-row">
           {/* Thread list column */}
           <div className="flex w-full shrink-0 flex-col gap-3 border-r border-[var(--color-border)] bg-[var(--color-surface)] p-4 lg:w-[300px]">
-            {/* Compose button + folder tabs */}
             <Skeleton className="skeleton-shimmer h-[34px] w-28 rounded-[var(--radius-md)]" />
             <div className="flex gap-1 rounded-[var(--radius-md)] bg-[var(--color-surface-offset)] p-0.5">
               <Skeleton className="skeleton-shimmer h-7 flex-1 rounded" />
               <Skeleton className="skeleton-shimmer h-7 flex-1 rounded" />
               <Skeleton className="skeleton-shimmer h-7 flex-1 rounded" />
             </div>
-            {/* Search */}
             <Skeleton className="skeleton-shimmer h-9 w-full rounded-[var(--radius-md)]" />
-
-            {/* Thread rows */}
             <div className="flex flex-col gap-3 pt-1">
               {Array.from({ length: 7 }).map((_, i) => (
                 <div key={i} className="flex items-start gap-3">
                   <Skeleton className="skeleton-shimmer h-9 w-9 shrink-0 rounded-full" />
                   <div className="flex flex-1 flex-col gap-1.5">
                     <div className="flex items-center justify-between gap-2">
-                      <Skeleton
-                        className="skeleton-shimmer h-3 rounded"
-                        style={{ width: `${[55, 70, 45, 65, 60, 80, 50][i]}%` }}
-                      />
+                      <Skeleton className="skeleton-shimmer h-3 rounded" style={{ width: `${[55, 70, 45, 65, 60, 80, 50][i]}%` }} />
                       <Skeleton className="skeleton-shimmer h-3 w-10 rounded" />
                     </div>
-                    <Skeleton
-                      className="skeleton-shimmer h-3 rounded"
-                      style={{ width: `${[85, 70, 90, 60, 80, 75, 95][i]}%` }}
-                    />
+                    <Skeleton className="skeleton-shimmer h-3 rounded" style={{ width: `${[85, 70, 90, 60, 80, 75, 95][i]}%` }} />
                   </div>
                 </div>
               ))}
             </div>
           </div>
-
-          {/* Reader pane — empty state placeholder */}
+          {/* Reader pane */}
           <div className="hidden flex-1 items-center justify-center bg-[var(--color-bg)] p-8 lg:flex">
             <div className="flex flex-col items-center gap-3">
               <Skeleton className="skeleton-shimmer h-14 w-14 rounded-[var(--radius-lg)]" />

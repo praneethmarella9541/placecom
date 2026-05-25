@@ -9,7 +9,7 @@ import type { AuthedRequest } from "@/lib/api-auth";
 const ACCESS_SKEW_MS = 120_000;
 
 export type MailboxTokenResult =
-  | { ok: true; accessToken: string; sessionUserId: string; mailboxOwnerId: string }
+  | { ok: true; accessToken: string; sessionUserId: string; mailboxOwnerId: string; gmailAddress?: string }
   | { ok: false; status: number; message: string };
 
 /** Same behavior as pre–shared-mailbox code: Google access token from the cookie session only. */
@@ -112,7 +112,7 @@ export async function resolveMailboxGoogleAccessToken(
 
   const { data: row, error: rowErr } = await svc
     .from("google_mailbox_credentials")
-    .select("refresh_token, access_token, access_token_expires_at")
+    .select("refresh_token, access_token, access_token_expires_at, gmail_address")
     .eq("owner_user_id", mailboxOwnerId)
     .maybeSingle();
 
@@ -125,6 +125,7 @@ export async function resolveMailboxGoogleAccessToken(
   }
 
   const now = Date.now();
+  const gmailAddress = (row?.gmail_address as string | undefined) || undefined;
 
   if (row?.access_token && row.access_token_expires_at) {
     const exp = new Date(row.access_token_expires_at as string).getTime();
@@ -134,6 +135,7 @@ export async function resolveMailboxGoogleAccessToken(
         accessToken: row.access_token as string,
         sessionUserId: userId,
         mailboxOwnerId,
+        gmailAddress,
       };
     }
   }
@@ -158,6 +160,7 @@ export async function resolveMailboxGoogleAccessToken(
         accessToken: refreshed.access_token,
         sessionUserId: userId,
         mailboxOwnerId,
+        gmailAddress,
       };
     } catch (e) {
       const refreshErr = e instanceof Error ? e.message : String(e);
@@ -170,7 +173,7 @@ export async function resolveMailboxGoogleAccessToken(
         } = await queryClient.auth.getSession();
         const token = session?.provider_token;
         if (token) {
-          return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId };
+          return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId, gmailAddress };
         }
       }
       // Surface the real Google error so we can tell invalid_grant (expired/revoked)
@@ -193,7 +196,7 @@ export async function resolveMailboxGoogleAccessToken(
     } = await queryClient.auth.getSession();
     const token = session?.provider_token;
     if (token) {
-      return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId };
+      return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId, gmailAddress };
     }
   }
 

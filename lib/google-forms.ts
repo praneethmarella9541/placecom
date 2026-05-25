@@ -151,6 +151,37 @@ export async function publishGoogleForm(
   }
 }
 
+/**
+ * Fetch `info.title` for a list of form IDs in parallel.
+ * Returns a map of formId → title. Silently skips any form that errors
+ * (insufficient scope, deleted, etc.) so the list still renders.
+ */
+export async function getFormTitlesBatch(
+  accessToken: string,
+  formIds: string[]
+): Promise<Record<string, string>> {
+  if (formIds.length === 0) return {};
+
+  const results = await Promise.allSettled(
+    formIds.map((id) =>
+      fetch(`${FORMS_API}/forms/${encodeURIComponent(id)}?fields=info(title)`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+        .then((r) => (r.ok ? (r.json() as Promise<{ info?: { title?: string } }>) : null))
+        .then((data) => ({ id, title: data?.info?.title ?? null }))
+        .catch(() => ({ id, title: null }))
+    )
+  );
+
+  const map: Record<string, string> = {};
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value.title) {
+      map[r.value.id] = r.value.title;
+    }
+  }
+  return map;
+}
+
 export async function batchUpdateGoogleForm(
   accessToken: string,
   formId: string,

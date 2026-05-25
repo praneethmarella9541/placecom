@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createGoogleForm, getGoogleForm, publishGoogleForm } from "@/lib/google-forms";
+import { createGoogleForm, getGoogleForm, publishGoogleForm, getFormTitlesBatch } from "@/lib/google-forms";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { listGoogleFormsPage } from "@/lib/drive";
 
@@ -32,11 +32,24 @@ export async function GET(request: Request) {
       pageToken,
       search,
     });
-    // formTitle comes from the Drive file name — no need to fetch each form
-    const forms = page.files.map((f) => ({ ...f, formTitle: null as null }));
+
+    // Fetch real form titles from the Forms API in parallel.
+    // Drive's `name` field stays as the original file name ("Untitled form")
+    // even after the user renames the form inside Google Forms, so we always
+    // need info.title from the Forms API to get the actual title.
+    const titleMap = await getFormTitlesBatch(
+      auth.accessToken,
+      page.files.map((f) => f.id)
+    );
+
+    const forms = page.files.map((f) => ({
+      ...f,
+      formTitle: titleMap[f.id] ?? null,
+    }));
+
     return NextResponse.json(
       { forms, nextPageToken: page.nextPageToken },
-      { headers: { "Cache-Control": "private, max-age=120, stale-while-revalidate=600" } }
+      { headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=180" } }
     );
   } catch (e) {
     const err = e as Error & { code?: string };

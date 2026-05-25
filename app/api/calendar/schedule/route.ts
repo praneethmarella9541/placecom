@@ -3,14 +3,8 @@ import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   CALENDAR_INSUFFICIENT_SCOPE,
   createPlacementMeetingEvent,
+  type SendUpdates,
 } from "@/lib/google-calendar";
-import {
-  canUseMeetOrganizerToken,
-  getMeetAdminInviteEmail,
-  getMeetOrganizerAccessToken,
-  getMeetOrganizerCalendarId,
-  isMeetOrganizerAccountEmail,
-} from "@/lib/google-meet-organizer";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
@@ -20,40 +14,40 @@ function isValidEmail(email: string): boolean {
 }
 
 export async function POST(request: Request) {
-  // Auth identifies the *requesting* user. Calendar access token may come
-  // from a separate Meet-organizer account (if configured) or from the
-  // requesting user's own Google session (web cookies) / Bearer token (mobile).
+  // Resolve the signed-in user — either cookie (web) or Bearer (mobile).
   const supabase = createServerSupabaseClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Fall back to Bearer (mobile) when cookie session is absent.
-  let signedInUserEmail: string | null = user?.email ?? null;
-  if (!user) {
-    const bearerAuth = await requireGmailAccessToken(request);
-    if (!bearerAuth.ok) {
-      return NextResponse.json({ error: bearerAuth.message }, { status: bearerAuth.status });
-    }
-    // requireGmailAccessToken doesn't surface the email; that's fine — we
-    // only use it for Meet-organizer detection below, and Bearer-only callers
-    // won't match the organizer email anyway.
-    signedInUserEmail = null;
+  // Platform login email — added as a default attendee so the scheduler gets the invite.
+  const signedInUserEmail: string | null = user?.email ?? null;
+
+  // Resolve Google access token (admin's connected mailbox or own session).
+  // gmailAddress = the actual Google account email that owns the calendar.
+  const auth = await requireGmailAccessToken(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
+
+  const calendarAccessToken = auth.accessToken;
+  const organizerGmailAddress = auth.gmailAddress ?? null;
 
   const body = (await request.json().catch(() => null)) as
     | {
         recruiterEmail?: string;
-        companyName?: string;
+        title?: string;
         startDateTime?: string;
         endDateTime?: string;
         notes?: string;
-        title?: string;
+        addMeet?: boolean;
+        sendUpdates?: SendUpdates;
+        extraAttendeeEmails?: string[];
       }
     | null;
 
   const recruiterEmail = body?.recruiterEmail?.trim() || "";
-  const companyName = body?.companyName?.trim() || "";
+  const title = body?.title?.trim() || "";
   const startDateTime = body?.startDateTime?.trim() || "";
   const endDateTime = body?.endDateTime?.trim() || "";
 
@@ -63,9 +57,9 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-  if (!companyName) {
+  if (!title) {
     return NextResponse.json(
-      { error: "companyName is required." },
+      { error: "Meeting title is required." },
       { status: 400 }
     );
   }
@@ -76,45 +70,46 @@ export async function POST(request: Request) {
     );
   }
 
-  const meetOrganizerEmail = getMeetOrganizerCalendarId();
-  const adminInviteEmail = getMeetAdminInviteEmail();
-  const useOrganizerToken = await canUseMeetOrganizerToken();
+  // Build extra attendees:
+  //  1. Signed-in user's platform email (always — so the scheduler gets the invite)
+  //  2. Any additional emails sent from the client
+  const extraAttendeeEmails: string[] = [];
+  if (signedInUserEmail && isValidEmail(signedInUserEmail)) {
+    const lc = signedInUserEmail.toLowerCase();
+    if (
+      lc !== organizerGmailAddress?.toLowerCase() &&
+      lc !== recruiterEmail.toLowerCase()
+    ) {
+      extraAttendeeEmails.push(signedInUserEmail);
+    }
+  }
+  for (const email of body?.extraAttendeeEmails ?? []) {
+    const e = email.trim();
+    if (
+      isValidEmail(e) &&
+      !extraAttendeeEmails.map((x) => x.toLowerCase()).includes(e.toLowerCase())
+    ) {
+      extraAttendeeEmails.push(e);
+    }
+  }
 
   try {
-    let calendarAccessToken: string;
-    if (useOrganizerToken) {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      calendarAccessToken = await getMeetOrganizerAccessToken({
-        sessionProviderToken: isMeetOrganizerAccountEmail(signedInUserEmail)
-          ? session?.provider_token
-          : null,
-      });
-    } else {
-      const auth = await requireGmailAccessToken(request);
-      if (!auth.ok) {
-        return NextResponse.json({ error: auth.message }, { status: auth.status });
-      }
-      calendarAccessToken = auth.accessToken;
-    }
-
-    const calendarId = useOrganizerToken ? "primary" : meetOrganizerEmail;
-
     const event = await createPlacementMeetingEvent(
       calendarAccessToken,
-      calendarId,
+      "primary",
       {
         recruiterEmail,
-        companyName,
+        title,
         startDateTime,
         endDateTime,
         notes: body?.notes,
-        title: body?.title,
-        extraAttendeeEmails: [adminInviteEmail],
+        extraAttendeeEmails,
+        addMeet: body?.addMeet !== false,           // default true
+        sendUpdates: body?.sendUpdates ?? "all",     // default: send invite emails
       }
     );
 
+    // Record the meet link for recordings / follow-ups.
     const hangoutLink = event.hangoutLink;
     if (hangoutLink && user) {
       try {
@@ -124,15 +119,15 @@ export async function POST(request: Request) {
           attendee_email: recruiterEmail,
         });
       } catch (err) {
-        console.error("Failed to save meeting recording:", err);
+        console.error("[schedule] Failed to save meeting recording:", err);
       }
     }
 
     return NextResponse.json(
       {
         event,
-        meetOrganizerEmail,
-        adminInviteEmail,
+        organizerEmail: organizerGmailAddress,
+        scheduledByEmail: signedInUserEmail,
       },
       { status: 201 }
     );
@@ -140,12 +135,7 @@ export async function POST(request: Request) {
     const err = e as Error & { code?: string };
     if (err.code === "UNAUTHORIZED") {
       return NextResponse.json(
-        {
-          error:
-            isMeetOrganizerAccountEmail(signedInUserEmail)
-              ? "Google Calendar session expired. Sign out, sign in again with Google as g24072@astra.xlri.ac.in, then retry."
-              : "Google token expired. Sign in again.",
-        },
+        { error: "Google token expired. Sign in again." },
         { status: 401 }
       );
     }
@@ -159,16 +149,8 @@ export async function POST(request: Request) {
         { status: 403 }
       );
     }
-    const msg = err.message || "Failed to create calendar event";
-    const needsShare =
-      !useOrganizerToken && /notFound|forbidden|404|403/i.test(msg);
     return NextResponse.json(
-      {
-        error: msg,
-        hint: needsShare
-          ? `${meetOrganizerEmail} must share their Google Calendar with ${adminInviteEmail} (Make changes to events), or sign in as ${meetOrganizerEmail} once.`
-          : undefined,
-      },
+      { error: err.message || "Failed to create calendar event" },
       { status: 500 }
     );
   }

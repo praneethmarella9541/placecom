@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Upload } from "lucide-react";
-import { formatDate } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import {
@@ -14,7 +14,7 @@ import {
   IconDownload,
   IconX,
 } from "@/components/Icons";
-import { supportsInAppPreview } from "@/lib/drive-file-proxy";
+import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
 
 type DriveFileRow = {
   id: string;
@@ -41,6 +41,10 @@ export default function DrivePage() {
   const [driveFiles, setDriveFiles] = useState<DriveFileRow[]>([]);
   const [driveNextPageToken, setDriveNextPageToken] = useState<string | undefined>();
   const [loadingDrive, setLoadingDrive] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false); // stable for the IntersectionObserver
+  const listScrollRef = useRef<HTMLUListElement>(null);
+  const loadMoreSentinelRef = useRef<HTMLLIElement>(null);
   const [driveListError, setDriveListError] = useState<string | null>(null);
   const [driveSearchInput, setDriveSearchInput] = useState("");
   const [driveSearch, setDriveSearch] = useState("");
@@ -61,6 +65,9 @@ export default function DrivePage() {
       if (!opts.append) {
         setLoadingDrive(true);
         setDriveListError(null);
+      } else {
+        setLoadingMore(true);
+        loadingMoreRef.current = true;
       }
       const params = new URLSearchParams({
         pageSize: "30",
@@ -93,6 +100,8 @@ export default function DrivePage() {
         if (!opts.append) setDriveFiles([]);
       } finally {
         setLoadingDrive(false);
+        setLoadingMore(false);
+        loadingMoreRef.current = false;
       }
     },
     [driveSearch, currentParentId]
@@ -117,6 +126,27 @@ export default function DrivePage() {
   useEffect(() => {
     void loadDriveFiles({ append: false });
   }, [loadDriveFiles]);
+
+  // Auto-load more: observe the sentinel <li> inside the scrollable list.
+  // Re-subscribes whenever driveNextPageToken changes so the new token is captured.
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    const scroller = listScrollRef.current;
+    if (!sentinel || !scroller || !driveNextPageToken) return;
+    let fired = false;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !fired && !loadingMoreRef.current) {
+          fired = true;
+          observer.disconnect();
+          void loadDriveFiles({ append: true, pageToken: driveNextPageToken });
+        }
+      },
+      { root: scroller, rootMargin: "200px", threshold: 0 }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [driveNextPageToken, loadDriveFiles]);
 
   const triggerUpload = useCallback(() => {
     setUploadError(null);
@@ -155,8 +185,16 @@ export default function DrivePage() {
   }
 
   return (
-    <div className="-mx-4 -mt-3 flex h-[calc(100vh-56px)] flex-col overflow-hidden md:-mx-6 md:-mt-4">
-      <div className="flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
+    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] flex-col overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+      <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
+        {/* Slim progress bar at top — visible only while loading more pages */}
+        <div
+          className={cn(
+            "absolute inset-x-0 top-0 z-10 h-[2px] origin-left bg-[var(--color-primary)] transition-all duration-300",
+            loadingMore ? "animate-progress-bar opacity-100" : "w-0 opacity-0"
+          )}
+          aria-hidden
+        />
         {/* Breadcrumbs — hidden while a search is active because search is
             drive-wide, not folder-scoped (same UX as Google Drive). */}
         {!driveSearch && (
@@ -284,7 +322,10 @@ export default function DrivePage() {
             </p>
           </div>
         ) : (
-          <ul className="scrollbar-thin flex-1 divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800/60">
+          <ul
+            ref={listScrollRef}
+            className="scrollbar-thin flex-1 divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800/60"
+          >
             {driveFiles.map((file) => {
               const isFolder = file.mimeType === "application/vnd.google-apps.folder";
               const sizeNum = file.size ? parseInt(file.size, 10) : NaN;
@@ -341,18 +382,25 @@ export default function DrivePage() {
                 </li>
               );
             })}
+
+            {/* Skeleton rows appended while loading the next page */}
+            {loadingMore && [0, 1, 2, 3].map((i) => (
+              <li key={`skel-${i}`} className="flex items-start gap-3 px-4 py-3">
+                <Skeleton className="skeleton-shimmer h-9 w-9 shrink-0 rounded-lg" />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="skeleton-shimmer h-3.5 w-[60%] rounded" />
+                  <Skeleton className="skeleton-shimmer h-3 w-[30%] rounded" />
+                </div>
+                <Skeleton className="skeleton-shimmer h-4 w-4 shrink-0 rounded" />
+              </li>
+            ))}
+
+            {/* Sentinel: scrolls into view at bottom; IntersectionObserver fires load-more */}
+            {driveNextPageToken && (
+              <li ref={loadMoreSentinelRef} className="h-4 list-none" aria-hidden />
+            )}
           </ul>
         )}
-
-        {driveNextPageToken ? (
-          <button
-            type="button"
-            className="border-t p-3 text-center text-xs font-medium text-indigo-600 hover:bg-zinc-50 dark:text-indigo-400 dark:hover:bg-zinc-900/50"
-            onClick={() => void loadDriveFiles({ append: true, pageToken: driveNextPageToken })}
-          >
-            {titleCase("Load more")}
-          </button>
-        ) : null}
       </div>
 
       {previewFile ? (
@@ -391,8 +439,17 @@ export default function DrivePage() {
                 <iframe
                   key={previewFile.id}
                   title={titleCase("File preview")}
-                  src={`/api/drive/file/${encodeURIComponent(previewFile.id)}?mode=preview`}
+                  /* Office/OpenDocument formats (.xlsx, .pptx, .docx, etc.) can't
+                     render as raw bytes in an iframe — use Google Drive's hosted
+                     viewer which handles them natively. Everything else streams
+                     through our same-origin proxy. */
+                  src={
+                    isOfficeMimeType(previewFile.mimeType)
+                      ? `https://drive.google.com/file/d/${encodeURIComponent(previewFile.id)}/preview`
+                      : `/api/drive/file/${encodeURIComponent(previewFile.id)}?mode=preview`
+                  }
                   className="h-full min-h-[50vh] w-full border-0"
+                  allow="autoplay"
                 />
               ) : (
                 <div className="flex h-full min-h-[40vh] flex-col items-center justify-center gap-2 p-6 text-center text-sm text-zinc-500">
@@ -403,6 +460,17 @@ export default function DrivePage() {
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 p-4">
+              {isOfficeMimeType(previewFile.mimeType) && previewFile.webViewLink ? (
+                <a
+                  href={previewFile.webViewLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary gap-2"
+                  title={titleCase("Open in Google Drive (new tab)")}
+                >
+                  {titleCase("Open in Drive")}
+                </a>
+              ) : null}
               <a
                 href={`/api/drive/file/${encodeURIComponent(previewFile.id)}?mode=download`}
                 className="btn-primary gap-2"

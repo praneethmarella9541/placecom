@@ -184,7 +184,7 @@ function AppHeaderInner() {
                 {userMenuOpen ? (
                   <div
                     role="menu"
-                    className="absolute right-0 top-full z-50 mt-1.5 w-[min(calc(100vw-2rem),17rem)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
+                    className="animate-slide-down absolute right-0 top-full z-50 mt-1.5 w-[min(calc(100vw-2rem),17rem)] overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
                   >
                     <div className="border-b border-[var(--color-border)] px-3 py-2.5">
                       <p className="truncate text-xs font-semibold text-[var(--color-text)]" title={me.sessionEmail}>
@@ -238,11 +238,11 @@ function AppHeaderInner() {
           <button
             type="button"
             aria-label="Close menu backdrop"
-            className="fixed inset-0 z-40 bg-[#0d1021]/45 backdrop-blur-sm"
+            className="animate-backdrop-in fixed inset-0 z-40 bg-[#0d1021]/45 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
           />
           <aside
-            className="fixed inset-y-0 left-0 z-50 flex w-[min(21rem,85vw)] flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
+            className="animate-drawer-in fixed inset-y-0 left-0 z-50 flex w-[min(21rem,85vw)] flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="nav-sidebar-title"
@@ -251,7 +251,7 @@ function AppHeaderInner() {
               <PlacecomLogo />
               <button
                 type="button"
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-all hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)] hover:scale-110 active:scale-90"
                 onClick={() => setMobileOpen(false)}
                 aria-label="Close menu"
               >
@@ -265,7 +265,7 @@ function AppHeaderInner() {
               {titleCase("Navigation")}
             </p>
             <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-3">
-              {links.map((l) => {
+              {links.map((l, idx) => {
                 const Icon = l.icon;
                 const active = isNavActive(l.href, pathname, searchParams);
                 return (
@@ -274,20 +274,21 @@ function AppHeaderInner() {
                     href={l.href}
                     prefetch
                     onClick={() => setMobileOpen(false)}
+                    style={{ animationDelay: `${idx * 35}ms` }}
                     className={cn(
-                      "mx-1 flex min-h-11 items-center gap-3.5 rounded-lg px-3 py-2.5 text-[14px] font-medium transition-all",
+                      "animate-slide-in-left mx-1 flex min-h-11 items-center gap-3.5 rounded-lg px-3 py-2.5 text-[14px] font-medium transition-all duration-150 active:scale-[0.98]",
                       active
                         ? "bg-[var(--color-primary-light)] text-[var(--color-primary)] shadow-sm"
-                        : "text-[var(--color-text)] hover:bg-[var(--color-surface-offset)]",
+                        : "text-[var(--color-text)] hover:bg-[var(--color-surface-offset)] hover:translate-x-[2px]",
                     )}
                   >
                     <span
                       className={cn(
-                        "flex w-6 shrink-0 justify-center",
-                        active ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]",
+                        "flex w-6 shrink-0 justify-center transition-transform duration-200",
+                        active ? "text-[var(--color-primary)] scale-110" : "text-[var(--color-text-muted)] group-hover:scale-105",
                       )}
                     >
-                      <Icon className="h-[18px] w-[18px]" />
+                      <Icon className="h-[18px] w-[18px]" strokeWidth={active ? 2.5 : 2} />
                     </span>
                     <span className="truncate">{titleCase(l.label)}</span>
                     {active && (
@@ -300,7 +301,7 @@ function AppHeaderInner() {
               <button
                 type="button"
                 onClick={() => void signOut()}
-                className="mx-1 flex min-h-11 items-center gap-3.5 rounded-lg px-3 py-2.5 text-left text-[14px] font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger-light)]"
+                className="mx-1 flex min-h-11 items-center gap-3.5 rounded-lg px-3 py-2.5 text-left text-[14px] font-medium text-[var(--color-danger)] transition-all duration-150 hover:bg-[var(--color-danger-light)] active:scale-[0.98]"
               >
                 <span className="flex w-6 shrink-0 justify-center">
                   <IconLogOut className="h-[18px] w-[18px] opacity-80" />

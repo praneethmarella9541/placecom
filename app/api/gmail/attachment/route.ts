@@ -63,8 +63,8 @@ export async function GET(request: Request) {
       "Content-Type": mimeType,
       "Content-Disposition": disposition,
       "Content-Length": String(buffer.byteLength),
-      // Allow preview in <iframe> / <img> from same origin
-      "X-Frame-Options": "SAMEORIGIN",
+      // No X-Frame-Options — the client fetches as a blob and uses a
+      // blob URL for iframes, so frame restrictions are irrelevant.
       "Cache-Control": "private, max-age=300",
     },
   });

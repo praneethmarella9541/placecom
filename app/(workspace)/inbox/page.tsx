@@ -20,7 +20,6 @@ import {
   IconX,
   IconEye,
   IconCheck,
-  IconPaperclip,
   IconDownload,
   IconSearch,
   IconFile,
@@ -123,9 +122,27 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-/** MIME types that browsers can render inline without a plugin. */
-function isPreviewable(mimeType: string): boolean {
-  return /^image\/|^video\/|^audio\/|^text\/(plain|html|csv)|^application\/pdf/.test(mimeType);
+/**
+ * Spreadsheets, presentations, and word-processing docs that browsers can't
+ * render natively. We show a "Download to open" fallback for these.
+ */
+function isOfficeFile(mimeType: string, filename?: string): boolean {
+  const name = filename?.toLowerCase() ?? "";
+  return /spreadsheetml|excel|presentation|powerpoint|wordprocessingml|msword/.test(mimeType)
+    || /\.(xlsx?|pptx?|docx?)$/.test(name);
+}
+
+/**
+ * Returns true for any MIME type that we handle in AttachmentPreviewModal
+ * (images, video, audio, PDF, text, CSV, and Office files — even if Office
+ * files show a "download to open" fallback, we still show the preview modal
+ * so the user gets the filename + download button in a friendly overlay).
+ */
+function isPreviewable(mimeType: string, filename?: string): boolean {
+  return /^image\/|^video\/|^audio\/|^text\/(plain|html|csv)|^application\/pdf/.test(mimeType)
+    || mimeType === "text/csv"
+    || (filename?.toLowerCase().endsWith(".csv") ?? false)
+    || isOfficeFile(mimeType, filename);
 }
 
 function attachmentUrl(messageId: string, a: AttachmentView, download = false): string {
@@ -133,13 +150,16 @@ function attachmentUrl(messageId: string, a: AttachmentView, download = false): 
   return download ? `${base}&download=1` : base;
 }
 
-function FileTypeIcon({ mimeType }: { mimeType: string }) {
+function FileTypeIcon({ mimeType, filename }: { mimeType: string; filename?: string }) {
+  const name = filename?.toLowerCase() ?? "";
   if (mimeType.startsWith("image/")) return <span className="text-base">🖼</span>;
   if (mimeType.startsWith("video/")) return <span className="text-base">🎬</span>;
   if (mimeType.startsWith("audio/")) return <span className="text-base">🎵</span>;
   if (mimeType === "application/pdf") return <span className="text-base">📄</span>;
-  if (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.endsWith(".xlsx")) return <span className="text-base">📊</span>;
-  if (mimeType.includes("word") || mimeType.endsWith(".docx")) return <span className="text-base">📝</span>;
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel") || name.match(/\.xlsx?$/)) return <span className="text-base">📊</span>;
+  if (mimeType.includes("presentation") || mimeType.includes("powerpoint") || name.match(/\.pptx?$/)) return <span className="text-base">📽</span>;
+  if (mimeType.includes("word") || mimeType.includes("msword") || name.match(/\.docx?$/)) return <span className="text-base">📝</span>;
+  if (mimeType === "text/csv" || name.endsWith(".csv")) return <span className="text-base">📊</span>;
   if (mimeType.includes("zip") || mimeType.includes("compressed")) return <span className="text-base">🗜</span>;
   return <IconFile className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />;
 }
@@ -157,9 +177,62 @@ function AttachmentPreviewModal({
   const downloadUrl = attachmentUrl(messageId, attachment, true);
   const mime = attachment.mimeType;
 
+  // Blob URL state — used for PDF so we bypass X-Frame-Options restrictions.
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [blobLoading, setBlobLoading] = useState(false);
+  const [blobError, setBlobError] = useState<string | null>(null);
+  // CSV text content rendered as an HTML table.
+  const [csvContent, setCsvContent] = useState<string[][] | null>(null);
+
+  const isPdf = mime === "application/pdf";
+  const isCsv = mime === "text/csv" || attachment.filename.toLowerCase().endsWith(".csv");
+  const isText = mime.startsWith("text/") && !isCsv;
+
+  // Fetch blob for PDF and CSV on mount.
+  useEffect(() => {
+    if (!isPdf && !isCsv) return;
+    setBlobLoading(true);
+    setBlobError(null);
+    fetch(url)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (isCsv) {
+          const text = await res.text();
+          // Simple CSV parser — split by newline, then by comma (handles quoted
+          // commas imperfectly but good enough for preview purposes).
+          const rows = text.trim().split(/\r?\n/).map((line) => {
+            const cols: string[] = [];
+            let cur = "";
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+              const ch = line[i];
+              if (ch === '"') { inQuotes = !inQuotes; }
+              else if (ch === "," && !inQuotes) { cols.push(cur); cur = ""; }
+              else { cur += ch; }
+            }
+            cols.push(cur);
+            return cols;
+          });
+          setCsvContent(rows);
+        } else {
+          const blob = await res.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          setBlobUrl(objectUrl);
+        }
+      })
+      .catch((e) => setBlobError(e?.message ?? "Failed to load"))
+      .finally(() => setBlobLoading(false));
+
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, isPdf, isCsv]);
+
   const renderPreview = () => {
     if (mime.startsWith("image/")) {
       return (
+        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={url}
           alt={attachment.filename}
@@ -179,29 +252,153 @@ function AttachmentPreviewModal({
       return (
         <div className="flex flex-col items-center gap-4 p-8">
           <span className="text-5xl">🎵</span>
-          <p className="text-sm font-medium text-[var(--color-text)]">{attachment.filename}</p>
+          <p className="text-sm font-medium text-white">{attachment.filename}</p>
           <audio controls src={url} className="w-full max-w-sm" />
         </div>
       );
     }
-    if (mime === "application/pdf" || mime.startsWith("text/")) {
+
+    // PDF — rendered from a blob URL so Chrome doesn't block it.
+    if (isPdf) {
+      if (blobLoading) {
+        return (
+          <div className="flex flex-col items-center gap-3 p-12 text-white/70">
+            <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+            <span className="text-sm">Loading PDF…</span>
+          </div>
+        );
+      }
+      if (blobError) {
+        return (
+          <div className="flex flex-col items-center gap-4 p-12 text-center">
+            <span className="text-6xl">📄</span>
+            <p className="text-sm text-white/70">Could not load PDF preview.</p>
+            <a href={downloadUrl} download={attachment.filename}
+              className="flex items-center gap-2 rounded-lg bg-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/30 transition-colors">
+              <IconDownload className="h-4 w-4" /> Download PDF
+            </a>
+          </div>
+        );
+      }
+      if (blobUrl) {
+        return (
+          <iframe
+            src={blobUrl}
+            title={attachment.filename}
+            className="h-full w-full rounded border-0"
+          />
+        );
+      }
+      return null;
+    }
+
+    // CSV — render as a scrollable table.
+    if (isCsv) {
+      if (blobLoading) {
+        return (
+          <div className="flex flex-col items-center gap-3 p-12 text-white/70">
+            <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+            <span className="text-sm">Loading CSV…</span>
+          </div>
+        );
+      }
+      if (blobError || !csvContent) {
+        return (
+          <div className="flex flex-col items-center gap-4 p-12 text-center">
+            <span className="text-6xl">📊</span>
+            <p className="text-sm text-white/70">Could not load CSV preview.</p>
+            <a href={downloadUrl} download={attachment.filename}
+              className="flex items-center gap-2 rounded-lg bg-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/30 transition-colors">
+              <IconDownload className="h-4 w-4" /> Download CSV
+            </a>
+          </div>
+        );
+      }
+      const headers = csvContent[0] ?? [];
+      const rows = csvContent.slice(1);
+      return (
+        <div className="h-full w-full overflow-auto rounded bg-white p-1">
+          <table className="min-w-full border-collapse text-[12px] text-[#202124]">
+            <thead>
+              <tr className="bg-[#f1f3f4]">
+                {headers.map((h, i) => (
+                  <th key={i} className="border border-[#dadce0] px-3 py-2 text-left font-semibold whitespace-nowrap">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 500).map((row, ri) => (
+                <tr key={ri} className={ri % 2 === 0 ? "" : "bg-[#f8f9fa]"}>
+                  {headers.map((_, ci) => (
+                    <td key={ci} className="border border-[#dadce0] px-3 py-1.5 whitespace-nowrap max-w-[300px] truncate">
+                      {row[ci] ?? ""}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {rows.length > 500 && (
+                <tr>
+                  <td colSpan={headers.length} className="px-3 py-2 text-center text-[#5f6368] italic">
+                    … {rows.length - 500} more rows (download to see all)
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    // Plain text.
+    if (isText) {
       return (
         <iframe
           src={url}
           title={attachment.filename}
-          className="h-full w-full rounded border-0"
-          sandbox="allow-same-origin allow-scripts"
+          className="h-full w-full rounded border-0 bg-white"
         />
       );
     }
-    // Fallback — can't preview
+
+    // Office files (xlsx, ppt, docx, etc.) — can't render natively in browser.
+    if (isOfficeFile(mime, attachment.filename)) {
+      return (
+        <div className="flex flex-col items-center gap-5 p-12 text-center">
+          <span className="text-7xl">
+            {(mime.includes("spreadsheet") || mime.includes("excel") || /\.xlsx?$/i.test(attachment.filename))
+              ? "📊"
+              : (mime.includes("presentation") || mime.includes("powerpoint") || /\.pptx?$/i.test(attachment.filename))
+                ? "📽"
+                : "📝"}
+          </span>
+          <div>
+            <p className="text-base font-semibold text-white">{attachment.filename}</p>
+            <p className="mt-1 text-sm text-white/60">
+              This file type cannot be previewed in the browser.
+            </p>
+          </div>
+          <a
+            href={downloadUrl}
+            download={attachment.filename}
+            className="flex items-center gap-2 rounded-lg bg-white/20 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/30 transition-colors"
+          >
+            <IconDownload className="h-4 w-4" /> Download to open
+          </a>
+        </div>
+      );
+    }
+
+    // Generic fallback — can't preview
     return (
       <div className="flex flex-col items-center gap-4 p-12 text-center">
-        <span className="text-6xl"><FileTypeIcon mimeType={mime} /></span>
-        <p className="text-sm text-[var(--color-text-muted)]">
+        <span className="text-6xl"><FileTypeIcon mimeType={mime} filename={attachment.filename} /></span>
+        <p className="text-sm text-white/70">
           Preview not available for this file type.
         </p>
-        <a href={downloadUrl} download={attachment.filename} className="btn-primary">
+        <a href={downloadUrl} download={attachment.filename}
+          className="flex items-center gap-2 rounded-lg bg-white/20 px-4 py-2 text-sm font-medium text-white hover:bg-white/30 transition-colors">
           <IconDownload className="h-4 w-4" /> Download to open
         </a>
       </div>
@@ -219,7 +416,7 @@ function AttachmentPreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <FileTypeIcon mimeType={mime} />
+          <FileTypeIcon mimeType={mime} filename={attachment.filename} />
           <span className="truncate text-sm font-medium text-white">{attachment.filename}</span>
           <span className="shrink-0 text-xs text-white/50">{formatBytes(attachment.size)}</span>
         </div>
@@ -260,7 +457,7 @@ function AttachmentChips({ attachments, messageId }: { attachments: AttachmentVi
     <>
       <div className="mt-3 flex flex-wrap gap-2">
         {attachments.map((a, i) => {
-          const canPreview = isPreviewable(a.mimeType);
+          const canPreview = isPreviewable(a.mimeType, a.filename);
           return (
             <div key={i} className="flex items-stretch rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-offset)] overflow-hidden text-[12px] text-[var(--color-text)]">
               {/* Preview / open button */}
@@ -269,16 +466,18 @@ function AttachmentChips({ attachments, messageId }: { attachments: AttachmentVi
                   type="button"
                   onClick={() => setPreview(a)}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-[var(--color-primary-light)] transition-colors"
-                  title="Preview"
+                  title={isOfficeFile(a.mimeType, a.filename) ? "Download to open" : "Preview"}
                 >
-                  <FileTypeIcon mimeType={a.mimeType} />
+                  <FileTypeIcon mimeType={a.mimeType} filename={a.filename} />
                   <span className="max-w-[150px] truncate">{a.filename}</span>
                   <span className="text-[var(--color-text-faint)]">({formatBytes(a.size)})</span>
-                  <IconEye className="h-3 w-3 text-[var(--color-text-faint)]" />
+                  {isOfficeFile(a.mimeType, a.filename)
+                    ? <IconDownload className="h-3 w-3 text-[var(--color-text-faint)]" />
+                    : <IconEye className="h-3 w-3 text-[var(--color-text-faint)]" />}
                 </button>
               ) : (
                 <span className="flex items-center gap-1.5 px-2.5 py-1.5">
-                  <FileTypeIcon mimeType={a.mimeType} />
+                  <FileTypeIcon mimeType={a.mimeType} filename={a.filename} />
                   <span className="max-w-[150px] truncate">{a.filename}</span>
                   <span className="text-[var(--color-text-faint)]">({formatBytes(a.size)})</span>
                 </span>
@@ -1487,7 +1686,7 @@ export default function InboxPage() {
                     <li
                       key={t.draftId ?? t.id}
                       className={cn(
-                        "group relative flex items-center gap-2 border-b border-[var(--color-border)] pl-2 pr-3 text-[13px] transition-colors",
+                        "group relative flex h-[52px] items-center gap-2 overflow-hidden border-b border-[var(--color-border)] pl-2 pr-3 text-[13px] transition-colors",
                         isSelected
                           ? "bg-[var(--color-primary-light)]"
                           : isUnread
@@ -1527,27 +1726,31 @@ export default function InboxPage() {
                         type="button"
                         onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
                         onMouseEnter={() => { if (!t.draftId) prefetchThread(t.id); }}
-                        className="flex min-w-0 flex-1 items-center gap-3 py-3 text-left"
+                        className="flex min-w-0 flex-1 items-center gap-3 self-stretch text-left"
                       >
+                        {/* Sender name — fixed width, truncated */}
                         <span className={cn(
-                          "w-[160px] shrink-0 truncate",
-                          isUnread ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"
+                          "w-[140px] shrink-0 truncate text-[13px]",
+                          isUnread ? "font-bold text-[var(--color-text)]" : "font-normal text-[var(--color-text-muted)]"
                         )}>
                           {name}
                         </span>
-                        <span className="flex min-w-0 flex-1 items-center gap-2">
+                        {/* Subject + snippet — single truncated line */}
+                        <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
                           {chips.length > 0 && (
                             <span className="flex shrink-0 items-center gap-1">
                               {chips.map((l) => <LabelChip key={l.id} label={l} />)}
                             </span>
                           )}
-                          <span className={cn(
-                            "min-w-0 truncate",
-                            isUnread ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]"
-                          )}>
-                            {t.subject || "(no subject)"}
+                          {/* block + truncate is the only reliable way to clip mixed inline spans */}
+                          <span className="block min-w-0 flex-1 truncate whitespace-nowrap text-[13px]">
+                            <span className={cn(
+                              isUnread ? "font-semibold text-[var(--color-text)]" : "font-normal text-[var(--color-text-muted)]"
+                            )}>
+                              {t.subject || "(no subject)"}
+                            </span>
                             {t.snippet ? (
-                              <span className="font-normal text-[var(--color-text-faint)]">{" "}— {t.snippet}</span>
+                              <span className="font-normal text-[var(--color-text-faint)]"> — {t.snippet}</span>
                             ) : null}
                           </span>
                         </span>

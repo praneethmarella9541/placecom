@@ -43,7 +43,7 @@ const LABELS: Record<ThreadListFolder, string[]> = {
 };
 
 const QUERY: Record<ThreadListFolder, string> = {
-  inbox: "category:primary",
+  inbox: "", // no category filter — show all inbox mail, not just Primary tab
   sent: "",
 };
 

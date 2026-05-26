@@ -815,61 +815,8 @@ export default function InboxPage() {
     }
   }, []);
 
-  /**
-   * Called when the user closes the compose window without sending. Saves
-   * the current contents as a draft (matches Gmail behaviour — close = save,
-   * not lose).  After saving, refresh the drafts list so it appears there
-   * immediately.
-   */
-  const closeComposeAndSaveDraft = useCallback(() => {
-    // Cancel any pending debounced save — we're saving now.
-    if (draftSaveTimerRef.current) {
-      clearTimeout(draftSaveTimerRef.current);
-      draftSaveTimerRef.current = null;
-    }
-    // Snapshot the state mirror BEFORE the close-effect wipes it.
-    const hadContent =
-      composeStateRef.current.to.trim() ||
-      composeStateRef.current.cc.trim() ||
-      composeStateRef.current.bcc.trim() ||
-      composeStateRef.current.subject.trim() ||
-      composeStateRef.current.body.trim();
-    setComposeOpen(false);
-    setComposeCcBccOpen(false);
-    if (hadContent) {
-      void saveDraft().then(() => {
-        // Invalidate cached list views so the drafts folder shows the new draft.
-        listCacheRef.current.clear();
-        if (folder === "drafts") void loadThreads({ append: false, forceRefresh: true });
-        scheduleCountRefresh();
-      });
-    }
-  }, [saveDraft, folder, scheduleCountRefresh, loadThreads]);
-
-  /**
-   * Discard button — explicit "throw this away" action. Deletes the draft on
-   * the server (if one was previously saved) and closes the window without saving.
-   */
-  const discardComposeDraft = useCallback(() => {
-    if (draftSaveTimerRef.current) {
-      clearTimeout(draftSaveTimerRef.current);
-      draftSaveTimerRef.current = null;
-    }
-    const draftId = composeStateRef.current.draftId;
-    setComposeOpen(false);
-    setComposeCcBccOpen(false);
-    if (draftId) {
-      void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
-        method: "DELETE",
-      })
-        .then(() => {
-          listCacheRef.current.clear();
-          if (folder === "drafts") void loadThreads({ append: false, forceRefresh: true });
-          scheduleCountRefresh();
-        })
-        .catch(() => {/* non-fatal */});
-    }
-  }, [folder, scheduleCountRefresh, loadThreads]);
+  // closeComposeAndSaveDraft + discardComposeDraft are declared later — they
+  // depend on scheduleCountRefresh and loadThreads which are defined further down.
 
   useEffect(() => {
     if (!composeOpen) {
@@ -1108,6 +1055,62 @@ export default function InboxPage() {
     const t2 = setTimeout(() => void loadCounts(), 4000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [loadCounts]);
+
+  /**
+   * Called when the user closes the compose window without sending. Saves
+   * the current contents as a draft (matches Gmail behaviour — close = save,
+   * not lose).  After saving, refresh the drafts list so it appears there
+   * immediately.
+   */
+  const closeComposeAndSaveDraft = useCallback(() => {
+    // Cancel any pending debounced save — we're saving now.
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    // Snapshot the state mirror BEFORE the close-effect wipes it.
+    const hadContent =
+      composeStateRef.current.to.trim() ||
+      composeStateRef.current.cc.trim() ||
+      composeStateRef.current.bcc.trim() ||
+      composeStateRef.current.subject.trim() ||
+      composeStateRef.current.body.trim();
+    setComposeOpen(false);
+    setComposeCcBccOpen(false);
+    if (hadContent) {
+      void saveDraft().then(() => {
+        // Invalidate cached list views so the drafts folder shows the new draft.
+        listCacheRef.current.clear();
+        if (folder === "drafts") void loadThreads({ append: false, forceRefresh: true });
+        scheduleCountRefresh();
+      });
+    }
+  }, [saveDraft, folder, scheduleCountRefresh, loadThreads]);
+
+  /**
+   * Discard button — explicit "throw this away" action. Deletes the draft on
+   * the server (if one was previously saved) and closes the window without saving.
+   */
+  const discardComposeDraft = useCallback(() => {
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    const draftId = composeStateRef.current.draftId;
+    setComposeOpen(false);
+    setComposeCcBccOpen(false);
+    if (draftId) {
+      void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
+        method: "DELETE",
+      })
+        .then(() => {
+          listCacheRef.current.clear();
+          if (folder === "drafts") void loadThreads({ append: false, forceRefresh: true });
+          scheduleCountRefresh();
+        })
+        .catch(() => {/* non-fatal */});
+    }
+  }, [folder, scheduleCountRefresh, loadThreads]);
 
   useEffect(() => { void loadCounts(); }, [loadCounts]);
   // Refresh counts after the list reloads (bulk actions, refresh).

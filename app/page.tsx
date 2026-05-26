@@ -21,6 +21,7 @@ export default function HomePage() {
   const [staffEmail, setStaffEmail] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
   const [staffMsg, setStaffMsg] = useState<string | null>(null);
+  const [staffMsgIsError, setStaffMsgIsError] = useState(false);
   const [staffBusy, setStaffBusy] = useState(false);
   const [staffPwdBusy, setStaffPwdBusy] = useState(false);
   const [magicOpen, setMagicOpen] = useState(false);
@@ -118,6 +119,7 @@ export default function HomePage() {
     const email = staffEmail.trim().toLowerCase();
     if (!email) {
       setStaffMsg("Enter your work email.");
+      setStaffMsgIsError(true);
       return;
     }
     setStaffMsg(null);
@@ -130,8 +132,10 @@ export default function HomePage() {
     setStaffBusy(false);
     if (error) {
       setStaffMsg(error.message);
+      setStaffMsgIsError(true);
       return;
     }
+    setStaffMsgIsError(false);
     setStaffMsg(
       `${titleCase("Check your email for the sign-in link.")} Open it in this same browser, or copy the link from the email and paste it into this browser. Each new request sends a new link; old links can expire.`
     );
@@ -142,10 +146,12 @@ export default function HomePage() {
     const password = staffPassword;
     if (!email) {
       setStaffMsg("Enter your work email.");
+      setStaffMsgIsError(true);
       return;
     }
     if (!password) {
       setStaffMsg("Enter your password.");
+      setStaffMsgIsError(true);
       return;
     }
     setStaffMsg(null);
@@ -154,6 +160,7 @@ export default function HomePage() {
     setStaffPwdBusy(false);
     if (error) {
       setStaffMsg(error.message);
+      setStaffMsgIsError(true);
       return;
     }
     window.location.href = "/inbox";
@@ -421,7 +428,13 @@ export default function HomePage() {
               ) : null}
 
               {staffMsg ? (
-                <p className="mt-4 text-center text-xs text-[var(--color-text-muted)]">{staffMsg}</p>
+                staffMsgIsError ? (
+                  <div className="mt-4 rounded-[var(--radius-md)] border border-[rgba(228,0,20,0.3)] bg-[var(--color-danger-light)] px-3 py-2.5 text-center text-sm font-medium text-[var(--color-danger)]">
+                    {staffMsg}
+                  </div>
+                ) : (
+                  <p className="mt-4 text-center text-xs text-[var(--color-text-muted)]">{staffMsg}</p>
+                )
               ) : null}
 
             </div>

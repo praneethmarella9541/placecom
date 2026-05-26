@@ -1751,7 +1751,10 @@ export default function InboxPage() {
   }
 
   async function sendCompose() {
-    if (!composeTo.trim() || !composeBody.trim()) return;
+    if (!composeTo.trim()) {
+      alert("Please add at least one recipient before sending.");
+      return;
+    }
     setSendBusy(true);
     try {
       const attachments = await resolveAttachmentsForUpload(composeFiles);
@@ -2786,9 +2789,9 @@ export default function InboxPage() {
                       </button>
                       <button
                         type="button"
-                        disabled={sendBusy}
+                        disabled={sendBusy || !composeTo.trim()}
                         onClick={() => void sendCompose()}
-                        className="rounded-full bg-[#1a73e8] px-6 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-[#1557b0] disabled:opacity-50"
+                        className="rounded-full bg-[#1a73e8] px-6 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-[#1557b0] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {sendBusy ? titleCase("Sending…") : titleCase("Send")}
                       </button>

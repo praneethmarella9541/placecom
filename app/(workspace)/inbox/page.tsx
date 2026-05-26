@@ -691,9 +691,17 @@ export default function InboxPage() {
 
   useEffect(() => {
     if (!composeOpen) {
+      // Reset ALL compose fields when the window closes so the next
+      // "Compose" click always opens a blank window, never a stale draft.
       setComposeCcBccOpen(false);
       setComposeMinimized(false);
       setComposeDraftId(null);
+      setComposeTo("");
+      setComposeCc("");
+      setComposeBcc("");
+      setComposeSubject("");
+      setComposeBody("");
+      setComposeFiles([]);
       return;
     }
     if (composeCc.trim() || composeBcc.trim()) {

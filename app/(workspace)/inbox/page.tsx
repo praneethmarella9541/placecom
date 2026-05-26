@@ -10,7 +10,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, Send, Paperclip, Maximize2, Minus, FilePen } from "lucide-react";
+import { PencilLine, Send, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -703,6 +703,7 @@ export default function InboxPage() {
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
   const [composeCcBccOpen, setComposeCcBccOpen] = useState(false);
   const [composeMinimized, setComposeMinimized] = useState(false);
+  const [composeFullscreen, setComposeFullscreen] = useState(false);
   const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
   // In-flight guard for openDraft. A ref (vs state) keeps the useCallback
   // identity stable so click handlers don't rebind on every flip.
@@ -885,6 +886,7 @@ export default function InboxPage() {
       //  before this fires, so the in-flight save isn't affected.)
       setComposeCcBccOpen(false);
       setComposeMinimized(false);
+      setComposeFullscreen(false);
       setComposeDraftId(null);
       setComposeTo("");
       setComposeCc("");
@@ -2599,7 +2601,15 @@ export default function InboxPage() {
                 </div>
               ) : (
                 <div
-                  className="fixed bottom-0 left-0 right-0 z-[999] flex max-h-[90vh] flex-col overflow-hidden rounded-t-2xl border-x border-t border-[#dadce0] bg-white text-[#202124] shadow-[0_-8px_24px_rgba(60,64,67,0.18)] [color-scheme:light] lg:bottom-6 lg:left-auto lg:right-6 lg:max-h-[min(620px,calc(100vh-96px))] lg:w-[528px] lg:rounded-t-lg lg:rounded-b-none lg:border lg:shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)]"
+                  className={cn(
+                    "fixed z-[999] flex flex-col overflow-hidden bg-white text-[#202124] [color-scheme:light]",
+                    composeFullscreen
+                      // Full-screen mode (Gmail's expanded compose) — covers
+                      // most of the viewport with comfortable margins.
+                      ? "left-[2.5%] right-[2.5%] top-[2.5%] bottom-[2.5%] rounded-lg border border-[#dadce0] shadow-[0_24px_48px_rgba(60,64,67,0.3)]"
+                      // Default Gmail-style bottom-right docked compose.
+                      : "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t border-[#dadce0] shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:bottom-6 lg:left-auto lg:right-6 lg:max-h-[min(620px,calc(100vh-96px))] lg:w-[528px] lg:rounded-t-lg lg:rounded-b-none lg:border lg:shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)]"
+                  )}
                   role="dialog"
                   aria-modal="true"
                   aria-labelledby="compose-dialog-title"
@@ -2616,6 +2626,18 @@ export default function InboxPage() {
                       title={titleCase("Minimize")}
                     >
                       <Minus className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setComposeFullscreen((v) => !v)}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
+                      title={composeFullscreen ? titleCase("Exit full screen") : titleCase("Full screen")}
+                    >
+                      {composeFullscreen ? (
+                        <Minimize className="h-4 w-4" strokeWidth={2} />
+                      ) : (
+                        <Maximize className="h-4 w-4" strokeWidth={2} />
+                      )}
                     </button>
                     <button
                       type="button"

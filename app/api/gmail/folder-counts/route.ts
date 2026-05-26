@@ -127,17 +127,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: GMAIL_INSUFFICIENT_SCOPE }, { status: 403 });
   }
 
-  // When the caller passes ?bust=1 (e.g. after a star/label change) skip the
-  // browser cache entirely so the fresh count is always returned.
-  const bust = searchParams.get("bust") === "1";
+  // Counts are mutable — every star/label/read change invalidates them.
+  // We rely on Gmail's own ~3-5 s propagation latency rather than browser
+  // caching, so the badges are always up-to-date after a navigation/refresh.
   return NextResponse.json(
     { counts },
-    {
-      headers: {
-        "Cache-Control": bust
-          ? "no-store"
-          : "private, max-age=30, stale-while-revalidate=60",
-      },
-    }
+    { headers: { "Cache-Control": "no-store" } }
   );
 }

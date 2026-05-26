@@ -813,19 +813,12 @@ export default function InboxPage() {
     void loadLabels();
   }, [loadLabels]);
 
-  // Folder + label counts. Refreshed alongside the thread list so a bulk
-  // archive/delete updates the badges. Browser caches the response 30 s
-  // so the request is cheap.
+  // Folder + label counts. Always fetched fresh (server returns no-store) and
+  // re-fetched after every mutation that can change a count, so the badges
+  // stay correct across navigations without any client-side cache logic.
   const [labelCounts, setLabelCounts] = useState<Record<string, { total: number; unread: number }>>({});
 
-  // Tracks star changes that have been sent to the API but may not yet be
-  // reflected in Gmail's label counts (Gmail lags a few seconds + browser
-  // caches the counts response for 30 s). We merge this delta over every
-  // loadCounts result so navigation never shows a stale Starred badge.
-  // Reset to 0 once the API count has moved in the expected direction.
-  const starDeltaRef = useRef(0);
-
-  const loadCounts = useCallback(async (bust = false) => {
+  const loadCounts = useCallback(async () => {
     if (allLabels.length === 0) return;
     const ids = [
       "INBOX",
@@ -840,35 +833,28 @@ export default function InboxPage() {
       ...allLabels.filter((l) => l.type === "user").map((l) => l.id),
     ];
     try {
-      const url = `/api/gmail/folder-counts?ids=${encodeURIComponent(ids.join(","))}${bust ? "&bust=1" : ""}`;
-      const res = await fetch(url);
+      const res = await fetch(
+        `/api/gmail/folder-counts?ids=${encodeURIComponent(ids.join(","))}`,
+        { cache: "no-store" }
+      );
       if (!res.ok) return;
       const j = (await res.json()) as { counts?: Record<string, { total: number; unread: number }> };
-      const fresh = j.counts ?? {};
-
-      // Merge any pending star delta over the API result so the badge stays
-      // accurate even while Gmail's count is still catching up.
-      const delta = starDeltaRef.current;
-      if (delta !== 0 && fresh["STARRED"]) {
-        // If the raw API count has already moved in the right direction by at
-        // least the expected amount, Gmail has caught up — clear the delta.
-        // Otherwise keep applying it so navigation never shows the stale count.
-        const prev = labelCounts["STARRED"]?.total ?? 0;
-        const apiMoved = delta > 0
-          ? fresh["STARRED"].total >= prev
-          : fresh["STARRED"].total <= prev;
-        if (apiMoved) {
-          starDeltaRef.current = 0;
-        } else {
-          fresh["STARRED"] = {
-            ...fresh["STARRED"],
-            total: Math.max(0, fresh["STARRED"].total + delta),
-          };
-        }
-      }
-      setLabelCounts(fresh);
+      setLabelCounts(j.counts ?? {});
     } catch { /* ignore */ }
   }, [allLabels]);
+
+  /**
+   * Re-fetch counts shortly after a mutation. Gmail's label counts API lags
+   * a few seconds behind a label change, so we retry once with a delay to
+   * catch the propagated value. The first call serves as an immediate sync
+   * (in case Gmail responds fast); the second covers the typical lag.
+   */
+  const scheduleCountRefresh = useCallback(() => {
+    void loadCounts();
+    const t1 = setTimeout(() => void loadCounts(), 1500);
+    const t2 = setTimeout(() => void loadCounts(), 4000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [loadCounts]);
 
   useEffect(() => { void loadCounts(); }, [loadCounts]);
   // Refresh counts after the list reloads (bulk actions, refresh).
@@ -997,12 +983,16 @@ export default function InboxPage() {
     setThreads((rows) =>
       rows.map((r) => (r.id === threadId && r.unread ? { ...r, unread: false } : r))
     );
-    // Fire-and-forget the read API call in parallel.
+    // Fire-and-forget the read API call in parallel; refresh counts on success
+    // so the Inbox unread badge moves in sync with the row losing bold.
+    const wasUnread = threads.find((r) => r.id === threadId)?.unread;
     fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}/labels`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ remove: ["UNREAD"] }),
-    }).catch(() => {/* non-critical */});
+    })
+      .then(() => { if (wasUnread) scheduleCountRefresh(); })
+      .catch(() => {/* non-critical */});
 
     setSelectedId(threadId);
     setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false);
@@ -1023,7 +1013,7 @@ export default function InboxPage() {
       void loadTracking();
     } catch (e) { setThreadError(e instanceof Error ? e.message : "Error"); }
     finally { setLoadingThread(false); }
-  }, [loadTracking]);
+  }, [loadTracking, threads, scheduleCountRefresh]);
 
   // Add or remove a label on the currently-open thread. Optimistic — flips
   // local chips immediately and rolls back if the server rejects.
@@ -1060,6 +1050,7 @@ export default function InboxPage() {
           }
         );
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
+        scheduleCountRefresh();
       } catch (e) {
         // Roll back
         setThreadLabelIds(prev);
@@ -1071,7 +1062,7 @@ export default function InboxPage() {
         setLabelBusy(false);
       }
     },
-    [selectedId, threadLabelIds]
+    [selectedId, threadLabelIds, scheduleCountRefresh]
   );
 
   // Create a new Gmail label and immediately apply it to the open thread.
@@ -1085,10 +1076,9 @@ export default function InboxPage() {
       setThreads((rows) =>
         rows.map((r) => (r.id === threadId ? { ...r, starred: nextStarred } : r))
       );
-      // Optimistically update the Starred badge and record the pending delta
-      // so loadCounts() keeps applying it until Gmail's count catches up.
+      // Optimistically update the Starred badge so the UI feels instant.
+      // scheduleCountRefresh below catches up with Gmail's authoritative count.
       const change = nextStarred ? 1 : -1;
-      starDeltaRef.current += change;
       setLabelCounts((prev) => {
         const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
         return {
@@ -1108,13 +1098,9 @@ export default function InboxPage() {
           }
         );
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
-        // Cache-bust so we get the real count back; loadCounts merges the
-        // delta over the result until Gmail's own number has moved.
-        void loadCounts(true);
+        scheduleCountRefresh();
       } catch (e) {
         setThreads(prevRows);
-        // Roll back both the optimistic state and the delta.
-        starDeltaRef.current -= change;
         setLabelCounts((prev) => {
           const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
           return {
@@ -1131,7 +1117,7 @@ export default function InboxPage() {
         });
       }
     },
-    [threads, loadCounts]
+    [threads, scheduleCountRefresh]
   );
 
   // Row quick-actions: archive (remove INBOX), trash (add TRASH), and
@@ -1159,12 +1145,12 @@ export default function InboxPage() {
         setThreads((rows) =>
           rows.map((r) => (selectedThreadIds.has(r.id) ? { ...r, starred: true } : r))
         );
-        // Optimistically bump the Starred badge and record the pending delta.
+        // Optimistically bump the Starred badge; scheduleCountRefresh below
+        // re-syncs with Gmail's authoritative number after a brief delay.
         const newlyStarred = ids.filter(
           (id) => !threads.find((t) => t.id === id)?.starred
         ).length;
         if (newlyStarred > 0) {
-          starDeltaRef.current += newlyStarred;
           setLabelCounts((prev) => {
             const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
             return { ...prev, STARRED: { ...cur, total: cur.total + newlyStarred } };
@@ -1196,17 +1182,15 @@ export default function InboxPage() {
             const j = (await res.json().catch(() => ({}))) as { error?: string };
             throw new Error(j.error || "Bulk action failed");
           }
-          // Cache-bust so the fresh count comes back; delta stays in ref
-          // until Gmail's own number has moved.
-          void loadCounts(true);
+          scheduleCountRefresh();
         })
         .catch(() => {
           // Roll back silently — re-alert would be jarring since the user has moved on.
           setThreads(prevRows);
-          void loadCounts(true);
+          scheduleCountRefresh();
         });
     },
-    [selectedThreadIds, threads, loadCounts]
+    [selectedThreadIds, threads, scheduleCountRefresh]
   );
 
   // Re-compute union of labels across selected threads whenever selection changes,
@@ -1252,13 +1236,14 @@ export default function InboxPage() {
             ...(nextChecked ? { add: [labelId] } : { remove: [labelId] }),
           }),
         });
+        scheduleCountRefresh();
       } catch {
         // Non-fatal — list stays optimistic; user can refresh if needed.
       } finally {
         setBulkLabelBusy(false);
       }
     },
-    [selectedThreadIds, bulkLabelBusy]
+    [selectedThreadIds, bulkLabelBusy, scheduleCountRefresh]
   );
 
   /** Create a new label then immediately apply it to all selected threads. */

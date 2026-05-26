@@ -37,9 +37,10 @@ export async function GET(request: Request) {
     return NextResponse.json(
       { labels: sorted },
       {
-        // Labels change rarely — let the browser cache for a minute and
-        // serve stale for five while we revalidate.
-        headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=300" },
+        // Labels can change at any time (rename, create, delete) so we never
+        // serve a cached response — fresh data per request keeps state correct
+        // after mutations. Listing labels is a single cheap Gmail API call.
+        headers: { "Cache-Control": "no-store" },
       }
     );
   } catch (e) {

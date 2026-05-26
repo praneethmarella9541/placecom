@@ -765,7 +765,9 @@ export default function InboxPage() {
       const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
-      if (effectiveLabelId) params.set("labelId", effectiveLabelId);
+      // When a search query is active, drop the category/label filter so results
+      // match all mail — exactly like Gmail's own search bar behaviour.
+      if (effectiveLabelId && !mailSearch) params.set("labelId", effectiveLabelId);
       try {
         const res = await fetch(`/api/gmail/threads?${params.toString()}`, { cache: "no-store" });
         const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };

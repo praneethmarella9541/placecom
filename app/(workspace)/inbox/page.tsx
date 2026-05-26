@@ -1134,11 +1134,11 @@ export default function InboxPage() {
   // so LabelPicker pre-checks labels that are on at least one selected thread.
   useEffect(() => {
     const union = new Set<string>();
-    for (const id of selectedThreadIds) {
-      for (const lid of threads.find((t) => t.id === id)?.labelIds ?? []) {
+    Array.from(selectedThreadIds).forEach((id) => {
+      (threads.find((t) => t.id === id)?.labelIds ?? []).forEach((lid) => {
         union.add(lid);
-      }
-    }
+      });
+    });
     setBulkLabelSelected(union);
   }, [selectedThreadIds, threads]);
 

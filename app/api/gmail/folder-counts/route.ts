@@ -127,8 +127,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: GMAIL_INSUFFICIENT_SCOPE }, { status: 403 });
   }
 
+  // When the caller passes ?bust=1 (e.g. after a star/label change) skip the
+  // browser cache entirely so the fresh count is always returned.
+  const bust = searchParams.get("bust") === "1";
   return NextResponse.json(
     { counts },
-    { headers: { "Cache-Control": "private, max-age=30, stale-while-revalidate=60" } }
+    {
+      headers: {
+        "Cache-Control": bust
+          ? "no-store"
+          : "private, max-age=30, stale-while-revalidate=60",
+      },
+    }
   );
 }

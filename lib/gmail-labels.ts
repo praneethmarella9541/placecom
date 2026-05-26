@@ -132,12 +132,16 @@ export async function createLabel(
     type?: "system" | "user";
     color?: { textColor?: string; backgroundColor?: string };
   };
-  const type = created.type === "user" ? "user" : "system";
+  // Gmail's users.labels.create response omits the `type` field — but a label
+  // created via this endpoint is by definition a user label (system labels
+  // can't be created through the API). Default to "user" so the client
+  // doesn't misclassify it as system and filter it out of the sidebar.
+  const type: "system" | "user" = created.type ?? "user";
   return {
     id: created.id,
     name: created.name,
     type,
-    surfaced: shouldSurface(created),
+    surfaced: type === "user" || SURFACED_SYSTEM_LABELS.has(created.id),
     isSystem: type === "system",
     isCategory: created.id.startsWith("CATEGORY_"),
     color: created.color,

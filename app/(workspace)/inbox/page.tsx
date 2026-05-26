@@ -118,10 +118,36 @@ type TrackingRow = {
   open_count: number;
 };
 
-type PendingFile = {
-  file: File;
-  base64: string;
-};
+/**
+ * Attachment in the compose window.
+ * - `kind: 'new'` — a freshly picked File whose base64 has been read into memory.
+ * - `kind: 'saved'` — an attachment already stored on a draft on the server;
+ *   we hold a reference (messageId + attachmentId) and only fetch the bytes
+ *   if we have to (re-saving the draft or sending).
+ */
+type PendingFile =
+  | {
+      kind: "new";
+      file: File;
+      base64: string;
+    }
+  | {
+      kind: "saved";
+      name: string;
+      mimeType: string;
+      size: number;
+      messageId: string;
+      attachmentId: string;
+    };
+
+/** Display-name for a PendingFile regardless of variant. */
+function pendingFileName(f: PendingFile): string {
+  return f.kind === "new" ? f.file.name : f.name;
+}
+/** Display-size for a PendingFile regardless of variant. */
+function pendingFileSize(f: PendingFile): number {
+  return f.kind === "new" ? f.file.size : f.size;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -686,6 +712,7 @@ export default function InboxPage() {
   const composeStateRef = useRef({
     to: "", cc: "", bcc: "", subject: "", body: "",
     draftId: null as string | null,
+    files: [] as PendingFile[],
   });
   // Debounced auto-save timer + last-saved snapshot (to avoid no-op POSTs).
   const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -761,8 +788,9 @@ export default function InboxPage() {
       subject: composeSubject,
       body: composeBody,
       draftId: composeDraftId,
+      files: composeFiles,
     };
-  }, [composeTo, composeCc, composeBcc, composeSubject, composeBody, composeDraftId]);
+  }, [composeTo, composeCc, composeBcc, composeSubject, composeBody, composeDraftId, composeFiles]);
 
   /**
    * Save the current compose contents as a Gmail draft. Idempotent: when
@@ -776,17 +804,39 @@ export default function InboxPage() {
     const s = composeStateRef.current;
     const hasContent =
       s.to.trim() || s.cc.trim() || s.bcc.trim() ||
-      s.subject.trim() || s.body.trim();
+      s.subject.trim() || s.body.trim() || s.files.length > 0;
     if (!hasContent) return null;
 
+    // Fingerprint the files cheaply for the no-op guard. Real bytes are only
+    // resolved (fetched/encoded) once we know we're actually going to POST.
+    const fileFingerprints = s.files.map((f) =>
+      f.kind === "new"
+        ? `new:${f.file.name}:${f.file.size}`
+        : `saved:${f.attachmentId}`
+    );
     const snapshot = JSON.stringify({
       to: s.to, cc: s.cc, bcc: s.bcc, subject: s.subject, body: s.body,
+      files: fileFingerprints,
     });
     if (snapshot === draftLastSavedRef.current) return s.draftId;
     if (draftSavingRef.current) return s.draftId;
 
     draftSavingRef.current = true;
     try {
+      // Resolve attachments to base64 just-in-time. For "saved" attachments
+      // this triggers a fetch back to Gmail — bounded by the snapshot diff,
+      // so it only happens when the attachment list actually changed.
+      let attachments: Array<{ filename: string; mimeType: string; base64Data: string }> = [];
+      if (s.files.length > 0) {
+        try {
+          attachments = await resolveAttachmentsForUpload(s.files);
+        } catch {
+          // If we can't fetch the bytes (rare — usually network), bail out
+          // rather than overwrite the existing draft with an attachment-less
+          // version that would silently lose user data.
+          return null;
+        }
+      }
       const res = await fetch("/api/gmail/drafts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -797,16 +847,25 @@ export default function InboxPage() {
           subject: s.subject.trim(),
           textBody: s.body,
           ...(s.draftId ? { draftId: s.draftId } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
         }),
       });
       if (!res.ok) return null;
-      const data = (await res.json()) as { draftId?: string };
+      const data = (await res.json()) as { draftId?: string; messageId?: string };
       draftLastSavedRef.current = snapshot;
       // Adopt the new draftId so subsequent edits update the same draft.
       if (data.draftId && data.draftId !== s.draftId) {
         composeStateRef.current.draftId = data.draftId;
         setComposeDraftId(data.draftId);
       }
+      // After a successful save, all attachments are now "saved" on Gmail.
+      // Convert any "new" entries into "saved" references using the returned
+      // messageId — this means subsequent auto-saves won't re-base64-encode
+      // them (the saved-variant just holds a pointer).
+      // We can only do this re-mapping if we know the messageId for each
+      // attachment, which Gmail doesn't return individually for a draft.
+      // Leaving "new" entries as-is is safe — the snapshot dedup will skip
+      // re-uploads until the user actually changes the attachment list.
       return data.draftId ?? s.draftId;
     } catch {
       return null;
@@ -853,7 +912,7 @@ export default function InboxPage() {
     return () => {
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     };
-  }, [composeOpen, composeTo, composeCc, composeBcc, composeSubject, composeBody, saveDraft]);
+  }, [composeOpen, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeFiles, saveDraft]);
 
   const composeRecipientSuggestions = useMemo((): RecipientSuggestion[] => {
     const map = new Map<string, string>();
@@ -876,6 +935,43 @@ export default function InboxPage() {
 
   const [trackingMap, setTrackingMap] = useState<Record<string, TrackingRow>>({});
 
+  /**
+   * Convert the compose attachment list into the {filename, mimeType, base64Data}
+   * shape the send/drafts APIs accept. New uploads carry their base64 in
+   * memory; saved-server attachments are fetched on demand via /api/gmail/attachment.
+   * Returns the resolved attachments in their original order; throws on fetch failure.
+   */
+  async function resolveAttachmentsForUpload(
+    list: PendingFile[]
+  ): Promise<Array<{ filename: string; mimeType: string; base64Data: string }>> {
+    return Promise.all(
+      list.map(async (f) => {
+        if (f.kind === "new") {
+          return {
+            filename: f.file.name,
+            mimeType: f.file.type || "application/octet-stream",
+            base64Data: f.base64,
+          };
+        }
+        // Saved attachment — fetch the bytes from Gmail and base64-encode them.
+        const url = `/api/gmail/attachment?messageId=${encodeURIComponent(f.messageId)}&attachmentId=${encodeURIComponent(f.attachmentId)}&filename=${encodeURIComponent(f.name)}&mimeType=${encodeURIComponent(f.mimeType)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Could not fetch attachment ${f.name}`);
+        const blob = await res.blob();
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => {
+            const result = r.result as string;
+            resolve(result.split(",")[1] || "");
+          };
+          r.onerror = reject;
+          r.readAsDataURL(blob);
+        });
+        return { filename: f.name, mimeType: f.mimeType, base64Data: base64 };
+      })
+    );
+  }
+
   async function handleFileSelect(files: FileList | null, target: "compose" | "reply") {
     if (!files) return;
     const newFiles: PendingFile[] = [];
@@ -883,7 +979,7 @@ export default function InboxPage() {
       const file = files[i];
       if (file.size > 25 * 1024 * 1024) { alert(`${file.name} is too large (max 25 MB)`); continue; }
       const base64 = await fileToBase64(file);
-      newFiles.push({ file, base64 });
+      newFiles.push({ kind: "new", file, base64 });
     }
     if (target === "compose") setComposeFiles((prev) => [...prev, ...newFiles]);
     else setReplyFiles((prev) => [...prev, ...newFiles]);
@@ -1074,7 +1170,8 @@ export default function InboxPage() {
       composeStateRef.current.cc.trim() ||
       composeStateRef.current.bcc.trim() ||
       composeStateRef.current.subject.trim() ||
-      composeStateRef.current.body.trim();
+      composeStateRef.current.body.trim() ||
+      composeStateRef.current.files.length > 0;
     setComposeOpen(false);
     setComposeCcBccOpen(false);
     if (hadContent) {
@@ -1203,20 +1300,41 @@ export default function InboxPage() {
         bcc?: string;
         subject?: string;
         textBody?: string;
+        attachments?: Array<{
+          attachmentId: string;
+          filename: string;
+          mimeType: string;
+          size: number;
+          messageId: string;
+        }>;
       };
       if (!res.ok) throw new Error(data.error || "Failed to open draft");
+      // Hydrate any existing attachments as "saved" references — the bytes
+      // are not fetched until/unless the user saves or sends.
+      const loadedFiles: PendingFile[] = (data.attachments ?? []).map((a) => ({
+        kind: "saved" as const,
+        name: a.filename,
+        mimeType: a.mimeType,
+        size: a.size,
+        messageId: a.messageId,
+        attachmentId: a.attachmentId,
+      }));
       setComposeDraftId(draftId);
       setComposeTo(data.to ?? "");
       setComposeCc(data.cc ?? "");
       setComposeBcc(data.bcc ?? "");
       setComposeSubject(data.subject ?? "");
       setComposeBody(data.textBody ?? "");
-      setComposeFiles([]);
+      setComposeFiles(loadedFiles);
       // Seed the last-saved snapshot so auto-save sees no diff and stays
       // quiet until the user actually edits something.
+      const fileFingerprints = loadedFiles.map((f) =>
+        f.kind === "saved" ? `saved:${f.attachmentId}` : `new:${(f as { file: File }).file.name}:${(f as { file: File }).file.size}`
+      );
       draftLastSavedRef.current = JSON.stringify({
         to: data.to ?? "", cc: data.cc ?? "", bcc: data.bcc ?? "",
         subject: data.subject ?? "", body: data.textBody ?? "",
+        files: fileFingerprints,
       });
       setComposeOpen(true);
       setComposeMinimized(false);
@@ -1615,11 +1733,7 @@ export default function InboxPage() {
     const to = extractEmailAddress(last.from);
     setSendBusy(true); setThreadError(null);
     try {
-      const attachments = replyFiles.map((f) => ({
-        filename: f.file.name,
-        mimeType: f.file.type || "application/octet-stream",
-        base64Data: f.base64,
-      }));
+      const attachments = await resolveAttachmentsForUpload(replyFiles);
       const res = await fetch("/api/gmail/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ to, subject: "", textBody: replyText.trim(), threadId: selectedId, inReplyToMessageId: last.id, attachments: attachments.length ? attachments : undefined }),
@@ -1640,11 +1754,7 @@ export default function InboxPage() {
     if (!composeTo.trim() || !composeBody.trim()) return;
     setSendBusy(true);
     try {
-      const attachments = composeFiles.map((f) => ({
-        filename: f.file.name,
-        mimeType: f.file.type || "application/octet-stream",
-        base64Data: f.base64,
-      }));
+      const attachments = await resolveAttachmentsForUpload(composeFiles);
       const res = await fetch("/api/gmail/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2391,7 +2501,7 @@ export default function InboxPage() {
                           {replyFiles.map((f, i) => (
                             <li key={i} className="inline-flex max-w-full items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] text-[var(--color-text)]">
                               <Paperclip className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
-                              <span className="max-w-[200px] truncate font-medium">{f.file.name}</span>
+                              <span className="max-w-[200px] truncate font-medium">{pendingFileName(f)}</span>
                               <button
                                 type="button"
                                 onClick={() => setReplyFiles((prev) => prev.filter((_, j) => j !== i))}
@@ -2628,8 +2738,8 @@ export default function InboxPage() {
                             >
                               <span className="flex min-w-0 items-center gap-2">
                                 <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
-                                <span className="truncate font-medium">{f.file.name}</span>
-                                <span className="shrink-0 text-[#5f6368]">({formatBytes(f.file.size)})</span>
+                                <span className="truncate font-medium">{pendingFileName(f)}</span>
+                                <span className="shrink-0 text-[#5f6368]">({formatBytes(pendingFileSize(f))})</span>
                               </span>
                               <button
                                 type="button"

@@ -13,35 +13,76 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
 }
 
+type DraftAttachment = {
+  filename: string;
+  mimeType: string;
+  /** Standard base64 (with padding) — same format the send route uses. */
+  base64Data: string;
+};
+
 function buildRaw(opts: {
   to: string;
   cc?: string;
   bcc?: string;
   subject: string;
   textBody: string;
+  attachments?: DraftAttachment[];
 }): string {
-  const boundary = "----=_DraftAlt_001";
+  const altBoundary = "----=_DraftAlt_001";
+  const mixedBoundary = "----=_DraftMixed_001";
   const html = `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${escapeHtml(opts.textBody)}</div>`;
-  const mime = [
+
+  const altPart = [
+    `--${altBoundary}`,
+    "Content-Type: text/plain; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    opts.textBody,
+    `--${altBoundary}`,
+    "Content-Type: text/html; charset=UTF-8",
+    "Content-Transfer-Encoding: 8bit",
+    "",
+    html,
+    `--${altBoundary}--`,
+  ].join("\r\n");
+
+  const hasAttachments = (opts.attachments?.length ?? 0) > 0;
+
+  const headerLines = [
     `To: ${opts.to}`,
     ...(opts.cc ? [`Cc: ${opts.cc}`] : []),
     ...(opts.bcc ? [`Bcc: ${opts.bcc}`] : []),
     `Subject: ${(opts.subject || "").trim() || "(no subject)"}`,
     "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    "",
-    `--${boundary}`,
-    "Content-Type: text/plain; charset=UTF-8",
-    "Content-Transfer-Encoding: 8bit",
-    "",
-    opts.textBody,
-    `--${boundary}`,
-    "Content-Type: text/html; charset=UTF-8",
-    "Content-Transfer-Encoding: 8bit",
-    "",
-    html,
-    `--${boundary}--`,
-  ].join("\r\n");
+  ];
+
+  let bodyMime: string;
+  if (!hasAttachments) {
+    headerLines.push(`Content-Type: multipart/alternative; boundary="${altBoundary}"`);
+    bodyMime = altPart;
+  } else {
+    headerLines.push(`Content-Type: multipart/mixed; boundary="${mixedBoundary}"`);
+    const parts: string[] = [
+      `--${mixedBoundary}`,
+      `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+      "",
+      altPart,
+    ];
+    for (const att of opts.attachments!) {
+      parts.push(
+        `--${mixedBoundary}`,
+        `Content-Type: ${att.mimeType}; name="${att.filename}"`,
+        "Content-Transfer-Encoding: base64",
+        `Content-Disposition: attachment; filename="${att.filename}"`,
+        "",
+        att.base64Data
+      );
+    }
+    parts.push(`--${mixedBoundary}--`);
+    bodyMime = parts.join("\r\n");
+  }
+
+  const mime = [...headerLines, "", bodyMime].join("\r\n");
   return toBase64Url(Buffer.from(mime, "utf8"));
 }
 
@@ -142,6 +183,8 @@ type Body = {
   textBody?: string;
   draftId?: string; // if set, update existing draft
   threadId?: string;
+  /** Standard-base64 attachment data — same shape the send route accepts. */
+  attachments?: DraftAttachment[];
 };
 
 export async function POST(request: Request) {
@@ -163,6 +206,7 @@ export async function POST(request: Request) {
     bcc: body.bcc,
     subject: body.subject ?? "",
     textBody: body.textBody ?? "",
+    attachments: body.attachments,
   });
 
   const message: Record<string, unknown> = { raw };

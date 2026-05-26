@@ -625,6 +625,11 @@ export default function InboxPage() {
     threads.length > 0 && threads.every((t) => selectedThreadIds.has(t.id));
   // Per-row action busy state (for the optimistic star toggle / row-quick-actions).
   const [rowBusy, setRowBusy] = useState<Set<string>>(new Set());
+  // Bulk label selection — tracks the union of label IDs on selected threads
+  // so the LabelPicker checkboxes show the right initial state.
+  const [bulkLabelSelected, setBulkLabelSelected] = useState<Set<string>>(new Set());
+  const [bulkLabelBusy, setBulkLabelBusy] = useState(false);
+
   // bulkBusy removed — actions are fire-and-forget with instant optimistic UI
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1125,6 +1130,74 @@ export default function InboxPage() {
     [selectedThreadIds, threads]
   );
 
+  // Re-compute union of labels across selected threads whenever selection changes,
+  // so LabelPicker pre-checks labels that are on at least one selected thread.
+  useEffect(() => {
+    const union = new Set<string>();
+    for (const id of selectedThreadIds) {
+      for (const lid of threads.find((t) => t.id === id)?.labelIds ?? []) {
+        union.add(lid);
+      }
+    }
+    setBulkLabelSelected(union);
+  }, [selectedThreadIds, threads]);
+
+  /** Called when user toggles a checkbox inside the bulk LabelPicker. */
+  const handleBulkLabelToggle = useCallback(
+    async (labelId: string, nextChecked: boolean) => {
+      const ids = Array.from(selectedThreadIds);
+      if (ids.length === 0 || bulkLabelBusy) return;
+
+      // Optimistic: update the local union and thread rows immediately.
+      setBulkLabelSelected((prev) => {
+        const next = new Set(prev);
+        if (nextChecked) next.add(labelId); else next.delete(labelId);
+        return next;
+      });
+      setThreads((rows) =>
+        rows.map((r) => {
+          if (!selectedThreadIds.has(r.id)) return r;
+          const cur = new Set(r.labelIds ?? []);
+          if (nextChecked) cur.add(labelId); else cur.delete(labelId);
+          return { ...r, labelIds: Array.from(cur) };
+        })
+      );
+
+      setBulkLabelBusy(true);
+      try {
+        await fetch("/api/gmail/threads/batch-modify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadIds: ids,
+            ...(nextChecked ? { add: [labelId] } : { remove: [labelId] }),
+          }),
+        });
+      } catch {
+        // Non-fatal — list stays optimistic; user can refresh if needed.
+      } finally {
+        setBulkLabelBusy(false);
+      }
+    },
+    [selectedThreadIds, bulkLabelBusy]
+  );
+
+  /** Create a new label then immediately apply it to all selected threads. */
+  const handleBulkLabelCreate = useCallback(
+    async (name: string) => {
+      const res = await fetch("/api/gmail/labels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { error?: string; label?: GmailLabel };
+      if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
+      setAllLabels((prev) => [...prev, j.label!]);
+      await handleBulkLabelToggle(j.label.id, true);
+    },
+    [handleBulkLabelToggle]
+  );
+
   const toggleRowSelection = useCallback((threadId: string) => {
     setSelectedThreadIds((s) => {
       const next = new Set(s);
@@ -1594,7 +1667,16 @@ export default function InboxPage() {
                 {selectedThreadIds.size > 0 ? (
                   <>
                     <span className="text-[var(--color-text-muted)]">{selectedThreadIds.size} selected</span>
-                    <div className="ml-2 flex items-center gap-0.5">
+                    <div className="ml-2 flex items-center gap-1.5">
+                      {/* Bulk label picker */}
+                      <LabelPicker
+                        allLabels={allLabels.filter((l) => l.type === "user")}
+                        selected={bulkLabelSelected}
+                        onToggle={(id, checked) => void handleBulkLabelToggle(id, checked)}
+                        onCreate={handleBulkLabelCreate}
+                        busy={bulkLabelBusy}
+                        align="left"
+                      />
                       {/* Single envelope toggle — closed = mark read, open = mark unread (Gmail pattern) */}
                       {(() => {
                         const allRead = Array.from(selectedThreadIds).every(

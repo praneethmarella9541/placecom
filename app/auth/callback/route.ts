@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { createServiceSupabase } from "@/lib/supabase-service";
 
 const MSG_MAX = 450;
 
@@ -50,12 +51,47 @@ export async function GET(request: Request) {
     }
   );
 
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
     const msg = truncateMsg(error.message, MSG_MAX);
     return NextResponse.redirect(
       `${origin}/?error=auth&msg=${encodeURIComponent(msg)}`
     );
+  }
+
+  // If this is a Google sign-in, persist the refresh token directly so
+  // Gmail/Drive keep working long after the short-lived session token expires.
+  const session = sessionData?.session;
+  const provider = session?.user?.app_metadata?.provider;
+  if (provider === "google" && session) {
+    try {
+      const refreshToken = session.provider_refresh_token;
+      const accessToken = session.provider_token;
+      const userId = session.user.id;
+      const email = session.user.email ?? null;
+
+      if (refreshToken || accessToken) {
+        const svc = createServiceSupabase();
+        const expiresAt = accessToken
+          ? new Date(Date.now() + 50 * 60 * 1000).toISOString()
+          : null;
+        await svc.from("google_mailbox_credentials").upsert(
+          {
+            owner_user_id: userId,
+            gmail_address: email,
+            refresh_token: refreshToken ?? "",
+            access_token: accessToken ?? null,
+            access_token_expires_at: expiresAt,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "owner_user_id" }
+        );
+      }
+    } catch {
+      // Non-fatal — user can still use the app today but will need to
+      // re-sign-in when the short-lived token expires.
+      console.error("[auth/callback] Failed to persist Google mailbox credentials");
+    }
   }
 
   return NextResponse.redirect(`${origin}${next}`);

@@ -1054,6 +1054,14 @@ export default function InboxPage() {
       setThreads((rows) =>
         rows.map((r) => (r.id === threadId ? { ...r, starred: nextStarred } : r))
       );
+      // Optimistically update the Starred badge count immediately — no API round-trip needed.
+      setLabelCounts((prev) => {
+        const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
+        return {
+          ...prev,
+          STARRED: { ...cur, total: Math.max(0, cur.total + (nextStarred ? 1 : -1)) },
+        };
+      });
       try {
         const res = await fetch(
           `/api/gmail/threads/${encodeURIComponent(threadId)}/labels`,
@@ -1066,8 +1074,18 @@ export default function InboxPage() {
           }
         );
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
+        // Sync accurate count from server after API confirms.
+        void loadCounts();
       } catch (e) {
         setThreads(prevRows);
+        // Roll back the optimistic count too.
+        setLabelCounts((prev) => {
+          const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
+          return {
+            ...prev,
+            STARRED: { ...cur, total: Math.max(0, cur.total + (nextStarred ? -1 : 1)) },
+          };
+        });
         alert(e instanceof Error ? e.message : "Could not update star");
       } finally {
         setRowBusy((s) => {
@@ -1077,7 +1095,7 @@ export default function InboxPage() {
         });
       }
     },
-    [threads]
+    [threads, loadCounts]
   );
 
   // Row quick-actions: archive (remove INBOX), trash (add TRASH), and
@@ -1105,6 +1123,16 @@ export default function InboxPage() {
         setThreads((rows) =>
           rows.map((r) => (selectedThreadIds.has(r.id) ? { ...r, starred: true } : r))
         );
+        // Optimistically bump the Starred badge by the number of newly starred threads.
+        const newlyStarred = ids.filter(
+          (id) => !threads.find((t) => t.id === id)?.starred
+        ).length;
+        if (newlyStarred > 0) {
+          setLabelCounts((prev) => {
+            const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
+            return { ...prev, STARRED: { ...cur, total: cur.total + newlyStarred } };
+          });
+        }
       }
 
       // 2. Clear selection immediately — user is unblocked right away.
@@ -1131,13 +1159,16 @@ export default function InboxPage() {
             const j = (await res.json().catch(() => ({}))) as { error?: string };
             throw new Error(j.error || "Bulk action failed");
           }
+          // Sync accurate count from server after API confirms.
+          void loadCounts();
         })
         .catch(() => {
           // Roll back silently — re-alert would be jarring since the user has moved on.
           setThreads(prevRows);
+          void loadCounts();
         });
     },
-    [selectedThreadIds, threads]
+    [selectedThreadIds, threads, loadCounts]
   );
 
   // Re-compute union of labels across selected threads whenever selection changes,

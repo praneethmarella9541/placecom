@@ -671,6 +671,38 @@ export default function InboxPage() {
   // Prefetch cache: hover over a row starts the fetch so the click is instant.
   const prefetchCache = useRef<Map<string, Promise<Response>>>(new Map());
 
+  // Session-scoped SWR cache for thread lists. Keyed by the same params that
+  // determine which threads are shown, so switching tabs/folders/labels can
+  // paint instantly from memory while a fresh fetch runs in the background.
+  // Cleared on the Refresh button click; pruned by mutation paths when the
+  // affected entries become stale.
+  const listCacheRef = useRef<Map<string, { threads: ThreadRow[]; nextPageToken?: string }>>(new Map());
+
+  // Timestamp of the most recent local mutation. We use this to skip the
+  // SWR background revalidation for ~5 s afterwards — Gmail's API lags a
+  // few seconds behind our writes, so refetching too soon would clobber the
+  // optimistic state. After the cooldown, fresh data is authoritative.
+  const lastMutationAtRef = useRef<number>(0);
+  const MUTATION_COOLDOWN_MS = 5000;
+
+  /**
+   * Apply the same transform to BOTH the rendered list and every cached view.
+   * Use this instead of bare setThreads() for any mutation that should persist
+   * across tab switches (mark read, star, label, archive/trash, etc.).
+   * Without this, an optimistic update would vanish the moment the user
+   * navigated away and back to a cached view.
+   */
+  const mutateThreads = useCallback(
+    (transform: (rows: ThreadRow[]) => ThreadRow[]) => {
+      setThreads(transform);
+      listCacheRef.current.forEach((entry, key) => {
+        listCacheRef.current.set(key, { ...entry, threads: transform(entry.threads) });
+      });
+      lastMutationAtRef.current = Date.now();
+    },
+    []
+  );
+
   const [recruiterSuggestions, setRecruiterSuggestions] = useState<{ email: string; name: string }[]>([]);
   const [googleContacts, setGoogleContacts] = useState<RecipientSuggestion[]>([]);
   const [contactsHint, setContactsHint] = useState<string | null>(null);
@@ -764,10 +796,22 @@ export default function InboxPage() {
     }
   }, []);
 
+  /**
+   * SWR-style list loader. For first-page loads:
+   *   1. If we have cached data for this (folder, category, labelFilter,
+   *      search) combo, paint it INSTANTLY (no spinner).
+   *   2. Then fetch in the background and silently swap in the fresh result.
+   * For appended pages (infinite scroll) we never cache — that path always
+   * hits the network.
+   *
+   * Tabs/folders/labels therefore feel instant on return, matching Gmail.
+   * A mutation that affects the visible list (star/read/archive) updates the
+   * cache in-place via the existing setThreads() calls, so cached views are
+   * never stale-by-our-own-doing — only Gmail's own ~3-5s propagation lag
+   * can cause divergence, which the background refetch then corrects.
+   */
   const loadThreads = useCallback(
-    async (opts: { append: boolean; pageToken?: string }) => {
-      if (!opts.append) { setLoadingList(true); setListError(null); }
-      else { setLoadingMore(true); loadingMoreRef.current = true; }
+    async (opts: { append: boolean; pageToken?: string; forceRefresh?: boolean }) => {
       // "starred" is a virtual folder — pass inbox to the API + labelId=STARRED
       const apiFolder = folder === "starred" ? "inbox" : folder;
       const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
@@ -776,16 +820,58 @@ export default function InboxPage() {
       // When a search query is active, drop the category/label filter so results
       // match all mail — exactly like Gmail's own search bar behaviour.
       if (effectiveLabelId && !mailSearch) params.set("labelId", effectiveLabelId);
+
+      const cacheKey = `${apiFolder}|${effectiveLabelId ?? ""}|${mailSearch}`;
+
+      if (opts.append) {
+        setLoadingMore(true); loadingMoreRef.current = true;
+      } else {
+        setListError(null);
+        // SWR: if we have a cached snapshot for this view, paint it
+        // immediately so the user never sees a spinner on tab-switch.
+        const cached = !opts.forceRefresh ? listCacheRef.current.get(cacheKey) : undefined;
+        if (cached) {
+          setThreads(cached.threads);
+          setNextPageToken(cached.nextPageToken);
+          setLoadingList(false);
+          // If we just made a local mutation, skip the background refetch.
+          // Gmail's read-side lags our writes by a few seconds and would
+          // clobber our optimistic state. After the cooldown, fresh wins.
+          const sinceMutation = Date.now() - lastMutationAtRef.current;
+          if (!opts.forceRefresh && sinceMutation < MUTATION_COOLDOWN_MS) {
+            return;
+          }
+        } else {
+          setLoadingList(true);
+        }
+      }
+
       try {
         const res = await fetch(`/api/gmail/threads?${params.toString()}`, { cache: "no-store" });
         const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
         if (!res.ok) throw new Error(data.error || "Failed to load inbox");
         const incoming = data.threads || [];
-        setThreads((prev) => (opts.append ? [...prev, ...incoming] : incoming));
+
+        if (opts.append) {
+          setThreads((prev) => {
+            const merged = [...prev, ...incoming];
+            // Keep the cache snapshot in sync with the merged list so coming
+            // back to this view after infinite-scrolling still feels instant.
+            listCacheRef.current.set(cacheKey, { threads: merged, nextPageToken: data.nextPageToken });
+            return merged;
+          });
+        } else {
+          setThreads(incoming);
+          listCacheRef.current.set(cacheKey, { threads: incoming, nextPageToken: data.nextPageToken });
+        }
         setNextPageToken(data.nextPageToken);
       } catch (e) {
-        setListError(e instanceof Error ? e.message : "Failed to load");
-        if (!opts.append) setThreads([]);
+        // Only surface the error if we have nothing on screen — otherwise the
+        // cached snapshot is still useful and a transient blip shouldn't blank it.
+        if (!opts.append && !listCacheRef.current.has(cacheKey)) {
+          setListError(e instanceof Error ? e.message : "Failed to load");
+          setThreads([]);
+        }
       } finally {
         setLoadingList(false);
         setLoadingMore(false);
@@ -980,7 +1066,9 @@ export default function InboxPage() {
     savedScrollTop.current = listScrollRef.current?.scrollTop ?? 0;
 
     // Optimistically mark the row as read the instant the user clicks.
-    setThreads((rows) =>
+    // mutateThreads also updates every cached list view so the read state
+    // survives tab switches without waiting for the background refetch.
+    mutateThreads((rows) =>
       rows.map((r) => (r.id === threadId && r.unread ? { ...r, unread: false } : r))
     );
     // Fire-and-forget the read API call in parallel; refresh counts on success
@@ -1013,7 +1101,7 @@ export default function InboxPage() {
       void loadTracking();
     } catch (e) { setThreadError(e instanceof Error ? e.message : "Error"); }
     finally { setLoadingThread(false); }
-  }, [loadTracking, threads, scheduleCountRefresh]);
+  }, [loadTracking, threads, scheduleCountRefresh, mutateThreads]);
 
   // Add or remove a label on the currently-open thread. Optimistic — flips
   // local chips immediately and rolls back if the server rejects.
@@ -1024,8 +1112,8 @@ export default function InboxPage() {
       setThreadLabelIds((cur) =>
         nextChecked ? Array.from(new Set([...cur, labelId])) : cur.filter((id) => id !== labelId)
       );
-      // Mirror on the row in the list too
-      setThreads((rows) =>
+      // Mirror on the row in the list too (and in every cached view).
+      mutateThreads((rows) =>
         rows.map((r) =>
           r.id === selectedId
             ? {
@@ -1062,7 +1150,7 @@ export default function InboxPage() {
         setLabelBusy(false);
       }
     },
-    [selectedId, threadLabelIds, scheduleCountRefresh]
+    [selectedId, threadLabelIds, scheduleCountRefresh, mutateThreads]
   );
 
   // Create a new Gmail label and immediately apply it to the open thread.
@@ -1072,8 +1160,7 @@ export default function InboxPage() {
   const toggleThreadStar = useCallback(
     async (threadId: string, nextStarred: boolean) => {
       setRowBusy((s) => new Set(s).add(threadId));
-      const prevRows = threads;
-      setThreads((rows) =>
+      mutateThreads((rows) =>
         rows.map((r) => (r.id === threadId ? { ...r, starred: nextStarred } : r))
       );
       // Optimistically update the Starred badge so the UI feels instant.
@@ -1100,7 +1187,10 @@ export default function InboxPage() {
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
         scheduleCountRefresh();
       } catch (e) {
-        setThreads(prevRows);
+        // Roll back the optimistic toggle across both rendered list and cache.
+        mutateThreads((rows) =>
+          rows.map((r) => (r.id === threadId ? { ...r, starred: !nextStarred } : r))
+        );
         setLabelCounts((prev) => {
           const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
           return {
@@ -1117,7 +1207,7 @@ export default function InboxPage() {
         });
       }
     },
-    [threads, scheduleCountRefresh]
+    [scheduleCountRefresh, mutateThreads]
   );
 
   // Row quick-actions: archive (remove INBOX), trash (add TRASH), and
@@ -1130,20 +1220,22 @@ export default function InboxPage() {
       const ids = Array.from(selectedThreadIds);
       if (ids.length === 0) return;
 
-      // 1. Optimistic UI update — instant, no waiting.
-      const prevRows = threads;
+      // 1. Optimistic UI update — instant, no waiting. mutateThreads also
+      //    propagates the change to every cached list view so it survives
+      //    tab switches without waiting for the background refetch.
+      const selectedSet = selectedThreadIds;
       const removeFromList = action === "archive" || action === "trash";
       if (removeFromList) {
-        setThreads((rows) => rows.filter((r) => !selectedThreadIds.has(r.id)));
+        mutateThreads((rows) => rows.filter((r) => !selectedSet.has(r.id)));
       } else if (action === "markRead" || action === "markUnread") {
-        setThreads((rows) =>
+        mutateThreads((rows) =>
           rows.map((r) =>
-            selectedThreadIds.has(r.id) ? { ...r, unread: action === "markUnread" } : r
+            selectedSet.has(r.id) ? { ...r, unread: action === "markUnread" } : r
           )
         );
       } else if (action === "star") {
-        setThreads((rows) =>
-          rows.map((r) => (selectedThreadIds.has(r.id) ? { ...r, starred: true } : r))
+        mutateThreads((rows) =>
+          rows.map((r) => (selectedSet.has(r.id) ? { ...r, starred: true } : r))
         );
         // Optimistically bump the Starred badge; scheduleCountRefresh below
         // re-syncs with Gmail's authoritative number after a brief delay.
@@ -1185,12 +1277,14 @@ export default function InboxPage() {
           scheduleCountRefresh();
         })
         .catch(() => {
-          // Roll back silently — re-alert would be jarring since the user has moved on.
-          setThreads(prevRows);
+          // Roll back silently — invalidate the SWR cache and refetch so the
+          // server-truth list paints, undoing the optimistic update.
+          listCacheRef.current.clear();
+          void loadThreads({ append: false, forceRefresh: true });
           scheduleCountRefresh();
         });
     },
-    [selectedThreadIds, threads, scheduleCountRefresh]
+    [selectedThreadIds, scheduleCountRefresh, mutateThreads, loadThreads]
   );
 
   // Re-compute union of labels across selected threads whenever selection changes,
@@ -1217,7 +1311,7 @@ export default function InboxPage() {
         if (nextChecked) next.add(labelId); else next.delete(labelId);
         return next;
       });
-      setThreads((rows) =>
+      mutateThreads((rows) =>
         rows.map((r) => {
           if (!selectedThreadIds.has(r.id)) return r;
           const cur = new Set(r.labelIds ?? []);
@@ -1243,7 +1337,7 @@ export default function InboxPage() {
         setBulkLabelBusy(false);
       }
     },
-    [selectedThreadIds, bulkLabelBusy, scheduleCountRefresh]
+    [selectedThreadIds, bulkLabelBusy, scheduleCountRefresh, mutateThreads]
   );
 
   /** Create a new label then immediately apply it to all selected threads. */
@@ -1349,7 +1443,9 @@ export default function InboxPage() {
       if (!res.ok) throw new Error(data.error || "Send failed");
       setReplyText(""); setReplyOpen(false); setReplyFiles([]);
       await openThread(selectedId);
-      void loadThreads({ append: false });
+      // Sending changes inbox + sent — invalidate cache so the new state paints.
+      listCacheRef.current.clear();
+      void loadThreads({ append: false, forceRefresh: true });
       void loadTracking();
     } catch (e) { setThreadError(e instanceof Error ? e.message : "Send failed"); }
     finally { setSendBusy(false); }
@@ -1391,7 +1487,9 @@ export default function InboxPage() {
       setComposeSubject("");
       setComposeBody("");
       setComposeFiles([]);
-      void loadThreads({ append: false });
+      // Sending changes inbox + sent counts/lists — invalidate cache.
+      listCacheRef.current.clear();
+      void loadThreads({ append: false, forceRefresh: true });
       void loadTracking();
     } catch (e) { alert(e instanceof Error ? e.message : "Send failed"); }
     finally { setSendBusy(false); }
@@ -1439,7 +1537,11 @@ export default function InboxPage() {
           </button>
           <button
             type="button"
-            onClick={() => void loadThreads({ append: false })}
+            onClick={() => {
+              listCacheRef.current.clear();
+              void loadThreads({ append: false, forceRefresh: true });
+              scheduleCountRefresh();
+            }}
             className="btn-ghost flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full p-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             title={titleCase("Refresh")}
           >
@@ -1648,7 +1750,11 @@ export default function InboxPage() {
             </button>
             <button
               type="button"
-              onClick={() => void loadThreads({ append: false })}
+              onClick={() => {
+              listCacheRef.current.clear();
+              void loadThreads({ append: false, forceRefresh: true });
+              scheduleCountRefresh();
+            }}
               className="btn-ghost h-9 w-9 justify-center p-0"
               title={titleCase("Refresh")}
             >

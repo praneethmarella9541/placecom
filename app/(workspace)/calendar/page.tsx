@@ -15,6 +15,8 @@ import {
   IconRefresh,
   IconX,
 } from "@/components/Icons";
+import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
+import { extractAllEmailsFromText } from "@/lib/email-recipients";
 
 /* ─── Types ─────────────────────────────────────────────────── */
 type Attendee = {
@@ -273,6 +275,9 @@ export default function CalendarPage() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [recruiters, setRecruiters] = useState<RecruiterRow[]>([]);
   const [loadingRecruiters, setLoadingRecruiters] = useState(true);
+  // Google contacts — merged with recruiters to power the same
+  // autocomplete used by the Compose mail modal.
+  const [googleContacts, setGoogleContacts] = useState<RecipientSuggestion[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -346,6 +351,40 @@ export default function CalendarPage() {
   }, []);
 
   useEffect(() => { void loadRecruiters(); }, [loadRecruiters]);
+
+  // Pull Google contacts once on mount — same source the Compose modal uses,
+  // so the meeting recipient pickers feel consistent with the mail flow.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/gmail/contacts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled) return;
+        const contacts = (j as { contacts?: RecipientSuggestion[] } | null)?.contacts;
+        if (Array.isArray(contacts)) setGoogleContacts(contacts);
+      })
+      .catch(() => {/* non-fatal — recruiters still work */});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Merge recruiters + Google contacts into the suggestion list shape that
+  // RecipientField expects. Email is the dedup key; the first encountered
+  // displayName wins (contacts have richer names than recruiters typically).
+  const recipientSuggestions = useMemo((): RecipientSuggestion[] => {
+    const map = new Map<string, string>();
+    for (const c of googleContacts) {
+      const em = c.email.trim().toLowerCase();
+      if (em) map.set(em, c.displayName?.trim() || em);
+    }
+    for (const r of recruiters) {
+      const em = r.email.trim().toLowerCase();
+      if (em && !map.has(em)) map.set(em, r.name.trim() || em);
+    }
+    return Array.from(map.entries()).map(([email, label]) => ({
+      email,
+      displayName: label !== email ? label : undefined,
+    }));
+  }, [googleContacts, recruiters]);
   useEffect(() => {
     void loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
   }, [loadEvents, rangeStartIso, rangeEndIso]);
@@ -404,7 +443,13 @@ export default function CalendarPage() {
 
   /* ── Schedule meeting (create) ───────────────────────── */
   async function scheduleMeeting() {
-    if (!recruiterEmail || !title || !startDateTime || !endDateTime) return;
+    // The recipient field may now hold multiple chips ("Foo" <foo@x.com>, …) —
+    // pick the first email as the primary recruiterEmail and pass any
+    // additional ones as extraAttendeeEmails so the server invites them all.
+    const allEmails = extractAllEmailsFromText(recruiterEmail);
+    const primary = allEmails[0];
+    const extras = allEmails.slice(1);
+    if (!primary || !title || !startDateTime || !endDateTime) return;
     setBusy(true);
     setError(null);
     try {
@@ -412,13 +457,14 @@ export default function CalendarPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          recruiterEmail,
+          recruiterEmail: primary,
           title,
           notes,
           startDateTime: new Date(startDateTime).toISOString(),
           endDateTime: new Date(endDateTime).toISOString(),
           addMeet,
           sendUpdates: "all", // always email guests on create
+          extraAttendeeEmails: extras.length ? extras : undefined,
         }),
       });
       const body = (await res.json()) as {
@@ -459,12 +505,9 @@ export default function CalendarPage() {
     setEditBusy(true);
     setEditError(null);
     try {
-      // Parse attendees from comma-sep string
-      const attendees = editAttendees
-        .split(/[\s,;]+/)
-        .map((e) => e.trim())
-        .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
-        .map((email) => ({ email }));
+      // Parse attendees from the recipient field — handles both plain emails
+      // and Gmail-style "Name" <email> chip serialization.
+      const attendees = extractAllEmailsFromText(editAttendees).map((email) => ({ email }));
 
       const res = await fetch(`/api/calendar/events/${encodeURIComponent(editEvent.id)}`, {
         method: "PATCH",
@@ -868,22 +911,13 @@ export default function CalendarPage() {
                 autoFocus
               />
               <div>
-                <input
-                  list="recruiter-emails-cal"
-                  type="email"
-                  placeholder="Recruiter / guest email *"
+                <RecipientField
+                  placeholder="Recipients (recruiters, guests, contacts) *"
                   value={recruiterEmail}
-                  onChange={(e) => setRecruiterEmail(e.target.value)}
-                  className="input-field"
+                  onChange={setRecruiterEmail}
+                  suggestions={recipientSuggestions}
                 />
-                <datalist id="recruiter-emails-cal">
-                  {recruiters.map((r) => (
-                    <option key={r.email} value={r.email}>
-                      {r.name} – {r.companyName} ({r.source})
-                    </option>
-                  ))}
-                </datalist>
-                {loadingRecruiters && (
+                {loadingRecruiters && recipientSuggestions.length === 0 && (
                   <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">Loading suggestions…</p>
                 )}
               </div>
@@ -1153,16 +1187,12 @@ export default function CalendarPage() {
 
               {/* Attendees */}
               <div>
-                <input
-                  type="text"
-                  placeholder="Guests (comma-separated emails)"
+                <RecipientField
+                  placeholder="Guests (recruiters, contacts)"
                   value={editAttendees}
-                  onChange={(e) => setEditAttendees(e.target.value)}
-                  className="input-field"
+                  onChange={setEditAttendees}
+                  suggestions={recipientSuggestions}
                 />
-                <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
-                  Separate multiple emails with commas
-                </p>
               </div>
 
               {/* Notes */}

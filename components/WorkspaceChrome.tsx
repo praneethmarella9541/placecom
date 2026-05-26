@@ -4,20 +4,20 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
-  CalendarDays,
+  Calendar,
   ChevronDown,
-  ClipboardList,
-  FileText,
-  Folder,
-  Kanban,
+  Contact,
+  FileSpreadsheet,
+  HardDrive,
+  Inbox,
   LogOut,
-  Mail,
-  Megaphone,
   Menu,
-  MessageCircle,
-  Smartphone,
-  Sparkles,
+  MessagesSquare,
+  MessageSquare,
+  Rss,
+  ScanText,
   Users,
+  Video,
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
@@ -31,19 +31,19 @@ import { pathToFeature } from "@/lib/feature-access";
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 
 const primaryNav = [
-  { href: "/inbox",     label: "Mail",       Icon: Mail },
-  { href: "/dashboard", label: "Extraction", Icon: Sparkles },
-  { href: "/crm",       label: "CRM",        Icon: Kanban },
-  { href: "/calendar",  label: "Calendar",   Icon: CalendarDays },
-  { href: "/meetings",  label: "Meetings",   Icon: FileText },
+  { href: "/inbox",     label: "Mail",       Icon: Inbox },
+  { href: "/dashboard", label: "Extraction", Icon: ScanText },
+  { href: "/crm",       label: "CRM",        Icon: Contact },
+  { href: "/calendar",  label: "Calendar",   Icon: Calendar },
+  { href: "/meetings",  label: "Meetings",   Icon: Video },
 ] as const;
 
 const secondaryNav = [
-  { href: "/drive",         label: "Drive",        Icon: Folder },
-  { href: "/forms",         label: "Forms",        Icon: ClipboardList },
-  { href: "/broadcasting",  label: "Broadcasting", Icon: Megaphone },
-  { href: "/sms",           label: "SMS",          Icon: Smartphone },
-  { href: "/whatsapp",      label: "WhatsApp",     Icon: MessageCircle },
+  { href: "/drive",         label: "Drive",        Icon: HardDrive },
+  { href: "/forms",         label: "Forms",        Icon: FileSpreadsheet },
+  { href: "/broadcasting",  label: "Broadcasting", Icon: Rss },
+  { href: "/sms",           label: "SMS",          Icon: MessageSquare },
+  { href: "/whatsapp",      label: "WhatsApp",     Icon: MessagesSquare },
 ] as const;
 
 /* ─── helpers ─────────────────────────────────────────────── */
@@ -402,7 +402,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
       <main
         key={pathname}
         className={cn(
-          "flex-1 animate-fade-up min-h-screen",
+          "flex-1 min-w-0 animate-fade-up min-h-screen overflow-hidden",
           // Desktop: push right of sidebar, with generous padding
           "md:ml-[220px] md:px-6 md:py-6",
           // Mobile: account for top header + side padding

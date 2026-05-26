@@ -1274,7 +1274,7 @@ export default function InboxPage() {
   // Inbox badge uses CATEGORY_PERSONAL (Primary) unread — same as Gmail sidebar,
   // which excludes Promotions/Social/etc. from the unread dot.
   const FOLDER_NAV = [
-    { key: "inbox"   as const, label: "Inbox",   Icon: IconInbox,   countId: "CATEGORY_PERSONAL", unreadOnly: true  },
+    { key: "inbox"   as const, label: "Inbox",   Icon: IconInbox,   countId: "INBOX",             unreadOnly: true  },
     { key: "starred" as const, label: "Starred",  Icon: IconStar,    countId: "STARRED",           unreadOnly: false },
     { key: "sent"    as const, label: "Sent",     Icon: IconSend,    countId: "SENT",              unreadOnly: false },
     { key: "drafts"  as const, label: "Drafts",   Icon: FilePen,     countId: "DRAFT",             unreadOnly: false },
@@ -1525,14 +1525,13 @@ export default function InboxPage() {
           <div className="flex gap-0 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)]">
             {(
               [
-                { key: "primary"    as const, label: "Primary",    countId: "CATEGORY_PERSONAL"   },
-                { key: "promotions" as const, label: "Promotions", countId: "CATEGORY_PROMOTIONS" },
-                { key: "social"     as const, label: "Social",     countId: "CATEGORY_SOCIAL"     },
-                { key: "updates"    as const, label: "Updates",    countId: "CATEGORY_UPDATES"    },
-                { key: "forums"     as const, label: "Forums",     countId: "CATEGORY_FORUMS"     },
+                { key: "primary"    as const, label: "Primary"    },
+                { key: "promotions" as const, label: "Promotions" },
+                { key: "social"     as const, label: "Social"     },
+                { key: "updates"    as const, label: "Updates"    },
+                { key: "forums"     as const, label: "Forums"     },
               ]
             ).map((t) => {
-              const unread = labelCounts[t.countId]?.unread ?? 0;
               const active = category === t.key;
               return (
                 <button
@@ -1547,16 +1546,6 @@ export default function InboxPage() {
                   )}
                 >
                   {t.label}
-                  {unread > 0 && (
-                    <span className={cn(
-                      "rounded-full px-1.5 py-[1px] text-[10px] font-bold tabular-nums",
-                      active
-                        ? "bg-[var(--color-primary)] text-white"
-                        : "bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]"
-                    )}>
-                      {unread > 99 ? "99+" : unread}
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -1645,11 +1634,19 @@ export default function InboxPage() {
 
             {/* Thread rows */}
             {loadingList ? (
-              <div className="space-y-2 p-4">
-                {[...Array(8)].map((_, i) => (
-                  <Skeleton key={i} className="skeleton-shimmer h-16 w-full rounded-[var(--radius-md)]" />
+              <ul>
+                {[...Array(20)].map((_, i) => (
+                  <li key={i} className="flex h-[57px] items-center border-b border-[var(--color-border)]">
+                    <span className="flex w-10 shrink-0 items-center justify-center">
+                      <Skeleton className="skeleton-shimmer h-3.5 w-3.5 rounded" />
+                    </span>
+                    <Skeleton className="skeleton-shimmer h-3.5 w-6 shrink-0 rounded" />
+                    <Skeleton className={cn("skeleton-shimmer mx-2 h-3.5 shrink-0 rounded", i % 3 === 0 ? "w-[180px]" : i % 3 === 1 ? "w-[130px]" : "w-[155px]")} />
+                    <Skeleton className={cn("skeleton-shimmer h-3.5 min-w-0 flex-1 rounded")} />
+                    <Skeleton className="skeleton-shimmer mx-4 h-3.5 w-[130px] shrink-0 rounded" />
+                  </li>
                 ))}
-              </div>
+              </ul>
             ) : listError ? (
               <div className="p-6 text-sm text-[var(--color-danger)]">{listError}</div>
             ) : threads.length === 0 ? (
@@ -1686,34 +1683,37 @@ export default function InboxPage() {
                     <li
                       key={t.draftId ?? t.id}
                       className={cn(
-                        "group relative flex h-[52px] items-center gap-2 overflow-hidden border-b border-[var(--color-border)] pl-2 pr-3 text-[13px] transition-colors",
+                        "group relative flex h-[57px] items-center overflow-hidden border-b border-[var(--color-border)] text-[13px] transition-colors",
                         isSelected
                           ? "bg-[var(--color-primary-light)]"
                           : isUnread
-                            ? "bg-[var(--color-surface)]"
-                            : "bg-[var(--color-surface-offset)]",
+                            ? "bg-[var(--color-surface)] font-semibold"
+                            : "bg-[var(--color-surface-offset)] font-normal",
                         "hover:bg-[var(--color-primary-light)] hover:shadow-sm",
                       )}
                     >
-                      {/* Checkbox */}
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleRowSelection(t.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[var(--color-primary)]"
-                        aria-label="Select"
-                      />
-                      {/* Star */}
+                      {/* Checkbox — fixed 40px slot */}
+                      <span className="flex w-10 shrink-0 items-center justify-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleRowSelection(t.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-primary)]"
+                          aria-label="Select"
+                        />
+                      </span>
+
+                      {/* Star — fixed 24px slot */}
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); void toggleThreadStar(t.id, !isStarred); }}
                         disabled={isBusy}
                         className={cn(
-                          "shrink-0 p-0.5 text-[16px] leading-none transition-colors",
+                          "flex w-6 shrink-0 items-center justify-center text-[15px] leading-none transition-colors",
                           isStarred
                             ? "text-yellow-500"
-                            : "text-[var(--color-text-faint)] opacity-60 hover:text-yellow-500 hover:opacity-100"
+                            : "text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 hover:text-yellow-500"
                         )}
                         aria-label={isStarred ? "Unstar" : "Star"}
                         title={isStarred ? "Unstar" : "Star"}
@@ -1721,69 +1721,69 @@ export default function InboxPage() {
                         {isStarred ? "★" : "☆"}
                       </button>
 
-                      {/* Row click target */}
+                      {/* Sender name — fixed 160px, truncated */}
                       <button
                         type="button"
                         onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
                         onMouseEnter={() => { if (!t.draftId) prefetchThread(t.id); }}
-                        className="flex min-w-0 flex-1 items-center gap-3 self-stretch text-left"
+                        className={cn(
+                          "w-[160px] shrink-0 truncate px-2 text-left text-[13px]",
+                          isUnread ? "font-bold text-[var(--color-text)]" : "font-normal text-[var(--color-text)]"
+                        )}
                       >
-                        {/* Sender name — fixed width, truncated */}
-                        <span className={cn(
-                          "w-[140px] shrink-0 truncate text-[13px]",
-                          isUnread ? "font-bold text-[var(--color-text)]" : "font-normal text-[var(--color-text-muted)]"
-                        )}>
-                          {name}
-                        </span>
-                        {/* Subject + snippet — single truncated line */}
-                        <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-                          {chips.length > 0 && (
-                            <span className="flex shrink-0 items-center gap-1">
-                              {chips.map((l) => <LabelChip key={l.id} label={l} />)}
-                            </span>
-                          )}
-                          {/* block + truncate is the only reliable way to clip mixed inline spans */}
-                          <span className="block min-w-0 flex-1 truncate whitespace-nowrap text-[13px]">
-                            <span className={cn(
-                              isUnread ? "font-semibold text-[var(--color-text)]" : "font-normal text-[var(--color-text-muted)]"
-                            )}>
-                              {t.subject || "(no subject)"}
-                            </span>
-                            {t.snippet ? (
-                              <span className="font-normal text-[var(--color-text-faint)]"> — {t.snippet}</span>
-                            ) : null}
+                        {name}
+                      </button>
+
+                      {/* Subject + snippet — fills remaining space, single line, truncated before date */}
+                      <button
+                        type="button"
+                        onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
+                        onMouseEnter={() => { if (!t.draftId) prefetchThread(t.id); }}
+                        className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left pr-3"
+                      >
+                        {chips.length > 0 && (
+                          <span className="flex shrink-0 items-center gap-1">
+                            {chips.map((l) => <LabelChip key={l.id} label={l} />)}
                           </span>
+                        )}
+                        <span className="min-w-0 flex-1 truncate">
+                          <span className={cn(isUnread ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]")}>
+                            {t.subject || "(no subject)"}
+                          </span>
+                          {t.snippet ? (
+                            <span className="font-normal text-[var(--color-text-faint)]"> — {t.snippet}</span>
+                          ) : null}
                         </span>
                       </button>
 
-                      {/* Attachment indicator */}
-                      {t.hasAttachments && (
-                        <span className="shrink-0 text-[var(--color-text-faint)]" title="Has attachment">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      {/* Right-side: attachment icon + date — fixed width, never shrinks */}
+                      <span className="flex w-[155px] shrink-0 items-center justify-end gap-1.5 pr-4">
+                        {t.hasAttachments && (
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-[var(--color-text-faint)]">
                             <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.49" />
                           </svg>
-                        </span>
-                      )}
-
-                      {/* Date */}
-                      <time className={cn(
-                        "shrink-0 text-[11px] tabular-nums",
-                        isUnread ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-faint)]"
-                      )}>
-                        {t.date ? formatDate(t.date) : ""}
-                      </time>
+                        )}
+                        <time className={cn(
+                          "shrink-0 whitespace-nowrap text-[12px] tabular-nums",
+                          isUnread ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-faint)]"
+                        )}>
+                          {t.date ? formatDate(t.date) : ""}
+                        </time>
+                      </span>
                     </li>
                   );
                 })}
 
                 {/* Skeleton rows appended inside the scroll list while loading more */}
                 {loadingMore && [0,1,2,3].map((i) => (
-                  <li key={`skel-${i}`} className="flex items-center gap-3 border-b border-[var(--color-border)] px-3 py-3">
-                    <Skeleton className="skeleton-shimmer h-3.5 w-3.5 shrink-0 rounded" />
-                    <Skeleton className="skeleton-shimmer h-4 w-4 shrink-0 rounded-full" />
-                    <Skeleton className="skeleton-shimmer h-4 w-[120px] shrink-0 rounded" />
-                    <Skeleton className="skeleton-shimmer h-4 flex-1 rounded" />
-                    <Skeleton className="skeleton-shimmer h-3.5 w-14 shrink-0 rounded" />
+                  <li key={`skel-${i}`} className="flex h-[57px] items-center border-b border-[var(--color-border)]">
+                    <span className="flex w-10 shrink-0 items-center justify-center">
+                      <Skeleton className="skeleton-shimmer h-3.5 w-3.5 rounded" />
+                    </span>
+                    <Skeleton className="skeleton-shimmer h-3.5 w-6 shrink-0 rounded" />
+                    <Skeleton className="skeleton-shimmer mx-2 h-3.5 w-[140px] shrink-0 rounded" />
+                    <Skeleton className="skeleton-shimmer h-3.5 min-w-0 flex-1 rounded" />
+                    <Skeleton className="skeleton-shimmer mx-4 h-3.5 w-[130px] shrink-0 rounded" />
                   </li>
                 ))}
 

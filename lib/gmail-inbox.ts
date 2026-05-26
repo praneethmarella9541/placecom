@@ -170,6 +170,20 @@ export async function listDraftsPage(
   return { threads, nextPageToken: data.nextPageToken };
 }
 
+/**
+ * Map CATEGORY_* label ids → Gmail search query terms.
+ * Gmail threads in "Primary" don't always carry the CATEGORY_PERSONAL label
+ * themselves — so filtering by labelIds=CATEGORY_PERSONAL excludes them.
+ * Using `category:primary` in the `q` param correctly matches Gmail's own tab.
+ */
+const CATEGORY_LABEL_TO_QUERY: Record<string, string> = {
+  CATEGORY_PERSONAL:   "category:primary",
+  CATEGORY_PROMOTIONS: "category:promotions",
+  CATEGORY_SOCIAL:     "category:social",
+  CATEGORY_UPDATES:    "category:updates",
+  CATEGORY_FORUMS:     "category:forums",
+};
+
 export async function listThreadsPage(
   accessToken: string,
   options: {
@@ -178,15 +192,23 @@ export async function listThreadsPage(
     pageToken?: string;
     /** Gmail search terms (same syntax as Gmail search box), AND-ed with folder filters. */
     searchQuery?: string;
-    /** Optional additional label id to filter by (intersected with folder labels). */
+    /** Optional additional label id to filter by (intersected with folder labels).
+     *  CATEGORY_* labels are translated to `category:xxx` query terms so threads
+     *  that Gmail hasn't explicitly tagged still appear (matches Gmail's own tabs). */
     labelId?: string;
   }
 ): Promise<ThreadListPage> {
   const labels = [...LABELS[options.folder]];
-  if (options.labelId && !labels.includes(options.labelId)) labels.push(options.labelId);
+  // CATEGORY_* labels must NOT be added to labelIds — use q=category:xxx instead
+  // so that uncategorised inbox threads (which Gmail still shows as "Primary")
+  // are included. Only add the labelId to the filter list for real user labels.
+  const categoryQuery = options.labelId ? CATEGORY_LABEL_TO_QUERY[options.labelId] : undefined;
+  if (options.labelId && !categoryQuery && !labels.includes(options.labelId)) {
+    labels.push(options.labelId);
+  }
   const baseQ = QUERY[options.folder];
   const userQ = (options.searchQuery || "").trim();
-  const q = [baseQ, userQ].filter(Boolean).join(" ");
+  const q = [baseQ, categoryQuery, userQ].filter(Boolean).join(" ");
   const params = new URLSearchParams({
     maxResults: String(Math.min(Math.max(options.maxResults, 1), 100)),
   });

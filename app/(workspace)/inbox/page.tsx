@@ -49,6 +49,26 @@ type GmailLabel = {
   color?: { backgroundColor?: string; textColor?: string };
 };
 
+/**
+ * Insert a label into a sorted list, matching the server's sort order:
+ * user labels first (alphabetical), then system labels (alphabetical).
+ * Returns a new array — does not mutate the input.
+ * If a label with the same id already exists, returns the input unchanged
+ * (defensive against an upstream double-fire).
+ */
+function insertLabelSorted(list: GmailLabel[], next: GmailLabel): GmailLabel[] {
+  if (list.some((l) => l.id === next.id)) return list;
+  const out = [...list];
+  const cmp = (a: GmailLabel, b: GmailLabel) => {
+    if (a.type !== b.type) return a.type === "user" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  };
+  let i = 0;
+  while (i < out.length && cmp(out[i], next) < 0) i++;
+  out.splice(i, 0, next);
+  return out;
+}
+
 function senderName(from: string): string {
   if (!from) return "Unknown";
   const match = from.match(/^"?([^"<]+)"?\s*</);
@@ -1350,7 +1370,10 @@ export default function InboxPage() {
       });
       const j = (await res.json().catch(() => ({}))) as { error?: string; label?: GmailLabel };
       if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
-      setAllLabels((prev) => [...prev, j.label!]);
+      // Insert in alphabetical position (matching the server's sort order)
+      // so the new label appears where the user expects to see it, and it
+      // doesn't fall off the visible .slice(0, 15) window in the left rail.
+      setAllLabels((prev) => insertLabelSorted(prev, j.label!));
       await handleBulkLabelToggle(j.label.id, true);
     },
     [handleBulkLabelToggle]
@@ -1392,7 +1415,10 @@ export default function InboxPage() {
           label?: GmailLabel;
         };
         if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
-        setAllLabels((prev) => [...prev, j.label!]);
+        // Insert in alphabetical position (matching the server's sort order)
+      // so the new label appears where the user expects to see it, and it
+      // doesn't fall off the visible .slice(0, 15) window in the left rail.
+      setAllLabels((prev) => insertLabelSorted(prev, j.label!));
         if (selectedId) await toggleThreadLabel(j.label.id, true);
       } catch (e) {
         alert(e instanceof Error ? e.message : "Could not create label");
@@ -1414,7 +1440,10 @@ export default function InboxPage() {
       });
       const j = (await res.json().catch(() => ({}))) as { error?: string; label?: GmailLabel };
       if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
-      setAllLabels((prev) => [...prev, j.label!]);
+      // Insert in alphabetical position (matching the server's sort order)
+      // so the new label appears where the user expects to see it, and it
+      // doesn't fall off the visible .slice(0, 15) window in the left rail.
+      setAllLabels((prev) => insertLabelSorted(prev, j.label!));
       setNewLabelInput("");
       setShowNewLabelForm(false);
     } catch (e) {

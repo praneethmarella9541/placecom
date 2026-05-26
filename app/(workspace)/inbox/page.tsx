@@ -681,6 +681,17 @@ export default function InboxPage() {
   // In-flight guard for openDraft. A ref (vs state) keeps the useCallback
   // identity stable so click handlers don't rebind on every flip.
   const draftLoadingRef = useRef(false);
+  // Mirror of compose state — needed because saveDraft fires from useEffect
+  // cleanup / close handlers, after React has already cleared the state setters.
+  const composeStateRef = useRef({
+    to: "", cc: "", bcc: "", subject: "", body: "",
+    draftId: null as string | null,
+  });
+  // Debounced auto-save timer + last-saved snapshot (to avoid no-op POSTs).
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const draftLastSavedRef = useRef<string>("");
+  // True if a save is in-flight — prevents overlapping POSTs while typing fast.
+  const draftSavingRef = useRef(false);
   const [replyFiles, setReplyFiles] = useState<PendingFile[]>([]);
   const composeFileRef = useRef<HTMLInputElement>(null);
   const replyFileRef = useRef<HTMLInputElement>(null);
@@ -741,10 +752,131 @@ export default function InboxPage() {
     return set;
   }, [threads, messages]);
 
+  // Keep the compose state mirror up to date for the save-on-close path.
+  useEffect(() => {
+    composeStateRef.current = {
+      to: composeTo,
+      cc: composeCc,
+      bcc: composeBcc,
+      subject: composeSubject,
+      body: composeBody,
+      draftId: composeDraftId,
+    };
+  }, [composeTo, composeCc, composeBcc, composeSubject, composeBody, composeDraftId]);
+
+  /**
+   * Save the current compose contents as a Gmail draft. Idempotent: when
+   * composeDraftId is set we PUT (update), otherwise we POST (create new) and
+   * adopt the returned draftId so subsequent saves update the same draft.
+   *   - Skipped entirely if there's nothing meaningful to save (all fields empty).
+   *   - Skipped if the snapshot matches the last saved state (no-op guard).
+   *   - Returns the draftId on success, or null if skipped/failed.
+   */
+  const saveDraft = useCallback(async (): Promise<string | null> => {
+    const s = composeStateRef.current;
+    const hasContent =
+      s.to.trim() || s.cc.trim() || s.bcc.trim() ||
+      s.subject.trim() || s.body.trim();
+    if (!hasContent) return null;
+
+    const snapshot = JSON.stringify({
+      to: s.to, cc: s.cc, bcc: s.bcc, subject: s.subject, body: s.body,
+    });
+    if (snapshot === draftLastSavedRef.current) return s.draftId;
+    if (draftSavingRef.current) return s.draftId;
+
+    draftSavingRef.current = true;
+    try {
+      const res = await fetch("/api/gmail/drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: s.to.trim(),
+          cc: s.cc.trim() || undefined,
+          bcc: s.bcc.trim() || undefined,
+          subject: s.subject.trim(),
+          textBody: s.body,
+          ...(s.draftId ? { draftId: s.draftId } : {}),
+        }),
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as { draftId?: string };
+      draftLastSavedRef.current = snapshot;
+      // Adopt the new draftId so subsequent edits update the same draft.
+      if (data.draftId && data.draftId !== s.draftId) {
+        composeStateRef.current.draftId = data.draftId;
+        setComposeDraftId(data.draftId);
+      }
+      return data.draftId ?? s.draftId;
+    } catch {
+      return null;
+    } finally {
+      draftSavingRef.current = false;
+    }
+  }, []);
+
+  /**
+   * Called when the user closes the compose window without sending. Saves
+   * the current contents as a draft (matches Gmail behaviour — close = save,
+   * not lose).  After saving, refresh the drafts list so it appears there
+   * immediately.
+   */
+  const closeComposeAndSaveDraft = useCallback(() => {
+    // Cancel any pending debounced save — we're saving now.
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    // Snapshot the state mirror BEFORE the close-effect wipes it.
+    const hadContent =
+      composeStateRef.current.to.trim() ||
+      composeStateRef.current.cc.trim() ||
+      composeStateRef.current.bcc.trim() ||
+      composeStateRef.current.subject.trim() ||
+      composeStateRef.current.body.trim();
+    setComposeOpen(false);
+    setComposeCcBccOpen(false);
+    if (hadContent) {
+      void saveDraft().then(() => {
+        // Invalidate cached list views so the drafts folder shows the new draft.
+        listCacheRef.current.clear();
+        if (folder === "drafts") void loadThreads({ append: false, forceRefresh: true });
+        scheduleCountRefresh();
+      });
+    }
+  }, [saveDraft, folder, scheduleCountRefresh, loadThreads]);
+
+  /**
+   * Discard button — explicit "throw this away" action. Deletes the draft on
+   * the server (if one was previously saved) and closes the window without saving.
+   */
+  const discardComposeDraft = useCallback(() => {
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    const draftId = composeStateRef.current.draftId;
+    setComposeOpen(false);
+    setComposeCcBccOpen(false);
+    if (draftId) {
+      void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
+        method: "DELETE",
+      })
+        .then(() => {
+          listCacheRef.current.clear();
+          if (folder === "drafts") void loadThreads({ append: false, forceRefresh: true });
+          scheduleCountRefresh();
+        })
+        .catch(() => {/* non-fatal */});
+    }
+  }, [folder, scheduleCountRefresh, loadThreads]);
+
   useEffect(() => {
     if (!composeOpen) {
       // Reset ALL compose fields when the window closes so the next
       // "Compose" click always opens a blank window, never a stale draft.
+      // (closeComposeAndSaveDraft already snapshotted the state via the ref
+      //  before this fires, so the in-flight save isn't affected.)
       setComposeCcBccOpen(false);
       setComposeMinimized(false);
       setComposeDraftId(null);
@@ -754,12 +886,27 @@ export default function InboxPage() {
       setComposeSubject("");
       setComposeBody("");
       setComposeFiles([]);
+      draftLastSavedRef.current = "";
       return;
     }
     if (composeCc.trim() || composeBcc.trim()) {
       setComposeCcBccOpen(true);
     }
   }, [composeOpen, composeCc, composeBcc]);
+
+  // Debounced auto-save while the user is editing. Matches Gmail: ~2s after
+  // the last keystroke we silently POST the current contents as a draft.
+  // No spinners/UI — feels invisible like Gmail's own auto-save.
+  useEffect(() => {
+    if (!composeOpen) return;
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      void saveDraft();
+    }, 2000);
+    return () => {
+      if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    };
+  }, [composeOpen, composeTo, composeCc, composeBcc, composeSubject, composeBody, saveDraft]);
 
   const composeRecipientSuggestions = useMemo((): RecipientSuggestion[] => {
     const map = new Map<string, string>();
@@ -1062,6 +1209,12 @@ export default function InboxPage() {
       setComposeSubject(data.subject ?? "");
       setComposeBody(data.textBody ?? "");
       setComposeFiles([]);
+      // Seed the last-saved snapshot so auto-save sees no diff and stays
+      // quiet until the user actually edits something.
+      draftLastSavedRef.current = JSON.stringify({
+        to: data.to ?? "", cc: data.cc ?? "", bcc: data.bcc ?? "",
+        subject: data.subject ?? "", body: data.textBody ?? "",
+      });
       setComposeOpen(true);
       setComposeMinimized(false);
     } catch (e) {
@@ -2294,7 +2447,7 @@ export default function InboxPage() {
                   type="button"
                   className="fixed inset-0 z-[998] bg-black/20 lg:hidden"
                   aria-label={titleCase("Close compose")}
-                  onClick={() => setComposeOpen(false)}
+                  onClick={closeComposeAndSaveDraft}
                 />
               ) : null}
 
@@ -2321,11 +2474,7 @@ export default function InboxPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setComposeOpen(false);
-                      setComposeCcBccOpen(false);
-                      setComposeMinimized(false);
-                    }}
+                    onClick={closeComposeAndSaveDraft}
                     className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
                     aria-label={titleCase("Close")}
                   >
@@ -2354,10 +2503,7 @@ export default function InboxPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setComposeOpen(false);
-                        setComposeCcBccOpen(false);
-                      }}
+                      onClick={closeComposeAndSaveDraft}
                       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
                       aria-label={titleCase("Close")}
                     >
@@ -2520,13 +2666,7 @@ export default function InboxPage() {
                     <div className="flex flex-1 items-center justify-end gap-2">
                       <button
                         type="button"
-                        onClick={() => {
-                          setComposeOpen(false);
-                          setComposeCc("");
-                          setComposeBcc("");
-                          setComposeFiles([]);
-                          setComposeCcBccOpen(false);
-                        }}
+                        onClick={discardComposeDraft}
                         className="rounded-full px-4 py-2 text-[13px] font-medium text-[#5f6368] hover:bg-[#f1f3f4]"
                       >
                         {titleCase("Discard")}

@@ -198,16 +198,18 @@ export async function listThreadsPage(
     labelId?: string;
   }
 ): Promise<ThreadListPage> {
-  const labels = [...LABELS[options.folder]];
-  // CATEGORY_* labels must NOT be added to labelIds — use q=category:xxx instead
-  // so that uncategorised inbox threads (which Gmail still shows as "Primary")
-  // are included. Only add the labelId to the filter list for real user labels.
-  const categoryQuery = options.labelId ? CATEGORY_LABEL_TO_QUERY[options.labelId] : undefined;
-  if (options.labelId && !categoryQuery && !labels.includes(options.labelId)) {
+  const userQ = (options.searchQuery || "").trim();
+  const isSearch = userQ.length > 0;
+
+  // When a search query is active, drop ALL folder/label restrictions so
+  // results come from all mail (inbox + sent + etc.) — exactly like Gmail's
+  // own search bar. Only apply folder + category filters when browsing.
+  const labels: string[] = isSearch ? [] : [...LABELS[options.folder]];
+  const categoryQuery = (!isSearch && options.labelId) ? CATEGORY_LABEL_TO_QUERY[options.labelId] : undefined;
+  if (!isSearch && options.labelId && !categoryQuery && !labels.includes(options.labelId)) {
     labels.push(options.labelId);
   }
-  const baseQ = QUERY[options.folder];
-  const userQ = (options.searchQuery || "").trim();
+  const baseQ = isSearch ? "" : QUERY[options.folder];
   const q = [baseQ, categoryQuery, userQ].filter(Boolean).join(" ");
   const params = new URLSearchParams({
     maxResults: String(Math.min(Math.max(options.maxResults, 1), 100)),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -271,6 +272,8 @@ function MiniAgenda({ events, onSelect }: { events: EventRow[]; onSelect: (e: Ev
 /* ─── Main Page ─────────────────────────────────────────────── */
 export default function CalendarPage() {
   const calendarRef = useRef<FullCalendar>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [events, setEvents] = useState<EventRow[]>([]);
   const [recruiters, setRecruiters] = useState<RecruiterRow[]>([]);
@@ -312,6 +315,10 @@ export default function CalendarPage() {
   const [editEnd, setEditEnd] = useState("");
   const [editAttendees, setEditAttendees] = useState(""); // comma-sep emails
   const [editNotify, setEditNotify] = useState<SendUpdates>("all");
+  // Optional message sent to guests as a separate follow-up email when the
+  // event is saved. NOT stored on the event itself (the `editNotes` field
+  // above is the event description). Mirrors Gmail's "Add a note" UX.
+  const [editGuestNote, setEditGuestNote] = useState("");
 
   // Success state — shown after meeting created
   const [createdMeetLink, setCreatedMeetLink] = useState<string | null>(null);
@@ -495,18 +502,70 @@ export default function CalendarPage() {
     setEditEnd(ev.end?.dateTime ? toInputValue(new Date(ev.end.dateTime)) : "");
     setEditAttendees((ev.attendees ?? []).map((a) => a.email).filter(Boolean).join(", "));
     setEditNotify("all");
+    setEditGuestNote("");
     setEditError(null);
     setSelectedEvent(null); // close detail view
   }
 
-  /* ── Cancel / delete a scheduled event ────────────────── */
+  /* ── Cancel / delete a scheduled event ──────────────────
+   *
+   * Two-step flow matching Gmail's "Delete with note" UX:
+   *   1. User clicks Delete → we open the confirm modal with an optional
+   *      "Add a note to attendees" textarea.
+   *   2. User clicks Delete in the modal → we DELETE the event with
+   *      sendUpdates=all (Google sends its standard cancellation email),
+   *      then if a note was provided we also send a separate follow-up
+   *      email via Gmail to all attendees with the user's reason.
+   */
   const [deleteBusy, setDeleteBusy] = useState(false);
-  async function cancelEvent(ev: EventRow) {
+  const [deleteTarget, setDeleteTarget] = useState<EventRow | null>(null);
+  const [deleteNote, setDeleteNote] = useState("");
+
+  function openDeleteConfirm(ev: EventRow) {
+    setDeleteTarget(ev);
+    setDeleteNote("");
+  }
+
+  /** Send a follow-up email to a meeting's attendees explaining a change
+   *  or cancellation. No-op if there are no attendees or the note is empty. */
+  async function sendAttendeeNote(
+    ev: EventRow,
+    note: string,
+    kind: "cancelled" | "updated"
+  ): Promise<void> {
+    const recipients = (ev.attendees ?? [])
+      .map((a) => a.email)
+      .filter((e): e is string => !!e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+    if (recipients.length === 0 || !note.trim()) return;
+    const verb = kind === "cancelled" ? "Cancelled" : "Updated";
+    const subject = `${verb}: ${ev.summary || "(untitled meeting)"}`;
+    const lines = [
+      kind === "cancelled"
+        ? `The meeting "${ev.summary || "(untitled meeting)"}" has been cancelled.`
+        : `The meeting "${ev.summary || "(untitled meeting)"}" has been updated.`,
+      "",
+      "Note from the organizer:",
+      note.trim(),
+    ];
+    try {
+      await fetch("/api/gmail/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: recipients.join(", "),
+          subject,
+          textBody: lines.join("\n"),
+        }),
+      });
+    } catch {
+      // Non-fatal — the event was already cancelled / updated server-side.
+    }
+  }
+
+  async function confirmDelete() {
+    const ev = deleteTarget;
+    if (!ev) return;
     const hasGuests = (ev.attendees?.length ?? 0) > 0;
-    const message = hasGuests
-      ? "Delete this meeting and notify all guests of the cancellation?"
-      : "Delete this meeting?";
-    if (!window.confirm(message)) return;
     setDeleteBusy(true);
     try {
       // sendUpdates=all so Google emails the cancellation to attendees,
@@ -517,9 +576,16 @@ export default function CalendarPage() {
       );
       const body = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(body.error || "Failed to delete event");
-      // Close any open detail / edit views referencing this event
+      // Optional follow-up email with the user's note. Fired-and-forget so
+      // a hiccup doesn't block the UI from closing.
+      if (deleteNote.trim() && hasGuests) {
+        void sendAttendeeNote(ev, deleteNote, "cancelled");
+      }
+      // Close any open detail / edit / delete views referencing this event
       setSelectedEvent(null);
       setEditEvent(null);
+      setDeleteTarget(null);
+      setDeleteNote("");
       await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     } catch (e) {
       alert(clientFetchFailedMessage(e));
@@ -552,7 +618,14 @@ export default function CalendarPage() {
       });
       const body = (await res.json()) as { error?: string; event?: EventRow };
       if (!res.ok) throw new Error(body.error || "Failed to update event");
+      // If the user added a guest-note, send it as a separate follow-up
+      // email so attendees see the reason for the update. Skipped when
+      // editNotify is "none" (the user explicitly opted out of guest mail).
+      if (editGuestNote.trim() && editNotify !== "none" && editEvent) {
+        void sendAttendeeNote(editEvent, editGuestNote, "updated");
+      }
       setEditEvent(null);
+      setEditGuestNote("");
       await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     } catch (e) {
       setEditError(clientFetchFailedMessage(e));
@@ -566,6 +639,37 @@ export default function CalendarPage() {
     await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     setSyncing(false);
   }
+
+  /* ── Deep-link from inbox invite buttons ─────────────────
+   *
+   * The inbox view routes here with ?eventId=...&action=edit|delete after
+   * the user clicks the inline Edit / Delete button on a calendar invite
+   * email. Once the events list has loaded we find the matching event and
+   * auto-open the corresponding modal. The URL is then cleared so a
+   * refresh doesn't re-trigger the action.
+   */
+  const handledDeepLinkRef = useRef(false);
+  useEffect(() => {
+    if (handledDeepLinkRef.current) return;
+    if (loadingEvents) return; // wait for events to load
+    const eventId = searchParams.get("eventId");
+    const action = searchParams.get("action");
+    if (!eventId || (action !== "edit" && action !== "delete")) return;
+    const match = events.find((e) => e.id === eventId);
+    if (!match) {
+      // Event not present in the current loaded window — clear the URL
+      // and surface a soft hint rather than getting stuck retrying.
+      handledDeepLinkRef.current = true;
+      router.replace("/calendar");
+      alert("That meeting isn't in the currently loaded date range. Browse the calendar to find it.");
+      return;
+    }
+    handledDeepLinkRef.current = true;
+    if (action === "edit") openEdit(match);
+    else openDeleteConfirm(match);
+    // Strip the query params so a page refresh doesn't re-open the modal.
+    router.replace("/calendar");
+  }, [events, loadingEvents, searchParams, router]);
 
   /* ── Render ──────────────────────────────────────────── */
   return (
@@ -1159,7 +1263,7 @@ export default function CalendarPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => void cancelEvent(selectedEvent)}
+                  onClick={() => openDeleteConfirm(selectedEvent)}
                   disabled={deleteBusy}
                   className="btn-ghost text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] disabled:opacity-50"
                   title="Delete this meeting"
@@ -1286,6 +1390,28 @@ export default function CalendarPage() {
                 ))}
               </div>
 
+              {/* Optional message to guests — sent as a separate email so
+                  attendees see the reason for the update. Hidden when the
+                  user opts out of guest notifications altogether. */}
+              {editNotify !== "none" && (editEvent?.attendees?.length ?? 0) > 0 && (
+                <div>
+                  <label htmlFor="edit-guest-note" className="mb-1 block text-[12px] font-medium text-[var(--color-text-muted)]">
+                    Add a note to guests <span className="text-[var(--color-text-faint)]">(optional)</span>
+                  </label>
+                  <textarea
+                    id="edit-guest-note"
+                    rows={2}
+                    placeholder="Explain what changed…"
+                    value={editGuestNote}
+                    onChange={(e) => setEditGuestNote(e.target.value)}
+                    className="input-field w-full resize-none text-[13px]"
+                  />
+                  <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
+                    Sent as a separate email alongside the update notice.
+                  </p>
+                </div>
+              )}
+
               {editError && (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
                   {editError}
@@ -1296,7 +1422,7 @@ export default function CalendarPage() {
             <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] px-5 py-4">
               <button
                 type="button"
-                onClick={() => editEvent && void cancelEvent(editEvent)}
+                onClick={() => editEvent && openDeleteConfirm(editEvent)}
                 disabled={deleteBusy}
                 className="btn-ghost text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] disabled:opacity-50"
                 title="Delete this meeting"
@@ -1316,6 +1442,69 @@ export default function CalendarPage() {
                 {editBusy ? "Saving…" : editNotify === "none" ? "Save quietly" : "Save & notify"}
               </button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* ── Delete confirmation modal (with optional note) ──── */}
+      {deleteTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="card w-full max-w-md overflow-hidden animate-scale-in">
+            <div className="border-b border-[var(--color-border)] px-5 py-4">
+              <h3 className="text-base font-semibold text-[var(--color-text)]">
+                Delete meeting?
+              </h3>
+              <p className="mt-1 text-[13px] text-[var(--color-text-muted)] line-clamp-2">
+                {deleteTarget.summary || "(untitled meeting)"}
+              </p>
+            </div>
+            <div className="space-y-3 px-5 py-4">
+              {(deleteTarget.attendees?.length ?? 0) > 0 ? (
+                <>
+                  <p className="text-[13px] text-[var(--color-text)]">
+                    All {deleteTarget.attendees?.length} guests will receive a cancellation email.
+                  </p>
+                  <div>
+                    <label htmlFor="delete-note" className="mb-1 block text-[12px] font-medium text-[var(--color-text-muted)]">
+                      Add a note to guests <span className="text-[var(--color-text-faint)]">(optional)</span>
+                    </label>
+                    <textarea
+                      id="delete-note"
+                      rows={3}
+                      value={deleteNote}
+                      onChange={(e) => setDeleteNote(e.target.value)}
+                      placeholder="Explain why you're cancelling…"
+                      className="input-field w-full resize-none text-[13px]"
+                    />
+                    <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
+                      Sent as a separate email after the cancellation notice.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <p className="text-[13px] text-[var(--color-text)]">
+                  This meeting will be permanently deleted.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-5 py-3">
+              <button
+                type="button"
+                onClick={() => { setDeleteTarget(null); setDeleteNote(""); }}
+                disabled={deleteBusy}
+                className="btn-ghost"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDelete()}
+                disabled={deleteBusy}
+                className="rounded-[var(--radius-md)] bg-[var(--color-danger)] px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {deleteBusy ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </div>
         </div>

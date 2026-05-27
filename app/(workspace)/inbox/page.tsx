@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { LabelChip } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { RichTextEditor, richTextIsEmpty } from "@/components/RichTextEditor";
@@ -81,6 +82,51 @@ function FilterRow({ label, children }: { label: string; children: ReactNode }) 
       <div className="min-w-0">{children}</div>
     </div>
   );
+}
+
+/**
+ * Detect whether a message body looks like a Google Calendar invite.
+ * We use multiple signals (Google-Calendar sender, ICS attachment, subject
+ * prefix, calendar.google.com link in body) because individual signals
+ * miss edge cases (forwarded invites, alternate sender domains, etc.).
+ */
+function isCalendarInvite(msg: {
+  from?: string;
+  subject?: string;
+  bodyHtml?: string;
+  attachments?: { filename: string; mimeType: string }[];
+}): boolean {
+  const from = (msg.from || "").toLowerCase();
+  if (from.includes("calendar-notification@google.com")) return true;
+  if ((msg.attachments ?? []).some((a) => /invite\.ics$/i.test(a.filename) || /^text\/calendar/i.test(a.mimeType))) return true;
+  const subj = msg.subject || "";
+  if (/^(?:invitation|updated invitation|cancelled event|accepted|declined|tentatively accepted):/i.test(subj)) return true;
+  if ((msg.bodyHtml || "").includes("calendar.google.com/calendar/event")) return true;
+  return false;
+}
+
+/**
+ * Extract the Google Calendar event id from an invite email's HTML body.
+ * Google embeds a "View on Google Calendar" link of the form:
+ *   https://calendar.google.com/calendar/event?action=VIEW&eid=<base64>
+ * The eid decodes to "{eventId} {calendarId}" — we return the eventId.
+ * Returns null if no link is present or the eid can't be decoded.
+ */
+function extractCalendarEventId(bodyHtml?: string): string | null {
+  if (!bodyHtml) return null;
+  const m = bodyHtml.match(/[?&]eid=([A-Za-z0-9_\-=%]+)/);
+  if (!m) return null;
+  try {
+    // The eid is base64url + may be URL-encoded.
+    const raw = decodeURIComponent(m[1]).replace(/-/g, "+").replace(/_/g, "/");
+    const pad = raw.length % 4 ? raw + "=".repeat(4 - (raw.length % 4)) : raw;
+    const decoded = atob(pad);
+    // Decoded form: "<eventId> <calendarId>"
+    const eventId = decoded.split(" ")[0];
+    return eventId || null;
+  } catch {
+    return null;
+  }
 }
 
 function senderName(from: string): string {
@@ -731,6 +777,7 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
 }
 
 export default function InboxPage() {
+  const router = useRouter();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
@@ -2847,6 +2894,44 @@ export default function InboxPage() {
                           <time className="text-[10px] text-zinc-400">{formatDate(m.date)}</time>
                         </div>
                       </div>
+                      {/* Inline calendar-invite actions — only render when
+                          the message is a Google Calendar invite AND we can
+                          extract a usable event id from its body. Clicking
+                          a button routes to /calendar with the event-id and
+                          desired action so the existing Edit/Delete modals
+                          (which already support an optional guest note)
+                          open pre-loaded. Mirrors Gmail's inline RSVP UX. */}
+                      {(() => {
+                        if (!isCalendarInvite(m)) return null;
+                        const eventId = extractCalendarEventId(m.bodyHtml);
+                        if (!eventId) return null;
+                        const go = (action: "edit" | "delete") => {
+                          const qs = new URLSearchParams({ eventId, action });
+                          router.push(`/calendar?${qs.toString()}`);
+                        };
+                        return (
+                          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2 text-[12px]">
+                            <span className="font-medium text-[var(--color-text-muted)]">Calendar invite</span>
+                            <span className="text-[var(--color-text-faint)]">·</span>
+                            <button
+                              type="button"
+                              onClick={() => go("edit")}
+                              className="rounded px-2 py-1 font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+                              title="Edit this meeting (opens Calendar)"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => go("delete")}
+                              className="rounded px-2 py-1 font-medium text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+                              title="Delete this meeting (opens Calendar)"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        );
+                      })()}
                       <HtmlBody html={m.bodyHtml} plain={m.body} />
                       {m.attachments && m.attachments.length > 0 && (
                         <AttachmentChips attachments={m.attachments} messageId={m.id} />

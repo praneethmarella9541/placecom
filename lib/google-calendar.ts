@@ -45,7 +45,7 @@ async function parseGoogleErrorBody(res: Response): Promise<string> {
 export async function listCalendarEvents(
   accessToken: string,
   calendarId: string,
-  opts: { timeMin?: string; timeMax?: string; maxResults?: number } = {}
+  opts: { timeMin?: string; timeMax?: string; maxResults?: number; iCalUID?: string } = {}
 ): Promise<CalendarEventItem[]> {
   const cal = encodeURIComponent(calendarId.trim() || "primary");
   const u = new URL(`${CALENDAR_API}/calendars/${cal}/events`);
@@ -54,6 +54,10 @@ export async function listCalendarEvents(
   u.searchParams.set("maxResults", String(opts.maxResults ?? 100));
   if (opts.timeMin) u.searchParams.set("timeMin", opts.timeMin);
   if (opts.timeMax) u.searchParams.set("timeMax", opts.timeMax);
+  // iCalUID lookup — invite emails carry the event's iCalUID in their ICS
+  // attachment, so the inbox can pass it here to resolve the event without
+  // knowing the calendar event id.
+  if (opts.iCalUID) u.searchParams.set("iCalUID", opts.iCalUID);
 
   let res: Response;
   try {
@@ -82,7 +86,7 @@ export async function listCalendarEvents(
 
 export async function listPrimaryCalendarEvents(
   accessToken: string,
-  opts: { timeMin?: string; timeMax?: string; maxResults?: number } = {}
+  opts: { timeMin?: string; timeMax?: string; maxResults?: number; iCalUID?: string } = {}
 ): Promise<CalendarEventItem[]> {
   return listCalendarEvents(accessToken, "primary", opts);
 }

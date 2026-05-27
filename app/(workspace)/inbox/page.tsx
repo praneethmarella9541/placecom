@@ -570,12 +570,9 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
     // Force-readable text for inline grey colours that calendar invites &
     // marketing emails love to use ("#888", "#999", "#aaa", etc.). Google
     // Calendar invite labels ("When", "Organizer", "Guests"…) are set to
-    // ~#888 inline which looks washed-out against our background. We bump
-    // them via attribute selectors that match the inline style EXACTLY as
-    // Google emits it, then a few common variants.
-    const greyOverride = isDark
-      ? "color: #d4d4d8 !important;"
-      : "color: #3f3f46 !important;";
+    // ~#888 inline which looks washed-out against our background. The
+    // selectors below restore contrast — the colour used is the same `fg`
+    // applied to the body, so light/dark mode is handled automatically.
     doc.open();
     doc.write(`<!DOCTYPE html><html><head><style>
       *, *::before, *::after { box-sizing: border-box; }
@@ -1621,7 +1618,7 @@ export default function InboxPage() {
           scheduleCountRefresh();
         });
     },
-    [selectedThreadIds, scheduleCountRefresh, mutateThreads, loadThreads]
+    [selectedThreadIds, threads, scheduleCountRefresh, mutateThreads, loadThreads]
   );
 
   // Re-compute union of labels across selected threads whenever selection changes,

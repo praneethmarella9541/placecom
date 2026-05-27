@@ -7,7 +7,12 @@ export const runtime = "nodejs";
 const MAX_BYTES = 50 * 1024 * 1024;
 
 function sanitizeFileName(name: string): string {
-  const base = name.replace(/[/\\]/g, "").trim();
+  // Some browsers populate File.name with the full webkitRelativePath
+  // ("MyFolder/sub/file.txt") during folder uploads, instead of just the
+  // basename. Keep only the LAST path segment, then strip stray slashes,
+  // so the Drive file ends up named "file.txt" — not "MyFoldersubfile.txt".
+  const parts = name.split(/[/\\]/);
+  const base = parts[parts.length - 1].trim();
   return base || "upload";
 }
 

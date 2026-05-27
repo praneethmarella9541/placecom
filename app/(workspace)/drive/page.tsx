@@ -303,7 +303,13 @@ export default function DrivePage() {
    *  and folder-upload paths so error handling stays consistent. */
   async function uploadSingleFile(file: File, parentId: string): Promise<DriveFileRow> {
     const fd = new FormData();
-    fd.set("file", file);
+    // Pass the explicit basename as the third FormData argument so we
+    // don't ride on File.name — which some browsers populate with the
+    // full webkitRelativePath ("Folder/sub/file.txt") during folder uploads,
+    // making the file land with a concatenated name.
+    const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || "";
+    const basename = (rel ? rel.split("/").pop() : file.name) || file.name || "upload";
+    fd.set("file", file, basename);
     fd.set("parent", parentId);
     const res = await fetch("/api/drive/upload", { method: "POST", body: fd });
     const raw = await res.text();

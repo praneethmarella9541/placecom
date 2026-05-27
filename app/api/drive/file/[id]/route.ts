@@ -4,6 +4,11 @@ import {
   buildDriveContentFetch,
   suggestedDownloadName,
 } from "@/lib/drive-file-proxy";
+import {
+  getDriveFileParent,
+  moveDriveFile,
+  renameDriveFile,
+} from "@/lib/drive";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -148,4 +153,95 @@ export async function GET(
       ...FRAMING_HEADERS,
     },
   });
+}
+
+/**
+ * PATCH — rename a file/folder, move it to a new parent, or both.
+ *
+ * Body shape (all fields optional, at least one required):
+ *   { name?: string, parentId?: string }
+ *
+ * For moves we resolve the file's current parent server-side so the caller
+ * doesn't have to send it; this also handles legacy multi-parent files
+ * (rare) by only swapping the first parent.
+ */
+export async function PATCH(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const auth = await requireGmailAccessToken(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.message }, { status: auth.status });
+  }
+  const fileId = params.id?.trim();
+  if (!fileId) {
+    return NextResponse.json({ error: "Missing file id" }, { status: 400 });
+  }
+
+  let body: { name?: string; parentId?: string };
+  try {
+    body = (await request.json()) as { name?: string; parentId?: string };
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const nextName = typeof body.name === "string" ? body.name.trim() : undefined;
+  const nextParent =
+    typeof body.parentId === "string" ? body.parentId.trim() : undefined;
+
+  if (!nextName && !nextParent) {
+    return NextResponse.json(
+      { error: "Provide at least one of `name` or `parentId`" },
+      { status: 400 }
+    );
+  }
+  if (nextName && nextName.length > 256) {
+    return NextResponse.json(
+      { error: "Name is too long (max 256 chars)" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    let file;
+    // Rename first if requested — keeps both ops idempotent if move fails.
+    if (nextName) {
+      file = await renameDriveFile(auth.accessToken, fileId, nextName);
+    }
+    if (nextParent) {
+      const currentParent = await getDriveFileParent(auth.accessToken, fileId);
+      if (!currentParent) {
+        return NextResponse.json(
+          { error: "Cannot determine current parent for move" },
+          { status: 500 }
+        );
+      }
+      if (currentParent !== nextParent) {
+        file = await moveDriveFile(auth.accessToken, fileId, nextParent, currentParent);
+      }
+    }
+    return NextResponse.json({ file });
+  } catch (e) {
+    const err = e as Error & { code?: string };
+    if (err.code === "UNAUTHORIZED") {
+      return NextResponse.json(
+        { error: "Google token expired. Sign in again." },
+        { status: 401 }
+      );
+    }
+    if (err.code === "DRIVE_INSUFFICIENT_SCOPE") {
+      return NextResponse.json(
+        {
+          error: "DRIVE_INSUFFICIENT_SCOPE",
+          message:
+            "Modifying files requires the full Drive scope. Sign out and sign in again to grant it.",
+        },
+        { status: 403 }
+      );
+    }
+    return NextResponse.json(
+      { error: err.message || "Drive update failed" },
+      { status: 500 }
+    );
+  }
 }

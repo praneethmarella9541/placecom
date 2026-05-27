@@ -16,7 +16,8 @@ import {
 } from "@/components/Icons";
 import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
-import { Share2, HardDrive, Users, Star } from "lucide-react";
+import { DriveMoveModal } from "@/components/DriveMoveModal";
+import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput } from "lucide-react";
 
 type DriveView = "my-drive" | "shared-with-me" | "starred";
 type SharedDrive = { id: string; name: string };
@@ -74,6 +75,17 @@ export default function DrivePage() {
   const [previewFile, setPreviewFile] = useState<DriveFileRow | null>(null);
   // Target file/folder for the share modal — null means modal closed.
   const [shareTarget, setShareTarget] = useState<DriveFileRow | null>(null);
+  // Target file/folder for the move modal.
+  const [moveTarget, setMoveTarget] = useState<DriveFileRow | null>(null);
+  // Inline-rename target id + the value being typed.
+  const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  // Row-action menu (kebab) open state — keyed by file id.
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  // "New folder" modal state.
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -263,6 +275,95 @@ export default function DrivePage() {
     }
   }
 
+  /* ── Rename / Move / New-folder handlers ──────────────────── */
+
+  /** Begin renaming a row — replaces its label with an input. */
+  function startRename(file: DriveFileRow) {
+    setRenameTargetId(file.id);
+    setRenameValue(file.name);
+    setMenuOpenId(null);
+  }
+
+  /** Commit an inline rename. Skip the PATCH if name didn't change or is empty. */
+  async function commitRename(file: DriveFileRow) {
+    const next = renameValue.trim();
+    if (!next || next === file.name) {
+      setRenameTargetId(null);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: next }),
+      });
+      const j = (await res.json()) as { file?: DriveFileRow; error?: string };
+      if (!res.ok) throw new Error(j.error || "Rename failed");
+      // Update the row in-place so the user sees the new name without a refetch
+      setDriveFiles((rows) =>
+        rows.map((r) => (r.id === file.id ? { ...r, name: next } : r))
+      );
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Rename failed");
+    } finally {
+      setRenameTargetId(null);
+    }
+  }
+
+  /** Issue a Drive move PATCH and refresh the list. */
+  async function performMove(file: DriveFileRow, newParentId: string) {
+    const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parentId: newParentId }),
+    });
+    const j = (await res.json()) as { error?: string };
+    if (!res.ok) throw new Error(j.error || "Move failed");
+    // Removed from the current folder view — drop it from the list.
+    setDriveFiles((rows) => rows.filter((r) => r.id !== file.id));
+  }
+
+  /** Create a new folder under the current location and refresh. */
+  async function createFolder() {
+    const name = newFolderName.trim();
+    if (!name || creatingFolder) return;
+    setCreatingFolder(true);
+    try {
+      const res = await fetch("/api/drive/folders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, parentId: currentParentId }),
+      });
+      const j = (await res.json()) as { file?: DriveFileRow; error?: string };
+      if (!res.ok) throw new Error(j.error || "Failed to create folder");
+      setNewFolderOpen(false);
+      setNewFolderName("");
+      await loadDriveFiles({ append: false });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to create folder");
+    } finally {
+      setCreatingFolder(false);
+    }
+  }
+
+  /** Close the kebab menu on outside-click / Escape. */
+  useEffect(() => {
+    if (!menuOpenId) return;
+    function onDoc(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (target && !target.closest("[data-row-menu]")) setMenuOpenId(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpenId(null);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpenId]);
+
   // Root label for the breadcrumb's first crumb — reflects which sidebar
   // view we're in.
   const viewRootLabel =
@@ -412,6 +513,15 @@ export default function DrivePage() {
           />
           <button
             type="button"
+            onClick={() => { setNewFolderOpen(true); setNewFolderName(""); }}
+            className="btn-ghost shrink-0 gap-2 px-3 py-2 text-[13px]"
+            title="New folder"
+          >
+            <FolderPlus className="h-4 w-4 shrink-0" strokeWidth={2} />
+            {titleCase("New folder")}
+          </button>
+          <button
+            type="button"
             onClick={() => triggerUpload()}
             disabled={uploadBusy}
             className="btn-secondary shrink-0 gap-2 px-3 py-2 text-[13px]"
@@ -472,19 +582,83 @@ export default function DrivePage() {
                 .filter(Boolean)
                 .join(" · ");
 
-              // Row layout: main clickable area (open/preview) + a Share
-              // button that stops propagation. Hover reveals the Share
-              // button so the row stays clean at rest, matching Google Drive.
-              const ShareButton = (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setShareTarget(file); }}
-                  className="shrink-0 rounded-md p-1.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-800 group-hover:opacity-100 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
-                  title={isFolder ? "Share folder" : "Share file"}
-                  aria-label="Share"
-                >
-                  <Share2 className="h-3.5 w-3.5" strokeWidth={2} />
-                </button>
+              // Row layout: main clickable area (open/preview) + a kebab
+              // menu (Share / Rename / Move). Hover-reveal at rest so the
+              // row stays clean, matching Google Drive's appearance.
+              const isRenaming = renameTargetId === file.id;
+              const RowMenu = (
+                <div className="relative" data-row-menu>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuOpenId(menuOpenId === file.id ? null : file.id);
+                    }}
+                    className={cn(
+                      "shrink-0 rounded-md p-1.5 text-zinc-500 transition-opacity hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
+                      menuOpenId === file.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    )}
+                    title="More actions"
+                    aria-label="More actions"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpenId === file.id}
+                  >
+                    <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />
+                  </button>
+                  {menuOpenId === file.id && (
+                    <div
+                      className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                      role="menu"
+                    >
+                      <RowMenuItem
+                        icon={<Share2 className="h-3.5 w-3.5" />}
+                        label="Share"
+                        onClick={() => { setMenuOpenId(null); setShareTarget(file); }}
+                      />
+                      <RowMenuItem
+                        icon={<Pencil className="h-3.5 w-3.5" />}
+                        label="Rename"
+                        onClick={() => startRename(file)}
+                      />
+                      <RowMenuItem
+                        icon={<FolderInput className="h-3.5 w-3.5" />}
+                        label="Move"
+                        onClick={() => { setMenuOpenId(null); setMoveTarget(file); }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+
+              // While renaming, the label cell becomes an input field.
+              // It autofocuses, selects all, and commits on blur / Enter
+              // (Escape cancels).  Click events inside it don't propagate
+              // so we don't accidentally enter the folder.
+              const NameOrEditor = isRenaming ? (
+                <input
+                  autoFocus
+                  type="text"
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
+                  onBlur={() => void commitRename(file)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); void commitRename(file); }
+                    else if (e.key === "Escape") { e.preventDefault(); setRenameTargetId(null); }
+                  }}
+                  onFocus={(e) => {
+                    // Select just the basename for files (preserve extension).
+                    const v = e.currentTarget.value;
+                    const dot = v.lastIndexOf(".");
+                    if (!isFolder && dot > 0) e.currentTarget.setSelectionRange(0, dot);
+                    else e.currentTarget.select();
+                  }}
+                  className="w-full rounded border border-indigo-300 bg-white px-1.5 py-0.5 text-[13px] font-semibold text-zinc-900 outline-none focus:border-indigo-500 dark:border-indigo-700 dark:bg-zinc-900 dark:text-zinc-100"
+                />
+              ) : (
+                <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
+                  {file.name}
+                </p>
               );
 
               if (isFolder) {
@@ -492,21 +666,19 @@ export default function DrivePage() {
                   <li key={file.id} className="group flex items-stretch hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
                     <button
                       type="button"
-                      onClick={() => enterFolder(file.id, file.name)}
+                      onClick={() => !isRenaming && enterFolder(file.id, file.name)}
                       className="flex flex-1 items-start gap-3 px-4 py-3 text-left transition-colors"
                     >
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100/80 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
                         <IconFolder className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
-                          {file.name}
-                        </p>
+                        {NameOrEditor}
                         <p className="mt-0.5 text-[11px] text-zinc-500">{metaLine}</p>
                       </div>
                     </button>
                     <div className="flex items-center gap-1 pr-3">
-                      {ShareButton}
+                      {RowMenu}
                       <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
                     </div>
                   </li>
@@ -517,21 +689,19 @@ export default function DrivePage() {
                 <li key={file.id} className="group flex items-stretch hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
                   <button
                     type="button"
-                    onClick={() => setPreviewFile(file)}
+                    onClick={() => !isRenaming && setPreviewFile(file)}
                     className="flex flex-1 cursor-pointer items-start gap-3 px-4 py-3 text-left text-zinc-800 transition-colors dark:text-zinc-200"
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-200/60 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                       <IconFile className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
-                        {file.name}
-                      </p>
+                      {NameOrEditor}
                       <p className="mt-0.5 text-[11px] text-zinc-500">{metaLine}</p>
                     </div>
                   </button>
                   <div className="flex items-center gap-1 pr-3">
-                    {ShareButton}
+                    {RowMenu}
                     <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />
                   </div>
                 </li>
@@ -647,7 +817,93 @@ export default function DrivePage() {
           onClose={() => setShareTarget(null)}
         />
       ) : null}
+
+      {/* Move modal — folder picker tree */}
+      {moveTarget ? (
+        <DriveMoveModal
+          fileId={moveTarget.id}
+          fileName={moveTarget.name}
+          currentParentId={currentParentId}
+          onMove={(newParent) => performMove(moveTarget, newParent)}
+          onClose={() => setMoveTarget(null)}
+        />
+      ) : null}
+
+      {/* New folder modal */}
+      {newFolderOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in"
+          onClick={() => !creatingFolder && setNewFolderOpen(false)}
+        >
+          <div
+            className="card w-full max-w-sm overflow-hidden animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="border-b border-[var(--color-border)] px-5 py-4">
+              <h3 className="text-base font-semibold text-[var(--color-text)]">New folder</h3>
+            </div>
+            <div className="px-5 py-4">
+              <input
+                autoFocus
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { e.preventDefault(); void createFolder(); }
+                  if (e.key === "Escape" && !creatingFolder) setNewFolderOpen(false);
+                }}
+                placeholder="Untitled folder"
+                className="input-field w-full text-[13px]"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setNewFolderOpen(false)}
+                disabled={creatingFolder}
+                className="btn-ghost"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void createFolder()}
+                disabled={creatingFolder || !newFolderName.trim()}
+                className="btn-primary disabled:opacity-50"
+              >
+                {creatingFolder ? "Creating…" : "Create"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * Single item in the per-row kebab menu — icon + label, stops click
+ * propagation so the row itself doesn't get clicked underneath.
+ */
+function RowMenuItem({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+      role="menuitem"
+    >
+      <span className="shrink-0 text-zinc-500 dark:text-zinc-400">{icon}</span>
+      <span>{label}</span>
+    </button>
   );
 }
 

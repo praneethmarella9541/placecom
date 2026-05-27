@@ -435,3 +435,162 @@ export async function listSharedDrives(
   const data = (await res.json()) as { drives?: SharedDrive[] };
   return data.drives ?? [];
 }
+
+/* ───────────────────────── File ops (rename / move / new folder) ─────────── */
+
+/**
+ * Rename a Drive file or folder. PATCH /files/{id} with a body that just
+ * contains {name} is the canonical operation.
+ */
+export async function renameDriveFile(
+  accessToken: string,
+  fileId: string,
+  name: string,
+): Promise<DriveFileRow> {
+  const params = new URLSearchParams({
+    fields: "id,name,mimeType,modifiedTime,size,webViewLink",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name }),
+      },
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (rename)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive rename ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    throw err;
+  }
+  return (await res.json()) as DriveFileRow;
+}
+
+/**
+ * Move a file/folder from one parent to another. Drive's API uses
+ * addParents / removeParents query params on PATCH (a file can have
+ * multiple parents in legacy data, but UIs effectively treat moves as
+ * single-parent swaps — which is what we do here).
+ */
+export async function moveDriveFile(
+  accessToken: string,
+  fileId: string,
+  newParentId: string,
+  oldParentId: string,
+): Promise<DriveFileRow> {
+  const params = new URLSearchParams({
+    addParents: newParentId,
+    removeParents: oldParentId,
+    fields: "id,name,mimeType,modifiedTime,size,webViewLink",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        // Empty body — query params do all the work for moves.
+        body: JSON.stringify({}),
+      },
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (move)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive move ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    throw err;
+  }
+  return (await res.json()) as DriveFileRow;
+}
+
+/**
+ * Create a new folder under the given parent. parentId can be "root" for
+ * the user's My Drive root, a regular folder id, or a shared-drive id.
+ */
+export async function createDriveFolder(
+  accessToken: string,
+  name: string,
+  parentId: string,
+): Promise<DriveFileRow> {
+  const params = new URLSearchParams({
+    fields: "id,name,mimeType,modifiedTime,size,webViewLink",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(`${DRIVE_API}/files?${params.toString()}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name,
+        mimeType: "application/vnd.google-apps.folder",
+        parents: [parentId],
+      }),
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (create folder)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive create-folder ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    throw err;
+  }
+  return (await res.json()) as DriveFileRow;
+}
+
+/**
+ * Resolve a file/folder's parent so we can build the addParents/removeParents
+ * pair for moveDriveFile. Returns the first parent (Drive supports multiple
+ * legacy parents but folders these days have exactly one).
+ */
+export async function getDriveFileParent(
+  accessToken: string,
+  fileId: string,
+): Promise<string | null> {
+  const params = new URLSearchParams({
+    fields: "parents",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (file parent)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive parent ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    throw err;
+  }
+  const data = (await res.json()) as { parents?: string[] };
+  return data.parents?.[0] ?? null;
+}

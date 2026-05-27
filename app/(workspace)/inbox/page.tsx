@@ -628,22 +628,54 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
     const fg = isDark ? "#d4d4d8" : "#27272a";
 
     doc.open();
-    doc.write(`<!DOCTYPE html><html><head><style>
-      *, *::before, *::after { box-sizing: border-box; }
-      body {
-        margin: 0; padding: 0;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        font-size: 14px; line-height: 1.6;
-        color: ${fg}; background: ${bg};
-        word-break: break-word; overflow-wrap: break-word;
-      }
-      a { color: var(--color-primary, #0d7c78); }
-      img { max-width: 100%; height: auto; }
-      blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid #d4d4d8; color: #71717a; }
-      table { border-collapse: collapse; max-width: 100%; }
-      pre { white-space: pre-wrap; overflow-x: auto; }
-    </style></head><body>${html}</body></html>`);
+    doc.write(`<!DOCTYPE html><html><head>
+      <!-- Force every anchor without an explicit target to open in a new
+           tab. With <base target="_blank"> we don't have to crawl the
+           DOM rewriting links (which would break on lazy-rendered emails)
+           and we also can't accidentally navigate THIS iframe away. -->
+      <base target="_blank">
+      <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        body {
+          margin: 0; padding: 0;
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+          font-size: 14px; line-height: 1.6;
+          color: ${fg}; background: ${bg};
+          word-break: break-word; overflow-wrap: break-word;
+        }
+        a { color: var(--color-primary, #0d7c78); }
+        img { max-width: 100%; height: auto; }
+        blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid #d4d4d8; color: #71717a; }
+        table { border-collapse: collapse; max-width: 100%; }
+        pre { white-space: pre-wrap; overflow-x: auto; }
+      </style>
+    </head><body>${html}</body></html>`);
     doc.close();
+
+    // Belt-and-braces: even with <base target="_blank">, some sandbox
+    // configurations silently swallow the click. Intercept anchor clicks
+    // at capture and re-open the URL via the parent window.open — which
+    // is unaffected by the iframe's sandbox.
+    const onLinkClick = (e: Event) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const anchor = target.closest("a[href]") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const href = anchor.getAttribute("href") ?? "";
+      // Skip in-page anchors and mailto/tel (let the browser handle those).
+      if (!href || href.startsWith("#")) return;
+      // Convert relative URLs to absolute using the iframe document's base
+      // URL if any, falling back to about:blank-safe behaviour.
+      let abs: string;
+      try { abs = new URL(href, doc.baseURI).toString(); }
+      catch { abs = href; }
+      // mailto:/tel:/etc — let the browser navigate normally.
+      if (/^(mailto|tel|sms):/i.test(abs)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(abs, "_blank", "noopener,noreferrer");
+    };
+    doc.addEventListener("click", onLinkClick, true);
 
     /**
      * Walk the rendered iframe and bump any element whose text is too low-
@@ -754,6 +786,7 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
     return () => {
       observer.disconnect();
       iframe.removeEventListener("load", resize);
+      doc.removeEventListener("click", onLinkClick, true);
     };
   }, [html]);
 
@@ -1496,8 +1529,15 @@ export default function InboxPage() {
     return () => observer.disconnect();
   }, [nextPageToken, selectedId, loadThreads]);
 
+  // Load recipient suggestions (Google contacts + recruiter list) the
+  // first time either Compose or the advanced search filter opens. Both
+  // surfaces consume composeRecipientSuggestions; we only fetch once
+  // per session unless explicitly refreshed.
+  const contactsLoadedRef = useRef(false);
   useEffect(() => {
-    if (!composeOpen) return;
+    if (!composeOpen && !filterOpen) return;
+    if (contactsLoadedRef.current) return;
+    contactsLoadedRef.current = true;
     let cancelled = false;
     setContactsHint(null);
     void Promise.all([
@@ -1521,12 +1561,14 @@ export default function InboxPage() {
         if (!cancelled) {
           setRecruiterSuggestions([]);
           setGoogleContacts([]);
+          // Allow a retry on next open if the first attempt failed
+          contactsLoadedRef.current = false;
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [composeOpen]);
+  }, [composeOpen, filterOpen]);
 
   const openDraft = useCallback(async (draftId: string) => {
     if (draftLoadingRef.current) return;
@@ -2391,23 +2433,41 @@ export default function InboxPage() {
               {/* Advanced filter popover — opens beneath the search input */}
               {filterOpen && (
                 <div className="absolute left-3 right-3 top-[calc(100%-4px)] z-20 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
+                  {/* Shared datalist of email suggestions for From / To.
+                      Sourced from the same composeRecipientSuggestions pool
+                      that powers the Compose modal (Google contacts +
+                      recruiter table + thread-derived emails). Native
+                      datalist gives an in-place dropdown with no extra
+                      component / state plumbing — exactly the
+                      "Gmail-style email suggestion" behaviour. */}
+                  <datalist id="mail-recipient-suggestions">
+                    {composeRecipientSuggestions.map((s) => (
+                      <option key={s.email} value={s.email}>
+                        {s.displayName ? `${s.displayName} <${s.email}>` : s.email}
+                      </option>
+                    ))}
+                  </datalist>
                   <div className="grid gap-3 p-4">
                     <FilterRow label="From">
                       <input
-                        type="text"
+                        type="email"
+                        list="mail-recipient-suggestions"
                         value={filterFrom}
                         onChange={(e) => setFilterFrom(e.target.value)}
                         className="input-field h-9 w-full text-[13px]"
                         placeholder="sender@example.com"
+                        autoComplete="off"
                       />
                     </FilterRow>
                     <FilterRow label="To">
                       <input
-                        type="text"
+                        type="email"
+                        list="mail-recipient-suggestions"
                         value={filterTo}
                         onChange={(e) => setFilterTo(e.target.value)}
                         className="input-field h-9 w-full text-[13px]"
                         placeholder="recipient@example.com"
+                        autoComplete="off"
                       />
                     </FilterRow>
                     <FilterRow label="Subject">

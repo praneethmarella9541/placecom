@@ -92,7 +92,7 @@ export function PlacecomLogo({ className, wordmarkClassName, inverted, size }: L
           wordmarkClassName,
         )}
       >
-        The Nucleus
+        Placecom
       </span>
     </span>
   );

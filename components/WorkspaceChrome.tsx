@@ -211,7 +211,7 @@ function Sidebar({
     <aside className="flex h-full flex-col">
       {/* Logo */}
       <div className="flex h-14 shrink-0 items-center px-4">
-        <Link href="/inbox" aria-label="The Nucleus — home">
+        <Link href="/inbox" aria-label="Placecom — home">
           <PlacecomLogo />
         </Link>
       </div>

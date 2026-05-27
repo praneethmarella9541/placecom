@@ -24,7 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "The Nucleus",
+  title: "Placecom",
   description:
     "Mail, contact extraction, recruiter CRM, calendar, calls, and meeting notes in one workspace.",
 };

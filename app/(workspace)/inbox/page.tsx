@@ -780,11 +780,35 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
     const observer = new MutationObserver(resize);
     observer.observe(doc.body, { childList: true, subtree: true, attributes: true });
     iframe.addEventListener("load", resize);
-    setTimeout(resize, 100);
-    setTimeout(resize, 500);
+
+    // Re-measure after each image inside the iframe finishes loading.
+    // Without this, scrollHeight is measured before images paint and the
+    // iframe is clipped — showing only the first line of content.
+    const attachImageListeners = () => {
+      const imgs = doc.body?.querySelectorAll<HTMLImageElement>("img") ?? [];
+      for (const img of Array.from(imgs)) {
+        if (!img.complete) {
+          img.addEventListener("load", resize, { once: true });
+          img.addEventListener("error", resize, { once: true });
+        }
+      }
+    };
+    attachImageListeners();
+    // Also catch images added by lazy-rendering email clients.
+    const imgObserver = new MutationObserver(() => {
+      attachImageListeners();
+      resize();
+    });
+    imgObserver.observe(doc.body, { childList: true, subtree: true });
+
+    // Fallback timeouts for emails that don't fire any of the above events.
+    setTimeout(resize, 200);
+    setTimeout(resize, 800);
+    setTimeout(resize, 2000);
 
     return () => {
       observer.disconnect();
+      imgObserver.disconnect();
       iframe.removeEventListener("load", resize);
       doc.removeEventListener("click", onLinkClick, true);
     };
@@ -801,7 +825,17 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
   return (
     <iframe
       ref={iframeRef}
-      sandbox="allow-same-origin"
+      // allow-same-origin: lets doc.write() work and grants the iframe
+      //   access to its own document after write.
+      // allow-popups: required for window.open() in the link-click handler
+      //   to open hrefs in a new tab — without this the sandbox silently
+      //   swallows every link click.
+      // allow-popups-to-escape-sandbox: lets the newly opened tab behave
+      //   like a normal browser tab (not inherit the sandbox restrictions).
+      // NOTE: allow-scripts is intentionally omitted — email HTML must not
+      //   run JavaScript. Images load fine without it; the sandbox does NOT
+      //   block external image/CSS resource fetches (only scripts & forms).
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       className="mt-3 w-full border-0"
       style={{ height: `${height}px`, minHeight: 60 }}
       title={titleCase("Email body")}

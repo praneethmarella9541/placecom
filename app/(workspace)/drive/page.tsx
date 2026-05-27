@@ -17,7 +17,7 @@ import {
 import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
-import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput, ArrowUp, ArrowDown } from "lucide-react";
+import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput, ArrowUp, ArrowDown, FileUp, FolderUp, ChevronDown } from "lucide-react";
 
 type DriveView = "my-drive" | "shared-with-me" | "starred";
 type SharedDrive = { id: string; name: string };
@@ -99,8 +99,14 @@ export default function DrivePage() {
   }
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Progress message — e.g. "Uploading 5/12 files" while a folder upload
+  // is in flight. Cleared when the upload settles.
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+  // Upload-button dropdown ("File upload" / "Folder upload") open state.
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDriveSearch(driveSearchInput.trim()), 400);
@@ -280,39 +286,140 @@ export default function DrivePage() {
     return () => observer.disconnect();
   }, [driveNextPageToken, loadDriveFiles]);
 
-  const triggerUpload = useCallback(() => {
+  const triggerFileUpload = useCallback(() => {
     setUploadError(null);
+    setUploadMenuOpen(false);
     fileInputRef.current?.click();
   }, []);
 
+  const triggerFolderUpload = useCallback(() => {
+    setUploadError(null);
+    setUploadMenuOpen(false);
+    folderInputRef.current?.click();
+  }, []);
+
+  /** Upload a single File blob to {parentId}. Returns the created Drive
+   *  file, or throws with a useful message. Shared by both the multi-file
+   *  and folder-upload paths so error handling stays consistent. */
+  async function uploadSingleFile(file: File, parentId: string): Promise<DriveFileRow> {
+    const fd = new FormData();
+    fd.set("file", file);
+    fd.set("parent", parentId);
+    const res = await fetch("/api/drive/upload", { method: "POST", body: fd });
+    const raw = await res.text();
+    let data: { error?: string; file?: DriveFileRow } = {};
+    try { data = raw ? JSON.parse(raw) : {}; }
+    catch { throw new Error(`Upload failed (${res.status}). Please try again.`); }
+    if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+    if (!data.file) throw new Error("Upload returned no file metadata");
+    return data.file;
+  }
+
+  /** Create a Drive folder named `name` under `parentId` and return its id.
+   *  Used by the folder-upload flow to replicate the source directory tree. */
+  async function createFolderUnder(name: string, parentId: string): Promise<string> {
+    const res = await fetch("/api/drive/folders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, parentId }),
+    });
+    const j = (await res.json()) as { file?: { id?: string }; error?: string };
+    if (!res.ok) throw new Error(j.error || "Failed to create folder");
+    if (!j.file?.id) throw new Error("Folder creation returned no id");
+    return j.file.id;
+  }
+
+  /** Multi-file upload. Each file goes to the current folder; we upload
+   *  sequentially to avoid hitting Drive's per-user concurrency limits
+   *  and keep error reporting linear. */
   async function onUploadFiles(files: FileList | null) {
     if (!files?.length) return;
-    const file = files[0];
-    if (!file) return;
+    const list = Array.from(files);
     setUploadBusy(true);
     setUploadError(null);
+    let done = 0;
     try {
-      const fd = new FormData();
-      fd.set("file", file);
-      fd.set("parent", currentParentId);
-      const res = await fetch("/api/drive/upload", {
-        method: "POST",
-        body: fd,
-      });
-      const raw = await res.text();
-      let data: { error?: string; file?: DriveFileRow } = {};
-      try {
-        data = raw ? JSON.parse(raw) : {};
-      } catch {
-        throw new Error(`Upload failed (${res.status}). Please try again.`);
+      for (const file of list) {
+        setUploadProgress(
+          list.length > 1 ? `Uploading ${done + 1}/${list.length}: ${file.name}` : `Uploading ${file.name}…`
+        );
+        await uploadSingleFile(file, currentParentId);
+        done += 1;
       }
-      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
       await loadDriveFiles({ append: false });
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setUploadBusy(false);
+      setUploadProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  /** Folder upload. Browsers expose the picked directory tree as a flat
+   *  FileList where each File has a webkitRelativePath like
+   *  "MyFolder/sub/file.txt". We:
+   *    1. Walk all unique directory prefixes in path order (parents first).
+   *    2. Create each on Drive once, caching the mapping
+   *       prefix -> driveFolderId so deeper subfolders find their parent.
+   *    3. Upload each file into the cached parent folder id.
+   *  Sequential to keep error reporting linear and avoid Drive rate limits. */
+  async function onUploadFolder(files: FileList | null) {
+    if (!files?.length) return;
+    const list = Array.from(files);
+    setUploadBusy(true);
+    setUploadError(null);
+    try {
+      // Collect unique parent-directory paths from each file's
+      // webkitRelativePath. "" is the top level (current folder) and
+      // already maps to currentParentId.
+      const folderIdByPath = new Map<string, string>();
+      folderIdByPath.set("", currentParentId);
+      const allDirPaths = new Set<string>();
+      for (const f of list) {
+        // webkitRelativePath is non-standard but supported in every modern
+        // browser when an <input> has the webkitdirectory attribute set.
+        const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
+        const parts = rel.split("/").slice(0, -1); // drop the file's own name
+        for (let i = 1; i <= parts.length; i++) {
+          allDirPaths.add(parts.slice(0, i).join("/"));
+        }
+      }
+      // Sort by depth so parents are created before their children.
+      const sortedDirs = Array.from(allDirPaths).sort(
+        (a, b) => a.split("/").length - b.split("/").length
+      );
+      let createdCount = 0;
+      for (const dirPath of sortedDirs) {
+        const parts = dirPath.split("/");
+        const parentPath = parts.slice(0, -1).join("");
+        // Empty parentPath = root of this upload, which is the current folder.
+        const parentId =
+          folderIdByPath.get(parts.slice(0, -1).join("/")) ?? currentParentId;
+        const name = parts[parts.length - 1];
+        setUploadProgress(`Creating folder ${++createdCount}/${sortedDirs.length}: ${name}`);
+        const newId = await createFolderUnder(name, parentId);
+        folderIdByPath.set(dirPath, newId);
+        void parentPath; // silence unused; kept for clarity
+      }
+      // Upload each file into its computed parent folder.
+      let fileIdx = 0;
+      for (const f of list) {
+        fileIdx += 1;
+        const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
+        const parts = rel.split("/");
+        const dirPath = parts.slice(0, -1).join("/");
+        const parentId = folderIdByPath.get(dirPath) ?? currentParentId;
+        setUploadProgress(`Uploading ${fileIdx}/${list.length}: ${parts[parts.length - 1]}`);
+        await uploadSingleFile(f, parentId);
+      }
+      await loadDriveFiles({ append: false });
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : "Folder upload failed");
+    } finally {
+      setUploadBusy(false);
+      setUploadProgress(null);
+      if (folderInputRef.current) folderInputRef.current.value = "";
     }
   }
 
@@ -404,6 +511,24 @@ export default function DrivePage() {
       document.removeEventListener("keydown", onKey);
     };
   }, [menuOpenId]);
+
+  /** Close the Upload dropdown on outside-click / Escape (same pattern). */
+  useEffect(() => {
+    if (!uploadMenuOpen) return;
+    function onDoc(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (target && !target.closest("[data-upload-menu]")) setUploadMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setUploadMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [uploadMenuOpen]);
 
   // Root label for the breadcrumb's first crumb — reflects which sidebar
   // view we're in.
@@ -546,11 +671,29 @@ export default function DrivePage() {
               />
             </div>
           </div>
+          {/* Hidden inputs — one per upload mode. The folder input uses
+              webkitdirectory which makes the OS picker show a folder
+              chooser; the browser then expands it into a flat FileList
+              with webkitRelativePath set on each entry. */}
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             className="hidden"
             onChange={(e) => void onUploadFiles(e.target.files)}
+          />
+          <input
+            ref={folderInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            // webkitdirectory is non-standard but supported everywhere we
+            // care about; React doesn't know about it so we set via attr.
+            // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+            // @ts-expect-error — webkitdirectory is a non-standard attribute
+            webkitdirectory=""
+            directory=""
+            onChange={(e) => void onUploadFolder(e.target.files)}
           />
           <button
             type="button"
@@ -561,16 +704,40 @@ export default function DrivePage() {
             <FolderPlus className="h-4 w-4 shrink-0" strokeWidth={2} />
             {titleCase("New folder")}
           </button>
-          <button
-            type="button"
-            onClick={() => triggerUpload()}
-            disabled={uploadBusy}
-            className="btn-secondary shrink-0 gap-2 px-3 py-2 text-[13px]"
-            title={titleCase("Upload file to this folder")}
-          >
-            <Upload className="h-4 w-4 shrink-0" strokeWidth={2} />
-            {uploadBusy ? titleCase("Uploading…") : titleCase("Upload")}
-          </button>
+
+          {/* Upload dropdown — File upload vs Folder upload, matching Drive */}
+          <div className="relative" data-upload-menu>
+            <button
+              type="button"
+              onClick={() => setUploadMenuOpen((v) => !v)}
+              disabled={uploadBusy}
+              className="btn-secondary shrink-0 gap-2 px-3 py-2 text-[13px]"
+              title={titleCase("Upload to this folder")}
+              aria-haspopup="menu"
+              aria-expanded={uploadMenuOpen}
+            >
+              <Upload className="h-4 w-4 shrink-0" strokeWidth={2} />
+              {uploadBusy ? titleCase("Uploading…") : titleCase("Upload")}
+              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2.5} />
+            </button>
+            {uploadMenuOpen && (
+              <div
+                className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                role="menu"
+              >
+                <RowMenuItem
+                  icon={<FileUp className="h-3.5 w-3.5" />}
+                  label="File upload"
+                  onClick={triggerFileUpload}
+                />
+                <RowMenuItem
+                  icon={<FolderUp className="h-3.5 w-3.5" />}
+                  label="Folder upload"
+                  onClick={triggerFolderUpload}
+                />
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => void loadDriveFiles({ append: false })}
@@ -584,6 +751,10 @@ export default function DrivePage() {
         {uploadError ? (
           <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-[13px] text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
             {uploadError}
+          </div>
+        ) : uploadProgress ? (
+          <div className="border-b border-zinc-200 bg-zinc-50 px-4 py-2 text-[13px] text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+            {uploadProgress}
           </div>
         ) : null}
 

@@ -1404,6 +1404,10 @@ export default function InboxPage() {
 
       const cacheKey = `${apiFolder}|${effectiveLabelId ?? ""}|${mailSearch}`;
 
+      // Track whether the list is already visible (cached) BEFORE the fetch
+      // so we know whether to preserve scroll when fresh data arrives.
+      let listWasVisible = false;
+
       if (opts.append) {
         setLoadingMore(true); loadingMoreRef.current = true;
       } else {
@@ -1415,6 +1419,7 @@ export default function InboxPage() {
           setThreads(cached.threads);
           setNextPageToken(cached.nextPageToken);
           setLoadingList(false);
+          listWasVisible = true; // list is on screen — preserve scroll on refresh
           // If we just made a local mutation, skip the background refetch.
           // Gmail's read-side lags our writes by a few seconds and would
           // clobber our optimistic state. After the cooldown, fresh wins.
@@ -1423,6 +1428,9 @@ export default function InboxPage() {
             return;
           }
         } else {
+          // No cache — spinner is showing; forceRefresh also counts as visible
+          // if threads are already rendered (e.g. Sent refresh after compose).
+          listWasVisible = opts.forceRefresh === true && (listScrollRef.current?.scrollTop ?? 0) > 0;
           setLoadingList(true);
         }
       }
@@ -1442,8 +1450,19 @@ export default function InboxPage() {
             return merged;
           });
         } else {
+          // Background SWR / forceRefresh: the user already sees the list and
+          // may have scrolled. Snapshot scrollTop BEFORE React re-renders with
+          // fresh data, then restore it immediately after so the view doesn't jump.
+          const scrollBefore = listWasVisible ? (listScrollRef.current?.scrollTop ?? 0) : 0;
           setThreads(incoming);
           listCacheRef.current.set(cacheKey, { threads: incoming, nextPageToken: data.nextPageToken });
+          if (scrollBefore > 0) {
+            requestAnimationFrame(() => {
+              if (listScrollRef.current) {
+                listScrollRef.current.scrollTop = scrollBefore;
+              }
+            });
+          }
         }
         setNextPageToken(data.nextPageToken);
       } catch (e) {

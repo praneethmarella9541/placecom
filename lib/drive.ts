@@ -191,3 +191,171 @@ export async function listGoogleFormsPage(
     nextPageToken: data.nextPageToken,
   };
 }
+
+/* ───────────────────────────── Permissions ─────────────────────────── */
+
+export type DriveRole = "reader" | "commenter" | "writer";
+export type DrivePermissionType = "user" | "group" | "domain" | "anyone";
+
+export type DrivePermission = {
+  id: string;
+  type: DrivePermissionType;
+  role: DriveRole | "owner";
+  emailAddress?: string;
+  displayName?: string;
+  photoLink?: string;
+  domain?: string;
+  /** Only present on type:"anyone" permissions. */
+  allowFileDiscovery?: boolean;
+};
+
+async function driveAuthFetch(
+  accessToken: string,
+  path: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const res = await fetch(`${DRIVE_API}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text();
+    const err = new Error(`Drive ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (
+      res.status === 403 &&
+      (text.includes("insufficientPermissions") ||
+        text.includes("ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
+    ) {
+      err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    }
+    throw err;
+  }
+  return res;
+}
+
+/** List all permissions on a file or folder. */
+export async function listFilePermissions(
+  accessToken: string,
+  fileId: string,
+): Promise<DrivePermission[]> {
+  const params = new URLSearchParams({
+    fields:
+      "permissions(id,type,role,emailAddress,displayName,photoLink,domain,allowFileDiscovery)",
+    supportsAllDrives: "true",
+  });
+  const res = await driveAuthFetch(
+    accessToken,
+    `/files/${encodeURIComponent(fileId)}/permissions?${params.toString()}`,
+  );
+  const data = (await res.json()) as { permissions?: DrivePermission[] };
+  return data.permissions ?? [];
+}
+
+/** Fetch the shareable webViewLink for a file or folder. */
+export async function getFileShareLink(
+  accessToken: string,
+  fileId: string,
+): Promise<string | null> {
+  const params = new URLSearchParams({
+    fields: "webViewLink",
+    supportsAllDrives: "true",
+  });
+  const res = await driveAuthFetch(
+    accessToken,
+    `/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+  );
+  const data = (await res.json()) as { webViewLink?: string };
+  return data.webViewLink ?? null;
+}
+
+/**
+ * Add a permission. For user/group: requires emailAddress and (by default)
+ * sends Google's standard "X shared a file with you" email. Anyone/domain
+ * types reject the notification flag, so we force it off there.
+ */
+export async function addFilePermission(
+  accessToken: string,
+  fileId: string,
+  input: {
+    role: DriveRole;
+    type: DrivePermissionType;
+    emailAddress?: string;
+    domain?: string;
+    sendNotificationEmail?: boolean;
+    emailMessage?: string;
+  },
+): Promise<DrivePermission> {
+  const sendNotificationEmail =
+    input.type === "user" || input.type === "group"
+      ? input.sendNotificationEmail !== false
+      : false;
+  const params = new URLSearchParams({
+    fields:
+      "id,type,role,emailAddress,displayName,photoLink,domain,allowFileDiscovery",
+    supportsAllDrives: "true",
+    sendNotificationEmail: sendNotificationEmail ? "true" : "false",
+  });
+  if (sendNotificationEmail && input.emailMessage) {
+    params.set("emailMessage", input.emailMessage);
+  }
+  const body: Record<string, unknown> = { role: input.role, type: input.type };
+  if (input.emailAddress) body.emailAddress = input.emailAddress;
+  if (input.domain) body.domain = input.domain;
+
+  const res = await driveAuthFetch(
+    accessToken,
+    `/files/${encodeURIComponent(fileId)}/permissions?${params.toString()}`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+  return (await res.json()) as DrivePermission;
+}
+
+/** Change an existing permission's role. */
+export async function updateFilePermission(
+  accessToken: string,
+  fileId: string,
+  permissionId: string,
+  role: DriveRole,
+): Promise<DrivePermission> {
+  const params = new URLSearchParams({
+    fields:
+      "id,type,role,emailAddress,displayName,photoLink,domain,allowFileDiscovery",
+    supportsAllDrives: "true",
+  });
+  const res = await driveAuthFetch(
+    accessToken,
+    `/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(
+      permissionId,
+    )}?${params.toString()}`,
+    { method: "PATCH", body: JSON.stringify({ role }) },
+  );
+  return (await res.json()) as DrivePermission;
+}
+
+/** Remove a permission (revokes access). 404 is treated as success. */
+export async function deleteFilePermission(
+  accessToken: string,
+  fileId: string,
+  permissionId: string,
+): Promise<void> {
+  const params = new URLSearchParams({ supportsAllDrives: "true" });
+  try {
+    await driveAuthFetch(
+      accessToken,
+      `/files/${encodeURIComponent(fileId)}/permissions/${encodeURIComponent(
+        permissionId,
+      )}?${params.toString()}`,
+      { method: "DELETE" },
+    );
+  } catch (e) {
+    // 404 already-gone is acceptable
+    const err = e as Error & { code?: string };
+    if (/Drive 404/.test(err.message)) return;
+    throw err;
+  }
+}

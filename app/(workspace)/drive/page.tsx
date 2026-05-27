@@ -15,6 +15,8 @@ import {
   IconX,
 } from "@/components/Icons";
 import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
+import { DriveShareModal } from "@/components/DriveShareModal";
+import { Share2 } from "lucide-react";
 
 type DriveFileRow = {
   id: string;
@@ -50,6 +52,8 @@ export default function DrivePage() {
   const [driveSearch, setDriveSearch] = useState("");
 
   const [previewFile, setPreviewFile] = useState<DriveFileRow | null>(null);
+  // Target file/folder for the share modal — null means modal closed.
+  const [shareTarget, setShareTarget] = useState<DriveFileRow | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -338,13 +342,28 @@ export default function DrivePage() {
                 .filter(Boolean)
                 .join(" · ");
 
+              // Row layout: main clickable area (open/preview) + a Share
+              // button that stops propagation. Hover reveals the Share
+              // button so the row stays clean at rest, matching Google Drive.
+              const ShareButton = (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setShareTarget(file); }}
+                  className="shrink-0 rounded-md p-1.5 text-zinc-500 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-800 group-hover:opacity-100 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                  title={isFolder ? "Share folder" : "Share file"}
+                  aria-label="Share"
+                >
+                  <Share2 className="h-3.5 w-3.5" strokeWidth={2} />
+                </button>
+              );
+
               if (isFolder) {
                 return (
-                  <li key={file.id}>
+                  <li key={file.id} className="group flex items-stretch hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
                     <button
                       type="button"
                       onClick={() => enterFolder(file.id, file.name)}
-                      className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                      className="flex flex-1 items-start gap-3 px-4 py-3 text-left transition-colors"
                     >
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100/80 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
                         <IconFolder className="h-4 w-4" />
@@ -355,18 +374,21 @@ export default function DrivePage() {
                         </p>
                         <p className="mt-0.5 text-[11px] text-zinc-500">{metaLine}</p>
                       </div>
-                      <IconChevronRight className="mt-1 h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
                     </button>
+                    <div className="flex items-center gap-1 pr-3">
+                      {ShareButton}
+                      <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+                    </div>
                   </li>
                 );
               }
 
               return (
-                <li key={file.id}>
+                <li key={file.id} className="group flex items-stretch hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
                   <button
                     type="button"
                     onClick={() => setPreviewFile(file)}
-                    className="flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left text-zinc-800 transition-colors hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-900/50"
+                    className="flex flex-1 cursor-pointer items-start gap-3 px-4 py-3 text-left text-zinc-800 transition-colors dark:text-zinc-200"
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-200/60 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
                       <IconFile className="h-4 w-4" />
@@ -377,8 +399,11 @@ export default function DrivePage() {
                       </p>
                       <p className="mt-0.5 text-[11px] text-zinc-500">{metaLine}</p>
                     </div>
-                    <IconChevronRight className="mt-1 h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />
                   </button>
+                  <div className="flex items-center gap-1 pr-3">
+                    {ShareButton}
+                    <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />
+                  </div>
                 </li>
               );
             })}
@@ -481,6 +506,16 @@ export default function DrivePage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {/* Share modal — opens when the user clicks the Share button on a row */}
+      {shareTarget ? (
+        <DriveShareModal
+          fileId={shareTarget.id}
+          fileName={shareTarget.name}
+          isFolder={shareTarget.mimeType === "application/vnd.google-apps.folder"}
+          onClose={() => setShareTarget(null)}
+        />
       ) : null}
     </div>
   );

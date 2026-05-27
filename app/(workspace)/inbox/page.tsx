@@ -633,18 +633,31 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
     // is lost inside nested function expressions).
     const iframeEl = iframe;
     const docEl = doc;
-    /** True iff the element OR any ancestor (excluding html/body) has a
-     *  non-transparent background — i.e. it sits inside a styled chip,
-     *  button, callout, or coloured cell where the author picked the
-     *  text colour to read on that bg, not ours. */
-    function hasStyledAncestorBg(el: HTMLElement | null): boolean {
+    // Body background luminance — used to detect whether an ancestor's
+    // background differs enough to be considered "styled" (button / badge)
+    // vs just an invisible card-on-card that matches our page bg.
+    const bodyBgLum = isDark ? 0.05 : 0.97; // approx luma of body bg
+    /** True iff the element itself OR any ancestor has a background colour
+     *  meaningfully different from the page background. Buttons / coloured
+     *  badges / callouts qualify; the generic white card the email sits
+     *  on does NOT. Used to preserve author-chosen text on styled UI. */
+    function hasStyledBgInChain(el: HTMLElement | null): boolean {
       let cur: HTMLElement | null = el;
       const win = iframeEl.contentWindow || window;
       while (cur && cur !== docEl.body && cur !== docEl.documentElement) {
         const bg = win.getComputedStyle(cur).backgroundColor;
         if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
-          const m = bg.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\)/);
-          if (!m || parseFloat(m[1]) > 0) return true;
+          const alpha = bg.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\)/);
+          const isOpaque = !alpha || parseFloat(alpha[1]) > 0;
+          if (isOpaque) {
+            const rgb = parseRgb(bg);
+            if (rgb) {
+              const ancestorLum = relLuma(rgb[0], rgb[1], rgb[2]);
+              // Only skip when the bg is materially different from the page
+              // bg — a real button/badge, not another white-ish card.
+              if (Math.abs(ancestorLum - bodyBgLum) > 0.15) return true;
+            }
+          }
         }
         cur = cur.parentElement;
       }
@@ -655,11 +668,11 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
       const win = iframeEl.contentWindow || window;
       const all = docEl.body.querySelectorAll<HTMLElement>("*");
       for (const el of Array.from(all)) {
-        if (el.tagName === "A") continue;             // links use their own rule
         if (el.tagName === "IMG" || el.tagName === "BR") continue;
-        // Skip if any ancestor has a real background — preserves designer's
-        // chosen text colour on buttons, badges, and coloured callouts.
-        if (hasStyledAncestorBg(el)) continue;
+        // Skip when the element itself OR an ancestor has a meaningfully-
+        // different background (button / coloured badge / callout). The
+        // author picked the text colour to read on THAT bg, so leave it.
+        if (hasStyledBgInChain(el)) continue;
         const cs = win.getComputedStyle(el);
         const rgb = parseRgb(cs.color);
         if (!rgb) continue;

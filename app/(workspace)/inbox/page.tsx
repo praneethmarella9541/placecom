@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LabelChip } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { createPortal } from "react-dom";
@@ -10,7 +10,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, Send, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize } from "lucide-react";
+import { PencilLine, Send, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -67,6 +67,19 @@ function insertLabelSorted(list: GmailLabel[], next: GmailLabel): GmailLabel[] {
   while (i < out.length && cmp(out[i], next) < 0) i++;
   out.splice(i, 0, next);
   return out;
+}
+
+/**
+ * Two-column row used inside the advanced search filter popover —
+ * left label + right input field. Keeps spacing consistent across rows.
+ */
+function FilterRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-3">
+      <label className="text-[13px] text-[var(--color-text-muted)]">{label}</label>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
 }
 
 function senderName(from: string): string {
@@ -671,6 +684,89 @@ export default function InboxPage() {
   const [listError, setListError] = useState<string | null>(null);
   const [mailSearchInput, setMailSearchInput] = useState("");
   const [mailSearch, setMailSearch] = useState("");
+
+  // Advanced search filter panel state — mirrors Gmail's "Show search options".
+  // When the user clicks Search, we translate these fields to Gmail operator
+  // syntax and stuff the result into mailSearchInput, so the regular search
+  // pipeline handles the rest. Visible / editable in the input bar afterwards.
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const [filterFrom, setFilterFrom] = useState("");
+  const [filterTo, setFilterTo] = useState("");
+  const [filterSubject, setFilterSubject] = useState("");
+  const [filterHasWords, setFilterHasWords] = useState("");
+  const [filterDoesntHave, setFilterDoesntHave] = useState("");
+  const [filterHasAttachment, setFilterHasAttachment] = useState(false);
+  // Date-within: one of Gmail's preset spans (matches Gmail UI).
+  type DateWithin = "" | "1d" | "3d" | "7d" | "14d" | "30d" | "60d" | "180d" | "365d";
+  const [filterDateWithin, setFilterDateWithin] = useState<DateWithin>("");
+  const DATE_WITHIN_OPTIONS: { value: DateWithin; label: string }[] = [
+    { value: "", label: "Any time" },
+    { value: "1d", label: "1 day" },
+    { value: "3d", label: "3 days" },
+    { value: "7d", label: "1 week" },
+    { value: "14d", label: "2 weeks" },
+    { value: "30d", label: "1 month" },
+    { value: "60d", label: "2 months" },
+    { value: "180d", label: "6 months" },
+    { value: "365d", label: "1 year" },
+  ];
+
+  // Close the filter panel on outside-click (Gmail-style behaviour).
+  useEffect(() => {
+    if (!filterOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (filterPanelRef.current && !filterPanelRef.current.contains(e.target as Node)) {
+        setFilterOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [filterOpen]);
+
+  /** Quote a term if it contains whitespace so multi-word values stay together. */
+  function quoteIfNeeded(s: string): string {
+    const t = s.trim();
+    if (!t) return "";
+    if (t.includes(" ") && !t.startsWith('"')) return `"${t}"`;
+    return t;
+  }
+
+  /** Build the Gmail-search-syntax string from current filter fields. */
+  function buildFilterQuery(): string {
+    const parts: string[] = [];
+    if (filterFrom.trim()) parts.push(`from:${quoteIfNeeded(filterFrom)}`);
+    if (filterTo.trim()) parts.push(`to:${quoteIfNeeded(filterTo)}`);
+    if (filterSubject.trim()) parts.push(`subject:${quoteIfNeeded(filterSubject)}`);
+    if (filterHasWords.trim()) parts.push(filterHasWords.trim());
+    if (filterDoesntHave.trim()) {
+      // Prefix each term with - for Gmail's NOT operator.
+      filterDoesntHave.trim().split(/\s+/).forEach((tok) => parts.push(`-${tok}`));
+    }
+    if (filterHasAttachment) parts.push("has:attachment");
+    if (filterDateWithin) parts.push(`newer_than:${filterDateWithin}`);
+    return parts.join(" ");
+  }
+
+  /** Apply: build the query, push into the input, close the panel. */
+  function applyFilter() {
+    const q = buildFilterQuery();
+    setMailSearchInput(q);
+    // Skip the 400 ms debounce — the user explicitly clicked Search.
+    setMailSearch(q);
+    setFilterOpen(false);
+  }
+
+  /** Clear all filter fields (does not affect the live search). */
+  function clearFilter() {
+    setFilterFrom("");
+    setFilterTo("");
+    setFilterSubject("");
+    setFilterHasWords("");
+    setFilterDoesntHave("");
+    setFilterHasAttachment(false);
+    setFilterDateWithin("");
+  }
 
   // Labels — loaded once, kept in a map by id for O(1) lookup from rows.
   const [allLabels, setAllLabels] = useState<GmailLabel[]>([]);
@@ -2146,8 +2242,8 @@ export default function InboxPage() {
               aria-hidden
             />
 
-            {/* Search bar */}
-            <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+            {/* Search bar + advanced filter popover trigger */}
+            <div ref={filterPanelRef} className="relative border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
               <div className="relative">
                 <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
                 <input
@@ -2155,10 +2251,113 @@ export default function InboxPage() {
                   value={mailSearchInput}
                   onChange={(e) => setMailSearchInput(e.target.value)}
                   placeholder={titleCase("Search mail (same as Gmail)")}
-                  className="input-field h-[34px] w-full border-0 bg-[var(--color-surface-offset)] pl-9 text-[13px]"
+                  className="input-field h-[34px] w-full border-0 bg-[var(--color-surface-offset)] pl-9 pr-9 text-[13px]"
                   autoComplete="off"
                 />
+                <button
+                  type="button"
+                  onClick={() => setFilterOpen((v) => !v)}
+                  className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
+                  aria-label="Show search options"
+                  title="Show search options"
+                >
+                  <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
+                </button>
               </div>
+
+              {/* Advanced filter popover — opens beneath the search input */}
+              {filterOpen && (
+                <div className="absolute left-3 right-3 top-[calc(100%-4px)] z-20 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
+                  <div className="grid gap-3 p-4">
+                    <FilterRow label="From">
+                      <input
+                        type="text"
+                        value={filterFrom}
+                        onChange={(e) => setFilterFrom(e.target.value)}
+                        className="input-field h-9 w-full text-[13px]"
+                        placeholder="sender@example.com"
+                      />
+                    </FilterRow>
+                    <FilterRow label="To">
+                      <input
+                        type="text"
+                        value={filterTo}
+                        onChange={(e) => setFilterTo(e.target.value)}
+                        className="input-field h-9 w-full text-[13px]"
+                        placeholder="recipient@example.com"
+                      />
+                    </FilterRow>
+                    <FilterRow label="Subject">
+                      <input
+                        type="text"
+                        value={filterSubject}
+                        onChange={(e) => setFilterSubject(e.target.value)}
+                        className="input-field h-9 w-full text-[13px]"
+                      />
+                    </FilterRow>
+                    <FilterRow label="Has the words">
+                      <input
+                        type="text"
+                        value={filterHasWords}
+                        onChange={(e) => setFilterHasWords(e.target.value)}
+                        className="input-field h-9 w-full text-[13px]"
+                      />
+                    </FilterRow>
+                    <FilterRow label="Doesn't have">
+                      <input
+                        type="text"
+                        value={filterDoesntHave}
+                        onChange={(e) => setFilterDoesntHave(e.target.value)}
+                        className="input-field h-9 w-full text-[13px]"
+                        placeholder="word(s) to exclude"
+                      />
+                    </FilterRow>
+                    <FilterRow label="Date within">
+                      <select
+                        value={filterDateWithin}
+                        onChange={(e) => setFilterDateWithin(e.target.value as DateWithin)}
+                        className="input-field h-9 w-full text-[13px]"
+                      >
+                        {DATE_WITHIN_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </FilterRow>
+                    <label className="flex cursor-pointer items-center gap-2 pl-2 pt-1 text-[13px] text-[var(--color-text)]">
+                      <input
+                        type="checkbox"
+                        checked={filterHasAttachment}
+                        onChange={(e) => setFilterHasAttachment(e.target.checked)}
+                        className="h-4 w-4 accent-[var(--color-primary)]"
+                      />
+                      Has attachment
+                    </label>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={clearFilter}
+                      className="btn-ghost h-9 text-[13px]"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFilterOpen(false)}
+                      className="btn-ghost h-9 text-[13px]"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyFilter}
+                      className="btn-primary h-9 px-5 text-[13px]"
+                    >
+                      Search
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Bulk-action / select-all toolbar */}

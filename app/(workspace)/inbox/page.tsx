@@ -872,8 +872,26 @@ export default function InboxPage() {
   /** Build the Gmail-search-syntax string from current filter fields. */
   function buildFilterQuery(): string {
     const parts: string[] = [];
-    if (filterFrom.trim()) parts.push(`from:${quoteIfNeeded(filterFrom)}`);
-    if (filterTo.trim()) parts.push(`to:${quoteIfNeeded(filterTo)}`);
+    // filterFrom / filterTo come from RecipientField which serialises chips
+    // as "Name" <email>, ...  Strip to bare email(s) so Gmail's from:/to:
+    // operators get something they can match against. OR multiple emails.
+    const fromEmails = extractAllEmailsFromText(filterFrom);
+    const toEmails = extractAllEmailsFromText(filterTo);
+    if (fromEmails.length === 1) {
+      parts.push(`from:${fromEmails[0]}`);
+    } else if (fromEmails.length > 1) {
+      parts.push(`from:{${fromEmails.join(" ")}}`);
+    } else if (filterFrom.trim()) {
+      // Free-text fallback (user typed something that isn't a valid email)
+      parts.push(`from:${quoteIfNeeded(filterFrom)}`);
+    }
+    if (toEmails.length === 1) {
+      parts.push(`to:${toEmails[0]}`);
+    } else if (toEmails.length > 1) {
+      parts.push(`to:{${toEmails.join(" ")}}`);
+    } else if (filterTo.trim()) {
+      parts.push(`to:${quoteIfNeeded(filterTo)}`);
+    }
     if (filterSubject.trim()) parts.push(`subject:${quoteIfNeeded(filterSubject)}`);
     if (filterHasWords.trim()) parts.push(filterHasWords.trim());
     if (filterDoesntHave.trim()) {
@@ -2433,41 +2451,24 @@ export default function InboxPage() {
               {/* Advanced filter popover — opens beneath the search input */}
               {filterOpen && (
                 <div className="absolute left-3 right-3 top-[calc(100%-4px)] z-20 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
-                  {/* Shared datalist of email suggestions for From / To.
-                      Sourced from the same composeRecipientSuggestions pool
-                      that powers the Compose modal (Google contacts +
-                      recruiter table + thread-derived emails). Native
-                      datalist gives an in-place dropdown with no extra
-                      component / state plumbing — exactly the
-                      "Gmail-style email suggestion" behaviour. */}
-                  <datalist id="mail-recipient-suggestions">
-                    {composeRecipientSuggestions.map((s) => (
-                      <option key={s.email} value={s.email}>
-                        {s.displayName ? `${s.displayName} <${s.email}>` : s.email}
-                      </option>
-                    ))}
-                  </datalist>
                   <div className="grid gap-3 p-4">
+                    {/* From / To use the same RecipientField as Compose so the
+                        typeahead behaviour is identical — narrows the dropdown
+                        as the user types instead of dumping the whole list. */}
                     <FilterRow label="From">
-                      <input
-                        type="email"
-                        list="mail-recipient-suggestions"
-                        value={filterFrom}
-                        onChange={(e) => setFilterFrom(e.target.value)}
-                        className="input-field h-9 w-full text-[13px]"
+                      <RecipientField
                         placeholder="sender@example.com"
-                        autoComplete="off"
+                        value={filterFrom}
+                        onChange={setFilterFrom}
+                        suggestions={composeRecipientSuggestions}
                       />
                     </FilterRow>
                     <FilterRow label="To">
-                      <input
-                        type="email"
-                        list="mail-recipient-suggestions"
-                        value={filterTo}
-                        onChange={(e) => setFilterTo(e.target.value)}
-                        className="input-field h-9 w-full text-[13px]"
+                      <RecipientField
                         placeholder="recipient@example.com"
-                        autoComplete="off"
+                        value={filterTo}
+                        onChange={setFilterTo}
+                        suggestions={composeRecipientSuggestions}
                       />
                     </FilterRow>
                     <FilterRow label="Subject">

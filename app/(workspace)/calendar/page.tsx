@@ -499,6 +499,35 @@ export default function CalendarPage() {
     setSelectedEvent(null); // close detail view
   }
 
+  /* ── Cancel / delete a scheduled event ────────────────── */
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  async function cancelEvent(ev: EventRow) {
+    const hasGuests = (ev.attendees?.length ?? 0) > 0;
+    const message = hasGuests
+      ? "Delete this meeting and notify all guests of the cancellation?"
+      : "Delete this meeting?";
+    if (!window.confirm(message)) return;
+    setDeleteBusy(true);
+    try {
+      // sendUpdates=all so Google emails the cancellation to attendees,
+      // matching what Gmail/Calendar does when you delete from their UI.
+      const res = await fetch(
+        `/api/calendar/events/${encodeURIComponent(ev.id)}?sendUpdates=${hasGuests ? "all" : "none"}`,
+        { method: "DELETE" }
+      );
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(body.error || "Failed to delete event");
+      // Close any open detail / edit views referencing this event
+      setSelectedEvent(null);
+      setEditEvent(null);
+      await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
+    } catch (e) {
+      alert(clientFetchFailedMessage(e));
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   /* ── Save edits ──────────────────────────────────────── */
   async function saveEdit() {
     if (!editEvent || !editTitle || !editStart || !editEnd) return;
@@ -1128,6 +1157,15 @@ export default function CalendarPage() {
                 >
                   Edit
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void cancelEvent(selectedEvent)}
+                  disabled={deleteBusy}
+                  className="btn-ghost text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] disabled:opacity-50"
+                  title="Delete this meeting"
+                >
+                  {deleteBusy ? "Deleting…" : "Delete"}
+                </button>
               </div>
               <div className="flex gap-2">
                 {selectedEvent.hangoutLink ? (
@@ -1255,7 +1293,17 @@ export default function CalendarPage() {
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-5 py-4">
+            <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] px-5 py-4">
+              <button
+                type="button"
+                onClick={() => editEvent && void cancelEvent(editEvent)}
+                disabled={deleteBusy}
+                className="btn-ghost text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] disabled:opacity-50"
+                title="Delete this meeting"
+              >
+                {deleteBusy ? "Deleting…" : "Delete"}
+              </button>
+              <div className="flex gap-2">
               <button type="button" onClick={() => setEditEvent(null)} className="btn-ghost">
                 Cancel
               </button>
@@ -1267,6 +1315,7 @@ export default function CalendarPage() {
               >
                 {editBusy ? "Saving…" : editNotify === "none" ? "Save quietly" : "Save & notify"}
               </button>
+              </div>
             </div>
           </div>
         </div>

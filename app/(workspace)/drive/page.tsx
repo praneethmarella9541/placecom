@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Upload } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
@@ -17,7 +17,7 @@ import {
 import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
-import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput } from "lucide-react";
+import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput, ArrowUp, ArrowDown } from "lucide-react";
 
 type DriveView = "my-drive" | "shared-with-me" | "starred";
 type SharedDrive = { id: string; name: string };
@@ -86,6 +86,17 @@ export default function DrivePage() {
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
+
+  // Client-side sort column + direction for the table view.  Default
+  // matches Google Drive's default: name ascending. Folders always sort
+  // ahead of files in any direction (matches Drive too).
+  type SortKey = "name" | "modifiedTime" | "size";
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  }
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -197,6 +208,36 @@ export default function DrivePage() {
     },
     [driveSearch, currentParentId, view, pathStack.length]
   );
+
+  /** Sorted view of the loaded files. Folders always come before files
+   *  regardless of direction (matches Google Drive). Within each group,
+   *  sort by the chosen column in the chosen direction. */
+  const sortedFiles = useMemo<DriveFileRow[]>(() => {
+    const folders: DriveFileRow[] = [];
+    const files: DriveFileRow[] = [];
+    for (const f of driveFiles) {
+      if (f.mimeType === "application/vnd.google-apps.folder") folders.push(f);
+      else files.push(f);
+    }
+    const cmp = (a: DriveFileRow, b: DriveFileRow): number => {
+      let n = 0;
+      if (sortKey === "name") {
+        n = a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
+      } else if (sortKey === "modifiedTime") {
+        const ta = a.modifiedTime ? new Date(a.modifiedTime).getTime() : 0;
+        const tb = b.modifiedTime ? new Date(b.modifiedTime).getTime() : 0;
+        n = ta - tb;
+      } else {
+        const sa = a.size ? parseInt(a.size, 10) : 0;
+        const sb = b.size ? parseInt(b.size, 10) : 0;
+        n = sa - sb;
+      }
+      return sortDir === "asc" ? n : -n;
+    };
+    folders.sort(cmp);
+    files.sort(cmp);
+    return [...folders, ...files];
+  }, [driveFiles, sortKey, sortDir]);
 
   function enterFolder(id: string, name: string) {
     setPathStack((prev) => [...prev, { id, name }]);
@@ -566,165 +607,188 @@ export default function DrivePage() {
             </p>
           </div>
         ) : (
-          <ul
-            ref={listScrollRef}
-            className="scrollbar-thin flex-1 divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800/60"
-          >
-            {driveFiles.map((file) => {
-              const isFolder = file.mimeType === "application/vnd.google-apps.folder";
-              const sizeNum = file.size ? parseInt(file.size, 10) : NaN;
-              const sizeLabel = !Number.isNaN(sizeNum) ? formatBytes(sizeNum) : null;
-              const metaLine = [
-                isFolder ? titleCase("Folder") : null,
-                file.modifiedTime ? formatDate(file.modifiedTime) : null,
-                !isFolder && sizeLabel ? sizeLabel : null,
-              ]
-                .filter(Boolean)
-                .join(" · ");
+          <>
+            {/* Column headers — Google Drive-style sortable bar. The arrow
+                icon next to a header shows the active sort column + dir.
+                Mobile note: the right two columns hide on narrower screens
+                so the layout stays usable; Name + actions are always shown. */}
+            <div className="sticky top-0 z-[5] flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-muted)]">
+              <SortHeader
+                label="Name"
+                active={sortKey === "name"}
+                dir={sortDir}
+                onClick={() => toggleSort("name")}
+                className="min-w-0 flex-1"
+              />
+              <SortHeader
+                label="Date modified"
+                active={sortKey === "modifiedTime"}
+                dir={sortDir}
+                onClick={() => toggleSort("modifiedTime")}
+                className="hidden w-[140px] shrink-0 sm:flex"
+              />
+              <SortHeader
+                label="File size"
+                active={sortKey === "size"}
+                dir={sortDir}
+                onClick={() => toggleSort("size")}
+                className="hidden w-[90px] shrink-0 sm:flex"
+              />
+              <span className="w-7 shrink-0" aria-hidden />
+            </div>
 
-              // Row layout: main clickable area (open/preview) + a kebab
-              // menu (Share / Rename / Move). Hover-reveal at rest so the
-              // row stays clean, matching Google Drive's appearance.
-              const isRenaming = renameTargetId === file.id;
-              const RowMenu = (
-                <div className="relative" data-row-menu>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setMenuOpenId(menuOpenId === file.id ? null : file.id);
-                    }}
-                    className={cn(
-                      "shrink-0 rounded-md p-1.5 text-zinc-500 transition-opacity hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
-                      menuOpenId === file.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-                    )}
-                    title="More actions"
-                    aria-label="More actions"
-                    aria-haspopup="menu"
-                    aria-expanded={menuOpenId === file.id}
-                  >
-                    <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />
-                  </button>
-                  {menuOpenId === file.id && (
-                    <div
-                      className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
-                      role="menu"
-                    >
-                      <RowMenuItem
-                        icon={<Share2 className="h-3.5 w-3.5" />}
-                        label="Share"
-                        onClick={() => { setMenuOpenId(null); setShareTarget(file); }}
-                      />
-                      <RowMenuItem
-                        icon={<Pencil className="h-3.5 w-3.5" />}
-                        label="Rename"
-                        onClick={() => startRename(file)}
-                      />
-                      <RowMenuItem
-                        icon={<FolderInput className="h-3.5 w-3.5" />}
-                        label="Move"
-                        onClick={() => { setMenuOpenId(null); setMoveTarget(file); }}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
+            <ul
+              ref={listScrollRef}
+              className="scrollbar-thin flex-1 divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800/60"
+            >
+              {sortedFiles.map((file) => {
+                const isFolder = file.mimeType === "application/vnd.google-apps.folder";
+                const sizeNum = file.size ? parseInt(file.size, 10) : NaN;
+                const sizeLabel =
+                  isFolder ? "—" : !Number.isNaN(sizeNum) ? formatBytes(sizeNum) : "—";
+                const dateLabel = file.modifiedTime ? formatDate(file.modifiedTime) : "—";
+                const isRenaming = renameTargetId === file.id;
 
-              // While renaming, the label cell becomes an input field.
-              // It autofocuses, selects all, and commits on blur / Enter
-              // (Escape cancels).  Click events inside it don't propagate
-              // so we don't accidentally enter the folder.
-              const NameOrEditor = isRenaming ? (
-                <input
-                  autoFocus
-                  type="text"
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  onBlur={() => void commitRename(file)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") { e.preventDefault(); void commitRename(file); }
-                    else if (e.key === "Escape") { e.preventDefault(); setRenameTargetId(null); }
-                  }}
-                  onFocus={(e) => {
-                    // Select just the basename for files (preserve extension).
-                    const v = e.currentTarget.value;
-                    const dot = v.lastIndexOf(".");
-                    if (!isFolder && dot > 0) e.currentTarget.setSelectionRange(0, dot);
-                    else e.currentTarget.select();
-                  }}
-                  className="w-full rounded border border-indigo-300 bg-white px-1.5 py-0.5 text-[13px] font-semibold text-zinc-900 outline-none focus:border-indigo-500 dark:border-indigo-700 dark:bg-zinc-900 dark:text-zinc-100"
-                />
-              ) : (
-                <p className="truncate text-[13px] font-semibold text-zinc-900 dark:text-zinc-100">
-                  {file.name}
-                </p>
-              );
-
-              if (isFolder) {
-                return (
-                  <li key={file.id} className="group flex items-stretch hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
+                const RowMenu = (
+                  <div className="relative" data-row-menu>
                     <button
                       type="button"
-                      onClick={() => !isRenaming && enterFolder(file.id, file.name)}
-                      className="flex flex-1 items-start gap-3 px-4 py-3 text-left transition-colors"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuOpenId(menuOpenId === file.id ? null : file.id);
+                      }}
+                      className={cn(
+                        "shrink-0 rounded-md p-1.5 text-zinc-500 transition-opacity hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
+                        menuOpenId === file.id ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      )}
+                      title="More actions"
+                      aria-label="More actions"
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpenId === file.id}
                     >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100/80 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
-                        <IconFolder className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        {NameOrEditor}
-                        <p className="mt-0.5 text-[11px] text-zinc-500">{metaLine}</p>
-                      </div>
+                      <MoreVertical className="h-3.5 w-3.5" strokeWidth={2} />
                     </button>
-                    <div className="flex items-center gap-1 pr-3">
+                    {menuOpenId === file.id && (
+                      <div
+                        className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                        role="menu"
+                      >
+                        <RowMenuItem
+                          icon={<Share2 className="h-3.5 w-3.5" />}
+                          label="Share"
+                          onClick={() => { setMenuOpenId(null); setShareTarget(file); }}
+                        />
+                        <RowMenuItem
+                          icon={<Pencil className="h-3.5 w-3.5" />}
+                          label="Rename"
+                          onClick={() => startRename(file)}
+                        />
+                        <RowMenuItem
+                          icon={<FolderInput className="h-3.5 w-3.5" />}
+                          label="Move"
+                          onClick={() => { setMenuOpenId(null); setMoveTarget(file); }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+
+                const NameOrEditor = isRenaming ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={() => void commitRename(file)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); void commitRename(file); }
+                      else if (e.key === "Escape") { e.preventDefault(); setRenameTargetId(null); }
+                    }}
+                    onFocus={(e) => {
+                      const v = e.currentTarget.value;
+                      const dot = v.lastIndexOf(".");
+                      if (!isFolder && dot > 0) e.currentTarget.setSelectionRange(0, dot);
+                      else e.currentTarget.select();
+                    }}
+                    className="w-full rounded border border-indigo-300 bg-white px-1.5 py-0.5 text-[13px] text-zinc-900 outline-none focus:border-indigo-500 dark:border-indigo-700 dark:bg-zinc-900 dark:text-zinc-100"
+                  />
+                ) : (
+                  <span className="truncate text-[13px] text-zinc-900 dark:text-zinc-100">
+                    {file.name}
+                  </span>
+                );
+
+                const rowOnClick = () => {
+                  if (isRenaming) return;
+                  if (isFolder) enterFolder(file.id, file.name);
+                  else setPreviewFile(file);
+                };
+
+                return (
+                  <li
+                    key={file.id}
+                    className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                  >
+                    {/* Name column — icon + clickable label */}
+                    <button
+                      type="button"
+                      onClick={rowOnClick}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    >
+                      <span
+                        className={cn(
+                          "flex h-6 w-6 shrink-0 items-center justify-center rounded",
+                          isFolder
+                            ? "text-zinc-700 dark:text-zinc-200"
+                            : "text-zinc-500 dark:text-zinc-400"
+                        )}
+                      >
+                        {isFolder ? <IconFolder className="h-4 w-4" /> : <IconFile className="h-4 w-4" />}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        {NameOrEditor}
+                      </span>
+                    </button>
+
+                    {/* Date modified */}
+                    <span className="hidden w-[140px] shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400 sm:block">
+                      {dateLabel}
+                    </span>
+
+                    {/* File size */}
+                    <span className="hidden w-[90px] shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400 sm:block">
+                      {sizeLabel}
+                    </span>
+
+                    {/* Actions */}
+                    <div className="w-7 shrink-0">
                       {RowMenu}
-                      <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
                     </div>
                   </li>
                 );
-              }
+              })}
 
-              return (
-                <li key={file.id} className="group flex items-stretch hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-                  <button
-                    type="button"
-                    onClick={() => !isRenaming && setPreviewFile(file)}
-                    className="flex flex-1 cursor-pointer items-start gap-3 px-4 py-3 text-left text-zinc-800 transition-colors dark:text-zinc-200"
-                  >
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-200/60 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
-                      <IconFile className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      {NameOrEditor}
-                      <p className="mt-0.5 text-[11px] text-zinc-500">{metaLine}</p>
-                    </div>
-                  </button>
-                  <div className="flex items-center gap-1 pr-3">
-                    {RowMenu}
-                    <IconChevronRight className="h-4 w-4 shrink-0 text-zinc-300 dark:text-zinc-600" />
+              {/* Skeleton rows appended while loading the next page — also
+                  match the new table column layout. */}
+              {loadingMore && [0, 1, 2, 3].map((i) => (
+                <li key={`skel-${i}`} className="flex items-center gap-3 px-4 py-2">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <Skeleton className="skeleton-shimmer h-6 w-6 shrink-0 rounded" />
+                    <Skeleton className="skeleton-shimmer h-3.5 w-[55%] rounded" />
                   </div>
+                  <Skeleton className="skeleton-shimmer hidden h-3 w-[100px] shrink-0 rounded sm:block" />
+                  <Skeleton className="skeleton-shimmer hidden h-3 w-[60px] shrink-0 rounded sm:block" />
+                  <Skeleton className="skeleton-shimmer h-4 w-4 shrink-0 rounded" />
                 </li>
-              );
-            })}
+              ))}
 
-            {/* Skeleton rows appended while loading the next page */}
-            {loadingMore && [0, 1, 2, 3].map((i) => (
-              <li key={`skel-${i}`} className="flex items-start gap-3 px-4 py-3">
-                <Skeleton className="skeleton-shimmer h-9 w-9 shrink-0 rounded-lg" />
-                <div className="min-w-0 flex-1 space-y-2">
-                  <Skeleton className="skeleton-shimmer h-3.5 w-[60%] rounded" />
-                  <Skeleton className="skeleton-shimmer h-3 w-[30%] rounded" />
-                </div>
-                <Skeleton className="skeleton-shimmer h-4 w-4 shrink-0 rounded" />
-              </li>
-            ))}
-
-            {/* Sentinel: scrolls into view at bottom; IntersectionObserver fires load-more */}
-            {driveNextPageToken && (
-              <li ref={loadMoreSentinelRef} className="h-4 list-none" aria-hidden />
-            )}
-          </ul>
+              {/* Sentinel: scrolls into view at bottom; IntersectionObserver fires load-more */}
+              {driveNextPageToken && (
+                <li ref={loadMoreSentinelRef} className="h-4 list-none" aria-hidden />
+              )}
+            </ul>
+          </>
         )}
       </div>
 
@@ -878,6 +942,46 @@ export default function DrivePage() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Sortable column header for the Drive table. Clicking flips the sort
+ * direction on the active column, or activates this column ascending if
+ * it wasn't the active one. Shows the up/down arrow only on the active
+ * column, matching Google Drive.
+ */
+function SortHeader({
+  label,
+  active,
+  dir,
+  onClick,
+  className,
+}: {
+  label: string;
+  active: boolean;
+  dir: "asc" | "desc";
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1 rounded px-1.5 py-0.5 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800",
+        active && "text-zinc-900 dark:text-zinc-100",
+        className,
+      )}
+    >
+      <span className="truncate">{label}</span>
+      {active &&
+        (dir === "asc" ? (
+          <ArrowUp className="h-3 w-3 shrink-0" strokeWidth={2.5} />
+        ) : (
+          <ArrowDown className="h-3 w-3 shrink-0" strokeWidth={2.5} />
+        ))}
+    </button>
   );
 }
 

@@ -2181,7 +2181,7 @@ export default function InboxPage() {
   }
 
   async function sendReply() {
-    if (!selectedId || !messages?.length || !replyText.trim()) return;
+    if (!selectedId || !messages?.length || richTextIsEmpty(replyText)) return;
     const last = messages[messages.length - 1];
     // Reply / Reply All → reply to the sender; the mode drives the CC list.
     const to = extractEmailAddress(last.from);
@@ -2189,7 +2189,7 @@ export default function InboxPage() {
 
     // Snapshot before clearing.
     const replySnapshot = {
-      text: replyText.trim(),
+      htmlBody: replyText,
       files: replyFiles,
       threadId: selectedId,
       lastId: last.id,
@@ -2211,7 +2211,8 @@ export default function InboxPage() {
           to: replySnapshot.to,
           cc: replySnapshot.cc,
           subject: "",
-          textBody: replySnapshot.text,
+          textBody: "",
+          htmlBody: replySnapshot.htmlBody,
           threadId: replySnapshot.threadId,
           inReplyToMessageId: replySnapshot.lastId,
           attachments: attachments.length ? attachments : undefined,
@@ -2235,7 +2236,7 @@ export default function InboxPage() {
         message: msg,
         retry: () => {
           setSendSnack(null);
-          setReplyText(replySnapshot.text);
+          setReplyText(replySnapshot.htmlBody);
           setReplyFiles(replySnapshot.files);
           setReplyCc(replySnapshot.cc ?? "");
           setReplyMode(replySnapshot.mode);
@@ -3404,12 +3405,10 @@ export default function InboxPage() {
                           <IconX className="h-4 w-4" />
                         </button>
                       </div>
-                      <textarea
+                      <RichTextEditor
                         value={replyText}
-                        onChange={(e) => setReplyText(e.target.value)}
-                        rows={5}
+                        onChange={setReplyText}
                         placeholder={titleCase("Write your reply…")}
-                        className="input-field min-h-[100px] resize-y bg-[var(--color-surface)] py-3 leading-relaxed"
                         autoFocus
                       />
                       {replyFiles.length > 0 ? (
@@ -3438,7 +3437,7 @@ export default function InboxPage() {
                         </button>
                         <button
                           type="button"
-                          disabled={!replyText.trim()}
+                          disabled={richTextIsEmpty(replyText)}
                           onClick={() => void sendReply()}
                           className="btn-primary min-w-[120px] gap-2 px-5"
                         >

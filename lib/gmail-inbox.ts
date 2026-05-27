@@ -211,14 +211,24 @@ export async function listThreadsPage(
   }
   const baseQ = isSearch ? "" : QUERY[options.folder];
   const q = [baseQ, categoryQuery, userQ].filter(Boolean).join(" ");
-  const params = new URLSearchParams({
-    maxResults: String(Math.min(Math.max(options.maxResults, 1), 100)),
-  });
+
+  // Search vs browse use different endpoints to match Gmail's UI behaviour:
+  //   - Browse (no q): threads.list — fast, paginated, ordered by thread recency.
+  //   - Search (with q): messages.list — Gmail's UI does this so it catches
+  //     threads where ANY message matches, not just the representative one.
+  //     We then dedupe by threadId. Without this, queries like "bug" miss
+  //     threads where only an older message contained the word.
+  const requestedMax = Math.min(Math.max(options.maxResults, 1), 100);
+  // Over-fetch messages because multiple msgs in the same thread collapse
+  // to one row after dedup — otherwise the user sees fewer than expected.
+  const fetchSize = isSearch ? Math.min(100, requestedMax * 3) : requestedMax;
+  const params = new URLSearchParams({ maxResults: String(fetchSize) });
   for (const l of labels) params.append("labelIds", l);
   if (q) params.set("q", q);
   if (options.pageToken) params.set("pageToken", options.pageToken);
 
-  const url = `${GMAIL_API}/threads?${params.toString()}`;
+  const endpoint = isSearch ? "messages" : "threads";
+  const url = `${GMAIL_API}/${endpoint}?${params.toString()}`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -226,7 +236,7 @@ export async function listThreadsPage(
     });
   } catch (e) {
     throw new Error(
-      describeUpstreamFetchError(e, "Gmail API (threads list)")
+      describeUpstreamFetchError(e, `Gmail API (${endpoint} list)`)
     );
   }
 
@@ -239,15 +249,36 @@ export async function listThreadsPage(
   if (!res.ok) {
     const text = await res.text();
     throwIfGmailInsufficientScope(res.status, text);
-    throw new Error(`Gmail threads list ${res.status}: ${text}`);
+    throw new Error(`Gmail ${endpoint} list ${res.status}: ${text}`);
   }
 
-  const data = (await res.json()) as {
-    threads?: { id: string; snippet?: string; historyId?: string }[];
-    nextPageToken?: string;
-  };
-
-  const rawThreads = data.threads || [];
+  // Normalise both shapes (threads.list / messages.list) to a thread-id list.
+  // messages.list returns {id, threadId, ...} per matching message; collapse
+  // to unique threadIds preserving search-rank order.
+  let rawThreads: { id: string; snippet?: string; historyId?: string }[];
+  let nextPageTokenFromApi: string | undefined;
+  if (isSearch) {
+    const data = (await res.json()) as {
+      messages?: { id: string; threadId: string }[];
+      nextPageToken?: string;
+    };
+    const seen = new Set<string>();
+    rawThreads = [];
+    for (const m of data.messages ?? []) {
+      if (!m.threadId || seen.has(m.threadId)) continue;
+      seen.add(m.threadId);
+      rawThreads.push({ id: m.threadId });
+      if (rawThreads.length >= requestedMax) break;
+    }
+    nextPageTokenFromApi = data.nextPageToken;
+  } else {
+    const data = (await res.json()) as {
+      threads?: { id: string; snippet?: string; historyId?: string }[];
+      nextPageToken?: string;
+    };
+    rawThreads = data.threads || [];
+    nextPageTokenFromApi = data.nextPageToken;
+  }
 
   const threads: ThreadListItem[] = await Promise.all(
     rawThreads.map(async (t) => {
@@ -338,7 +369,7 @@ export async function listThreadsPage(
     })
   );
 
-  return { threads, nextPageToken: data.nextPageToken };
+  return { threads, nextPageToken: nextPageTokenFromApi };
 }
 
 /**

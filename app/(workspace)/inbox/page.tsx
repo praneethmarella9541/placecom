@@ -1018,6 +1018,8 @@ export default function InboxPage() {
   const savedScrollTop = useRef<number>(0);
   // Prefetch cache: hover over a row starts the fetch so the click is instant.
   const prefetchCache = useRef<Map<string, Promise<Response>>>(new Map());
+  // Same prefetch cache for draft rows — mirrors prefetchCache but keyed by draftId.
+  const draftPrefetchCache = useRef<Map<string, Promise<Response>>>(new Map());
 
   // Session-scoped SWR cache for thread lists. Keyed by the same params that
   // determine which threads are shown, so switching tabs/folders/labels can
@@ -1596,7 +1598,12 @@ export default function InboxPage() {
     setMessages(null);
     setThreadError(null);
     try {
-      const res = await fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`);
+      // Reuse prefetch response if hover already started the fetch; otherwise start fresh.
+      const inflight = draftPrefetchCache.current.get(draftId);
+      draftPrefetchCache.current.delete(draftId); // consume — each Response body can only be read once
+      const res = await (inflight
+        ? inflight.then((r) => r.clone()).catch(() => fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`))
+        : fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`));
       const data = (await res.json()) as {
         error?: string;
         to?: string;
@@ -1668,6 +1675,16 @@ export default function InboxPage() {
     prefetchCache.current.set(threadId, promise);
     // Auto-evict after 60 s so stale data doesn't accumulate.
     setTimeout(() => prefetchCache.current.delete(threadId), 60_000);
+  }, []);
+
+  // Prefetch a draft on hover — same pattern as prefetchThread so openDraft
+  // can reuse the already-in-flight response and open instantly on click.
+  const prefetchDraft = useCallback((draftId: string) => {
+    if (draftPrefetchCache.current.has(draftId)) return; // already in-flight or done
+    const promise = fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, { cache: "no-store" });
+    draftPrefetchCache.current.set(draftId, promise);
+    // Auto-evict after 60 s so stale data doesn't accumulate.
+    setTimeout(() => draftPrefetchCache.current.delete(draftId), 60_000);
   }, []);
 
   const openThread = useCallback(async (threadId: string) => {
@@ -2717,7 +2734,7 @@ export default function InboxPage() {
                       <button
                         type="button"
                         onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
-                        onMouseEnter={() => { if (!t.draftId) prefetchThread(t.id); }}
+                        onMouseEnter={() => { t.draftId ? prefetchDraft(t.draftId) : prefetchThread(t.id); }}
                         className={cn(
                           "w-[160px] shrink-0 truncate px-2 text-left text-[13px]",
                           isUnread ? "font-bold text-[var(--color-text)]" : "font-normal text-[var(--color-text)]"
@@ -2730,7 +2747,7 @@ export default function InboxPage() {
                       <button
                         type="button"
                         onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
-                        onMouseEnter={() => { if (!t.draftId) prefetchThread(t.id); }}
+                        onMouseEnter={() => { t.draftId ? prefetchDraft(t.draftId) : prefetchThread(t.id); }}
                         className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left pr-3"
                       >
                         {chips.length > 0 && (

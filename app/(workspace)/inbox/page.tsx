@@ -1017,8 +1017,26 @@ export default function InboxPage() {
   const newLabelInputRef = useRef<HTMLInputElement>(null);
 
   const [replyText, setReplyText] = useState("");
-  const [sendBusy, setSendBusy] = useState(false);
   const [replyOpen, setReplyOpen] = useState(false);
+
+  // Gmail-style send snackbar — shows "Message sent" immediately on click,
+  // stays visible while the API call runs in the background, then shows
+  // success or error. On error the user can retry (re-opens compose).
+  type SendSnackState =
+    | { phase: "sending" }
+    | { phase: "sent" }
+    | { phase: "error"; message: string; retry: () => void };
+  const [sendSnack, setSendSnack] = useState<SendSnackState | null>(null);
+  const sendSnackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Show the snackbar and auto-dismiss it after `ms` milliseconds. */
+  function showSendSnack(state: SendSnackState, autoDismissMs?: number) {
+    if (sendSnackTimerRef.current) clearTimeout(sendSnackTimerRef.current);
+    setSendSnack(state);
+    if (autoDismissMs) {
+      sendSnackTimerRef.current = setTimeout(() => setSendSnack(null), autoDismissMs);
+    }
+  }
 
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeTo, setComposeTo] = useState("");
@@ -2102,23 +2120,50 @@ export default function InboxPage() {
     if (!selectedId || !messages?.length || !replyText.trim()) return;
     const last = messages[messages.length - 1];
     const to = extractEmailAddress(last.from);
-    setSendBusy(true); setThreadError(null);
+
+    // Snapshot before clearing.
+    const replySnapshot = { text: replyText.trim(), files: replyFiles, threadId: selectedId, lastId: last.id };
+
+    // Close the reply panel immediately — optimistic UX.
+    setReplyText(""); setReplyOpen(false); setReplyFiles([]);
+    setThreadError(null);
+    showSendSnack({ phase: "sending" });
+
     try {
-      const attachments = await resolveAttachmentsForUpload(replyFiles);
+      const attachments = await resolveAttachmentsForUpload(replySnapshot.files);
       const res = await fetch("/api/gmail/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, subject: "", textBody: replyText.trim(), threadId: selectedId, inReplyToMessageId: last.id, attachments: attachments.length ? attachments : undefined }),
+        body: JSON.stringify({
+          to,
+          subject: "",
+          textBody: replySnapshot.text,
+          threadId: replySnapshot.threadId,
+          inReplyToMessageId: replySnapshot.lastId,
+          attachments: attachments.length ? attachments : undefined,
+        }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Send failed");
-      setReplyText(""); setReplyOpen(false); setReplyFiles([]);
-      await openThread(selectedId);
-      // Sending changes inbox + sent — invalidate cache so the new state paints.
+
+      // Refresh the open thread to show the new reply message.
+      void openThread(replySnapshot.threadId);
       listCacheRef.current.clear();
       void loadThreads({ append: false, forceRefresh: true });
       void loadTracking();
-    } catch (e) { setThreadError(e instanceof Error ? e.message : "Send failed"); }
-    finally { setSendBusy(false); }
+      showSendSnack({ phase: "sent" }, 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Send failed";
+      showSendSnack({
+        phase: "error",
+        message: msg,
+        retry: () => {
+          setSendSnack(null);
+          setReplyText(replySnapshot.text);
+          setReplyFiles(replySnapshot.files);
+          setReplyOpen(true);
+        },
+      });
+    }
   }
 
   async function sendCompose() {
@@ -2126,46 +2171,126 @@ export default function InboxPage() {
       alert("Please add at least one recipient before sending.");
       return;
     }
-    setSendBusy(true);
+
+    // Snapshot compose state BEFORE closing the window so the retry closure
+    // and the background fetch both see a stable copy.
+    const snapshot = {
+      to: composeTo.trim(),
+      cc: composeCc.trim(),
+      bcc: composeBcc.trim(),
+      subject: composeSubject.trim(),
+      htmlBody: composeBody,
+      files: composeFiles,
+      draftId: composeDraftId,
+    };
+
+    // ── Gmail-style optimistic close ──────────────────────────────────────
+    // Close the compose window immediately — the user sees "Message sent"
+    // right away. The actual API call runs in the background below.
+    setComposeOpen(false);
+    setComposeDraftId(null);
+    setComposeTo(""); setComposeCc(""); setComposeBcc("");
+    setComposeSubject(""); setComposeBody(""); setComposeFiles([]);
+    showSendSnack({ phase: "sending" });
+
+    // Inject an optimistic row into the Sent list so it appears immediately.
+    // We use a stable temp id prefixed "__opt__" so reconciliation can
+    // identify and replace it once the real server id comes back.
+    const optId = `__opt__${Date.now()}`;
+    const optimisticRow: ThreadRow = {
+      id: optId,
+      snippet: "",
+      subject: snapshot.subject || "(no subject)",
+      from: "me",
+      date: new Date().toISOString(),
+      unread: false,
+      starred: false,
+      important: false,
+    };
+    // Prepend to Sent list cache so the row appears even if the user is
+    // currently viewing another folder.
+    const sentKey = `sent||`;
+    const sentCached = listCacheRef.current.get(sentKey);
+    if (sentCached) {
+      listCacheRef.current.set(sentKey, {
+        threads: [optimisticRow, ...sentCached.threads],
+        nextPageToken: sentCached.nextPageToken,
+      });
+    }
+    if (folder === "sent") {
+      mutateThreads((rows) => [optimisticRow, ...rows]);
+    }
+
+    // ── Background send ───────────────────────────────────────────────────
     try {
-      const attachments = await resolveAttachmentsForUpload(composeFiles);
+      const attachments = await resolveAttachmentsForUpload(snapshot.files);
       const res = await fetch("/api/gmail/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: composeTo.trim(),
-          cc: composeCc.trim(),
-          bcc: composeBcc.trim(),
-          subject: composeSubject.trim(),
-          // composeBody is HTML from RichTextEditor. Send as htmlBody; the
-          // server derives the plain-text MIME part from it.  textBody is
-          // left empty so the server's HTML path wins.
+          to: snapshot.to,
+          cc: snapshot.cc || undefined,
+          bcc: snapshot.bcc || undefined,
+          subject: snapshot.subject,
           textBody: "",
-          htmlBody: composeBody,
+          htmlBody: snapshot.htmlBody,
           attachments: attachments.length ? attachments : undefined,
         }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Send failed");
-      // If this compose was an in-progress draft, drop it from Drafts.
-      if (composeDraftId) {
-        void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(composeDraftId)}`, {
+
+      // Delete the draft it was based on (fire-and-forget).
+      if (snapshot.draftId) {
+        void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(snapshot.draftId)}`, {
           method: "DELETE",
         }).catch(() => {});
       }
-      setComposeOpen(false);
-      setComposeDraftId(null);
-      setComposeTo("");
-      setComposeCc("");
-      setComposeBcc("");
-      setComposeSubject("");
-      setComposeBody("");
-      setComposeFiles([]);
-      // Sending changes inbox + sent counts/lists — invalidate cache.
+
+      // Remove the optimistic row — the real refresh will add the true row.
+      mutateThreads((rows) => rows.filter((r) => r.id !== optId));
+      const sentC = listCacheRef.current.get(sentKey);
+      if (sentC) {
+        listCacheRef.current.set(sentKey, {
+          threads: sentC.threads.filter((r) => r.id !== optId),
+          nextPageToken: sentC.nextPageToken,
+        });
+      }
+      // Invalidate + refresh so the real sent row and counts paint.
       listCacheRef.current.clear();
       void loadThreads({ append: false, forceRefresh: true });
       void loadTracking();
-    } catch (e) { alert(e instanceof Error ? e.message : "Send failed"); }
-    finally { setSendBusy(false); }
+
+      showSendSnack({ phase: "sent" }, 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Send failed";
+      // Remove the optimistic row on failure.
+      mutateThreads((rows) => rows.filter((r) => r.id !== optId));
+      const sentC = listCacheRef.current.get(sentKey);
+      if (sentC) {
+        listCacheRef.current.set(sentKey, {
+          threads: sentC.threads.filter((r) => r.id !== optId),
+          nextPageToken: sentC.nextPageToken,
+        });
+      }
+      // Show error snackbar with Retry button — re-opens compose with the
+      // original content so the user doesn't lose their message.
+      showSendSnack({
+        phase: "error",
+        message: msg,
+        retry: () => {
+          setSendSnack(null);
+          setComposeTo(snapshot.to);
+          setComposeCc(snapshot.cc);
+          setComposeBcc(snapshot.bcc);
+          setComposeSubject(snapshot.subject);
+          setComposeBody(snapshot.htmlBody);
+          setComposeFiles(snapshot.files);
+          setComposeDraftId(snapshot.draftId);
+          setComposeOpen(true);
+          setComposeMinimized(false);
+        },
+      });
+    }
   }
 
   // Shared back-to-list action used by thread detail
@@ -3141,15 +3266,11 @@ export default function InboxPage() {
                         </button>
                         <button
                           type="button"
-                          disabled={sendBusy || !replyText.trim()}
+                          disabled={!replyText.trim()}
                           onClick={() => void sendReply()}
                           className="btn-primary min-w-[120px] gap-2 px-5"
                         >
-                          {sendBusy ? (
-                            <><span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> {titleCase("Sending…")}</>
-                          ) : (
-                            <><Send className="h-4 w-4" strokeWidth={2} />{titleCase("Send")}</>
-                          )}
+                          <Send className="h-4 w-4" strokeWidth={2} />{titleCase("Send")}
                         </button>
                       </div>
                     </div>
@@ -3169,6 +3290,69 @@ export default function InboxPage() {
         )}
       </div>{/* end right content */}
     </div>
+
+      {/* ── Send snackbar — Gmail-style bottom-left toast ──────────────── */}
+      {sendSnack && typeof document !== "undefined" && createPortal(
+        <div
+          className={cn(
+            "fixed bottom-6 left-6 z-[1100] flex items-center gap-3 rounded-lg px-4 py-3 text-[13px] font-medium shadow-xl transition-all",
+            sendSnack.phase === "error"
+              ? "bg-zinc-800 text-white"
+              : "bg-zinc-800 text-white"
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          {sendSnack.phase === "sending" && (
+            <>
+              {/* Spinner */}
+              <svg className="h-4 w-4 animate-spin shrink-0 text-white/70" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+              </svg>
+              <span>Sending…</span>
+            </>
+          )}
+          {sendSnack.phase === "sent" && (
+            <>
+              <IconCheck className="h-4 w-4 shrink-0 text-green-400" />
+              <span>Message sent</span>
+              <button
+                type="button"
+                onClick={() => setSendSnack(null)}
+                className="ml-1 rounded p-0.5 opacity-60 hover:opacity-100"
+                aria-label="Dismiss"
+              >
+                <IconX className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+          {sendSnack.phase === "error" && (
+            <>
+              <svg className="h-4 w-4 shrink-0 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+              <span className="max-w-[220px] truncate">{sendSnack.message}</span>
+              <button
+                type="button"
+                onClick={sendSnack.retry}
+                className="ml-1 rounded bg-white/15 px-2 py-0.5 text-[12px] font-semibold hover:bg-white/25"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={() => setSendSnack(null)}
+                className="rounded p-0.5 opacity-60 hover:opacity-100"
+                aria-label="Dismiss"
+              >
+                <IconX className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
+        </div>,
+        document.body
+      )}
 
       {/* Gmail-style floating compose */}
       {composeOpen && typeof document !== "undefined"
@@ -3423,11 +3607,11 @@ export default function InboxPage() {
                       </button>
                       <button
                         type="button"
-                        disabled={sendBusy || !composeTo.trim()}
+                        disabled={!composeTo.trim()}
                         onClick={() => void sendCompose()}
                         className="rounded-full bg-[#1a73e8] px-6 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-[#1557b0] disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        {sendBusy ? titleCase("Sending…") : titleCase("Send")}
+                        {titleCase("Send")}
                       </button>
                     </div>
                   </div>

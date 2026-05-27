@@ -12,7 +12,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, Send, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal } from "lucide-react";
+import { PencilLine, Send, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal, Bookmark } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -27,7 +27,7 @@ import {
   IconFile,
 } from "@/components/Icons";
 
-type Folder = "inbox" | "sent" | "drafts" | "starred";
+type Folder = "inbox" | "sent" | "drafts" | "starred" | "important";
 type ThreadRow = {
   id: string;
   snippet: string;
@@ -38,6 +38,7 @@ type ThreadRow = {
   labelIds?: string[];
   unread?: boolean;
   starred?: boolean;
+  important?: boolean;
   hasAttachments?: boolean;
 };
 
@@ -982,11 +983,13 @@ export default function InboxPage() {
   const [category, setCategory] = useState<CategoryKey>("primary");
   // Effective label-id passed to the API: when in inbox and no user-label
   // filter is set, use the category label; otherwise use whatever the user
-  // explicitly filtered to. Starred section always forces labelId=STARRED.
+  // explicitly filtered to. Starred/Important sections force their label IDs.
   const effectiveLabelId =
     folder === "starred"
       ? "STARRED"
-      : filterLabelId ?? (folder === "inbox" ? CATEGORY_LABEL[category] : null);
+      : folder === "important"
+        ? "IMPORTANT"
+        : filterLabelId ?? (folder === "inbox" ? CATEGORY_LABEL[category] : null);
 
   // Multi-select state (Gmail-style row checkboxes).
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
@@ -1353,8 +1356,9 @@ export default function InboxPage() {
    */
   const loadThreads = useCallback(
     async (opts: { append: boolean; pageToken?: string; forceRefresh?: boolean }) => {
-      // "starred" is a virtual folder — pass inbox to the API + labelId=STARRED
-      const apiFolder = folder === "starred" ? "inbox" : folder;
+      // "starred" and "important" are virtual folders — pass inbox to the API
+      // and use labelId=STARRED / labelId=IMPORTANT to filter.
+      const apiFolder = (folder === "starred" || folder === "important") ? "inbox" : folder;
       const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
@@ -1452,6 +1456,7 @@ export default function InboxPage() {
       "SENT",
       "DRAFT",
       "STARRED",
+      "IMPORTANT",
       "CATEGORY_PERSONAL",
       "CATEGORY_PROMOTIONS",
       "CATEGORY_SOCIAL",
@@ -2177,10 +2182,11 @@ export default function InboxPage() {
   // Inbox badge uses CATEGORY_PERSONAL (Primary) unread — same as Gmail sidebar,
   // which excludes Promotions/Social/etc. from the unread dot.
   const FOLDER_NAV = [
-    { key: "inbox"   as const, label: "Inbox",   Icon: IconInbox,   countId: "INBOX",             unreadOnly: true  },
-    { key: "starred" as const, label: "Starred",  Icon: IconStar,    countId: "STARRED",           unreadOnly: false },
-    { key: "sent"    as const, label: "Sent",     Icon: IconSend,    countId: "SENT",              unreadOnly: false },
-    { key: "drafts"  as const, label: "Drafts",   Icon: FilePen,     countId: "DRAFT",             unreadOnly: false },
+    { key: "inbox"     as const, label: "Inbox",     Icon: IconInbox,  countId: "INBOX",     unreadOnly: true  },
+    { key: "starred"   as const, label: "Starred",   Icon: IconStar,   countId: "STARRED",   unreadOnly: false },
+    { key: "important" as const, label: "Important", Icon: Bookmark,   countId: "IMPORTANT", unreadOnly: false },
+    { key: "sent"      as const, label: "Sent",      Icon: IconSend,   countId: "SENT",      unreadOnly: false },
+    { key: "drafts"    as const, label: "Drafts",    Icon: FilePen,    countId: "DRAFT",     unreadOnly: false },
   ] as const;
 
   return (
@@ -2250,6 +2256,8 @@ export default function InboxPage() {
                   "h-[18px] w-[18px] shrink-0",
                   key === "starred" && active ? "fill-yellow-400 stroke-yellow-400" : "",
                   key === "starred" && !active ? "stroke-[var(--color-text-muted)]" : "",
+                  key === "important" && active ? "fill-yellow-400 stroke-yellow-400" : "",
+                  key === "important" && !active ? "stroke-[var(--color-text-muted)]" : "",
                 )} />
                 <span className="flex-1 truncate text-left">{titleCase(label)}</span>
                 {badge !== null && (
@@ -2699,13 +2707,16 @@ export default function InboxPage() {
                     ? <FilePen className="h-7 w-7 text-[var(--color-text-faint)] stroke-[1.25]" />
                     : folder === "starred"
                       ? <IconStar className="h-7 w-7 text-[var(--color-text-faint)]" />
-                      : <IconInbox className="h-7 w-7 text-[var(--color-text-faint)]" />}
+                      : folder === "important"
+                        ? <Bookmark className="h-7 w-7 text-[var(--color-text-faint)]" />
+                        : <IconInbox className="h-7 w-7 text-[var(--color-text-faint)]" />}
                 </div>
                 <p className="text-sm text-[var(--color-text-muted)]">
                   {titleCase(
                     mailSearch ? "Nothing matches your search"
                     : folder === "drafts" ? "No drafts"
                     : folder === "starred" ? "No starred messages"
+                    : folder === "important" ? "No important messages"
                     : `No threads in ${folder}`,
                   )}
                 </p>
@@ -2747,7 +2758,19 @@ export default function InboxPage() {
                         />
                       </span>
 
-                      {/* Star — fixed 24px slot */}
+                      {/* Important marker — always visible when IMPORTANT label is set */}
+                      <span
+                        className={cn(
+                          "flex w-4 shrink-0 items-center justify-center text-[11px] leading-none",
+                          t.important ? "text-yellow-500" : "text-transparent select-none pointer-events-none"
+                        )}
+                        aria-label={t.important ? "Important" : undefined}
+                        title={t.important ? "Important" : undefined}
+                      >
+                        ►
+                      </span>
+
+                      {/* Star — always visible; filled/yellow when starred, faint outline when not */}
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); void toggleThreadStar(t.id, !isStarred); }}
@@ -2755,8 +2778,8 @@ export default function InboxPage() {
                         className={cn(
                           "flex w-6 shrink-0 items-center justify-center text-[15px] leading-none transition-colors",
                           isStarred
-                            ? "text-yellow-500"
-                            : "text-[var(--color-text-faint)] opacity-0 group-hover:opacity-100 hover:text-yellow-500"
+                            ? "text-yellow-500 hover:text-yellow-400"
+                            : "text-[var(--color-text-faint)] hover:text-yellow-500"
                         )}
                         aria-label={isStarred ? "Unstar" : "Star"}
                         title={isStarred ? "Unstar" : "Star"}

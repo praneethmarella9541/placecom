@@ -345,8 +345,8 @@ export async function listThreadsPage(
         }
         const allLabelIds = Array.from(new Set(msgs.flatMap((m) => m.labelIds ?? [])));
         // Strip folder-state labels — the row's folder tab already conveys this.
-        // STARRED is also stripped from chips because it has its own star icon
-        // in the UI (Gmail does the same; star is not rendered as a chip).
+        // STARRED and IMPORTANT are also stripped from chips because they have
+        // their own dedicated icons in the row UI (same as Gmail).
         const FOLDER_LABELS = new Set([
           "INBOX",
           "SENT",
@@ -356,6 +356,7 @@ export async function listThreadsPage(
           "UNREAD",
           "CHAT",
           "STARRED",
+          "IMPORTANT",
         ]);
         const userVisibleLabelIds = allLabelIds.filter((id) => !FOLDER_LABELS.has(id));
         // hasAttachments — any message whose top-level Content-Type starts
@@ -376,6 +377,7 @@ export async function listThreadsPage(
           historyId: t.historyId,
           unread: allLabelIds.includes("UNREAD"),
           starred: allLabelIds.includes("STARRED"),
+          important: allLabelIds.includes("IMPORTANT"),
           hasAttachments,
         };
       } catch {

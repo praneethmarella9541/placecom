@@ -567,6 +567,15 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
     const bg = isDark ? "#18181b" : "#ffffff";
     const fg = isDark ? "#d4d4d8" : "#27272a";
 
+    // Force-readable text for inline grey colours that calendar invites &
+    // marketing emails love to use ("#888", "#999", "#aaa", etc.). Google
+    // Calendar invite labels ("When", "Organizer", "Guests"…) are set to
+    // ~#888 inline which looks washed-out against our background. We bump
+    // them via attribute selectors that match the inline style EXACTLY as
+    // Google emits it, then a few common variants.
+    const greyOverride = isDark
+      ? "color: #d4d4d8 !important;"
+      : "color: #3f3f46 !important;";
     doc.open();
     doc.write(`<!DOCTYPE html><html><head><style>
       *, *::before, *::after { box-sizing: border-box; }
@@ -582,6 +591,24 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
       blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid #d4d4d8; color: #71717a; }
       table { border-collapse: collapse; max-width: 100%; }
       pre { white-space: pre-wrap; overflow-x: auto; }
+
+      /* Google Calendar invite labels & similar inline-grey text — boost to
+         a readable contrast without flattening intentional styling. */
+      [style*="color:#888"], [style*="color: #888"],
+      [style*="color:#999"], [style*="color: #999"],
+      [style*="color:#aaa"], [style*="color: #aaa"],
+      [style*="color:#777"], [style*="color: #777"],
+      [style*="color:#666"], [style*="color: #666"],
+      [style*="color:#bbb"], [style*="color: #bbb"],
+      [style*="color:#ccc"], [style*="color: #ccc"],
+      [style*="color:rgb(136"], [style*="color: rgb(136"],
+      [style*="color:rgb(153"], [style*="color: rgb(153"],
+      [style*="color:rgb(170"], [style*="color: rgb(170"],
+      font[color="#888"], font[color="#888888"],
+      font[color="#999"], font[color="#999999"],
+      font[color="#aaa"], font[color="#aaaaaa"] {
+        ${greyOverride}
+      }
     </style></head><body>${html}</body></html>`);
     doc.close();
 

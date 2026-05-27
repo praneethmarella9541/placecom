@@ -2734,7 +2734,7 @@ export default function InboxPage() {
                       <button
                         type="button"
                         onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
-                        onMouseEnter={() => { t.draftId ? prefetchDraft(t.draftId) : prefetchThread(t.id); }}
+                        onMouseEnter={() => { if (t.draftId) { prefetchDraft(t.draftId); } else { prefetchThread(t.id); } }}
                         className={cn(
                           "w-[160px] shrink-0 truncate px-2 text-left text-[13px]",
                           isUnread ? "font-bold text-[var(--color-text)]" : "font-normal text-[var(--color-text)]"
@@ -2747,7 +2747,7 @@ export default function InboxPage() {
                       <button
                         type="button"
                         onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
-                        onMouseEnter={() => { t.draftId ? prefetchDraft(t.draftId) : prefetchThread(t.id); }}
+                        onMouseEnter={() => { if (t.draftId) { prefetchDraft(t.draftId); } else { prefetchThread(t.id); } }}
                         className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left pr-3"
                       >
                         {chips.length > 0 && (

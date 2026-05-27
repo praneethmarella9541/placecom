@@ -315,11 +315,6 @@ export default function CalendarPage() {
   const [editEnd, setEditEnd] = useState("");
   const [editAttendees, setEditAttendees] = useState(""); // comma-sep emails
   const [editNotify, setEditNotify] = useState<SendUpdates>("all");
-  // Optional message sent to guests as a separate follow-up email when the
-  // event is saved. NOT stored on the event itself (the `editNotes` field
-  // above is the event description). Mirrors Gmail's "Add a note" UX.
-  const [editGuestNote, setEditGuestNote] = useState("");
-
   // Success state — shown after meeting created
   const [createdMeetLink, setCreatedMeetLink] = useState<string | null>(null);
 
@@ -502,7 +497,6 @@ export default function CalendarPage() {
     setEditEnd(ev.end?.dateTime ? toInputValue(new Date(ev.end.dateTime)) : "");
     setEditAttendees((ev.attendees ?? []).map((a) => a.email).filter(Boolean).join(", "));
     setEditNotify("all");
-    setEditGuestNote("");
     setEditError(null);
     setSelectedEvent(null); // close detail view
   }
@@ -618,14 +612,7 @@ export default function CalendarPage() {
       });
       const body = (await res.json()) as { error?: string; event?: EventRow };
       if (!res.ok) throw new Error(body.error || "Failed to update event");
-      // If the user added a guest-note, send it as a separate follow-up
-      // email so attendees see the reason for the update. Skipped when
-      // editNotify is "none" (the user explicitly opted out of guest mail).
-      if (editGuestNote.trim() && editNotify !== "none" && editEvent) {
-        void sendAttendeeNote(editEvent, editGuestNote, "updated");
-      }
       setEditEvent(null);
-      setEditGuestNote("");
       await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     } catch (e) {
       setEditError(clientFetchFailedMessage(e));
@@ -1389,28 +1376,6 @@ export default function CalendarPage() {
                   </label>
                 ))}
               </div>
-
-              {/* Optional message to guests — sent as a separate email so
-                  attendees see the reason for the update. Hidden when the
-                  user opts out of guest notifications altogether. */}
-              {editNotify !== "none" && (editEvent?.attendees?.length ?? 0) > 0 && (
-                <div>
-                  <label htmlFor="edit-guest-note" className="mb-1 block text-[12px] font-medium text-[var(--color-text-muted)]">
-                    Add a note to guests <span className="text-[var(--color-text-faint)]">(optional)</span>
-                  </label>
-                  <textarea
-                    id="edit-guest-note"
-                    rows={2}
-                    placeholder="Explain what changed…"
-                    value={editGuestNote}
-                    onChange={(e) => setEditGuestNote(e.target.value)}
-                    className="input-field w-full resize-none text-[13px]"
-                  />
-                  <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
-                    Sent as a separate email alongside the update notice.
-                  </p>
-                </div>
-              )}
 
               {editError && (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">

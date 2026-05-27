@@ -198,7 +198,29 @@ export async function listThreadsPage(
     labelId?: string;
   }
 ): Promise<ThreadListPage> {
-  const userQ = (options.searchQuery || "").trim();
+  const rawUserQ = (options.searchQuery || "").trim();
+  // Gmail's web UI does automatic word-prefix matching ("bug" matches "bugs",
+  // "Bugzilla"). The Gmail API does NOT do this by default — it requires
+  // explicit `*` suffixes. We add the `*` ourselves to bareword tokens so
+  // searches feel the same as Gmail's UI.
+  // Skip: tokens with operators (from:, subject:, has:, is:, label:, etc.),
+  // already-wildcarded tokens, quoted phrases, boolean operators (AND/OR/NOT),
+  // and pure punctuation. Leave them as-is so user-typed operators still work.
+  const expandPrefixSearch = (input: string): string => {
+    if (!input) return "";
+    // Split on whitespace but keep quoted phrases intact.
+    const tokens = input.match(/"[^"]*"|\S+/g) ?? [];
+    return tokens.map((t) => {
+      if (t.startsWith('"') && t.endsWith('"')) return t;          // quoted phrase
+      if (t === "AND" || t === "OR" || t === "NOT") return t;       // boolean op
+      if (t.startsWith("-")) return t;                              // negation
+      if (t.includes(":")) return t;                                // operator (from:, subject:, etc.)
+      if (t.endsWith("*")) return t;                                // already wildcarded
+      if (!/[a-zA-Z0-9]/.test(t)) return t;                         // pure punctuation
+      return `${t}*`;
+    }).join(" ");
+  };
+  const userQ = expandPrefixSearch(rawUserQ);
   const isSearch = userQ.length > 0;
 
   // When a search query is active, drop ALL folder/label restrictions so

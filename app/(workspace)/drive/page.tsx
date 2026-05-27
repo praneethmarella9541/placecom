@@ -16,7 +16,10 @@ import {
 } from "@/components/Icons";
 import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
-import { Share2 } from "lucide-react";
+import { Share2, HardDrive, Users, Star } from "lucide-react";
+
+type DriveView = "my-drive" | "shared-with-me" | "starred";
+type SharedDrive = { id: string; name: string };
 
 type DriveFileRow = {
   id: string;
@@ -36,9 +39,26 @@ function formatBytes(bytes: number): string {
 }
 
 export default function DrivePage() {
-  /** Folder path from My Drive root; empty = root. */
+  /** Top-level sidebar selection. "shared-drive" is internal — the actual
+   *  drive id is held separately in currentSharedDrive. */
+  const [view, setView] = useState<DriveView | "shared-drive">("my-drive");
+  /** When view === "shared-drive", which drive's contents we're listing. */
+  const [currentSharedDrive, setCurrentSharedDrive] = useState<SharedDrive | null>(null);
+
+  /** List of shared drives the user has access to — populates the sidebar. */
+  const [sharedDrives, setSharedDrives] = useState<SharedDrive[]>([]);
+
+  /** Folder path from the current view root; empty = at the root. */
   const [pathStack, setPathStack] = useState<PathCrumb[]>([]);
-  const currentParentId = pathStack.length === 0 ? "root" : pathStack[pathStack.length - 1].id;
+  // Effective parent id sent to the API:
+  //   - In a shared-drive view at root, use the driveId as parentId.
+  //   - Otherwise, last folder on the stack, or "root" for the top of a view.
+  const currentParentId =
+    pathStack.length > 0
+      ? pathStack[pathStack.length - 1].id
+      : view === "shared-drive" && currentSharedDrive
+        ? currentSharedDrive.id
+        : "root";
 
   const [driveFiles, setDriveFiles] = useState<DriveFileRow[]>([]);
   const [driveNextPageToken, setDriveNextPageToken] = useState<string | undefined>();
@@ -64,6 +84,51 @@ export default function DrivePage() {
     return () => clearTimeout(t);
   }, [driveSearchInput]);
 
+  // Load the user's shared drives once on mount so the sidebar can list
+  // them. Non-fatal on error (some accounts simply have none).
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/drive/drives")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { drives?: SharedDrive[] } | null) => {
+        if (cancelled || !j?.drives) return;
+        setSharedDrives(j.drives);
+      })
+      .catch(() => {/* no shared drives is fine */});
+    return () => { cancelled = true; };
+  }, []);
+
+  /** Switch the top-level view. Resets folder path + search so the user
+   *  always lands at the view root, matching Google Drive behaviour. */
+  function switchView(next: DriveView, drive?: SharedDrive) {
+    if (next === "my-drive") {
+      setView("my-drive");
+      setCurrentSharedDrive(null);
+    } else {
+      setView(next);
+      setCurrentSharedDrive(null);
+    }
+    setPathStack([]);
+    setDriveSearchInput("");
+    setDriveSearch("");
+    setDriveNextPageToken(undefined);
+    // `drive` param only relevant when caller is selecting a shared drive
+    // via switchSharedDrive — switchView itself just handles my-drive /
+    // shared-with-me / starred.
+    void drive;
+  }
+
+  /** Enter a shared drive — special case because the drive id becomes the
+   *  effective parentId for the file listing. */
+  function switchSharedDrive(drive: SharedDrive) {
+    setView("shared-drive");
+    setCurrentSharedDrive(drive);
+    setPathStack([]);
+    setDriveSearchInput("");
+    setDriveSearch("");
+    setDriveNextPageToken(undefined);
+  }
+
   const loadDriveFiles = useCallback(
     async (opts: { append: boolean; pageToken?: string }) => {
       if (!opts.append) {
@@ -79,6 +144,16 @@ export default function DrivePage() {
       });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (driveSearch) params.set("search", driveSearch);
+      // Only forward "view" when we're at the root of a special view and
+      // not searching. After descending into a folder OR when searching,
+      // the API uses parentId / global-search semantics regardless.
+      if (
+        !driveSearch &&
+        pathStack.length === 0 &&
+        (view === "shared-with-me" || view === "starred")
+      ) {
+        params.set("view", view);
+      }
       try {
         const res = await fetch(`/api/drive/files?${params.toString()}`);
         // Parse defensively: a 5xx may return an HTML error page (not JSON),
@@ -108,7 +183,7 @@ export default function DrivePage() {
         loadingMoreRef.current = false;
       }
     },
-    [driveSearch, currentParentId]
+    [driveSearch, currentParentId, view, pathStack.length]
   );
 
   function enterFolder(id: string, name: string) {
@@ -188,8 +263,63 @@ export default function DrivePage() {
     }
   }
 
+  // Root label for the breadcrumb's first crumb — reflects which sidebar
+  // view we're in.
+  const viewRootLabel =
+    view === "my-drive"
+      ? titleCase("My Drive")
+      : view === "shared-with-me"
+        ? "Shared with me"
+        : view === "starred"
+          ? "Starred"
+          : currentSharedDrive?.name || "Shared drive";
+
   return (
-    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] flex-col overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+      {/* ── Sidebar ─────────────────────────────────────────────
+          Mirrors Google Drive's left nav. Visible from sm+; on mobile
+          we collapse it (Drive does the same — switches to a drawer). */}
+      <aside className="hidden w-[208px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] p-2 sm:flex">
+        <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
+          Drive
+        </p>
+        <SidebarItem
+          icon={<HardDrive className="h-4 w-4" />}
+          label="My Drive"
+          active={view === "my-drive"}
+          onClick={() => switchView("my-drive")}
+        />
+        <SidebarItem
+          icon={<Users className="h-4 w-4" />}
+          label="Shared with me"
+          active={view === "shared-with-me"}
+          onClick={() => switchView("shared-with-me")}
+        />
+        <SidebarItem
+          icon={<Star className="h-4 w-4" />}
+          label="Starred"
+          active={view === "starred"}
+          onClick={() => switchView("starred")}
+        />
+
+        {sharedDrives.length > 0 && (
+          <>
+            <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
+              Shared drives
+            </p>
+            {sharedDrives.map((d) => (
+              <SidebarItem
+                key={d.id}
+                icon={<HardDrive className="h-4 w-4" />}
+                label={d.name}
+                active={view === "shared-drive" && currentSharedDrive?.id === d.id}
+                onClick={() => switchSharedDrive(d)}
+              />
+            ))}
+          </>
+        )}
+      </aside>
+
       <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
         {/* Slim progress bar at top — visible only while loading more pages */}
         <div
@@ -211,7 +341,7 @@ export default function DrivePage() {
               onClick={() => navigateToDepth(0)}
               className="rounded-md px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
             >
-              {titleCase("My Drive")}
+              {viewRootLabel}
             </button>
             {pathStack.map((crumb, index) => (
               <span key={crumb.id} className="flex items-center gap-1">
@@ -518,5 +648,37 @@ export default function DrivePage() {
         />
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Sidebar nav row — icon + label + active state.  Matches Google Drive's
+ * left rail: rounded pill, primary-tinted background when selected.
+ */
+function SidebarItem({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-4 pr-3 text-left text-[13px] font-medium transition-colors",
+        active
+          ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+          : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+      )}
+    >
+      <span className="shrink-0">{icon}</span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </button>
   );
 }

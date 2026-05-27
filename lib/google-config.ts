@@ -23,8 +23,12 @@ export function getGoogleOAuthClientId(): string {
  * - gmail.send: send and reply (required for compose)
  * - calendar.readonly: list events for timeline/weekly views
  * - calendar.events: create recruiter meetings and add attendees
- * - drive.readonly: list and open Drive files from the Drive page (/drive)
- * - drive.file: upload files to Drive from Placecom (/api/drive/upload)
+ * - drive: full Drive access — needed because the app lists arbitrary user
+ *   files (drive.readonly behaviour), uploads (drive.file behaviour) AND
+ *   manages permissions (sharing). The narrower scopes can't grant
+ *   permission-write on files the app didn't itself create. After adding
+ *   this scope, users must sign out and sign in again so the granted-scope
+ *   list refreshes.
  * - contacts.readonly + contacts.other.readonly: People API — saved contacts & “Other contacts” for compose suggestions
  * - forms.body: create Google Forms via Forms API (/forms workspace)
  * Enable **People API** in the same Google Cloud project (APIs & Services → Enable APIs).
@@ -45,8 +49,7 @@ export const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/gmail.send",
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
-  "https://www.googleapis.com/auth/drive.readonly",
-  "https://www.googleapis.com/auth/drive.file",
+  "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/contacts.readonly",
   "https://www.googleapis.com/auth/contacts.other.readonly",
   "https://www.googleapis.com/auth/forms.body",

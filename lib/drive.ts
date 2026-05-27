@@ -22,29 +22,45 @@ function escapeDriveQFragment(s: string): string {
 }
 
 /**
+ * Drive top-level views the sidebar exposes — mirrors Google Drive's left
+ * nav. "my-drive" is the default; the others map to Drive API query terms.
+ */
+export type DriveView = "my-drive" | "shared-with-me" | "starred";
+
+/**
  * Build the Drive `q` query string.
  *
- * Two distinct modes — matches Google Drive's UX:
+ * Modes — matches Google Drive's UX:
  *
- * 1. **Browse mode (no search):** show children of the current folder.
- * 2. **Search mode (has search):** ignore folder context, search the ENTIRE
- *    Drive — same as typing in Google Drive's search bar. OR-joins
- *    `name contains` with `fullText contains` so it matches both
- *    filenames and file contents (PDFs, Docs, Sheets, etc.).
+ * - **Search:** ignore folder/view context, search the ENTIRE Drive
+ *   (Drive's own search bar behaviour). OR-joins `name contains` with
+ *   `fullText contains` for filename + content matches.
+ * - **View-rooted browse** ("shared-with-me", "starred"): use Drive's
+ *   sharedWithMe / starred flags. Folder navigation INSIDE these views
+ *   uses parentId (after clicking a folder, we descend normally).
+ * - **My Drive browse:** list children of the current folder.
  */
-function buildFilesListQ(parentId: string, search: string | undefined): string {
+function buildFilesListQ(
+  parentId: string,
+  search: string | undefined,
+  view: DriveView,
+  atViewRoot: boolean,
+): string {
   const t = (search || "").trim();
-
-  if (!t) {
-    const pid = escapeDriveQFragment(parentId);
-    return `'${pid}' in parents and trashed = false`;
+  if (t) {
+    const esc = escapeDriveQFragment(t);
+    const fullTextTerm = t.includes(" ") ? `"${esc}"` : esc;
+    return `(name contains '${esc}' or fullText contains '${fullTextTerm}') and trashed = false`;
   }
-
-  const esc = escapeDriveQFragment(t);
-  // For multi-word queries, wrap in quotes for fullText so Drive does a
-  // phrase match rather than splitting tokens.
-  const fullTextTerm = t.includes(" ") ? `"${esc}"` : esc;
-  return `(name contains '${esc}' or fullText contains '${fullTextTerm}') and trashed = false`;
+  // At the root of a special view, use Drive's flag; otherwise descend by parent.
+  if (atViewRoot && view === "shared-with-me") {
+    return "sharedWithMe = true and trashed = false";
+  }
+  if (atViewRoot && view === "starred") {
+    return "starred = true and trashed = false";
+  }
+  const pid = escapeDriveQFragment(parentId);
+  return `'${pid}' in parents and trashed = false`;
 }
 
 export async function listDriveFilesPage(
@@ -55,15 +71,22 @@ export async function listDriveFilesPage(
     search?: string;
     /** Google Drive folder id, or `"root"` for My Drive root. Ignored in search mode. */
     parentId: string;
+    /** Top-level view selector. Defaults to "my-drive". */
+    view?: DriveView;
   }
 ): Promise<DriveListPage> {
   const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
   const parentId = options.parentId.trim() || "root";
+  const view: DriveView = options.view ?? "my-drive";
   const hasSearch = (options.search || "").trim().length > 0;
+  // "View root" means the user clicked Shared-with-me/Starred and hasn't
+  // descended into a folder yet. After descending we use parentId like
+  // normal browse mode.
+  const atViewRoot = parentId === "root";
   const params = new URLSearchParams({
     pageSize: String(pageSize),
     fields: "nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink)",
-    q: buildFilesListQ(parentId, options.search),
+    q: buildFilesListQ(parentId, options.search, view, atViewRoot),
     includeItemsFromAllDrives: "true",
     supportsAllDrives: "true",
     corpora: "user",
@@ -104,7 +127,7 @@ export async function listDriveFilesPage(
     ) {
       err.code = "DRIVE_INSUFFICIENT_SCOPE";
       err.message =
-        "Drive access was not granted for this Google account. In Google Cloud Console: enable the Google Drive API and add the drive.readonly scope to your OAuth client; then sign out and sign in with Google again.";
+        "Drive access was not granted for this Google account. In Google Cloud Console: enable the Google Drive API and add the https://www.googleapis.com/auth/drive scope to your OAuth client; then sign out and sign in with Google again.";
     }
     throw err;
   }
@@ -176,7 +199,7 @@ export async function listGoogleFormsPage(
     ) {
       err.code = "DRIVE_INSUFFICIENT_SCOPE";
       err.message =
-        "Drive access was not granted for this Google account. In Google Cloud Console: enable the Google Drive API and add the drive.readonly scope to your OAuth client; then sign out and sign in with Google again.";
+        "Drive access was not granted for this Google account. In Google Cloud Console: enable the Google Drive API and add the https://www.googleapis.com/auth/drive scope to your OAuth client; then sign out and sign in with Google again.";
     }
     throw err;
   }
@@ -358,4 +381,57 @@ export async function deleteFilePermission(
     if (/Drive 404/.test(err.message)) return;
     throw err;
   }
+}
+
+/* ───────────────────────── Shared drives ───────────────────────── */
+
+export type SharedDrive = {
+  id: string;
+  name: string;
+  /** ISO timestamp of when this shared drive was created. */
+  createdTime?: string;
+};
+
+/**
+ * List shared drives the user has access to (a.k.a. "Team Drives" in older
+ * docs). Used to populate the sidebar's "Shared drives" group — clicking a
+ * drive descends into it as if it were a folder (its driveId is also a
+ * valid parentId for listDriveFilesPage).
+ */
+export async function listSharedDrives(
+  accessToken: string,
+): Promise<SharedDrive[]> {
+  const params = new URLSearchParams({
+    pageSize: "100",
+    fields: "drives(id,name,createdTime)",
+  });
+  let res: Response;
+  try {
+    res = await fetch(`${DRIVE_API}/drives?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (shared drives)"));
+  }
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive shared-drives ${res.status}: ${text}`) as Error & {
+      code?: string;
+    };
+    if (
+      res.status === 403 &&
+      (text.includes("ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
+        text.includes("insufficientPermissions"))
+    ) {
+      err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    }
+    throw err;
+  }
+  const data = (await res.json()) as { drives?: SharedDrive[] };
+  return data.drives ?? [];
 }

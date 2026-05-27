@@ -14,7 +14,7 @@ export type DriveUploadResult = {
 
 /**
  * Upload a file into a Drive folder (or My Drive root with parentId `root`) via resumable upload.
- * Requires OAuth scope `https://www.googleapis.com/auth/drive.file` (or broader Drive access).
+ * Requires OAuth scope `https://www.googleapis.com/auth/drive`.
  */
 export async function uploadBinaryToDrive(
   accessToken: string,
@@ -69,7 +69,7 @@ export async function uploadBinaryToDrive(
     ) {
       err.code = "DRIVE_UPLOAD_INSUFFICIENT_SCOPE";
       err.message =
-        "Upload requires Google Drive write access. Add scope https://www.googleapis.com/auth/drive.file to your OAuth client and Supabase Google provider, then sign out and sign in again.";
+        "Upload requires Google Drive write access. Add scope https://www.googleapis.com/auth/drive to your OAuth client and Supabase Google provider, then sign out and sign in again.";
     }
     throw err;
   }

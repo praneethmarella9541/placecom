@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { listDriveFilesPage } from "@/lib/drive";
+import { listDriveFilesPage, type DriveView } from "@/lib/drive";
 
 export const runtime = "nodejs";
+
+const VALID_VIEWS: DriveView[] = ["my-drive", "shared-with-me", "starred"];
 
 export async function GET(request: Request) {
   const auth = await requireGmailAccessToken(request);
@@ -15,6 +17,9 @@ export async function GET(request: Request) {
   const search = searchParams.get("search")?.trim() || undefined;
   const parentRaw = searchParams.get("parent")?.trim();
   const parentId = parentRaw && parentRaw.length > 0 ? parentRaw : "root";
+  const viewRaw = searchParams.get("view")?.trim() as DriveView | null;
+  const view: DriveView | undefined =
+    viewRaw && VALID_VIEWS.includes(viewRaw) ? viewRaw : undefined;
   const pageSize = Math.min(
     50,
     Math.max(5, parseInt(searchParams.get("pageSize") || "30", 10) || 30)
@@ -26,6 +31,7 @@ export async function GET(request: Request) {
       pageToken,
       search,
       parentId,
+      view,
     });
     return NextResponse.json(
       { files: page.files, nextPageToken: page.nextPageToken },

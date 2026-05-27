@@ -1039,9 +1039,10 @@ export default function InboxPage() {
 
   const [replyText, setReplyText] = useState("");
   const [replyOpen, setReplyOpen] = useState(false);
-  // "reply" | "replyAll" | "forward" — which mode opened the reply panel
-  const [replyMode, setReplyMode] = useState<"reply" | "replyAll" | "forward">("reply");
-  // Extra CC recipients for Reply All
+  // "reply" | "replyAll" — which mode opened the reply panel
+  const [replyMode, setReplyMode] = useState<"reply" | "replyAll">("reply");
+  // Editable To / Cc fields for the reply panel (pre-filled from mode)
+  const [replyTo, setReplyTo] = useState("");
   const [replyCc, setReplyCc] = useState("");
   // The current user's own Gmail address — used to exclude self from Reply All
   const [myEmail, setMyEmail] = useState("");
@@ -1830,7 +1831,7 @@ export default function InboxPage() {
       .catch(() => {/* non-critical */});
 
     setSelectedId(threadId);
-    setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false); setReplyCc("");
+    setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false); setReplyTo(""); setReplyCc("");
     setThreadLabelIds([]);
     setLoadingThread(true);
     try {
@@ -2183,8 +2184,8 @@ export default function InboxPage() {
   async function sendReply() {
     if (!selectedId || !messages?.length || richTextIsEmpty(replyText)) return;
     const last = messages[messages.length - 1];
-    // Reply / Reply All → reply to the sender; the mode drives the CC list.
-    const to = extractEmailAddress(last.from);
+    // Use the editable replyTo/replyCc fields (pre-filled when panel opened).
+    const to = replyTo.trim() || extractEmailAddress(last.from);
     const cc = replyCc.trim() || undefined;
 
     // Snapshot before clearing.
@@ -2196,10 +2197,11 @@ export default function InboxPage() {
       to,
       cc,
       mode: replyMode,
+      replyTo: to,
     };
 
     // Close the reply panel immediately — optimistic UX.
-    setReplyText(""); setReplyOpen(false); setReplyFiles([]); setReplyCc("");
+    setReplyText(""); setReplyOpen(false); setReplyFiles([]); setReplyCc(""); setReplyTo("");
     setThreadError(null);
     showSendSnack({ phase: "sending" });
 
@@ -2238,6 +2240,7 @@ export default function InboxPage() {
           setSendSnack(null);
           setReplyText(replySnapshot.htmlBody);
           setReplyFiles(replySnapshot.files);
+          setReplyTo(replySnapshot.replyTo);
           setReplyCc(replySnapshot.cc ?? "");
           setReplyMode(replySnapshot.mode);
           setReplyOpen(true);
@@ -2440,6 +2443,7 @@ export default function InboxPage() {
     setReplyOpen(false);
     setReplyText("");
     setReplyFiles([]);
+    setReplyTo("");
     setReplyCc("");
   };
 
@@ -3347,7 +3351,13 @@ export default function InboxPage() {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => { setReplyMode("reply"); setReplyCc(""); setReplyOpen(true); }}
+                        onClick={() => {
+                          const last = messages[messages.length - 1];
+                          setReplyMode("reply");
+                          setReplyTo(extractEmailAddress(last.from));
+                          setReplyCc("");
+                          setReplyOpen(true);
+                        }}
                         className="btn-secondary h-[38px] flex-1 justify-center gap-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
                       >
                         <IconReply className="h-4 w-4 text-[var(--color-primary)]" />
@@ -3359,6 +3369,7 @@ export default function InboxPage() {
                           const last = messages[messages.length - 1];
                           const cc = buildReplyAllCc(last);
                           setReplyMode("replyAll");
+                          setReplyTo(extractEmailAddress(last.from));
                           setReplyCc(cc);
                           setReplyOpen(true);
                         }}
@@ -3377,72 +3388,115 @@ export default function InboxPage() {
                       </button>
                     </div>
                   ) : (
-                    <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 shadow-[var(--shadow-sm)]">
-                      <div className="mb-3 flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
-                            {replyMode === "replyAll" ? titleCase("Reply All") : titleCase("Reply")}
-                          </p>
-                          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
-                            <span className="text-[var(--color-text)]">{titleCase("To")}</span>{" "}
-                            <span className="font-medium text-[var(--color-primary)]">
-                              {extractEmailAddress(messages[messages.length - 1].from)}
-                            </span>
-                          </p>
-                          {replyMode === "replyAll" && replyCc && (
-                            <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
-                              <span className="text-[var(--color-text)]">{titleCase("Cc")}</span>{" "}
-                              <span className="font-medium">{replyCc}</span>
-                            </p>
-                          )}
-                        </div>
+                    /* Reply / Reply All panel — same look as compose window */
+                    <div className="overflow-hidden rounded-lg border border-[#dadce0] bg-white text-[#202124] shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)] [color-scheme:light]">
+                      {/* Title bar — Gmail dark chrome */}
+                      <div className="flex shrink-0 items-center gap-1 bg-[#404040] px-3 py-1.5 text-white">
+                        <h3 className="min-w-0 flex-1 truncate pl-1 text-[13px] font-medium">
+                          {replyMode === "replyAll" ? titleCase("Reply All") : titleCase("Reply")}
+                        </h3>
                         <button
                           type="button"
-                          onClick={() => { setReplyOpen(false); setReplyText(""); setReplyFiles([]); setReplyCc(""); }}
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+                          onClick={() => { setReplyOpen(false); setReplyText(""); setReplyFiles([]); setReplyTo(""); setReplyCc(""); }}
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
                           aria-label={titleCase("Discard reply")}
                         >
                           <IconX className="h-4 w-4" />
                         </button>
                       </div>
-                      <RichTextEditor
-                        value={replyText}
-                        onChange={setReplyText}
-                        placeholder={titleCase("Write your reply…")}
-                        autoFocus
-                      />
-                      {replyFiles.length > 0 ? (
-                        <ul className="mt-3 flex flex-wrap gap-2">
-                          {replyFiles.map((f, i) => (
-                            <li key={i} className="inline-flex max-w-full items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[12px] text-[var(--color-text)]">
-                              <Paperclip className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
-                              <span className="max-w-[200px] truncate font-medium">{pendingFileName(f)}</span>
-                              <button
-                                type="button"
-                                onClick={() => setReplyFiles((prev) => prev.filter((_, j) => j !== i))}
-                                className="ml-1 rounded p-0.5 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-danger)]"
-                                aria-label={titleCase("Remove attachment")}
-                              >
-                                <IconX className="h-3.5 w-3.5" />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--color-border)] pt-4">
+
+                      {/* Fields */}
+                      <div className="flex flex-col bg-white">
+                        {/* To */}
+                        <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
+                          <span className="w-9 shrink-0 pt-2 text-right text-[13px] leading-none text-[#5f6368]">{titleCase("To")}</span>
+                          <div className="min-w-0 flex-1 [&_[role=group]]:min-h-[36px] [&_[role=group]]:rounded-none [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:px-0 [&_[role=group]]:py-1 [&_[role=group]]:shadow-none [&_[role=group]]:focus-within:border-transparent [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-0">
+                            <RecipientField
+                              placeholder={titleCase("Recipients")}
+                              value={replyTo}
+                              onChange={setReplyTo}
+                              suggestions={composeRecipientSuggestions}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Cc — shown for Reply All, hidden for Reply */}
+                        {replyMode === "replyAll" && (
+                          <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
+                            <span className="w-9 shrink-0 pt-2 text-right text-[13px] leading-none text-[#5f6368]">{titleCase("Cc")}</span>
+                            <div className="min-w-0 flex-1 [&_[role=group]]:min-h-[36px] [&_[role=group]]:rounded-none [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:px-0 [&_[role=group]]:py-1 [&_[role=group]]:shadow-none [&_[role=group]]:focus-within:border-transparent [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-0">
+                              <RecipientField
+                                placeholder={titleCase("Cc")}
+                                value={replyCc}
+                                onChange={setReplyCc}
+                                suggestions={composeRecipientSuggestions}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Body */}
+                        <RichTextEditor
+                          value={replyText}
+                          onChange={setReplyText}
+                          placeholder={titleCase("Write your reply…")}
+                          autoFocus
+                        />
+
+                        {/* Attachments */}
+                        {replyFiles.length > 0 && (
+                          <div className="border-t border-[#f1f3f4] px-3 py-2">
+                            <ul className="flex flex-col gap-1.5">
+                              {replyFiles.map((f, i) => (
+                                <li key={i} className="flex items-center justify-between gap-2 rounded border border-[#dadce0] bg-[#f8f9fa] px-2 py-1.5 text-[12px]">
+                                  <span className="flex min-w-0 items-center gap-2">
+                                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
+                                    <span className="truncate font-medium">{pendingFileName(f)}</span>
+                                    <span className="shrink-0 text-[#5f6368]">({formatBytes(pendingFileSize(f))})</span>
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setReplyFiles((prev) => prev.filter((_, j) => j !== i))}
+                                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
+                                    aria-label={titleCase("Remove attachment")}
+                                  >
+                                    <IconX className="h-3.5 w-3.5" />
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Footer — attach icon + Discard text + blue Send button */}
+                      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[#f1f3f4] bg-white px-3 py-2">
                         <input ref={replyFileRef} type="file" multiple className="hidden" onChange={(e) => { void handleFileSelect(e.target.files, "reply"); e.target.value = ""; }} />
-                        <button type="button" onClick={() => replyFileRef.current?.click()} className="btn-secondary h-9 gap-2 px-3 text-[13px]">
-                          <Paperclip className="h-4 w-4" strokeWidth={2} />
-                          {titleCase("Attach")}
-                        </button>
                         <button
                           type="button"
-                          disabled={richTextIsEmpty(replyText)}
-                          onClick={() => void sendReply()}
-                          className="btn-primary min-w-[120px] gap-2 px-5"
+                          onClick={() => replyFileRef.current?.click()}
+                          className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
+                          title={titleCase("Attach files")}
                         >
-                          <Send className="h-4 w-4" strokeWidth={2} />{titleCase("Send")}
+                          <Paperclip className="h-5 w-5" strokeWidth={2} />
                         </button>
+                        <div className="flex flex-1 items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setReplyOpen(false); setReplyText(""); setReplyFiles([]); setReplyTo(""); setReplyCc(""); }}
+                            className="rounded-full px-4 py-2 text-[13px] font-medium text-[#5f6368] hover:bg-[#f1f3f4]"
+                          >
+                            {titleCase("Discard")}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={richTextIsEmpty(replyText)}
+                            onClick={() => void sendReply()}
+                            className="rounded-full bg-[#1a73e8] px-6 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-[#1557b0] disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {titleCase("Send")}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}

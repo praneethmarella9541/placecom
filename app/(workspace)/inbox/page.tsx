@@ -18,6 +18,8 @@ import {
   IconSend,
   IconStar,
   IconReply,
+  IconReplyAll,
+  IconForward,
   IconRefresh,
   IconX,
   IconEye,
@@ -166,6 +168,7 @@ type MsgView = {
   subject: string;
   from: string;
   to: string;
+  cc: string;
   date: string;
   body: string;
   bodyHtml?: string;
@@ -1036,6 +1039,12 @@ export default function InboxPage() {
 
   const [replyText, setReplyText] = useState("");
   const [replyOpen, setReplyOpen] = useState(false);
+  // "reply" | "replyAll" | "forward" — which mode opened the reply panel
+  const [replyMode, setReplyMode] = useState<"reply" | "replyAll" | "forward">("reply");
+  // Extra CC recipients for Reply All
+  const [replyCc, setReplyCc] = useState("");
+  // The current user's own Gmail address — used to exclude self from Reply All
+  const [myEmail, setMyEmail] = useState("");
 
   // Gmail-style send snackbar — shows "Message sent" immediately on click,
   // stays visible while the API call runs in the background, then shows
@@ -1499,6 +1508,15 @@ export default function InboxPage() {
     void loadLabels();
   }, [loadLabels]);
 
+  // Fetch the signed-in user's Gmail address once on mount — used to exclude
+  // self from Reply All recipients.
+  useEffect(() => {
+    fetch("/api/gmail/me")
+      .then((r) => r.ok ? r.json() : null)
+      .then((j: { email?: string } | null) => { if (j?.email) setMyEmail(j.email); })
+      .catch(() => {/* non-fatal */});
+  }, []);
+
   // Folder + label counts. Always fetched fresh (server returns no-store) and
   // re-fetched after every mutation that can change a count, so the badges
   // stay correct across navigations without any client-side cache logic.
@@ -1603,6 +1621,15 @@ export default function InboxPage() {
   useEffect(() => { void loadCounts(); }, [loadCounts]);
   // Refresh counts after the list reloads (bulk actions, refresh).
   useEffect(() => { if (!loadingList) void loadCounts(); }, [loadingList, loadCounts]);
+
+  // Poll for new mail every 30 s — keeps the unread badge live (mirrors Gmail).
+  // We skip the tick while the tab is hidden to avoid waking up a backgrounded tab.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!document.hidden) void loadCounts();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [loadCounts]);
 
   useEffect(() => {
     void loadTracking();
@@ -1803,7 +1830,7 @@ export default function InboxPage() {
       .catch(() => {/* non-critical */});
 
     setSelectedId(threadId);
-    setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false);
+    setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false); setReplyCc("");
     setThreadLabelIds([]);
     setLoadingThread(true);
     try {
@@ -2156,13 +2183,23 @@ export default function InboxPage() {
   async function sendReply() {
     if (!selectedId || !messages?.length || !replyText.trim()) return;
     const last = messages[messages.length - 1];
+    // Reply / Reply All → reply to the sender; the mode drives the CC list.
     const to = extractEmailAddress(last.from);
+    const cc = replyCc.trim() || undefined;
 
     // Snapshot before clearing.
-    const replySnapshot = { text: replyText.trim(), files: replyFiles, threadId: selectedId, lastId: last.id };
+    const replySnapshot = {
+      text: replyText.trim(),
+      files: replyFiles,
+      threadId: selectedId,
+      lastId: last.id,
+      to,
+      cc,
+      mode: replyMode,
+    };
 
     // Close the reply panel immediately — optimistic UX.
-    setReplyText(""); setReplyOpen(false); setReplyFiles([]);
+    setReplyText(""); setReplyOpen(false); setReplyFiles([]); setReplyCc("");
     setThreadError(null);
     showSendSnack({ phase: "sending" });
 
@@ -2171,7 +2208,8 @@ export default function InboxPage() {
       const res = await fetch("/api/gmail/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to,
+          to: replySnapshot.to,
+          cc: replySnapshot.cc,
           subject: "",
           textBody: replySnapshot.text,
           threadId: replySnapshot.threadId,
@@ -2199,10 +2237,73 @@ export default function InboxPage() {
           setSendSnack(null);
           setReplyText(replySnapshot.text);
           setReplyFiles(replySnapshot.files);
+          setReplyCc(replySnapshot.cc ?? "");
+          setReplyMode(replySnapshot.mode);
           setReplyOpen(true);
         },
       });
     }
+  }
+
+  /**
+   * Build the CC string for Reply All — all addresses in the thread except
+   * the original sender (already in To) and the current user's own address.
+   */
+  function buildReplyAllCc(lastMsg: { from: string; to: string; cc: string }): string {
+    const exclude = new Set<string>();
+    // Exclude the sender (they go in To).
+    exclude.add(extractEmailAddress(lastMsg.from).toLowerCase());
+    // Exclude own address so we don't CC ourselves.
+    if (myEmail) exclude.add(myEmail.toLowerCase());
+
+    const candidates = [
+      ...(lastMsg.to ? extractAllEmailsFromText(lastMsg.to) : []),
+      ...(lastMsg.cc ? extractAllEmailsFromText(lastMsg.cc) : []),
+    ];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const addr of candidates) {
+      const lower = addr.toLowerCase();
+      if (!exclude.has(lower) && !seen.has(lower)) {
+        seen.add(lower);
+        result.push(addr);
+      }
+    }
+    return result.join(", ");
+  }
+
+  /**
+   * Open the compose window pre-filled for forwarding the current thread.
+   * The subject is prefixed with "Fwd:" and the last message body is quoted.
+   */
+  function openForward() {
+    if (!messages?.length) return;
+    const last = messages[messages.length - 1];
+    const fwdSubject = last.subject.startsWith("Fwd:")
+      ? last.subject
+      : `Fwd: ${last.subject}`;
+
+    // Build a plain-text quoted block for the forward body.
+    const dateStr = last.date ? new Date(last.date).toLocaleString() : "";
+    const quotedHtml = `<br><br>---------- Forwarded message ----------<br>From: ${last.from}<br>Date: ${dateStr}<br>Subject: ${last.subject}<br>To: ${last.to}<br><br>${last.bodyHtml || last.body.replace(/\n/g, "<br>")}`;
+
+    // Close any open reply panel first.
+    setReplyOpen(false);
+    setReplyText("");
+    setReplyCc("");
+
+    // Pre-fill compose — do NOT set composeTo (forward has no recipient yet).
+    setComposeTo("");
+    setComposeCc("");
+    setComposeBcc("");
+    setComposeSubject(fwdSubject);
+    setComposeBody(quotedHtml);
+    setComposeFiles([]);
+    setComposeDraftId(null);
+    setComposeCcBccOpen(false);
+    setComposeMinimized(false);
+    setComposeFullscreen(false);
+    setComposeOpen(true);
   }
 
   async function sendCompose() {
@@ -2338,6 +2439,7 @@ export default function InboxPage() {
     setReplyOpen(false);
     setReplyText("");
     setReplyFiles([]);
+    setReplyCc("");
   };
 
   // Folder nav items — shared between left rail (desktop) and mobile tab bar.
@@ -3166,7 +3268,7 @@ export default function InboxPage() {
                           </div>
                           <div>
                             <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{m.from}</p>
-                            <p className="text-[10px] text-zinc-400">to {m.to || "—"}</p>
+                            <p className="text-[10px] text-zinc-400">to {m.to || "—"}{m.cc ? <span className="ml-1">cc {m.cc}</span> : null}</p>
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
@@ -3237,32 +3339,65 @@ export default function InboxPage() {
                   ))}
                 </div>
 
-                {/* Reply bar */}
+                {/* Reply / Reply All / Forward bar */}
                 <div className="sticky bottom-0 z-10 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 shadow-[0_-4px_24px_rgba(0,0,0,0.06)] md:px-6">
                   {!replyOpen ? (
-                    <button
-                      type="button"
-                      onClick={() => setReplyOpen(true)}
-                      className="btn-secondary h-[38px] w-full justify-center gap-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
-                    >
-                      <IconReply className="h-4 w-4 text-[var(--color-primary)]" />
-                      {titleCase("Reply")}
-                    </button>
+                    /* Action buttons — Reply, Reply All, Forward */
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setReplyMode("reply"); setReplyCc(""); setReplyOpen(true); }}
+                        className="btn-secondary h-[38px] flex-1 justify-center gap-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+                      >
+                        <IconReply className="h-4 w-4 text-[var(--color-primary)]" />
+                        {titleCase("Reply")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const last = messages[messages.length - 1];
+                          const cc = buildReplyAllCc(last);
+                          setReplyMode("replyAll");
+                          setReplyCc(cc);
+                          setReplyOpen(true);
+                        }}
+                        className="btn-secondary h-[38px] flex-1 justify-center gap-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+                      >
+                        <IconReplyAll className="h-4 w-4 text-[var(--color-primary)]" />
+                        {titleCase("Reply All")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openForward()}
+                        className="btn-secondary h-[38px] flex-1 justify-center gap-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+                      >
+                        <IconForward className="h-4 w-4 text-[var(--color-primary)]" />
+                        {titleCase("Forward")}
+                      </button>
+                    </div>
                   ) : (
                     <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 shadow-[var(--shadow-sm)]">
                       <div className="mb-3 flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">{titleCase("Reply")}</p>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
+                            {replyMode === "replyAll" ? titleCase("Reply All") : titleCase("Reply")}
+                          </p>
                           <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
                             <span className="text-[var(--color-text)]">{titleCase("To")}</span>{" "}
                             <span className="font-medium text-[var(--color-primary)]">
                               {extractEmailAddress(messages[messages.length - 1].from)}
                             </span>
                           </p>
+                          {replyMode === "replyAll" && replyCc && (
+                            <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
+                              <span className="text-[var(--color-text)]">{titleCase("Cc")}</span>{" "}
+                              <span className="font-medium">{replyCc}</span>
+                            </p>
+                          )}
                         </div>
                         <button
                           type="button"
-                          onClick={() => { setReplyOpen(false); setReplyText(""); setReplyFiles([]); }}
+                          onClick={() => { setReplyOpen(false); setReplyText(""); setReplyFiles([]); setReplyCc(""); }}
                           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
                           aria-label={titleCase("Discard reply")}
                         >

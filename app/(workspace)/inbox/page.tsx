@@ -2165,8 +2165,10 @@ export default function InboxPage() {
 
       // Refresh the open thread to show the new reply message.
       void openThread(replySnapshot.threadId);
-      listCacheRef.current.clear();
-      void loadThreads({ append: false, forceRefresh: true });
+      // A reply only affects the open thread and Sent — do NOT clear the
+      // whole cache or re-fetch the current folder list (would cause a
+      // visible inbox refresh even though nothing there changed).
+      listCacheRef.current.delete("sent||");
       void loadTracking();
       showSendSnack({ phase: "sent" }, 3000);
     } catch (e) {
@@ -2266,16 +2268,14 @@ export default function InboxPage() {
 
       // Remove the optimistic row — the real refresh will add the true row.
       mutateThreads((rows) => rows.filter((r) => r.id !== optId));
-      const sentC = listCacheRef.current.get(sentKey);
-      if (sentC) {
-        listCacheRef.current.set(sentKey, {
-          threads: sentC.threads.filter((r) => r.id !== optId),
-          nextPageToken: sentC.nextPageToken,
-        });
+      // Only invalidate the Sent cache — a compose send has no effect on
+      // Inbox or any other folder, so we must not clear or re-fetch those.
+      listCacheRef.current.delete(sentKey);
+      // If the user is currently viewing Sent, refresh it so the real row
+      // replaces the optimistic one. Any other active folder is left alone.
+      if (folder === "sent") {
+        void loadThreads({ append: false, forceRefresh: true });
       }
-      // Invalidate + refresh so the real sent row and counts paint.
-      listCacheRef.current.clear();
-      void loadThreads({ append: false, forceRefresh: true });
       void loadTracking();
 
       showSendSnack({ phase: "sent" }, 3000);

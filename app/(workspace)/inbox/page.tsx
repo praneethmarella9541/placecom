@@ -629,10 +629,15 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
       font[color="#aaa"], font[color="#aaaaaa"], font[color="#aaa"] *, font[color="#aaaaaa"] * {
         color: ${fg} !important;
       }
-      /* Links must stay link-coloured even when they're descendants of a
-         dim-coloured wrapper that we just darkened. */
-      a[href], a[href] * {
-        color: var(--color-primary, #1a73e8) !important;
+      /* Links inside a dim-colour wrapper would otherwise inherit the
+         darkened text shade we just set.  Bump bare anchors back to the
+         link colour — but ONLY anchors without an inline color of their
+         own, and NOT their descendants. This way a button-styled link
+         (e.g. <a style="color:#fff;background:blue">) keeps the white
+         text the email designer chose, while plain text links inside a
+         calendar invite's grey wrapper stay readably blue. */
+      a[href]:not([style*="color"]) {
+        color: var(--color-primary, #1a73e8);
       }
     </style></head><body>${html}</body></html>`);
     doc.close();

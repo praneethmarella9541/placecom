@@ -48,10 +48,17 @@ export function DriveMoveModal({ fileId, fileName, currentParentId, onMove, onCl
       setLoading(true);
       setError(null);
       try {
-        // Reuse the existing files endpoint — we'll filter to folders client-
-        // side. Drive's q-syntax could filter on mimeType but reusing the
-        // endpoint keeps things simple and avoids a new API surface.
-        const params = new URLSearchParams({ parent, pageSize: "50" });
+        // Request only folders server-side so Drive applies the mimeType
+        // filter in its index query — far faster than fetching a mixed page
+        // and discarding files client-side (especially in large folders).
+        // The `search` param with the Drive-specific mime-type prefix lets
+        // the API narrow the result set before it leaves Google's servers.
+        // We still exclude the file-being-moved client-side (it's just one id check).
+        const params = new URLSearchParams({
+          parent,
+          pageSize: "100",
+          mimeType: "application/vnd.google-apps.folder",
+        });
         const res = await fetch(`/api/drive/files?${params.toString()}`);
         const j = (await res.json()) as {
           files?: FolderRow[];
@@ -59,7 +66,6 @@ export function DriveMoveModal({ fileId, fileName, currentParentId, onMove, onCl
         };
         if (!res.ok) throw new Error(j.error || "Failed to load folders");
         const onlyFolders = (j.files ?? [])
-          .filter((f) => f.mimeType === "application/vnd.google-apps.folder")
           .filter((f) => f.id !== fileId); // never list the file being moved
         setFolders(onlyFolders);
       } catch (e) {

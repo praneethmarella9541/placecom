@@ -20,9 +20,14 @@ export async function GET(request: Request) {
   const viewRaw = searchParams.get("view")?.trim() as DriveView | null;
   const view: DriveView | undefined =
     viewRaw && VALID_VIEWS.includes(viewRaw) ? viewRaw : undefined;
+  // Allow up to 100 when a mimeType filter is supplied (e.g. folder-only
+  // requests from the Move modal) — the filtered set is much smaller so
+  // a larger page is still fast. Default cap is 50 for mixed listings.
+  const mimeTypeFilter = searchParams.get("mimeType")?.trim() || undefined;
+  const maxPageSize = mimeTypeFilter ? 100 : 50;
   const pageSize = Math.min(
-    50,
-    Math.max(5, parseInt(searchParams.get("pageSize") || "30", 10) || 30)
+    maxPageSize,
+    Math.max(5, parseInt(searchParams.get("pageSize") || "50", 10) || 50)
   );
 
   try {
@@ -32,6 +37,7 @@ export async function GET(request: Request) {
       search,
       parentId,
       view,
+      mimeTypeFilter,
     });
     return NextResponse.json(
       { files: page.files, nextPageToken: page.nextPageToken },

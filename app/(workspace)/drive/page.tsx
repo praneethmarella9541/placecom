@@ -109,7 +109,7 @@ export default function DrivePage() {
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
 
   useEffect(() => {
-    const t = setTimeout(() => setDriveSearch(driveSearchInput.trim()), 400);
+    const t = setTimeout(() => setDriveSearch(driveSearchInput.trim()), 200);
     return () => clearTimeout(t);
   }, [driveSearchInput]);
 
@@ -168,7 +168,7 @@ export default function DrivePage() {
         loadingMoreRef.current = true;
       }
       const params = new URLSearchParams({
-        pageSize: "30",
+        pageSize: "50",
         parent: currentParentId,
       });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);

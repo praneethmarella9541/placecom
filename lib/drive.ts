@@ -49,8 +49,15 @@ function buildFilesListQ(
   const t = (search || "").trim();
   if (t) {
     const esc = escapeDriveQFragment(t);
-    const fullTextTerm = t.includes(" ") ? `"${esc}"` : esc;
-    return `(name contains '${esc}' or fullText contains '${fullTextTerm}') and trashed = false`;
+    // Always include name-only match; also add fullText only for multi-word
+    // queries where content search adds real value. fullText triggers a full
+    // corpus scan and is significantly slower — keeping it name-only for
+    // short queries matches Google Drive's fast-path behaviour.
+    if (t.includes(" ")) {
+      const fullTextTerm = `"${esc}"`;
+      return `(name contains '${esc}' or fullText contains '${fullTextTerm}') and trashed = false`;
+    }
+    return `name contains '${esc}' and trashed = false`;
   }
   // At the root of a special view, use Drive's flag; otherwise descend by parent.
   if (atViewRoot && view === "shared-with-me") {
@@ -73,6 +80,13 @@ export async function listDriveFilesPage(
     parentId: string;
     /** Top-level view selector. Defaults to "my-drive". */
     view?: DriveView;
+    /**
+     * Optional mimeType equality filter appended to the `q` string.
+     * Passed straight to Drive — e.g. "application/vnd.google-apps.folder".
+     * Applied server-side so Drive can use its index rather than filtering
+     * a full-page result client-side.
+     */
+    mimeTypeFilter?: string;
   }
 ): Promise<DriveListPage> {
   const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
@@ -83,13 +97,23 @@ export async function listDriveFilesPage(
   // descended into a folder yet. After descending we use parentId like
   // normal browse mode.
   const atViewRoot = parentId === "root";
+  let q = buildFilesListQ(parentId, options.search, view, atViewRoot);
+  // Append a mimeType equality clause when the caller wants a filtered set
+  // (e.g. folders-only for the Move modal). This lets Drive narrow the
+  // result in its own index before sending bytes over the wire.
+  if (options.mimeTypeFilter) {
+    q = `${q} and mimeType = '${escapeDriveQFragment(options.mimeTypeFilter)}'`;
+  }
   const params = new URLSearchParams({
     pageSize: String(pageSize),
     fields: "nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink)",
-    q: buildFilesListQ(parentId, options.search, view, atViewRoot),
+    q,
     includeItemsFromAllDrives: "true",
     supportsAllDrives: "true",
-    corpora: "user",
+    // "allDrives" covers My Drive + shared drives in a single index sweep.
+    // "user" implicitly excludes shared drive content even when
+    // includeItemsFromAllDrives is true, causing extra round-trips.
+    corpora: "allDrives",
   });
   // Drive API rejects orderBy when the query uses `fullText contains` —
   // results come back in descending relevance order automatically. So we

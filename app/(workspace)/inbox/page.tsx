@@ -581,12 +581,6 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
     const bg = isDark ? "#18181b" : "#ffffff";
     const fg = isDark ? "#d4d4d8" : "#27272a";
 
-    // Force-readable text for inline grey colours that calendar invites &
-    // marketing emails love to use ("#888", "#999", "#aaa", etc.). Google
-    // Calendar invite labels ("When", "Organizer", "Guests"…) are set to
-    // ~#888 inline which looks washed-out against our background. The
-    // selectors below restore contrast — the colour used is the same `fg`
-    // applied to the body, so light/dark mode is handled automatically.
     doc.open();
     doc.write(`<!DOCTYPE html><html><head><style>
       *, *::before, *::after { box-sizing: border-box; }
@@ -602,45 +596,89 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
       blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid #d4d4d8; color: #71717a; }
       table { border-collapse: collapse; max-width: 100%; }
       pre { white-space: pre-wrap; overflow-x: auto; }
-
-      /* Google Calendar invites (and similar transactional emails) wrap
-         their content in a parent element with an inline grey colour
-         (e.g. style="color:#888"). That colour cascades to every child
-         since none of them set their own colour, making EVERYTHING look
-         washed out — not just the labels. We force-override the dim
-         grey range to a readable shade, and use a wildcard child
-         selector so descendants inherit the bump too.
-         Excludes pure black/very-dark shades and intentional accent
-         colours, so designer-styled marketing emails are untouched. */
-      [style*="color:#888"], [style*="color: #888"], [style*="color:#888"] *, [style*="color: #888"] *,
-      [style*="color:#999"], [style*="color: #999"], [style*="color:#999"] *, [style*="color: #999"] *,
-      [style*="color:#aaa"], [style*="color: #aaa"], [style*="color:#aaa"] *, [style*="color: #aaa"] *,
-      [style*="color:#777"], [style*="color: #777"], [style*="color:#777"] *, [style*="color: #777"] *,
-      [style*="color:#666"], [style*="color: #666"], [style*="color:#666"] *, [style*="color: #666"] *,
-      [style*="color:#bbb"], [style*="color: #bbb"], [style*="color:#bbb"] *, [style*="color: #bbb"] *,
-      [style*="color:#ccc"], [style*="color: #ccc"], [style*="color:#ccc"] *, [style*="color: #ccc"] *,
-      [style*="color:#888888"], [style*="color: #888888"], [style*="color:#888888"] *, [style*="color: #888888"] *,
-      [style*="color:#999999"], [style*="color: #999999"], [style*="color:#999999"] *, [style*="color: #999999"] *,
-      [style*="color:rgb(136"], [style*="color: rgb(136"], [style*="color:rgb(136"] *, [style*="color: rgb(136"] *,
-      [style*="color:rgb(153"], [style*="color: rgb(153"], [style*="color:rgb(153"] *, [style*="color: rgb(153"] *,
-      [style*="color:rgb(170"], [style*="color: rgb(170"], [style*="color:rgb(170"] *, [style*="color: rgb(170"] *,
-      font[color="#888"], font[color="#888888"], font[color="#888"] *, font[color="#888888"] *,
-      font[color="#999"], font[color="#999999"], font[color="#999"] *, font[color="#999999"] *,
-      font[color="#aaa"], font[color="#aaaaaa"], font[color="#aaa"] *, font[color="#aaaaaa"] * {
-        color: ${fg} !important;
-      }
-      /* Links inside a dim-colour wrapper would otherwise inherit the
-         darkened text shade we just set.  Bump bare anchors back to the
-         link colour — but ONLY anchors without an inline color of their
-         own, and NOT their descendants. This way a button-styled link
-         (e.g. <a style="color:#fff;background:blue">) keeps the white
-         text the email designer chose, while plain text links inside a
-         calendar invite's grey wrapper stay readably blue. */
-      a[href]:not([style*="color"]) {
-        color: var(--color-primary, #1a73e8);
-      }
     </style></head><body>${html}</body></html>`);
     doc.close();
+
+    /**
+     * Walk the rendered iframe and bump any element whose text is too low-
+     * contrast against the background to a readable shade. This handles
+     * calendar invites (Google emits an inline grey that cascades through
+     * the whole left column) and any other dim-text email — much more
+     * reliable than allowlisting specific hex values via CSS selectors.
+     *
+     * Rules:
+     *   - Compute the element's actual text colour via getComputedStyle.
+     *   - If the colour is "dim" (in light mode: luminance > 0.30 i.e.
+     *     lighter than ~#777; in dark mode: luminance < 0.55), set its
+     *     inline color to the body's `fg`.
+     *   - Skip elements with `background-color` set (button/CTA chips,
+     *     coloured badges) so we don't break designer-styled UI.
+     *   - Skip <a> tags — they already have our anchor color rule.
+     *   - Re-run if the document mutates (some clients lazy-render).
+     */
+    function relLuma(r: number, g: number, b: number) {
+      // Approx luminance: 0 = black, 1 = white.
+      const f = (c: number) => {
+        const v = c / 255;
+        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+      };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    }
+    function parseRgb(s: string): [number, number, number] | null {
+      const m = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+      if (!m) return null;
+      return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+    }
+    // Pin non-null references for the helper closures below (TS narrowing
+    // is lost inside nested function expressions).
+    const iframeEl = iframe;
+    const docEl = doc;
+    /** True iff the element OR any ancestor (excluding html/body) has a
+     *  non-transparent background — i.e. it sits inside a styled chip,
+     *  button, callout, or coloured cell where the author picked the
+     *  text colour to read on that bg, not ours. */
+    function hasStyledAncestorBg(el: HTMLElement | null): boolean {
+      let cur: HTMLElement | null = el;
+      const win = iframeEl.contentWindow || window;
+      while (cur && cur !== docEl.body && cur !== docEl.documentElement) {
+        const bg = win.getComputedStyle(cur).backgroundColor;
+        if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
+          const m = bg.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\)/);
+          if (!m || parseFloat(m[1]) > 0) return true;
+        }
+        cur = cur.parentElement;
+      }
+      return false;
+    }
+    function bumpDimText() {
+      if (!docEl.body) return;
+      const win = iframeEl.contentWindow || window;
+      const all = docEl.body.querySelectorAll<HTMLElement>("*");
+      for (const el of Array.from(all)) {
+        if (el.tagName === "A") continue;             // links use their own rule
+        if (el.tagName === "IMG" || el.tagName === "BR") continue;
+        // Skip if any ancestor has a real background — preserves designer's
+        // chosen text colour on buttons, badges, and coloured callouts.
+        if (hasStyledAncestorBg(el)) continue;
+        const cs = win.getComputedStyle(el);
+        const rgb = parseRgb(cs.color);
+        if (!rgb) continue;
+        const lum = relLuma(rgb[0], rgb[1], rgb[2]);
+        if (isDark) {
+          // Dark mode: any text darker than ~#888 luma is hard to read.
+          if (lum < 0.45) el.style.color = fg;
+        } else {
+          // Light mode: text with luminance > 0.18 (~#777 and lighter) fails
+          // WCAG AA against white. Bump it to our readable fg.
+          if (lum > 0.18) el.style.color = fg;
+        }
+      }
+    }
+    bumpDimText();
+    // Some clients lazy-render parts of the message; re-run shortly after
+    // first paint to catch them. Two ticks covers fast + slow loaders.
+    setTimeout(bumpDimText, 100);
+    setTimeout(bumpDimText, 500);
 
     const resize = () => {
       if (doc.body) {

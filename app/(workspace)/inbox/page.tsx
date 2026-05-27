@@ -637,17 +637,25 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
       <base target="_blank">
       <style>
         *, *::before, *::after { box-sizing: border-box; }
-        body {
+        html, body {
           margin: 0; padding: 0;
+          /* overflow: visible so the iframe can measure the true scrollHeight
+             and expand to fit — no internal scrollbars. */
+          overflow: visible;
+        }
+        body {
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
           font-size: 14px; line-height: 1.6;
           color: ${fg}; background: ${bg};
           word-break: break-word; overflow-wrap: break-word;
         }
-        a { color: var(--color-primary, #0d7c78); }
-        img { max-width: 100%; height: auto; }
+        a { color: #1a73e8; }
+        /* Images must never overflow the readable column width */
+        img { max-width: 100%; height: auto; display: block; }
         blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid #d4d4d8; color: #71717a; }
-        table { border-collapse: collapse; max-width: 100%; }
+        /* Wide email tables (common in bank/marketing HTML): scale down to
+           fit the iframe width instead of overflowing and causing clipping. */
+        table { border-collapse: collapse; max-width: 100%; width: 100%; }
         pre { white-space: pre-wrap; overflow-x: auto; }
       </style>
     </head><body>${html}</body></html>`);
@@ -773,9 +781,16 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
     setTimeout(bumpDimText, 500);
 
     const resize = () => {
-      if (doc.body) {
-        setHeight(Math.max(60, doc.body.scrollHeight + 4));
-      }
+      if (!doc.body) return;
+      // Use the maximum of body and documentElement scrollHeight — different
+      // browsers report the "true" content height on different nodes.
+      // Add 24px bottom padding so the last line is never shaved off.
+      const h = Math.max(
+        doc.body.scrollHeight,
+        doc.documentElement?.scrollHeight ?? 0,
+        doc.body.offsetHeight,
+      );
+      setHeight(Math.max(60, h + 24));
     };
 
     const observer = new MutationObserver(resize);
@@ -838,7 +853,10 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
       //   block external image/CSS resource fetches (only scripts & forms).
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       className="mt-3 w-full border-0"
-      style={{ height: `${height}px`, minHeight: 60 }}
+      // overflow:hidden removes the iframe's own scrollbar — the height is
+      // driven entirely by the resize() measurement so the element is always
+      // exactly as tall as its content with no internal scroll.
+      style={{ height: `${height}px`, minHeight: 60, overflow: "hidden" }}
       title={titleCase("Email body")}
     />
   );

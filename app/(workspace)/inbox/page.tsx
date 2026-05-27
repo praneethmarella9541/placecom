@@ -3695,7 +3695,8 @@ export default function InboxPage() {
 
                     {/* Cc / Bcc toggle — Gmail blue links */}
                     {!composeCcBccOpen ? (
-                      <div className="border-b border-[#f1f3f4] px-3 py-1.5 pl-[52px]">
+                      <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-3 py-1.5">
+                        <span className="w-9 shrink-0" aria-hidden />
                         <button
                           type="button"
                           onClick={() => setComposeCcBccOpen(true)}
@@ -3703,7 +3704,6 @@ export default function InboxPage() {
                         >
                           {titleCase("Cc")}
                         </button>
-                        <span className="text-[#dadce0]"> </span>
                         <button
                           type="button"
                           onClick={() => setComposeCcBccOpen(true)}

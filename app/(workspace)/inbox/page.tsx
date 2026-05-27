@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LabelChip } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
+import { RichTextEditor, richTextIsEmpty } from "@/components/RichTextEditor";
 import { createPortal } from "react-dom";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractEmailAddress } from "@/lib/email-parse";
@@ -939,7 +940,7 @@ export default function InboxPage() {
     const s = composeStateRef.current;
     const hasContent =
       s.to.trim() || s.cc.trim() || s.bcc.trim() ||
-      s.subject.trim() || s.body.trim() || s.files.length > 0;
+      s.subject.trim() || !richTextIsEmpty(s.body) || s.files.length > 0;
     if (!hasContent) return null;
 
     // Fingerprint the files cheaply for the no-op guard. Real bytes are only
@@ -980,7 +981,11 @@ export default function InboxPage() {
           cc: s.cc.trim() || undefined,
           bcc: s.bcc.trim() || undefined,
           subject: s.subject.trim(),
-          textBody: s.body,
+          // s.body is HTML from RichTextEditor. Send it as htmlBody; the server
+          // derives the plain-text part from it.  Leave textBody empty — the
+          // server only uses it when htmlBody is missing (legacy callers).
+          textBody: "",
+          htmlBody: s.body,
           ...(s.draftId ? { draftId: s.draftId } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
         }),
@@ -1306,7 +1311,7 @@ export default function InboxPage() {
       composeStateRef.current.cc.trim() ||
       composeStateRef.current.bcc.trim() ||
       composeStateRef.current.subject.trim() ||
-      composeStateRef.current.body.trim() ||
+      !richTextIsEmpty(composeStateRef.current.body) ||
       composeStateRef.current.files.length > 0;
     setComposeOpen(false);
     setComposeCcBccOpen(false);
@@ -1436,6 +1441,7 @@ export default function InboxPage() {
         bcc?: string;
         subject?: string;
         textBody?: string;
+        htmlBody?: string;
         attachments?: Array<{
           attachmentId: string;
           filename: string;
@@ -1455,12 +1461,22 @@ export default function InboxPage() {
         messageId: a.messageId,
         attachmentId: a.attachmentId,
       }));
+      // composeBody is HTML.  Prefer the saved HTML part; fall back to
+      // textBody wrapped in a <p> so plain-text drafts still display
+      // readably in the rich editor.
+      const loadedHtmlBody =
+        data.htmlBody && data.htmlBody.trim().length > 0
+          ? data.htmlBody
+          : (data.textBody ?? "")
+              .split(/\n\n+/)
+              .map((para) => `<p>${para.replace(/\n/g, "<br>")}</p>`)
+              .join("");
       setComposeDraftId(draftId);
       setComposeTo(data.to ?? "");
       setComposeCc(data.cc ?? "");
       setComposeBcc(data.bcc ?? "");
       setComposeSubject(data.subject ?? "");
-      setComposeBody(data.textBody ?? "");
+      setComposeBody(loadedHtmlBody);
       setComposeFiles(loadedFiles);
       // Seed the last-saved snapshot so auto-save sees no diff and stays
       // quiet until the user actually edits something.
@@ -1469,7 +1485,7 @@ export default function InboxPage() {
       );
       draftLastSavedRef.current = JSON.stringify({
         to: data.to ?? "", cc: data.cc ?? "", bcc: data.bcc ?? "",
-        subject: data.subject ?? "", body: data.textBody ?? "",
+        subject: data.subject ?? "", body: loadedHtmlBody,
         files: fileFingerprints,
       });
       setComposeOpen(true);
@@ -1901,7 +1917,11 @@ export default function InboxPage() {
           cc: composeCc.trim(),
           bcc: composeBcc.trim(),
           subject: composeSubject.trim(),
-          textBody: composeBody.trim(),
+          // composeBody is HTML from RichTextEditor. Send as htmlBody; the
+          // server derives the plain-text MIME part from it.  textBody is
+          // left empty so the server's HTML path wins.
+          textBody: "",
+          htmlBody: composeBody,
           attachments: attachments.length ? attachments : undefined,
         }),
       });
@@ -3062,13 +3082,11 @@ export default function InboxPage() {
                       />
                     </div>
 
-                    {/* Body */}
-                    <textarea
-                      placeholder={titleCase("Compose email")}
+                    {/* Body — rich text editor with B/I/U/Strike/Lists/Link toolbar */}
+                    <RichTextEditor
                       value={composeBody}
-                      onChange={(e) => setComposeBody(e.target.value)}
-                      rows={10}
-                      className="min-h-[220px] flex-1 resize-y border-0 bg-white px-3 py-3 text-[13px] leading-relaxed text-[#202124] outline-none placeholder:text-[#70757a]"
+                      onChange={setComposeBody}
+                      placeholder={titleCase("Compose email")}
                     />
 
                     {composeFiles.length > 0 ? (

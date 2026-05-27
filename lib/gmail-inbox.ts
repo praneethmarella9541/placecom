@@ -631,17 +631,53 @@ export type SendAttachment = {
   base64Data: string;
 };
 
-function buildAlternativePart(plainText: string, trackingPixelUrl?: string): string {
-  const htmlBody = trackingPixelUrl
-    ? `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${escapeHtml(plainText)}</div><img src="${trackingPixelUrl}" width="1" height="1" style="display:none" alt="" />`
+/**
+ * Strip HTML tags to derive a plain-text fallback for the alternative MIME
+ * part. Converts <br>, <p>, <li> to newlines; <strong>/<em>/etc. just
+ * become their inner text. Good enough for the plain-text body that
+ * receiving clients without HTML support see — they get readable text.
+ */
+function htmlToPlainText(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "• ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function buildAlternativePart(
+  plainText: string,
+  trackingPixelUrl?: string,
+  htmlBodyInput?: string
+): string {
+  // If caller supplied real HTML (from a rich-text editor), use it directly
+  // and derive a plain-text fallback. Otherwise wrap the plain text in a
+  // simple div, matching the previous behaviour for plain-text-only senders.
+  const usingRichHtml = !!htmlBodyInput && htmlBodyInput.trim().length > 0;
+  const plain = usingRichHtml ? htmlToPlainText(htmlBodyInput!) : plainText;
+  const rawHtml = usingRichHtml
+    ? htmlBodyInput!
     : `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${escapeHtml(plainText)}</div>`;
+  const htmlBody = trackingPixelUrl
+    ? `${rawHtml}<img src="${trackingPixelUrl}" width="1" height="1" style="display:none" alt="" />`
+    : rawHtml;
 
   return [
     `--${MIME_ALT_BOUNDARY}`,
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
     "",
-    plainText,
+    plain,
     `--${MIME_ALT_BOUNDARY}`,
     "Content-Type: text/html; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
@@ -654,9 +690,10 @@ function buildAlternativePart(plainText: string, trackingPixelUrl?: string): str
 function buildMimeBody(
   plainText: string,
   trackingPixelUrl?: string,
-  attachments?: SendAttachment[]
+  attachments?: SendAttachment[],
+  htmlBody?: string
 ): { contentType: string; body: string } {
-  const altPart = buildAlternativePart(plainText, trackingPixelUrl);
+  const altPart = buildAlternativePart(plainText, trackingPixelUrl, htmlBody);
 
   if (!attachments || attachments.length === 0) {
     return {
@@ -699,6 +736,10 @@ export async function sendMailViaGmail(
     bcc?: string;
     subject: string;
     textBody: string;
+    /** Optional rich HTML body. If provided, the MIME message uses this
+     *  directly as the text/html part and derives the text/plain part
+     *  from it. Otherwise textBody is wrapped in a simple HTML envelope. */
+    htmlBody?: string;
     threadId?: string;
     inReplyToMessageId?: string;
     references?: string;
@@ -739,7 +780,8 @@ export async function sendMailViaGmail(
   const { contentType, body: mimeBody } = buildMimeBody(
     options.textBody,
     options.trackingPixelUrl,
-    options.attachments
+    options.attachments,
+    options.htmlBody
   );
 
   const rawLines = [

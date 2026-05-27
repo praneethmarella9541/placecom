@@ -20,6 +20,9 @@ type Body = {
   bcc?: string;
   subject: string;
   textBody: string;
+  /** Optional rich HTML body. Mobile callers can omit this and keep the
+   *  existing text-only behaviour; web compose sends it for formatted mail. */
+  htmlBody?: string;
   threadId?: string;
   inReplyToMessageId?: string;
   attachments?: AttachmentPayload[];
@@ -96,6 +99,7 @@ export async function POST(request: Request) {
       bcc,
       subject,
       textBody,
+      htmlBody: body.htmlBody,
       threadId: body.threadId,
       inReplyToMessageId: body.inReplyToMessageId,
       trackingPixelUrl,

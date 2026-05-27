@@ -20,24 +20,52 @@ type DraftAttachment = {
   base64Data: string;
 };
 
+/** Best-effort HTML → plain-text fallback for the multipart/alternative
+ *  text part. Kept simple — receiving plain-text clients only need readable
+ *  content, not a perfect render. */
+function htmlToPlain(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "• ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function buildRaw(opts: {
   to: string;
   cc?: string;
   bcc?: string;
   subject: string;
   textBody: string;
+  /** Optional rich HTML. When present, used as the text/html part directly
+   *  and a derived plain-text version is written to the text/plain part. */
+  htmlBody?: string;
   attachments?: DraftAttachment[];
 }): string {
   const altBoundary = "----=_DraftAlt_001";
   const mixedBoundary = "----=_DraftMixed_001";
-  const html = `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${escapeHtml(opts.textBody)}</div>`;
+  const usingRichHtml = !!opts.htmlBody && opts.htmlBody.trim().length > 0;
+  const plain = usingRichHtml ? htmlToPlain(opts.htmlBody!) : opts.textBody;
+  const html = usingRichHtml
+    ? opts.htmlBody!
+    : `<div style="font-family:sans-serif;font-size:14px;line-height:1.6">${escapeHtml(opts.textBody)}</div>`;
 
   const altPart = [
     `--${altBoundary}`,
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
     "",
-    opts.textBody,
+    plain,
     `--${altBoundary}`,
     "Content-Type: text/html; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
@@ -141,6 +169,20 @@ export async function GET(request: Request) {
     return '';
   }
 
+  function collectHtml(payload: MimePart): string {
+    if (payload.mimeType === 'text/html' && payload.body?.data) {
+      const b64 = payload.body.data.replace(/-/g, '+').replace(/_/g, '/');
+      return Buffer.from(b64, 'base64').toString('utf8');
+    }
+    if (Array.isArray(payload.parts)) {
+      for (const part of payload.parts) {
+        const html = collectHtml(part);
+        if (html) return html;
+      }
+    }
+    return '';
+  }
+
   function collectAttachments(payload: MimePart): Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> {
     const results: Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> = [];
     if (payload.body?.attachmentId && payload.filename) {
@@ -171,6 +213,7 @@ export async function GET(request: Request) {
     bcc: get('Bcc'),
     subject: get('Subject'),
     textBody: collectText(payload),
+    htmlBody: collectHtml(payload),
     attachments: collectAttachments(payload).map((a) => ({ ...a, messageId })),
   });
 }
@@ -181,6 +224,10 @@ type Body = {
   bcc?: string;
   subject?: string;
   textBody?: string;
+  /** Optional rich HTML body from the compose editor. When present, used
+   *  directly as the MIME text/html part and the text/plain part is
+   *  derived from it via tag stripping. Mobile callers can omit this. */
+  htmlBody?: string;
   draftId?: string; // if set, update existing draft
   threadId?: string;
   /** Standard-base64 attachment data — same shape the send route accepts. */
@@ -206,6 +253,7 @@ export async function POST(request: Request) {
     bcc: body.bcc,
     subject: body.subject ?? "",
     textBody: body.textBody ?? "",
+    htmlBody: body.htmlBody,
     attachments: body.attachments,
   });
 

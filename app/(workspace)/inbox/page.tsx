@@ -2214,17 +2214,36 @@ export default function InboxPage() {
             {/* Thread rows */}
             {loadingList ? (
               <ul>
-                {[...Array(20)].map((_, i) => (
-                  <li key={i} className="flex h-[57px] items-center border-b border-[var(--color-border)]">
-                    <span className="flex w-10 shrink-0 items-center justify-center">
-                      <Skeleton className="skeleton-shimmer h-3.5 w-3.5 rounded" />
-                    </span>
-                    <Skeleton className="skeleton-shimmer h-3.5 w-6 shrink-0 rounded" />
-                    <Skeleton className={cn("skeleton-shimmer mx-2 h-3.5 shrink-0 rounded", i % 3 === 0 ? "w-[180px]" : i % 3 === 1 ? "w-[130px]" : "w-[155px]")} />
-                    <Skeleton className={cn("skeleton-shimmer h-3.5 min-w-0 flex-1 rounded")} />
-                    <Skeleton className="skeleton-shimmer mx-4 h-3.5 w-[130px] shrink-0 rounded" />
-                  </li>
-                ))}
+                {[...Array(20)].map((_, i) => {
+                  // Vary widths slightly per row so the skeleton looks like
+                  // a real list (different sender name lengths + subject lengths)
+                  // instead of a uniform stripe pattern.
+                  const senderW = i % 3 === 0 ? "w-[120px]" : i % 3 === 1 ? "w-[95px]" : "w-[140px]";
+                  const subjectW = i % 4 === 0 ? "w-[70%]" : i % 4 === 1 ? "w-[55%]" : i % 4 === 2 ? "w-[85%]" : "w-[40%]";
+                  const dateW = i % 2 === 0 ? "w-[58px]" : "w-[72px]";
+                  return (
+                    <li key={i} className="flex h-[57px] items-center overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface-offset)]">
+                      {/* Checkbox slot — matches w-10 in real row */}
+                      <span className="flex w-10 shrink-0 items-center justify-center">
+                        <Skeleton className="skeleton-shimmer h-3.5 w-3.5 rounded" />
+                      </span>
+                      {/* Star slot stays empty by default in real rows (only shown on hover); leave blank */}
+                      <span className="w-6 shrink-0" />
+                      {/* Sender name — fixed 160px slot in real row, padding px-2 */}
+                      <span className="w-[160px] shrink-0 px-2">
+                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", senderW)} />
+                      </span>
+                      {/* Subject + snippet — fills remaining space, pr-3 in real row */}
+                      <span className="flex min-w-0 flex-1 items-center pr-3">
+                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", subjectW)} />
+                      </span>
+                      {/* Date slot — w-[155px] with pr-4 in real row */}
+                      <span className="flex w-[155px] shrink-0 items-center justify-end pr-4">
+                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", dateW)} />
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             ) : listError ? (
               <div className="p-6 text-sm text-[var(--color-danger)]">{listError}</div>
@@ -2353,18 +2372,31 @@ export default function InboxPage() {
                   );
                 })}
 
-                {/* Skeleton rows appended inside the scroll list while loading more */}
-                {loadingMore && [0,1,2,3].map((i) => (
-                  <li key={`skel-${i}`} className="flex h-[57px] items-center border-b border-[var(--color-border)]">
-                    <span className="flex w-10 shrink-0 items-center justify-center">
-                      <Skeleton className="skeleton-shimmer h-3.5 w-3.5 rounded" />
-                    </span>
-                    <Skeleton className="skeleton-shimmer h-3.5 w-6 shrink-0 rounded" />
-                    <Skeleton className="skeleton-shimmer mx-2 h-3.5 w-[140px] shrink-0 rounded" />
-                    <Skeleton className="skeleton-shimmer h-3.5 min-w-0 flex-1 rounded" />
-                    <Skeleton className="skeleton-shimmer mx-4 h-3.5 w-[130px] shrink-0 rounded" />
-                  </li>
-                ))}
+                {/* Skeleton rows appended inside the scroll list while loading more.
+                    Mirrors the real row layout (checkbox slot, fixed-160 sender,
+                    fluid subject, fixed-155 date) so the swap-in is seamless. */}
+                {loadingMore && [0,1,2,3].map((i) => {
+                  const senderW = i % 3 === 0 ? "w-[120px]" : i % 3 === 1 ? "w-[95px]" : "w-[140px]";
+                  const subjectW = i % 4 === 0 ? "w-[70%]" : i % 4 === 1 ? "w-[55%]" : i % 4 === 2 ? "w-[85%]" : "w-[40%]";
+                  const dateW = i % 2 === 0 ? "w-[58px]" : "w-[72px]";
+                  return (
+                    <li key={`skel-${i}`} className="flex h-[57px] items-center overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface-offset)]">
+                      <span className="flex w-10 shrink-0 items-center justify-center">
+                        <Skeleton className="skeleton-shimmer h-3.5 w-3.5 rounded" />
+                      </span>
+                      <span className="w-6 shrink-0" />
+                      <span className="w-[160px] shrink-0 px-2">
+                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", senderW)} />
+                      </span>
+                      <span className="flex min-w-0 flex-1 items-center pr-3">
+                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", subjectW)} />
+                      </span>
+                      <span className="flex w-[155px] shrink-0 items-center justify-end pr-4">
+                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", dateW)} />
+                      </span>
+                    </li>
+                  );
+                })}
 
                 {/* Sentinel: sits at bottom of scroll list; IntersectionObserver fires load-more */}
                 {nextPageToken && (
@@ -2379,13 +2411,62 @@ export default function InboxPage() {
         {selectedId && (
           <div className="flex flex-1 flex-col overflow-hidden bg-[var(--color-bg)]">
             {loadingThread ? (
-              <div className="space-y-4 p-6">
-                <div className="flex items-center gap-3 pb-2">
-                  <Skeleton className="skeleton-shimmer h-8 w-8 rounded-full" />
-                  <Skeleton className="skeleton-shimmer h-6 w-1/2 rounded-lg" />
+              <div className="flex h-full flex-col">
+                {/* Header skeleton — mirrors the real subject row + sender meta */}
+                <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 md:px-6 md:py-5">
+                  <div className="mb-3 flex items-center gap-3">
+                    {/* Back-button slot */}
+                    <Skeleton className="skeleton-shimmer h-9 w-9 shrink-0 rounded-full" />
+                    {/* Subject line (h2 text-lg/xl) */}
+                    <Skeleton className="skeleton-shimmer h-5 w-2/3 rounded md:h-6" />
+                    {/* Labels button slot */}
+                    <Skeleton className="skeleton-shimmer ml-auto h-8 w-20 shrink-0 rounded-md" />
+                  </div>
+                  {/* Sender + email + date row (pl-12 in real header) */}
+                  <div className="flex items-center gap-3 pl-12">
+                    <Skeleton className="skeleton-shimmer h-3.5 w-28 rounded" />
+                    <Skeleton className="skeleton-shimmer h-3 w-44 rounded" />
+                    <Skeleton className="skeleton-shimmer ml-auto h-3 w-20 rounded" />
+                  </div>
+                  {/* "N messages in thread" caption */}
+                  <div className="mt-2 pl-12">
+                    <Skeleton className="skeleton-shimmer h-2.5 w-32 rounded" />
+                  </div>
                 </div>
-                <Skeleton className="skeleton-shimmer h-32 w-full rounded-[var(--radius-lg)]" />
-                <Skeleton className="skeleton-shimmer h-32 w-full rounded-[var(--radius-lg)]" />
+
+                {/* Message-card skeletons (two — typical thread is 1-3 messages) */}
+                <div className="flex-1 space-y-4 overflow-hidden p-4 md:p-6">
+                  {[0, 1].map((idx) => (
+                    <article
+                      key={idx}
+                      className="surface-card rounded-[var(--radius-lg)] p-5 shadow-[var(--shadow-sm)] md:p-6"
+                    >
+                      {/* Top row: avatar + from/to + date */}
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Skeleton className="skeleton-shimmer h-7 w-7 rounded-full" />
+                          <div className="space-y-1.5">
+                            <Skeleton className="skeleton-shimmer h-3 w-36 rounded" />
+                            <Skeleton className="skeleton-shimmer h-2.5 w-24 rounded" />
+                          </div>
+                        </div>
+                        <Skeleton className="skeleton-shimmer h-2.5 w-16 shrink-0 rounded" />
+                      </div>
+                      {/* Body lines — multiple at varying widths */}
+                      <div className="mt-4 space-y-2">
+                        <Skeleton className="skeleton-shimmer h-3 w-full rounded" />
+                        <Skeleton className="skeleton-shimmer h-3 w-[92%] rounded" />
+                        <Skeleton className="skeleton-shimmer h-3 w-[78%] rounded" />
+                        {idx === 0 && (
+                          <>
+                            <Skeleton className="skeleton-shimmer h-3 w-[88%] rounded" />
+                            <Skeleton className="skeleton-shimmer h-3 w-[40%] rounded" />
+                          </>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
               </div>
             ) : threadError ? (
               <div className="flex flex-1 flex-col gap-4 p-6">

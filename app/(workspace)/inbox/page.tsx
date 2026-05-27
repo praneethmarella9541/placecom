@@ -592,22 +592,36 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
       table { border-collapse: collapse; max-width: 100%; }
       pre { white-space: pre-wrap; overflow-x: auto; }
 
-      /* Google Calendar invite labels & similar inline-grey text — boost to
-         a readable contrast without flattening intentional styling. */
-      [style*="color:#888"], [style*="color: #888"],
-      [style*="color:#999"], [style*="color: #999"],
-      [style*="color:#aaa"], [style*="color: #aaa"],
-      [style*="color:#777"], [style*="color: #777"],
-      [style*="color:#666"], [style*="color: #666"],
-      [style*="color:#bbb"], [style*="color: #bbb"],
-      [style*="color:#ccc"], [style*="color: #ccc"],
-      [style*="color:rgb(136"], [style*="color: rgb(136"],
-      [style*="color:rgb(153"], [style*="color: rgb(153"],
-      [style*="color:rgb(170"], [style*="color: rgb(170"],
-      font[color="#888"], font[color="#888888"],
-      font[color="#999"], font[color="#999999"],
-      font[color="#aaa"], font[color="#aaaaaa"] {
-        ${greyOverride}
+      /* Google Calendar invites (and similar transactional emails) wrap
+         their content in a parent element with an inline grey colour
+         (e.g. style="color:#888"). That colour cascades to every child
+         since none of them set their own colour, making EVERYTHING look
+         washed out — not just the labels. We force-override the dim
+         grey range to a readable shade, and use a wildcard child
+         selector so descendants inherit the bump too.
+         Excludes pure black/very-dark shades and intentional accent
+         colours, so designer-styled marketing emails are untouched. */
+      [style*="color:#888"], [style*="color: #888"], [style*="color:#888"] *, [style*="color: #888"] *,
+      [style*="color:#999"], [style*="color: #999"], [style*="color:#999"] *, [style*="color: #999"] *,
+      [style*="color:#aaa"], [style*="color: #aaa"], [style*="color:#aaa"] *, [style*="color: #aaa"] *,
+      [style*="color:#777"], [style*="color: #777"], [style*="color:#777"] *, [style*="color: #777"] *,
+      [style*="color:#666"], [style*="color: #666"], [style*="color:#666"] *, [style*="color: #666"] *,
+      [style*="color:#bbb"], [style*="color: #bbb"], [style*="color:#bbb"] *, [style*="color: #bbb"] *,
+      [style*="color:#ccc"], [style*="color: #ccc"], [style*="color:#ccc"] *, [style*="color: #ccc"] *,
+      [style*="color:#888888"], [style*="color: #888888"], [style*="color:#888888"] *, [style*="color: #888888"] *,
+      [style*="color:#999999"], [style*="color: #999999"], [style*="color:#999999"] *, [style*="color: #999999"] *,
+      [style*="color:rgb(136"], [style*="color: rgb(136"], [style*="color:rgb(136"] *, [style*="color: rgb(136"] *,
+      [style*="color:rgb(153"], [style*="color: rgb(153"], [style*="color:rgb(153"] *, [style*="color: rgb(153"] *,
+      [style*="color:rgb(170"], [style*="color: rgb(170"], [style*="color:rgb(170"] *, [style*="color: rgb(170"] *,
+      font[color="#888"], font[color="#888888"], font[color="#888"] *, font[color="#888888"] *,
+      font[color="#999"], font[color="#999999"], font[color="#999"] *, font[color="#999999"] *,
+      font[color="#aaa"], font[color="#aaaaaa"], font[color="#aaa"] *, font[color="#aaaaaa"] * {
+        color: ${fg} !important;
+      }
+      /* Links must stay link-coloured even when they're descendants of a
+         dim-coloured wrapper that we just darkened. */
+      a[href], a[href] * {
+        color: var(--color-primary, #1a73e8) !important;
       }
     </style></head><body>${html}</body></html>`);
     doc.close();

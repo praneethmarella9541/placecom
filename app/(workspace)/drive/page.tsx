@@ -117,7 +117,9 @@ export default function DrivePage() {
   // them. Non-fatal on error (some accounts simply have none).
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/drive/drives")
+    // no-store: shared drives appear immediately when the user first lands on
+    // the page — avoids the 60s browser cache hiding a newly-shared drive.
+    fetch("/api/drive/drives", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((j: { drives?: SharedDrive[] } | null) => {
         if (cancelled || !j?.drives) return;
@@ -159,7 +161,7 @@ export default function DrivePage() {
   }
 
   const loadDriveFiles = useCallback(
-    async (opts: { append: boolean; pageToken?: string }) => {
+    async (opts: { append: boolean; pageToken?: string; bust?: boolean }) => {
       if (!opts.append) {
         setLoadingDrive(true);
         setDriveListError(null);
@@ -184,7 +186,13 @@ export default function DrivePage() {
         params.set("view", view);
       }
       try {
-        const res = await fetch(`/api/drive/files?${params.toString()}`);
+        // bust=true: skip the browser's HTTP cache so newly uploaded/shared
+        // items are visible immediately. Without this, the browser serves the
+        // cached response (max-age=60, swr=300) and the fresh item is invisible
+        // until the cache expires — requiring multiple manual refreshes.
+        const res = await fetch(`/api/drive/files?${params.toString()}`,
+          opts.bust ? { cache: "no-store" } : undefined
+        );
         // Parse defensively: a 5xx may return an HTML error page (not JSON),
         // and the raw "Unexpected token '<'" exception is useless to the user.
         // Read text first, then attempt JSON, so we always have a fallback.
@@ -352,7 +360,7 @@ export default function DrivePage() {
         await uploadSingleFile(file, currentParentId);
         done += 1;
       }
-      await loadDriveFiles({ append: false });
+      await loadDriveFiles({ append: false, bust: true });
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
     } finally {
@@ -419,7 +427,7 @@ export default function DrivePage() {
         setUploadProgress(`Uploading ${fileIdx}/${list.length}: ${parts[parts.length - 1]}`);
         await uploadSingleFile(f, parentId);
       }
-      await loadDriveFiles({ append: false });
+      await loadDriveFiles({ append: false, bust: true });
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Folder upload failed");
     } finally {
@@ -492,7 +500,7 @@ export default function DrivePage() {
       if (!res.ok) throw new Error(j.error || "Failed to create folder");
       setNewFolderOpen(false);
       setNewFolderName("");
-      await loadDriveFiles({ append: false });
+      await loadDriveFiles({ append: false, bust: true });
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to create folder");
     } finally {
@@ -746,7 +754,7 @@ export default function DrivePage() {
           </div>
           <button
             type="button"
-            onClick={() => void loadDriveFiles({ append: false })}
+            onClick={() => void loadDriveFiles({ append: false, bust: true })}
             className="btn-ghost shrink-0 rounded-lg p-2"
             title={titleCase("Refresh")}
           >

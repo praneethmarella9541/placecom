@@ -24,9 +24,12 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Placecom",
+  title: "The Nucleus",
   description:
     "Mail, contact extraction, recruiter CRM, calendar, calls, and meeting notes in one workspace.",
+  icons: {
+    icon: "/favicon.png",
+  },
 };
 
 const themeInitScript = `(function(){try{var t=localStorage.getItem('nucleus-theme')||localStorage.getItem('placecom-theme')||localStorage.getItem('theme');var dark=t==='dark'||(t!=='light'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.setAttribute('data-theme',dark?'dark':'light');if(dark)document.documentElement.classList.add('dark');else document.documentElement.classList.remove('dark')}catch(e){}})()`;

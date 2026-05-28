@@ -2,10 +2,18 @@
  * Attachment in the compose / inline-reply window.
  * - `new` — freshly picked file with base64 in memory.
  * - `saved` — attachment on a server draft (fetched on send).
+ * - `staged` — uploaded to server in chunks (3–25 MB); embedded on draft save.
  * - `drive` — file over 25 MB uploaded to Drive; sent as a link.
  */
 export type PendingFile =
   | { kind: "new"; file: File; base64: string }
+  | {
+      kind: "staged";
+      uploadId: string;
+      name: string;
+      mimeType: string;
+      size: number;
+    }
   | {
       kind: "saved";
       name: string;
@@ -40,6 +48,7 @@ export function formatBytes(bytes: number): string {
 /** Cheap fingerprint for draft save de-duplication. */
 export function pendingFileFingerprint(f: PendingFile): string {
   if (f.kind === "new") return `new:${f.file.name}:${f.file.size}`;
+  if (f.kind === "staged") return `staged:${f.uploadId}`;
   if (f.kind === "drive") return `drive:${f.driveFileId}`;
   return `saved:${f.attachmentId}`;
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { takeStagedAttachment } from "@/lib/draft-attachment-staging";
 import { rebuildDraftRawPreservingAttachments } from "@/lib/gmail-draft-mime";
 import { draftSubjectForCompose, draftSubjectForMime } from "@/lib/gmail-draft-subject";
 
@@ -263,6 +264,8 @@ type Body = {
   preserveAttachments?: boolean;
   /** Append `attachments` to files already on the draft (new files only). */
   mergeExistingAttachments?: boolean;
+  /** Server-staged upload ids (chunked upload — not sent as base64 in JSON). */
+  stagedUploadIds?: string[];
 };
 
 type MimePart = {
@@ -349,6 +352,7 @@ function collectAttachmentMeta(
 
 async function buildDraftRaw(
   accessToken: string,
+  userId: string,
   body: Body
 ): Promise<string> {
   const base = {
@@ -372,6 +376,18 @@ async function buildDraftRaw(
   }
 
   let attachments = body.attachments ?? [];
+
+  if (body.stagedUploadIds?.length) {
+    for (const uploadId of body.stagedUploadIds) {
+      const staged = takeStagedAttachment(userId, uploadId);
+      if (!staged) {
+        throw new Error(
+          "A staged attachment expired before save. Please remove and re-attach the file."
+        );
+      }
+      attachments.push(staged);
+    }
+  }
 
   if (body.draftId && body.mergeExistingAttachments) {
     const draft = await fetchDraftFull(accessToken, body.draftId);
@@ -408,15 +424,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const attachmentBytes = (body.attachments ?? []).reduce(
+  const inlineAttachmentBytes = (body.attachments ?? []).reduce(
     (sum, a) => sum + (a.base64Data?.length ?? 0),
     0
   );
-  if (attachmentBytes > 4 * 1024 * 1024) {
+  if (inlineAttachmentBytes > 4 * 1024 * 1024) {
     return NextResponse.json(
       {
         error:
-          "Attachment is too large to save inline. Files over 3 MB are uploaded to Drive automatically — wait for the upload to finish, then try again.",
+          "Inline attachment payload is too large. Wait for large files to finish uploading, then save again.",
       },
       { status: 413 }
     );
@@ -424,7 +440,7 @@ export async function POST(request: Request) {
 
   let raw: string;
   try {
-    raw = await buildDraftRaw(auth.accessToken, body);
+    raw = await buildDraftRaw(auth.accessToken, auth.userId, body);
   } catch (e) {
     const err = e as Error;
     console.error("[drafts] build raw", err);

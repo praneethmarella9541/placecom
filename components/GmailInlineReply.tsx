@@ -32,6 +32,7 @@ type GmailInlineReplyProps = {
   sending?: boolean;
   files: PendingFile[];
   driveUploadProgress: DriveUploadProgressMap;
+  uploadProgressKind?: Record<string, "drive" | "attachment">;
   onRemoveFile: (index: number) => void;
 };
 
@@ -63,6 +64,7 @@ export function GmailInlineReply({
   sending,
   files,
   driveUploadProgress,
+  uploadProgressKind,
   onRemoveFile,
 }: GmailInlineReplyProps) {
   if (!mode) {
@@ -121,6 +123,7 @@ export function GmailInlineReply({
         <GmailPendingAttachments
           files={files}
           driveUploadProgress={driveUploadProgress}
+          uploadProgressKind={uploadProgressKind}
           onRemove={onRemoveFile}
         />
 

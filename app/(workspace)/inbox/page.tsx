@@ -19,9 +19,10 @@ import {
   type ComposeDraftSaveStatus,
 } from "@/lib/gmail-draft-autosave";
 import {
-  DRAFT_INLINE_ATTACHMENT_MAX_BYTES,
+  DRAFT_JSON_INLINE_MAX_BYTES,
   GMAIL_ATTACHMENT_MAX_BYTES,
 } from "@/lib/gmail-draft-limits";
+import { uploadStagedDraftAttachment } from "@/lib/upload-staged-draft-attachment";
 import {
   pendingFileFingerprint,
   pendingFilesFromDraftAttachments,
@@ -446,8 +447,11 @@ export default function InboxPage() {
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
-  /** File name → 0–100 while a large attachment uploads to Drive. */
+  /** File name → 0–100 while a large attachment uploads (Drive or staged). */
   const [driveUploadProgress, setDriveUploadProgress] = useState<Record<string, number>>({});
+  const [uploadProgressKind, setUploadProgressKind] = useState<
+    Record<string, "drive" | "attachment">
+  >({});
   const [composeCcBccOpen, setComposeCcBccOpen] = useState(false);
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeFullscreen, setComposeFullscreen] = useState(false);
@@ -469,6 +473,8 @@ export default function InboxPage() {
   const draftSavingRef = useRef(false);
   /** Set when a save was skipped because another was in-flight — flushed in finally. */
   const draftSavePendingRef = useRef(false);
+  /** Wired after loadCounts — refresh draft badge right after autosave. */
+  const onDraftCountChangeRef = useRef<(wasNew: boolean) => void>(() => {});
   const [draftSaveStatus, setDraftSaveStatus] = useState<ComposeDraftSaveStatus>("idle");
   const draftSaveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const composeFileRef = useRef<HTMLInputElement>(null);
@@ -659,19 +665,25 @@ export default function InboxPage() {
         !!lastSavedFiles &&
         JSON.stringify(fileFingerprints) === JSON.stringify(lastSavedFiles);
       const hasNewInline = s.files.some((f) => f.kind === "new");
+      const hasNewStaged = s.files.some((f) => f.kind === "staged");
+      const hasNewAttachments = hasNewInline || hasNewStaged;
       const hasSavedOnDraft = s.files.some((f) => f.kind === "saved");
 
       const preserveAttachments =
-        !!s.draftId && filesUnchanged && !hasNewInline && hasSavedOnDraft;
+        !!s.draftId && filesUnchanged && !hasNewAttachments && hasSavedOnDraft;
       const mergeExistingAttachments =
-        !!s.draftId && hasNewInline && hasSavedOnDraft;
+        !!s.draftId && hasNewAttachments && hasSavedOnDraft;
 
       let filesToEncode: PendingFile[] = [];
       if (mergeExistingAttachments) {
         filesToEncode = s.files.filter((f) => f.kind === "new");
       } else if (!preserveAttachments) {
-        filesToEncode = s.files.filter((f) => f.kind !== "drive");
+        filesToEncode = s.files.filter((f) => f.kind !== "drive" && f.kind !== "staged");
       }
+
+      const stagedUploadIds = preserveAttachments
+        ? []
+        : s.files.filter((f) => f.kind === "staged").map((f) => f.uploadId);
 
       let attachments: Array<{ filename: string; mimeType: string; base64Data: string }> = [];
       if (filesToEncode.length > 0) {
@@ -699,6 +711,7 @@ export default function InboxPage() {
           ...(preserveAttachments ? { preserveAttachments: true } : {}),
           ...(mergeExistingAttachments ? { mergeExistingAttachments: true } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(stagedUploadIds.length > 0 ? { stagedUploadIds } : {}),
         }),
       });
       const data = (await res.json()) as { error?: string; draftId?: string; messageId?: string };
@@ -724,7 +737,12 @@ export default function InboxPage() {
         setComposeFiles(withMessageId);
       }
       markDraftSaved();
-      if (draftId && s.files.some((f) => f.kind === "saved") && !preserveAttachments) {
+      const wasNewDraft = !s.draftId && !!data.draftId;
+      onDraftCountChangeRef.current(wasNewDraft);
+      if (
+        draftId &&
+        (s.files.some((f) => f.kind === "saved" || f.kind === "staged") && !preserveAttachments)
+      ) {
         void syncComposeFilesFromDraft(draftId);
       } else if (draftId && preserveAttachments) {
         void syncComposeFilesFromDraft(draftId).catch(() => {});
@@ -839,6 +857,7 @@ export default function InboxPage() {
             base64Data: f.base64,
           };
         }
+        if (f.kind === "staged") return null;
         // Drive links are sent as body text, not embedded attachments.
         if (f.kind === "drive") return null;
         // Saved attachment — fetch the bytes from Gmail and base64-encode them.
@@ -866,11 +885,43 @@ export default function InboxPage() {
     const newFiles: PendingFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (file.size <= DRAFT_INLINE_ATTACHMENT_MAX_BYTES) {
+      if (file.size <= DRAFT_JSON_INLINE_MAX_BYTES) {
         const base64 = await fileToBase64(file);
         newFiles.push({ kind: "new", file, base64 });
       } else if (file.size <= GMAIL_ATTACHMENT_MAX_BYTES) {
-        // Too large for draft API JSON — store on Drive and link in the body.
+        setUploadProgressKind((prev) => ({ ...prev, [file.name]: "attachment" }));
+        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
+        try {
+          const staged = await uploadStagedDraftAttachment(file, (percent) => {
+            setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
+          });
+          newFiles.push({
+            kind: "staged",
+            uploadId: staged.uploadId,
+            name: staged.name,
+            mimeType: staged.mimeType,
+            size: staged.size,
+          });
+        } catch (e) {
+          alert(
+            `Failed to upload ${file.name}: ${e instanceof Error ? e.message : "network error"}. Please try again.`
+          );
+        } finally {
+          setDriveUploadProgress((prev) => {
+            const next = { ...prev };
+            delete next[file.name];
+            return next;
+          });
+          setUploadProgressKind((prev) => {
+            const next = { ...prev };
+            delete next[file.name];
+            return next;
+          });
+        }
+      } else {
+        // Exceeds Gmail's 25 MB limit — upload to Drive in 4 MB chunks via our API
+        // (browser cannot PUT to googleapis.com directly due to CORS).
+        setUploadProgressKind((prev) => ({ ...prev, [file.name]: "drive" }));
         setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
         try {
           const driveFile = await uploadLargeFileToDrive(file, (percent) => {
@@ -894,29 +945,7 @@ export default function InboxPage() {
             delete next[file.name];
             return next;
           });
-        }
-      } else {
-        // Exceeds Gmail's 25 MB limit — upload to Drive in 4 MB chunks via our API
-        // (browser cannot PUT to googleapis.com directly due to CORS).
-        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
-        try {
-          const driveFile = await uploadLargeFileToDrive(file, (percent) => {
-            setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
-          });
-          newFiles.push({
-            kind: "drive",
-            name: driveFile.name,
-            mimeType: driveFile.mimeType,
-            size: driveFile.size ? parseInt(driveFile.size, 10) : file.size,
-            driveFileId: driveFile.id,
-            webViewLink: driveFile.webViewLink,
-          });
-        } catch (e) {
-          alert(
-            `Failed to upload ${file.name} to Drive: ${e instanceof Error ? e.message : "network error"}. Please try again.`
-          );
-        } finally {
-          setDriveUploadProgress((prev) => {
+          setUploadProgressKind((prev) => {
             const next = { ...prev };
             delete next[file.name];
             return next;
@@ -1120,6 +1149,17 @@ export default function InboxPage() {
     });
   }, []);
 
+  const adjustDraftCount = useCallback((delta: number) => {
+    if (delta === 0) return;
+    setLabelCounts((prev) => ({
+      ...prev,
+      DRAFT: {
+        total: Math.max(0, (prev.DRAFT?.total ?? 0) + delta),
+        unread: prev.DRAFT?.unread ?? 0,
+      },
+    }));
+  }, []);
+
   const { width: sidebarWidth, onResizeStart: onSidebarResizeStart } = useResizablePane(
     STORAGE_SIDEBAR_W,
     256,
@@ -1176,6 +1216,13 @@ export default function InboxPage() {
     } catch { /* ignore */ }
   }, [allLabels]);
 
+  useEffect(() => {
+    onDraftCountChangeRef.current = (wasNew) => {
+      if (wasNew) adjustDraftCount(1);
+      void loadCounts();
+    };
+  }, [adjustDraftCount, loadCounts]);
+
   /**
    * Re-fetch counts shortly after a mutation. Gmail's label counts API lags
    * a few seconds behind a label change, so we retry once with a delay to
@@ -1183,8 +1230,9 @@ export default function InboxPage() {
    * (in case Gmail responds fast); the second covers the typical lag.
    */
   const scheduleCountRefresh = useCallback(() => {
-    const t1 = setTimeout(() => void loadCounts(), 1500);
-    const t2 = setTimeout(() => void loadCounts(), 5000);
+    void loadCounts();
+    const t1 = setTimeout(() => void loadCounts(), 800);
+    const t2 = setTimeout(() => void loadCounts(), 2500);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [loadCounts]);
 
@@ -1232,6 +1280,7 @@ export default function InboxPage() {
     setComposeOpen(false);
     setComposeCcBccOpen(false);
     if (draftId) {
+      adjustDraftCount(-1);
       void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
         method: "DELETE",
       })
@@ -1239,9 +1288,11 @@ export default function InboxPage() {
           if (folder === "drafts") void loadThreads({ append: false });
           scheduleCountRefresh();
         })
-        .catch(() => {/* non-fatal */});
+        .catch(() => {
+          adjustDraftCount(1);
+        });
     }
-  }, [folder, scheduleCountRefresh, loadThreads]);
+  }, [folder, scheduleCountRefresh, loadThreads, adjustDraftCount]);
 
   useEffect(() => { void loadCounts(); }, [loadCounts]);
   // Refresh counts after the list reloads (bulk actions, refresh).
@@ -3279,6 +3330,7 @@ export default function InboxPage() {
                     sending={inlineReplySending}
                     files={inlineReplyFiles}
                     driveUploadProgress={driveUploadProgress}
+                    uploadProgressKind={uploadProgressKind}
                     onRemoveFile={(i) => setInlineReplyFiles((prev) => prev.filter((_, j) => j !== i))}
                   />
                   </div>
@@ -3406,6 +3458,7 @@ export default function InboxPage() {
           <GmailPendingAttachments
             files={composeFiles}
             driveUploadProgress={driveUploadProgress}
+            uploadProgressKind={uploadProgressKind}
             onRemove={(i) => setComposeFiles((prev) => prev.filter((_, j) => j !== i))}
           />
         }

@@ -2,7 +2,7 @@
 export const GMAIL_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 
 /**
- * Max size for embedding a file as base64 in a draft API request.
- * Vercel/serverless JSON bodies are ~4.5MB; base64 adds ~33% overhead.
+ * Files at or below this size are base64-encoded in the browser and sent in the
+ * draft JSON body. Larger files (up to 25 MB) use chunked server staging instead.
  */
-export const DRAFT_INLINE_ATTACHMENT_MAX_BYTES = 3 * 1024 * 1024;
+export const DRAFT_JSON_INLINE_MAX_BYTES = 3 * 1024 * 1024;

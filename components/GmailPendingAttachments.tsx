@@ -14,6 +14,8 @@ import { titleCase } from "@/lib/title-case";
 type GmailPendingAttachmentsProps = {
   files: PendingFile[];
   driveUploadProgress: DriveUploadProgressMap;
+  /** When set, progress rows show Drive vs attachment upload copy. */
+  uploadProgressKind?: Record<string, "drive" | "attachment">;
   onRemove: (index: number) => void;
 };
 
@@ -21,6 +23,7 @@ type GmailPendingAttachmentsProps = {
 export function GmailPendingAttachments({
   files,
   driveUploadProgress,
+  uploadProgressKind,
   onRemove,
 }: GmailPendingAttachmentsProps) {
   const uploading = Object.entries(driveUploadProgress);
@@ -29,7 +32,12 @@ export function GmailPendingAttachments({
   return (
     <div className="border-t border-[#f1f3f4] px-3 py-2">
       <ul className="flex flex-col gap-1.5">
-        {uploading.map(([name, percent]) => (
+        {uploading.map(([name, percent]) => {
+          const toDrive = uploadProgressKind?.[name] === "drive";
+          const statusLabel = toDrive
+            ? titleCase("Uploading to Drive…")
+            : titleCase("Uploading attachment…");
+          return (
           <li
             key={`uploading-${name}`}
             className="rounded border border-[#c5e1f5] bg-[#e8f4fd] px-2 py-2 text-[12px]"
@@ -49,16 +57,17 @@ export function GmailPendingAttachments({
               aria-valuenow={percent}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label={`${titleCase("Uploading to Drive")} ${percent}%`}
+              aria-label={`${statusLabel} ${percent}%`}
             >
               <div
                 className="h-full rounded-full bg-[#1a73e8] transition-[width] duration-200 ease-out"
                 style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
               />
             </div>
-            <p className="mt-1 text-[10px] text-[#5f6368]">{titleCase("Uploading to Drive…")}</p>
+            <p className="mt-1 text-[10px] text-[#5f6368]">{statusLabel}</p>
           </li>
-        ))}
+          );
+        })}
         {files.map((f, i) => (
           <li
             key={i}

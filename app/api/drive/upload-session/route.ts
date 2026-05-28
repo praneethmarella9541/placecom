@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
 
-  let body: { fileName?: string; mimeType?: string; size?: number };
+  let body: { fileName?: string; mimeType?: string; size?: number; parentId?: string };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -36,7 +36,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid file size" }, { status: 400 });
   }
 
-  const meta = JSON.stringify({ name: fileName, parents: ["root"] });
+  const parentRaw = (body.parentId || "root").trim() || "root";
+  const parents = parentRaw === "root" ? ["root"] : [parentRaw];
+  const meta = JSON.stringify({ name: fileName, parents });
 
   let initRes: Response;
   try {

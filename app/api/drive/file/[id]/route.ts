@@ -5,9 +5,11 @@ import {
   suggestedDownloadName,
 } from "@/lib/drive-file-proxy";
 import {
+  getDriveFileDetails,
   getDriveFileParent,
   moveDriveFile,
   renameDriveFile,
+  setDriveFileStarred,
 } from "@/lib/drive";
 
 export const runtime = "nodejs";
@@ -42,6 +44,19 @@ export async function GET(
   }
 
   const { searchParams } = new URL(request.url);
+  if (searchParams.get("details") === "1") {
+    try {
+      const details = await getDriveFileDetails(auth.accessToken, fileId);
+      return NextResponse.json({ file: details });
+    } catch (e) {
+      const err = e as Error & { code?: string };
+      if (err.code === "UNAUTHORIZED") {
+        return NextResponse.json({ error: "Google token expired. Sign in again." }, { status: 401 });
+      }
+      return NextResponse.json({ error: err.message || "Failed to load details" }, { status: 500 });
+    }
+  }
+
   const mode = searchParams.get("mode") === "download" ? "download" : "preview";
 
   const metaRes = await fetch(
@@ -178,9 +193,9 @@ export async function PATCH(
     return NextResponse.json({ error: "Missing file id" }, { status: 400 });
   }
 
-  let body: { name?: string; parentId?: string };
+  let body: { name?: string; parentId?: string; starred?: boolean };
   try {
-    body = (await request.json()) as { name?: string; parentId?: string };
+    body = (await request.json()) as { name?: string; parentId?: string; starred?: boolean };
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
@@ -188,10 +203,11 @@ export async function PATCH(
   const nextName = typeof body.name === "string" ? body.name.trim() : undefined;
   const nextParent =
     typeof body.parentId === "string" ? body.parentId.trim() : undefined;
+  const nextStarred = typeof body.starred === "boolean" ? body.starred : undefined;
 
-  if (!nextName && !nextParent) {
+  if (!nextName && !nextParent && nextStarred === undefined) {
     return NextResponse.json(
-      { error: "Provide at least one of `name` or `parentId`" },
+      { error: "Provide at least one of `name`, `parentId`, or `starred`" },
       { status: 400 }
     );
   }
@@ -204,6 +220,9 @@ export async function PATCH(
 
   try {
     let file;
+    if (nextStarred !== undefined) {
+      file = await setDriveFileStarred(auth.accessToken, fileId, nextStarred);
+    }
     // Rename first if requested — keeps both ops idempotent if move fails.
     if (nextName) {
       file = await renameDriveFile(auth.accessToken, fileId, nextName);

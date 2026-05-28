@@ -4,7 +4,7 @@ import { listDriveFilesPage, type DriveView } from "@/lib/drive";
 
 export const runtime = "nodejs";
 
-const VALID_VIEWS: DriveView[] = ["my-drive", "shared-with-me", "starred"];
+const VALID_VIEWS: DriveView[] = ["my-drive", "shared-with-me", "starred", "recent"];
 
 export async function GET(request: Request) {
   const auth = await requireGmailAccessToken(request);

@@ -9,6 +9,16 @@ export type DriveFileRow = {
   modifiedTime: string;
   size?: string;
   webViewLink?: string;
+  starred?: boolean;
+  thumbnailLink?: string;
+  iconLink?: string;
+};
+
+export type DriveFileDetails = DriveFileRow & {
+  createdTime?: string;
+  owners?: Array<{ displayName?: string; emailAddress?: string; me?: boolean }>;
+  shared?: boolean;
+  viewedByMeTime?: string;
 };
 
 export type DriveListPage = {
@@ -25,7 +35,7 @@ function escapeDriveQFragment(s: string): string {
  * Drive top-level views the sidebar exposes — mirrors Google Drive's left
  * nav. "my-drive" is the default; the others map to Drive API query terms.
  */
-export type DriveView = "my-drive" | "shared-with-me" | "starred";
+export type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
 
 /**
  * Build the Drive `q` query string.
@@ -66,9 +76,15 @@ function buildFilesListQ(
   if (atViewRoot && view === "starred") {
     return "starred = true and trashed = false";
   }
+  if (atViewRoot && view === "recent") {
+    return "trashed = false";
+  }
   const pid = escapeDriveQFragment(parentId);
   return `'${pid}' in parents and trashed = false`;
 }
+
+const LIST_FILE_FIELDS =
+  "id, name, mimeType, modifiedTime, size, webViewLink, starred, thumbnailLink, iconLink";
 
 export async function listDriveFilesPage(
   accessToken: string,
@@ -106,7 +122,7 @@ export async function listDriveFilesPage(
   }
   const params = new URLSearchParams({
     pageSize: String(pageSize),
-    fields: "nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink)",
+    fields: `nextPageToken, files(${LIST_FILE_FIELDS})`,
     q,
     includeItemsFromAllDrives: "true",
     supportsAllDrives: "true",
@@ -119,7 +135,11 @@ export async function listDriveFilesPage(
   // results come back in descending relevance order automatically. So we
   // only set orderBy in browse mode (no search).
   if (!hasSearch) {
-    params.set("orderBy", "folder,modifiedTime desc,name_natural");
+    if (atViewRoot && view === "recent") {
+      params.set("orderBy", "viewedByMeTime desc");
+    } else {
+      params.set("orderBy", "folder,modifiedTime desc,name_natural");
+    }
   }
   if (options.pageToken) params.set("pageToken", options.pageToken);
 
@@ -476,13 +496,87 @@ export async function listSharedDrives(
  * Rename a Drive file or folder. PATCH /files/{id} with a body that just
  * contains {name} is the canonical operation.
  */
+/** Toggle starred on a file or folder. */
+export async function setDriveFileStarred(
+  accessToken: string,
+  fileId: string,
+  starred: boolean,
+): Promise<DriveFileRow> {
+  const params = new URLSearchParams({
+    fields: LIST_FILE_FIELDS.replace(/ /g, ""),
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ starred }),
+      },
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (star)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive star ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    throw err;
+  }
+  return (await res.json()) as DriveFileRow;
+}
+
+/** Copy a file or folder into `parentId` (defaults to same parent as source). */
+export async function copyDriveFile(
+  accessToken: string,
+  fileId: string,
+  parentId?: string,
+): Promise<DriveFileRow> {
+  const params = new URLSearchParams({
+    fields: LIST_FILE_FIELDS.replace(/ /g, ""),
+    supportsAllDrives: "true",
+  });
+  const body: { parents?: string[] } = {};
+  if (parentId?.trim()) body.parents = [parentId.trim()];
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}/copy?${params.toString()}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      },
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (copy)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive copy ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    throw err;
+  }
+  return (await res.json()) as DriveFileRow;
+}
+
 export async function renameDriveFile(
   accessToken: string,
   fileId: string,
   name: string,
 ): Promise<DriveFileRow> {
   const params = new URLSearchParams({
-    fields: "id,name,mimeType,modifiedTime,size,webViewLink",
+    fields: LIST_FILE_FIELDS.replace(/ /g, ""),
     supportsAllDrives: "true",
   });
   let res: Response;
@@ -526,7 +620,7 @@ export async function moveDriveFile(
   const params = new URLSearchParams({
     addParents: newParentId,
     removeParents: oldParentId,
-    fields: "id,name,mimeType,modifiedTime,size,webViewLink",
+    fields: LIST_FILE_FIELDS.replace(/ /g, ""),
     supportsAllDrives: "true",
   });
   let res: Response;
@@ -566,7 +660,7 @@ export async function createDriveFolder(
   parentId: string,
 ): Promise<DriveFileRow> {
   const params = new URLSearchParams({
-    fields: "id,name,mimeType,modifiedTime,size,webViewLink",
+    fields: LIST_FILE_FIELDS.replace(/ /g, ""),
     supportsAllDrives: "true",
   });
   let res: Response;
@@ -627,6 +721,35 @@ export async function getDriveFileParent(
   }
   const data = (await res.json()) as { parents?: string[] };
   return data.parents?.[0] ?? null;
+}
+
+/** Rich metadata for the details panel. */
+export async function getDriveFileDetails(
+  accessToken: string,
+  fileId: string,
+): Promise<DriveFileDetails> {
+  const params = new URLSearchParams({
+    fields:
+      "id,name,mimeType,modifiedTime,createdTime,size,webViewLink,starred,thumbnailLink,iconLink,shared,viewedByMeTime,owners(displayName,emailAddress,me)",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (file details)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive details ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    throw err;
+  }
+  return (await res.json()) as DriveFileDetails;
 }
 
 /** Fetch a file/folder's name + mimeType (used by the folder-zip download). */

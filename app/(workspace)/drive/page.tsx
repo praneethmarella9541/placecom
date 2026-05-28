@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Upload } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
@@ -9,7 +9,6 @@ import {
   IconSearch,
   IconRefresh,
   IconFolder,
-  IconFile,
   IconChevronRight,
   IconDownload,
   IconX,
@@ -17,11 +16,49 @@ import {
 import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
+import { DriveDetailsPanel } from "@/components/DriveDetailsPanel";
 import { DriveUploadQueue, type UploadQueueItem } from "@/components/DriveUploadQueue";
-import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput, ArrowUp, ArrowDown, FileUp, FolderUp, ChevronDown, LayoutGrid, List, Loader2 } from "lucide-react";
+import { DriveMimeIcon } from "@/lib/drive-mime-icon";
+import {
+  driveUploadResultToRow,
+  uploadFileToDriveFolder,
+} from "@/lib/upload-file-to-drive-folder";
+import {
+  Share2,
+  HardDrive,
+  Users,
+  Star,
+  FolderPlus,
+  MoreVertical,
+  Pencil,
+  FolderInput,
+  ArrowUp,
+  ArrowDown,
+  FileUp,
+  FolderUp,
+  ChevronDown,
+  LayoutGrid,
+  List,
+  Loader2,
+  Clock,
+  Copy,
+  Info,
+  Menu,
+  Filter,
+} from "lucide-react";
 
-type DriveView = "my-drive" | "shared-with-me" | "starred";
+const DRIVE_SIMPLE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+
+type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
 type SharedDrive = { id: string; name: string };
+type MimeFilter =
+  | "all"
+  | "folders"
+  | "documents"
+  | "spreadsheets"
+  | "images"
+  | "videos"
+  | "pdfs";
 
 type DriveFileRow = {
   id: string;
@@ -30,7 +67,38 @@ type DriveFileRow = {
   modifiedTime: string;
   size?: string;
   webViewLink?: string;
+  starred?: boolean;
+  thumbnailLink?: string;
+  iconLink?: string;
 };
+
+type RowContextMenu = { x: number; y: number; file: DriveFileRow };
+
+function matchesMimeFilter(file: DriveFileRow, filter: MimeFilter): boolean {
+  const m = file.mimeType;
+  switch (filter) {
+    case "all":
+      return true;
+    case "folders":
+      return m === "application/vnd.google-apps.folder";
+    case "documents":
+      return (
+        m.includes("document") ||
+        m.includes("word") ||
+        m.startsWith("text/")
+      );
+    case "spreadsheets":
+      return m.includes("spreadsheet") || m.includes("excel");
+    case "images":
+      return m.startsWith("image/");
+    case "videos":
+      return m.startsWith("video/");
+    case "pdfs":
+      return m === "application/pdf";
+    default:
+      return true;
+  }
+}
 
 type PathCrumb = { id: string; name: string };
 
@@ -78,6 +146,11 @@ export default function DrivePage() {
   const [shareTarget, setShareTarget] = useState<DriveFileRow | null>(null);
   // Target file/folder for the move modal.
   const [moveTarget, setMoveTarget] = useState<DriveFileRow | null>(null);
+  const [detailsFileId, setDetailsFileId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<RowContextMenu | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mimeFilter, setMimeFilter] = useState<MimeFilter>("all");
+  const [isDragOver, setIsDragOver] = useState(false);
   // Inline-rename target id + the value being typed.
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -103,6 +176,18 @@ export default function DrivePage() {
   type SortKey = "name" | "modifiedTime" | "size";
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  useEffect(() => {
+    const sk = typeof window !== "undefined" ? localStorage.getItem("drive-sort-key") : null;
+    const sd = typeof window !== "undefined" ? localStorage.getItem("drive-sort-dir") : null;
+    if (sk === "name" || sk === "modifiedTime" || sk === "size") setSortKey(sk);
+    if (sd === "asc" || sd === "desc") setSortDir(sd);
+  }, []);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("drive-sort-key", sortKey);
+      localStorage.setItem("drive-sort-dir", sortDir);
+    }
+  }, [sortKey, sortDir]);
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("asc"); }
@@ -202,9 +287,12 @@ export default function DrivePage() {
       if (
         !driveSearch &&
         pathStack.length === 0 &&
-        (view === "shared-with-me" || view === "starred")
+        (view === "shared-with-me" || view === "starred" || view === "recent")
       ) {
         params.set("view", view);
+      }
+      if (mimeFilter === "folders") {
+        params.set("mimeType", "application/vnd.google-apps.folder");
       }
       try {
         // bust=true: skip the browser's HTTP cache so newly uploaded/shared
@@ -241,7 +329,7 @@ export default function DrivePage() {
         loadingMoreRef.current = false;
       }
     },
-    [driveSearch, currentParentId, view, pathStack.length]
+    [driveSearch, currentParentId, view, pathStack.length, mimeFilter]
   );
 
   /** Sorted view of the loaded files. Folders always come before files
@@ -273,6 +361,14 @@ export default function DrivePage() {
     files.sort(cmp);
     return [...folders, ...files];
   }, [driveFiles, sortKey, sortDir]);
+
+  const displayFiles = useMemo(
+    () =>
+      mimeFilter === "all" || mimeFilter === "folders"
+        ? sortedFiles
+        : sortedFiles.filter((f) => matchesMimeFilter(f, mimeFilter)),
+    [sortedFiles, mimeFilter]
+  );
 
   function enterFolder(id: string, name: string) {
     setPathStack((prev) => [...prev, { id, name }]);
@@ -328,23 +424,38 @@ export default function DrivePage() {
   /** Upload a single File blob to {parentId}. Returns the created Drive
    *  file, or throws with a useful message. Shared by both the multi-file
    *  and folder-upload paths so error handling stays consistent. */
-  async function uploadSingleFile(file: File, parentId: string): Promise<DriveFileRow> {
-    const fd = new FormData();
-    // Pass the explicit basename as the third FormData argument so we
-    // don't ride on File.name — which some browsers populate with the
-    // full webkitRelativePath ("Folder/sub/file.txt") during folder uploads,
-    // making the file land with a concatenated name.
+  async function uploadSingleFile(
+    file: File,
+    parentId: string,
+    onProgress?: (percent: number) => void
+  ): Promise<DriveFileRow> {
     const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || "";
     const basename = (rel ? rel.split("/").pop() : file.name) || file.name || "upload";
+
+    if (file.size > DRIVE_SIMPLE_UPLOAD_MAX_BYTES) {
+      const uploaded = await uploadFileToDriveFolder(
+        new File([file], basename, { type: file.type }),
+        parentId,
+        onProgress
+      );
+      return driveUploadResultToRow(uploaded);
+    }
+
+    const fd = new FormData();
     fd.set("file", file, basename);
     fd.set("parent", parentId);
+    onProgress?.(50);
     const res = await fetch("/api/drive/upload", { method: "POST", body: fd });
     const raw = await res.text();
     let data: { error?: string; file?: DriveFileRow } = {};
-    try { data = raw ? JSON.parse(raw) : {}; }
-    catch { throw new Error(`Upload failed (${res.status}). Please try again.`); }
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error(`Upload failed (${res.status}). Please try again.`);
+    }
     if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
     if (!data.file) throw new Error("Upload returned no file metadata");
+    onProgress?.(100);
     return data.file;
   }
 
@@ -381,10 +492,12 @@ export default function DrivePage() {
     try {
       for (let i = 0; i < list.length; i++) {
         const item = items[i];
-        updateQueueItem(item.id, { status: "uploading" });
+        updateQueueItem(item.id, { status: "uploading", percent: 0 });
         try {
-          const uploaded = await uploadSingleFile(list[i], currentParentId);
-          updateQueueItem(item.id, { status: "done" });
+          const uploaded = await uploadSingleFile(list[i], currentParentId, (pct) => {
+            updateQueueItem(item.id, { percent: pct });
+          });
+          updateQueueItem(item.id, { status: "done", percent: 100 });
           // Optimistically prepend the new file — no full reload, no flash.
           // Only add it if we're currently viewing the folder it was uploaded to.
           setDriveFiles((prev) => [uploaded, ...prev]);
@@ -558,6 +671,70 @@ export default function DrivePage() {
     }
   }
 
+  async function toggleStar(file: DriveFileRow) {
+    const next = !file.starred;
+    setMenuOpenId(null);
+    setContextMenu(null);
+    try {
+      const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ starred: next }),
+      });
+      const j = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(j.error || "Could not update star");
+      setDriveFiles((rows) => {
+        if (view === "starred" && !next) {
+          return rows.filter((r) => r.id !== file.id);
+        }
+        return rows.map((r) => (r.id === file.id ? { ...r, starred: next } : r));
+      });
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Could not update star");
+    }
+  }
+
+  async function copyItem(file: DriveFileRow) {
+    setMenuOpenId(null);
+    setContextMenu(null);
+    try {
+      const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}/copy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parentId: currentParentId }),
+      });
+      const j = (await res.json()) as { file?: DriveFileRow; error?: string };
+      if (!res.ok) throw new Error(j.error || "Copy failed");
+      if (j.file) setDriveFiles((prev) => [j.file!, ...prev]);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Copy failed");
+    }
+  }
+
+  function openRowContextMenu(e: ReactMouseEvent, file: DriveFileRow) {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenuOpenId(null);
+    setContextMenu({ x: e.clientX, y: e.clientY, file });
+  }
+
+  async function handleDroppedFiles(fileList: FileList | File[]) {
+    const files = Array.from(fileList);
+    if (!files.length) return;
+    const hasDir = files.some(
+      (f) => (f as File & { webkitRelativePath?: string }).webkitRelativePath
+    );
+    if (hasDir) {
+      const dt = new DataTransfer();
+      for (const f of files) dt.items.add(f);
+      await onUploadFolder(dt.files);
+    } else {
+      const dt = new DataTransfer();
+      for (const f of files) dt.items.add(f);
+      await onUploadFiles(dt.files);
+    }
+  }
+
   /** Issue a Drive move PATCH and refresh the list. */
   async function performMove(file: DriveFileRow, newParentId: string) {
     const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}`, {
@@ -635,6 +812,22 @@ export default function DrivePage() {
     }
   }
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    function onDoc() {
+      setContextMenu(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setContextMenu(null);
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [contextMenu]);
+
   /** Close the kebab menu on outside-click / Escape. */
   useEffect(() => {
     if (!menuOpenId) return;
@@ -673,6 +866,10 @@ export default function DrivePage() {
 
   // Root label for the breadcrumb's first crumb — reflects which sidebar
   // view we're in.
+  const canUploadHere =
+    view !== "recent" &&
+    (view === "my-drive" || view === "shared-drive" || pathStack.length > 0);
+
   const viewRootLabel =
     view === "my-drive"
       ? titleCase("My Drive")
@@ -680,14 +877,12 @@ export default function DrivePage() {
         ? "Shared with me"
         : view === "starred"
           ? "Starred"
-          : currentSharedDrive?.name || "Shared drive";
+          : view === "recent"
+            ? "Recent"
+            : currentSharedDrive?.name || "Shared drive";
 
-  return (
-    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
-      {/* ── Sidebar ─────────────────────────────────────────────
-          Mirrors Google Drive's left nav. Visible from sm+; on mobile
-          we collapse it (Drive does the same — switches to a drawer). */}
-      <aside className="hidden w-[208px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] p-2 sm:flex">
+  const sidebarNav = (
+    <>
         <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
           Drive
         </p>
@@ -695,19 +890,25 @@ export default function DrivePage() {
           icon={<HardDrive className="h-4 w-4" />}
           label="My Drive"
           active={view === "my-drive"}
-          onClick={() => switchView("my-drive")}
+          onClick={() => { switchView("my-drive"); setMobileNavOpen(false); }}
+        />
+        <SidebarItem
+          icon={<Clock className="h-4 w-4" />}
+          label="Recent"
+          active={view === "recent"}
+          onClick={() => { switchView("recent"); setMobileNavOpen(false); }}
         />
         <SidebarItem
           icon={<Users className="h-4 w-4" />}
           label="Shared with me"
           active={view === "shared-with-me"}
-          onClick={() => switchView("shared-with-me")}
+          onClick={() => { switchView("shared-with-me"); setMobileNavOpen(false); }}
         />
         <SidebarItem
           icon={<Star className="h-4 w-4" />}
           label="Starred"
           active={view === "starred"}
-          onClick={() => switchView("starred")}
+          onClick={() => { switchView("starred"); setMobileNavOpen(false); }}
         />
 
         {sharedDrives.length > 0 && (
@@ -721,14 +922,60 @@ export default function DrivePage() {
                 icon={<HardDrive className="h-4 w-4" />}
                 label={d.name}
                 active={view === "shared-drive" && currentSharedDrive?.id === d.id}
-                onClick={() => switchSharedDrive(d)}
+                onClick={() => { switchSharedDrive(d); setMobileNavOpen(false); }}
               />
             ))}
           </>
         )}
+    </>
+  );
+
+  return (
+    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-40 bg-black/40 sm:hidden"
+          aria-label="Close navigation"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+      <aside
+        className={cn(
+          "z-50 flex w-[208px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] p-2",
+          "fixed inset-y-0 left-0 shadow-xl transition-transform sm:static sm:shadow-none",
+          mobileNavOpen ? "translate-x-0" : "-translate-x-full sm:translate-x-0"
+        )}
+      >
+        {sidebarNav}
       </aside>
 
-      <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
+      <div
+        className={cn(
+          "relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--color-surface)]",
+          isDragOver && "ring-2 ring-inset ring-[var(--color-primary)]"
+        )}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          if (e.dataTransfer.types.includes("Files")) setIsDragOver(true);
+        }}
+        onDragOver={(e) => e.preventDefault()}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setIsDragOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragOver(false);
+          if (e.dataTransfer.files?.length) void handleDroppedFiles(e.dataTransfer.files);
+        }}
+      >
+        {isDragOver && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[var(--color-primary)]/10">
+            <p className="rounded-lg bg-white px-4 py-2 text-sm font-medium shadow-lg dark:bg-zinc-900">
+              {titleCase("Drop files to upload")}
+            </p>
+          </div>
+        )}
         {/* Slim progress bar at top — visible only while loading more pages */}
         <div
           className={cn(
@@ -799,6 +1046,31 @@ export default function DrivePage() {
         )}
 
         <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] p-1.5">
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            className="btn-ghost shrink-0 rounded-lg p-2 sm:hidden"
+            aria-label={titleCase("Open navigation")}
+          >
+            <Menu className="h-4 w-4" />
+          </button>
+          <div className="relative shrink-0">
+            <Filter className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <select
+              value={mimeFilter}
+              onChange={(e) => setMimeFilter(e.target.value as MimeFilter)}
+              className="input-field appearance-none py-2 pl-8 pr-8 text-[13px]"
+              aria-label={titleCase("Filter by type")}
+            >
+              <option value="all">All types</option>
+              <option value="folders">Folders</option>
+              <option value="documents">Documents</option>
+              <option value="spreadsheets">Spreadsheets</option>
+              <option value="images">Images</option>
+              <option value="videos">Videos</option>
+              <option value="pdfs">PDFs</option>
+            </select>
+          </div>
           <div className="min-w-0 flex-1 px-2 py-1">
             <div className="relative">
               <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
@@ -839,7 +1111,8 @@ export default function DrivePage() {
           <button
             type="button"
             onClick={() => { setNewFolderOpen(true); setNewFolderName(""); }}
-            className="btn-ghost shrink-0 gap-2 px-3 py-2 text-[13px]"
+            disabled={!canUploadHere}
+            className="btn-ghost shrink-0 gap-2 px-3 py-2 text-[13px] disabled:opacity-40"
             title="New folder"
           >
             <FolderPlus className="h-4 w-4 shrink-0" strokeWidth={2} />
@@ -851,8 +1124,8 @@ export default function DrivePage() {
             <button
               type="button"
               onClick={() => setUploadMenuOpen((v) => !v)}
-              disabled={uploadBusy}
-              className="btn-secondary shrink-0 gap-2 px-3 py-2 text-[13px]"
+              disabled={uploadBusy || !canUploadHere}
+              className="btn-secondary shrink-0 gap-2 px-3 py-2 text-[13px] disabled:opacity-40"
               title={titleCase("Upload to this folder")}
               aria-haspopup="menu"
               aria-expanded={uploadMenuOpen}
@@ -906,19 +1179,24 @@ export default function DrivePage() {
           </div>
         ) : driveListError ? (
           <div className="p-6 text-sm text-red-600 dark:text-red-400">{driveListError}</div>
-        ) : driveFiles.length === 0 ? (
+        ) : displayFiles.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
               <IconFolder className="h-7 w-7 text-zinc-400" />
             </div>
             <p className="text-center text-sm text-zinc-500">
               {titleCase(
-                driveSearch ? "No items match your search" : "This folder is empty"
+                driveSearch
+                  ? "No items match your search"
+                  : mimeFilter !== "all"
+                    ? "No items match this filter"
+                    : "This folder is empty"
               )}
             </p>
           </div>
         ) : (
-          <>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             {/* Column headers — Google Drive-style sortable bar (list view only). */}
             {viewMode === "list" && (
             <div className="sticky top-0 z-[5] flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-muted)]">
@@ -956,13 +1234,67 @@ export default function DrivePage() {
                   : "grid grid-cols-2 content-start gap-3 p-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
               )}
             >
-              {sortedFiles.map((file) => {
+              {displayFiles.map((file) => {
                 const isFolder = file.mimeType === "application/vnd.google-apps.folder";
                 const sizeNum = file.size ? parseInt(file.size, 10) : NaN;
                 const sizeLabel =
                   isFolder ? "—" : !Number.isNaN(sizeNum) ? formatBytes(sizeNum) : "—";
                 const dateLabel = file.modifiedTime ? formatDate(file.modifiedTime) : "—";
                 const isRenaming = renameTargetId === file.id;
+
+                const rowMenuActions = (
+                  <>
+                        <RowMenuItem
+                          icon={<Share2 className="h-3.5 w-3.5" />}
+                          label="Share"
+                          onClick={() => { setMenuOpenId(null); setShareTarget(file); }}
+                        />
+                        <RowMenuItem
+                          icon={
+                            <Star
+                              className={cn(
+                                "h-3.5 w-3.5",
+                                file.starred && "fill-amber-500 text-amber-500"
+                              )}
+                            />
+                          }
+                          label={file.starred ? "Remove star" : "Add star"}
+                          onClick={() => void toggleStar(file)}
+                        />
+                        <RowMenuItem
+                          icon={<Pencil className="h-3.5 w-3.5" />}
+                          label="Rename"
+                          onClick={() => startRename(file)}
+                        />
+                        <RowMenuItem
+                          icon={<Copy className="h-3.5 w-3.5" />}
+                          label="Make a copy"
+                          onClick={() => void copyItem(file)}
+                        />
+                        <RowMenuItem
+                          icon={<FolderInput className="h-3.5 w-3.5" />}
+                          label="Move"
+                          onClick={() => { setMenuOpenId(null); setMoveTarget(file); }}
+                        />
+                        <RowMenuItem
+                          icon={<Info className="h-3.5 w-3.5" />}
+                          label="Details"
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            setDetailsFileId(file.id);
+                          }}
+                        />
+                        <RowMenuItem
+                          icon={downloadingIds.has(file.id)
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <IconDownload className="h-3.5 w-3.5" />}
+                          label={downloadingIds.has(file.id)
+                            ? "Downloading…"
+                            : isFolder ? "Download (.zip)" : "Download"}
+                          onClick={() => { setMenuOpenId(null); void downloadItem(file); }}
+                        />
+                  </>
+                );
 
                 const RowMenu = (
                   <div className="relative" data-row-menu>
@@ -982,33 +1314,10 @@ export default function DrivePage() {
                     </button>
                     {menuOpenId === file.id && (
                       <div
-                        className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                        className="absolute right-0 top-full z-20 mt-1 w-48 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
                         role="menu"
                       >
-                        <RowMenuItem
-                          icon={<Share2 className="h-3.5 w-3.5" />}
-                          label="Share"
-                          onClick={() => { setMenuOpenId(null); setShareTarget(file); }}
-                        />
-                        <RowMenuItem
-                          icon={<Pencil className="h-3.5 w-3.5" />}
-                          label="Rename"
-                          onClick={() => startRename(file)}
-                        />
-                        <RowMenuItem
-                          icon={<FolderInput className="h-3.5 w-3.5" />}
-                          label="Move"
-                          onClick={() => { setMenuOpenId(null); setMoveTarget(file); }}
-                        />
-                        <RowMenuItem
-                          icon={downloadingIds.has(file.id)
-                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            : <IconDownload className="h-3.5 w-3.5" />}
-                          label={downloadingIds.has(file.id)
-                            ? "Downloading…"
-                            : isFolder ? "Download (.zip)" : "Download"}
-                          onClick={() => { setMenuOpenId(null); void downloadItem(file); }}
-                        />
+                        {rowMenuActions}
                       </div>
                     )}
                   </div>
@@ -1051,6 +1360,7 @@ export default function DrivePage() {
                     <li
                       key={file.id}
                       className="group relative flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-colors hover:border-[var(--color-primary)] hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                      onContextMenu={(e) => openRowContextMenu(e, file)}
                     >
                       {/* Kebab — top-right corner */}
                       <div className="absolute right-1.5 top-1.5 z-10">{RowMenu}</div>
@@ -1058,18 +1368,18 @@ export default function DrivePage() {
                       <button
                         type="button"
                         onClick={rowOnClick}
-                        className="flex flex-col items-center gap-3 pt-2 text-center"
+                        className="relative flex flex-col items-center gap-3 pt-2 text-center"
                       >
-                        <span
-                          className={cn(
-                            "flex h-12 w-12 items-center justify-center rounded-lg",
-                            isFolder
-                              ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                              : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
-                          )}
-                        >
-                          {isFolder ? <IconFolder className="h-6 w-6" /> : <IconFile className="h-6 w-6" />}
-                        </span>
+                        <DriveMimeIcon
+                          mimeType={file.mimeType}
+                          name={file.name}
+                          thumbnailLink={file.thumbnailLink}
+                          className="h-12 w-12 rounded-lg bg-zinc-100 dark:bg-zinc-800"
+                          iconClassName="h-6 w-6"
+                        />
+                        {file.starred && (
+                          <Star className="absolute left-2 top-2 h-3.5 w-3.5 fill-amber-500 text-amber-500" />
+                        )}
                         <span className="line-clamp-2 w-full break-words px-1 text-[13px] text-zinc-900 dark:text-zinc-100">
                           {isRenaming ? NameOrEditor : file.name}
                         </span>
@@ -1085,6 +1395,7 @@ export default function DrivePage() {
                   <li
                     key={file.id}
                     className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                    onContextMenu={(e) => openRowContextMenu(e, file)}
                   >
                     {/* Name column — icon + clickable label */}
                     <button
@@ -1092,18 +1403,17 @@ export default function DrivePage() {
                       onClick={rowOnClick}
                       className="flex min-w-0 flex-1 items-center gap-3 text-left"
                     >
-                      <span
-                        className={cn(
-                          "flex h-6 w-6 shrink-0 items-center justify-center rounded",
-                          isFolder
-                            ? "text-zinc-700 dark:text-zinc-200"
-                            : "text-zinc-500 dark:text-zinc-400"
-                        )}
-                      >
-                        {isFolder ? <IconFolder className="h-4 w-4" /> : <IconFile className="h-4 w-4" />}
-                      </span>
-                      <span className="min-w-0 flex-1">
+                      <DriveMimeIcon
+                        mimeType={file.mimeType}
+                        name={file.name}
+                        thumbnailLink={file.thumbnailLink}
+                        iconClassName="h-4 w-4"
+                      />
+                      <span className="min-w-0 flex-1 flex items-center gap-1.5">
                         {NameOrEditor}
+                        {file.starred && (
+                          <Star className="h-3 w-3 shrink-0 fill-amber-500 text-amber-500" />
+                        )}
                       </span>
                     </button>
 
@@ -1155,9 +1465,80 @@ export default function DrivePage() {
                 />
               )}
             </ul>
-          </>
+          </div>
+          {detailsFileId ? (
+            <DriveDetailsPanel
+              fileId={detailsFileId}
+              onClose={() => setDetailsFileId(null)}
+            />
+          ) : null}
+          </div>
         )}
       </div>
+
+      {contextMenu ? (
+        <div
+          className="fixed z-[60] w-48 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          role="menu"
+          data-row-menu
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(() => {
+            const file = contextMenu.file;
+            const isFolder = file.mimeType === "application/vnd.google-apps.folder";
+            return (
+              <>
+                <RowMenuItem
+                  icon={<Share2 className="h-3.5 w-3.5" />}
+                  label="Share"
+                  onClick={() => { setContextMenu(null); setShareTarget(file); }}
+                />
+                <RowMenuItem
+                  icon={
+                    <Star
+                      className={cn(
+                        "h-3.5 w-3.5",
+                        file.starred && "fill-amber-500 text-amber-500"
+                      )}
+                    />
+                  }
+                  label={file.starred ? "Remove star" : "Add star"}
+                  onClick={() => void toggleStar(file)}
+                />
+                <RowMenuItem
+                  icon={<Pencil className="h-3.5 w-3.5" />}
+                  label="Rename"
+                  onClick={() => { setContextMenu(null); startRename(file); }}
+                />
+                <RowMenuItem
+                  icon={<Copy className="h-3.5 w-3.5" />}
+                  label="Make a copy"
+                  onClick={() => void copyItem(file)}
+                />
+                <RowMenuItem
+                  icon={<FolderInput className="h-3.5 w-3.5" />}
+                  label="Move"
+                  onClick={() => { setContextMenu(null); setMoveTarget(file); }}
+                />
+                <RowMenuItem
+                  icon={<Info className="h-3.5 w-3.5" />}
+                  label="Details"
+                  onClick={() => {
+                    setContextMenu(null);
+                    setDetailsFileId(file.id);
+                  }}
+                />
+                <RowMenuItem
+                  icon={<IconDownload className="h-3.5 w-3.5" />}
+                  label={isFolder ? "Download (.zip)" : "Download"}
+                  onClick={() => { setContextMenu(null); void downloadItem(file); }}
+                />
+              </>
+            );
+          })()}
+        </div>
+      ) : null}
 
       {previewFile ? (
         <div

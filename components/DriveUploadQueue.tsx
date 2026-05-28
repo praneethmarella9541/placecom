@@ -14,6 +14,8 @@ export type UploadQueueItem = {
   /** "folder" rows are the directories created during a folder upload. */
   kind: "file" | "folder";
   status: UploadItemStatus;
+  /** 0–100 while status === "uploading". */
+  percent?: number;
   /** Populated when status === "error". */
   error?: string;
 };
@@ -91,8 +93,9 @@ export function DriveUploadQueue({ items, busy, onClose }: Props) {
           {items.map((item) => (
             <li
               key={item.id}
-              className="flex items-center gap-2 border-b border-zinc-100 px-3 py-2 last:border-b-0 dark:border-zinc-800"
+              className="border-b border-zinc-100 px-3 py-2 last:border-b-0 dark:border-zinc-800"
             >
+              <div className="flex items-center gap-2">
               <span className="shrink-0 text-zinc-400">
                 {item.kind === "folder" ? (
                   <IconFolder className="h-4 w-4" />
@@ -103,17 +106,30 @@ export function DriveUploadQueue({ items, busy, onClose }: Props) {
               <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-700 dark:text-zinc-200" title={item.name}>
                 {item.name}
               </span>
-              <span className="shrink-0">
-                {item.status === "done" ? (
+              <span className="shrink-0 tabular-nums text-[11px] text-zinc-500">
+                {item.status === "uploading" ? (
+                  item.percent != null ? (
+                    `${item.percent}%`
+                  ) : (
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
+                  )
+                ) : item.status === "done" ? (
                   <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-500" />
                 ) : item.status === "error" ? (
                   <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-500" />
-                ) : item.status === "uploading" ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
                 ) : (
                   <span className="block h-4 w-4 rounded-full border-2 border-zinc-200 dark:border-zinc-700" />
                 )}
               </span>
+              </div>
+              {item.status === "uploading" && item.percent != null && (
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                  <div
+                    className="h-full rounded-full bg-blue-600 transition-[width] duration-200"
+                    style={{ width: `${Math.min(100, item.percent)}%` }}
+                  />
+                </div>
+              )}
             </li>
           ))}
         </ul>

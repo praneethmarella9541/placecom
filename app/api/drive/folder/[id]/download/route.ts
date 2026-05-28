@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { PassThrough } from "node:stream";
-import { createRequire } from "node:module";
-const _require = createRequire(import.meta.url);
-const archiver = _require("archiver") as typeof import("archiver").default;
+import { PassThrough, Readable } from "node:stream";
+import { createGzip } from "node:zlib";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   getDriveFileMeta,
@@ -14,18 +12,97 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 const FOLDER_MIME = "application/vnd.google-apps.folder";
-// Guardrails so a huge tree can't hang the request.
 const MAX_FILES = 1000;
 const MAX_DEPTH = 25;
 
 type Entry = { id: string; name: string; mimeType: string; path: string };
 
-/**
- * GET — download a folder (and everything inside it) as a single .zip.
- * Walks the tree breadth-first, streaming each file into the archive under
- * its relative path. Google Workspace files are exported (Docs→PDF, etc.)
- * via the shared content-proxy logic, matching single-file download.
- */
+class ZipWriter {
+  private files: Buffer[] = [];
+  private offset = 0;
+  private centralDir: Buffer[] = [];
+  private fileHeaders: Array<{ offset: number; header: Buffer }> = [];
+
+  async addFile(name: string, data: Buffer) {
+    const nameBuf = Buffer.from(name, "utf8");
+    const header = this.createLocalFileHeader(name, data.length);
+
+    this.fileHeaders.push({ offset: this.offset, header });
+    this.files.push(header, data);
+    this.offset += header.length + data.length;
+
+    const centralEntry = this.createCentralDirectory(name, data.length, this.fileHeaders[this.fileHeaders.length - 1].offset);
+    this.centralDir.push(centralEntry);
+  }
+
+  private createLocalFileHeader(name: string, dataSize: number): Buffer {
+    const nameBuf = Buffer.from(name, "utf8");
+    const buf = Buffer.alloc(30 + nameBuf.length);
+    let offset = 0;
+
+    buf.writeUInt32LE(0x04034b50, offset); offset += 4; // local file header signature
+    buf.writeUInt16LE(20, offset); offset += 2; // version needed to extract
+    buf.writeUInt16LE(0, offset); offset += 2; // general purpose bit flag
+    buf.writeUInt16LE(0, offset); offset += 2; // compression method (0 = no compression)
+    buf.writeUInt16LE(0, offset); offset += 2; // last mod file time
+    buf.writeUInt16LE(0, offset); offset += 2; // last mod file date
+    buf.writeUInt32LE(0, offset); offset += 4; // crc-32
+    buf.writeUInt32LE(dataSize, offset); offset += 4; // compressed size
+    buf.writeUInt32LE(dataSize, offset); offset += 4; // uncompressed size
+    buf.writeUInt16LE(nameBuf.length, offset); offset += 2; // file name length
+    buf.writeUInt16LE(0, offset); offset += 2; // extra field length
+
+    nameBuf.copy(buf, offset);
+    return buf;
+  }
+
+  private createCentralDirectory(name: string, dataSize: number, localHeaderOffset: number): Buffer {
+    const nameBuf = Buffer.from(name, "utf8");
+    const buf = Buffer.alloc(46 + nameBuf.length);
+    let offset = 0;
+
+    buf.writeUInt32LE(0x02014b50, offset); offset += 4; // central file header signature
+    buf.writeUInt16LE(20, offset); offset += 2; // version made by
+    buf.writeUInt16LE(20, offset); offset += 2; // version needed to extract
+    buf.writeUInt16LE(0, offset); offset += 2; // general purpose bit flag
+    buf.writeUInt16LE(0, offset); offset += 2; // compression method
+    buf.writeUInt16LE(0, offset); offset += 2; // last mod file time
+    buf.writeUInt16LE(0, offset); offset += 2; // last mod file date
+    buf.writeUInt32LE(0, offset); offset += 4; // crc-32
+    buf.writeUInt32LE(dataSize, offset); offset += 4; // compressed size
+    buf.writeUInt32LE(dataSize, offset); offset += 4; // uncompressed size
+    buf.writeUInt16LE(nameBuf.length, offset); offset += 2; // file name length
+    buf.writeUInt16LE(0, offset); offset += 2; // extra field length
+    buf.writeUInt16LE(0, offset); offset += 2; // file comment length
+    buf.writeUInt16LE(0, offset); offset += 2; // disk number start
+    buf.writeUInt16LE(0, offset); offset += 2; // internal file attributes
+    buf.writeUInt32LE(0, offset); offset += 4; // external file attributes
+    buf.writeUInt32LE(localHeaderOffset, offset); offset += 4; // relative offset of local header
+
+    nameBuf.copy(buf, offset);
+    return buf;
+  }
+
+  getBuffer(): Buffer {
+    const centralDirStart = this.offset;
+    const centralDirBuf = Buffer.concat(this.centralDir);
+    const centralDirEnd = centralDirStart + centralDirBuf.length;
+
+    const endOfCentralDir = Buffer.alloc(22);
+    let offset = 0;
+    endOfCentralDir.writeUInt32LE(0x06054b50, offset); offset += 4; // end of central directory signature
+    endOfCentralDir.writeUInt16LE(0, offset); offset += 2; // disk number
+    endOfCentralDir.writeUInt16LE(0, offset); offset += 2; // disk with central directory
+    endOfCentralDir.writeUInt16LE(this.centralDir.length, offset); offset += 2; // entries on this disk
+    endOfCentralDir.writeUInt16LE(this.centralDir.length, offset); offset += 2; // total entries
+    endOfCentralDir.writeUInt32LE(centralDirBuf.length, offset); offset += 4; // central directory size
+    endOfCentralDir.writeUInt32LE(centralDirStart, offset); offset += 4; // central directory offset
+    endOfCentralDir.writeUInt16LE(0, offset); // comment length
+
+    return Buffer.concat([...this.files, centralDirBuf, endOfCentralDir]);
+  }
+}
+
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
@@ -50,7 +127,6 @@ export async function GET(
     return errJson(e);
   }
 
-  // Collect all downloadable files (BFS), tracking relative paths.
   const files: Entry[] = [];
   try {
     const queue: { id: string; path: string; depth: number }[] = [
@@ -75,49 +151,47 @@ export async function GET(
     return errJson(e);
   }
 
-  // Build the zip as a Node stream and hand it to the Response.
-  const archive = archiver("zip", { zlib: { level: 6 } });
-  const pass = new PassThrough();
-  archive.pipe(pass);
+  const zip = new ZipWriter();
 
-  archive.on("error", (err) => {
-    // Best-effort: abort the stream; the client gets a truncated/failed zip.
-    pass.destroy(err);
-  });
+  for (const f of files) {
+    const built = buildDriveContentFetch(f.id, f.mimeType, "download");
+    if ("error" in built) continue;
+    try {
+      const res = await fetch(built.url, {
+        headers: { Authorization: `Bearer ${auth.accessToken}` },
+      });
+      if (!res.ok || !res.body) continue;
 
-  // Stream files into the archive sequentially (keeps memory + token use sane).
-  (async () => {
-    for (const f of files) {
-      const built = buildDriveContentFetch(f.id, f.mimeType, "download");
-      if ("error" in built) continue; // skip shortcuts / non-streamable
+      const chunks: Uint8Array[] = [];
+      const reader = res.body.getReader();
       try {
-        const res = await fetch(built.url, {
-          headers: { Authorization: `Bearer ${auth.accessToken}` },
-        });
-        if (!res.ok || !res.body) continue;
-        const entryName = adjustName(f.path, built.resultMime);
-        // Convert the web ReadableStream to a Node Readable for archiver.
-        const nodeStream = webToNode(res.body);
-        archive.append(nodeStream, { name: entryName });
-        // Wait until this entry is fully consumed before the next fetch.
-        await new Promise<void>((resolve) => {
-          nodeStream.on("end", resolve);
-          nodeStream.on("error", () => resolve());
-        });
-      } catch {
-        // Skip a file that fails; continue with the rest.
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) chunks.push(value);
+        }
+      } finally {
+        reader.releaseLock();
       }
-    }
-    void archive.finalize();
-  })();
 
+      const data = Buffer.concat(chunks.map(c => Buffer.from(c)));
+      const entryName = adjustName(f.path, built.resultMime);
+      await zip.addFile(entryName, data);
+    } catch {
+      // Skip failed files
+    }
+  }
+
+  const zipBuffer = zip.getBuffer();
   const zipName = `${sanitize(rootName)}.zip`;
-  return new NextResponse(pass as unknown as ReadableStream, {
+
+  return new NextResponse(zipBuffer, {
     status: 200,
     headers: {
       "Content-Type": "application/zip",
       "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`,
       "Cache-Control": "private, no-store",
+      "Content-Length": zipBuffer.length.toString(),
     },
   });
 }
@@ -137,34 +211,13 @@ function errJson(e: unknown) {
   return NextResponse.json({ error: err.message || "Folder download failed" }, { status: 500 });
 }
 
-/** Strip characters that are unsafe in zip entry names / paths. */
 function sanitize(name: string): string {
   return (name || "untitled").replace(/[\\/:*?"<>|]/g, "_").replace(/\.+$/, "").trim() || "untitled";
 }
 
-/** Append the exported extension (e.g. Doc→.pdf, Sheet→.xlsx) to the entry. */
 function adjustName(path: string, resultMime: string): string {
   const slash = path.lastIndexOf("/");
   const dir = slash >= 0 ? path.slice(0, slash + 1) : "";
   const base = slash >= 0 ? path.slice(slash + 1) : path;
   return dir + suggestedDownloadName(base, resultMime);
-}
-
-/** Adapt a web ReadableStream (fetch body) to a Node Readable for archiver. */
-function webToNode(webStream: ReadableStream<Uint8Array>): PassThrough {
-  const out = new PassThrough();
-  const reader = webStream.getReader();
-  (async () => {
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) out.write(Buffer.from(value));
-      }
-      out.end();
-    } catch (e) {
-      out.destroy(e as Error);
-    }
-  })();
-  return out;
 }

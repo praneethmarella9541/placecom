@@ -244,12 +244,44 @@ export async function listThreadsPage(
   const baseQ = isSearch ? "" : QUERY[options.folder];
   const q = [baseQ, categoryQuery, userQ].filter(Boolean).join(" ");
 
-  // Search vs browse use different endpoints to match Gmail's UI behaviour:
-  //   - Browse (no q): threads.list — fast, paginated, ordered by thread recency.
-  //   - Search (with q): messages.list — Gmail's UI does this so it catches
-  //     threads where ANY message matches, not just the representative one.
-  //     We then dedupe by threadId. Without this, queries like "bug" miss
-  //     threads where only an older message contained the word.
+  // For pure `from:X` queries, also run a supplemental full-text search for
+  // the person's email address. This catches Google notification emails
+  // (e.g. "shared a file with you", Drive activity) that are sent FROM
+  // Google's system addresses but mention the person's email in the body/
+  // subject — Gmail's own search surfaces these, we mirror that behaviour.
+  const extractFromEmail = (raw: string): string | null => {
+    // Match: from:email  or  from:(email)  — no other operators present
+    const stripped = raw.trim();
+    // Only apply when the entire query is a single from: clause
+    if (!/^from:/i.test(stripped)) return null;
+    if (stripped.split(/\s+/).length > 1) return null; // compound query
+    const m = stripped.match(/^from:\(?([^\s)]+)\)?$/i);
+    if (!m) return null;
+    const candidate = m[1];
+    // Must look like an email address
+    return /@/.test(candidate) ? candidate : null;
+  };
+  const fromEmail = isSearch ? extractFromEmail(rawUserQ) : null;
+
+  // Helper: fetch one page of messages.list and return unique threadIds.
+  async function fetchMessageThreadIds(searchQ: string): Promise<string[]> {
+    const p = new URLSearchParams({ maxResults: "500", q: searchQ });
+    const r = await fetch(`${GMAIL_API}/messages?${p.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!r.ok) return [];
+    const d = (await r.json()) as { messages?: { id: string; threadId: string }[] };
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const m of d.messages ?? []) {
+      if (m.threadId && !seen.has(m.threadId)) {
+        seen.add(m.threadId);
+        ids.push(m.threadId);
+      }
+    }
+    return ids;
+  }
+
   const requestedMax = Math.min(Math.max(options.maxResults, 1), 100);
   // Over-fetch messages in search mode: multiple messages in the same thread
   // collapse to one row after dedup, so we need many more raw messages to
@@ -262,11 +294,20 @@ export async function listThreadsPage(
 
   const endpoint = isSearch ? "messages" : "threads";
   const url = `${GMAIL_API}/${endpoint}?${params.toString()}`;
+
+  // Fire primary fetch and optional supplemental fetch in parallel.
   let res: Response;
+  let supplementalIds: string[] = [];
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const fetches: [Promise<Response>, Promise<string[]>] = [
+      fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
+      // Supplemental: search for the person's email anywhere in the thread.
+      // We strip the domain to also match display names like "venkatapraneeth".
+      fromEmail
+        ? fetchMessageThreadIds(`"${fromEmail}"`)
+        : Promise.resolve([]),
+    ];
+    [res, supplementalIds] = await Promise.all(fetches);
   } catch (e) {
     throw new Error(
       describeUpstreamFetchError(e, `Gmail API (${endpoint} list)`)
@@ -301,8 +342,17 @@ export async function listThreadsPage(
       if (!m.threadId || seen.has(m.threadId)) continue;
       seen.add(m.threadId);
       rawThreads.push({ id: m.threadId });
-      if (rawThreads.length >= requestedMax) break;
     }
+    // Merge supplemental results (notification emails etc.) that weren't in
+    // the primary from: search. Append them after primary results.
+    for (const tid of supplementalIds) {
+      if (!seen.has(tid)) {
+        seen.add(tid);
+        rawThreads.push({ id: tid });
+      }
+    }
+    // Trim to requestedMax after merge
+    rawThreads = rawThreads.slice(0, requestedMax);
     nextPageTokenFromApi = data.nextPageToken;
   } else {
     const data = (await res.json()) as {

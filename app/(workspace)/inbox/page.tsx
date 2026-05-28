@@ -1398,12 +1398,11 @@ export default function InboxPage() {
             method: "POST",
             body: fd,
           });
-          const data = (await res.json()) as {
-            file?: { id: string; name: string; mimeType: string; size?: string; webViewLink: string };
-            error?: string;
-          };
+          const raw = await res.text();
+          let data: { file?: { id: string; name: string; mimeType: string; size?: string; webViewLink: string }; error?: string } = {};
+          try { data = raw ? JSON.parse(raw) : {}; } catch { /* non-JSON body */ }
           if (!res.ok || !data.file) {
-            alert(data.error || `Could not upload ${file.name} to Drive`);
+            alert(data.error || `Could not upload ${file.name} to Drive (${res.status}). Check that Drive access is enabled for your Google account.`);
             continue;
           }
           newFiles.push({
@@ -1414,8 +1413,8 @@ export default function InboxPage() {
             driveFileId: data.file.id,
             webViewLink: data.file.webViewLink,
           });
-        } catch {
-          alert(`Failed to upload ${file.name} to Drive. Please try again.`);
+        } catch (e) {
+          alert(`Failed to upload ${file.name} to Drive: ${e instanceof Error ? e.message : "network error"}. Please try again.`);
         } finally {
           setDriveUploading((s) => { const n = new Set(s); n.delete(file.name); return n; });
         }

@@ -1632,26 +1632,20 @@ export default function InboxPage() {
     pollRef.current = { loadCounts, loadThreads };
   }, [loadCounts, loadThreads]);
 
-  // Live refresh, mirroring Gmail: every 30 s pull fresh unread counts AND
-  // re-fetch the current thread list so newly-arrived mail shows up (and the
-  // Inbox badge moves) without a manual refresh. loadThreads does a background
-  // SWR refresh that preserves scroll and respects the post-mutation cooldown,
-  // so this is non-disruptive. We skip the tick while the tab is hidden.
+  // Live refresh every 30 s: pull fresh unread counts AND re-fetch the
+  // current thread list so newly-arrived mail shows up and the Inbox badge
+  // moves without a manual refresh. loadThreads does a background SWR refresh
+  // that preserves scroll and respects the post-mutation cooldown.
+  // Visibility-change is intentionally NOT wired here — firing forceRefresh
+  // on every app/tab switch causes a visible reload that the user doesn't
+  // expect; the 30 s interval is sufficient for new-mail awareness.
   useEffect(() => {
-    function refresh() {
+    const id = setInterval(() => {
       if (document.hidden) return;
       void pollRef.current.loadCounts();
       void pollRef.current.loadThreads({ append: false, forceRefresh: true });
-    }
-    const id = setInterval(refresh, 30_000);
-    // Also refresh the moment the tab regains focus — a backgrounded tab
-    // misses ticks, so without this the count looks stale on return.
-    function onVisible() { if (!document.hidden) refresh(); }
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    }, 30_000);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -1975,6 +1969,49 @@ export default function InboxPage() {
           next.delete(threadId);
           return next;
         });
+      }
+    },
+    [scheduleCountRefresh, mutateThreads]
+  );
+
+  // Toggle the IMPORTANT label on a thread (optimistic). Same shape as
+  // toggleThreadStar — instant UI update, API call in background, rollback
+  // on failure. Gmail uses a filled/outlined ► marker for this affordance.
+  const toggleThreadImportant = useCallback(
+    async (threadId: string, nextImportant: boolean) => {
+      setRowBusy((s) => new Set(s).add(threadId));
+      mutateThreads((rows) =>
+        rows.map((r) => (r.id === threadId ? { ...r, important: nextImportant } : r))
+      );
+      const change = nextImportant ? 1 : -1;
+      setLabelCounts((prev) => {
+        const cur = prev["IMPORTANT"] ?? { total: 0, unread: 0 };
+        return { ...prev, IMPORTANT: { ...cur, total: Math.max(0, cur.total + change) } };
+      });
+      try {
+        const res = await fetch(
+          `/api/gmail/threads/${encodeURIComponent(threadId)}/labels`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(
+              nextImportant ? { add: ["IMPORTANT"] } : { remove: ["IMPORTANT"] }
+            ),
+          }
+        );
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
+        scheduleCountRefresh();
+      } catch (e) {
+        mutateThreads((rows) =>
+          rows.map((r) => (r.id === threadId ? { ...r, important: !nextImportant } : r))
+        );
+        setLabelCounts((prev) => {
+          const cur = prev["IMPORTANT"] ?? { total: 0, unread: 0 };
+          return { ...prev, IMPORTANT: { ...cur, total: Math.max(0, cur.total - change) } };
+        });
+        alert(e instanceof Error ? e.message : "Could not update importance");
+      } finally {
+        setRowBusy((s) => { const next = new Set(s); next.delete(threadId); return next; });
       }
     },
     [scheduleCountRefresh, mutateThreads]
@@ -3049,17 +3086,22 @@ export default function InboxPage() {
                         />
                       </span>
 
-                      {/* Important marker — always visible when IMPORTANT label is set */}
-                      <span
+                      {/* Important marker — clickable ► toggle, matches Gmail's row affordance */}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void toggleThreadImportant(t.id, !t.important); }}
+                        disabled={isBusy}
                         className={cn(
-                          "flex w-4 shrink-0 items-center justify-center text-[11px] leading-none",
-                          t.important ? "text-yellow-500" : "text-transparent select-none pointer-events-none"
+                          "flex w-4 shrink-0 items-center justify-center text-[11px] leading-none transition-colors",
+                          t.important
+                            ? "text-yellow-500 hover:text-yellow-400"
+                            : "text-[var(--color-text-faint)] hover:text-yellow-500 opacity-0 group-hover:opacity-100"
                         )}
-                        aria-label={t.important ? "Important" : undefined}
-                        title={t.important ? "Important" : undefined}
+                        aria-label={t.important ? "Mark not important" : "Mark as important"}
+                        title={t.important ? "Mark not important" : "Mark as important"}
                       >
                         ►
-                      </span>
+                      </button>
 
                       {/* Star — always visible; filled/yellow when starred, faint outline when not */}
                       <button

@@ -19,6 +19,10 @@ import {
   type ComposeDraftSaveStatus,
 } from "@/lib/gmail-draft-autosave";
 import {
+  DRAFT_INLINE_ATTACHMENT_MAX_BYTES,
+  GMAIL_ATTACHMENT_MAX_BYTES,
+} from "@/lib/gmail-draft-limits";
+import {
   pendingFileFingerprint,
   pendingFilesFromDraftAttachments,
   type DraftApiAttachment,
@@ -466,7 +470,6 @@ export default function InboxPage() {
   /** Set when a save was skipped because another was in-flight — flushed in finally. */
   const draftSavePendingRef = useRef(false);
   const [draftSaveStatus, setDraftSaveStatus] = useState<ComposeDraftSaveStatus>("idle");
-  const [draftSaveProgressKey, setDraftSaveProgressKey] = useState(0);
   const draftSaveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const composeFileRef = useRef<HTMLInputElement>(null);
   // Scroll-position preservation: save the list's scrollTop before opening a
@@ -643,21 +646,45 @@ export default function InboxPage() {
     setDraftSaveStatus("saving");
     draftSavingRef.current = true;
     try {
-      // Resolve attachments to base64 just-in-time. For "saved" attachments
-      // this triggers a fetch back to Gmail — bounded by the snapshot diff,
-      // so it only happens when the attachment list actually changed.
-      let attachments: Array<{ filename: string; mimeType: string; base64Data: string }> = [];
-      if (s.files.length > 0) {
+      const lastSavedFiles = (() => {
+        if (!draftLastSavedRef.current) return null;
         try {
-          attachments = await resolveAttachmentsForUpload(s.files);
+          const p = JSON.parse(draftLastSavedRef.current) as { files?: string[] };
+          return Array.isArray(p.files) ? p.files : null;
         } catch {
-          // If we can't fetch the bytes (rare — usually network), bail out
-          // rather than overwrite the existing draft with an attachment-less
-          // version that would silently lose user data.
+          return null;
+        }
+      })();
+      const filesUnchanged =
+        !!lastSavedFiles &&
+        JSON.stringify(fileFingerprints) === JSON.stringify(lastSavedFiles);
+      const hasNewInline = s.files.some((f) => f.kind === "new");
+      const hasSavedOnDraft = s.files.some((f) => f.kind === "saved");
+
+      const preserveAttachments =
+        !!s.draftId && filesUnchanged && !hasNewInline && hasSavedOnDraft;
+      const mergeExistingAttachments =
+        !!s.draftId && hasNewInline && hasSavedOnDraft;
+
+      let filesToEncode: PendingFile[] = [];
+      if (mergeExistingAttachments) {
+        filesToEncode = s.files.filter((f) => f.kind === "new");
+      } else if (!preserveAttachments) {
+        filesToEncode = s.files.filter((f) => f.kind !== "drive");
+      }
+
+      let attachments: Array<{ filename: string; mimeType: string; base64Data: string }> = [];
+      if (filesToEncode.length > 0) {
+        try {
+          attachments = await resolveAttachmentsForUpload(filesToEncode);
+        } catch {
           markDraftSaveError();
           return null;
         }
       }
+
+      const htmlBody = appendDriveLinksToHtml(s.body, s.files);
+
       const res = await fetch("/api/gmail/drafts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -666,34 +693,42 @@ export default function InboxPage() {
           cc: s.cc.trim() || undefined,
           bcc: s.bcc.trim() || undefined,
           subject: s.subject.trim(),
-          // s.body is HTML from RichTextEditor. Send it as htmlBody; the server
-          // derives the plain-text part from it.  Leave textBody empty — the
-          // server only uses it when htmlBody is missing (legacy callers).
           textBody: "",
-          htmlBody: s.body,
+          htmlBody,
           ...(s.draftId ? { draftId: s.draftId } : {}),
+          ...(preserveAttachments ? { preserveAttachments: true } : {}),
+          ...(mergeExistingAttachments ? { mergeExistingAttachments: true } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
         }),
       });
+      const data = (await res.json()) as { error?: string; draftId?: string; messageId?: string };
       if (!res.ok) {
         markDraftSaveError();
+        if (data.error && typeof window !== "undefined") {
+          console.warn("[draft save]", data.error);
+        }
         return null;
       }
-      const data = (await res.json()) as { draftId?: string; messageId?: string };
       draftLastSavedRef.current = snapshot;
-      // Adopt the new draftId so subsequent edits update the same draft.
       const draftId = data.draftId ?? s.draftId;
       if (data.draftId && data.draftId !== s.draftId) {
         composeStateRef.current.draftId = data.draftId;
         setComposeDraftId(data.draftId);
       }
-      // Gmail rotates messageId + attachmentIds on every draft update. Refresh
-      // our saved pointers from the server so the next auto-save can fetch all
-      // attachments (stale ids otherwise break multi-attachment drafts).
-      if (draftId && s.files.length > 0) {
-        await syncComposeFilesFromDraft(draftId);
+      if (data.messageId) {
+        const mid = data.messageId;
+        const withMessageId = composeStateRef.current.files.map((f) =>
+          f.kind === "saved" ? { ...f, messageId: mid } : f
+        );
+        composeStateRef.current.files = withMessageId;
+        setComposeFiles(withMessageId);
       }
       markDraftSaved();
+      if (draftId && s.files.some((f) => f.kind === "saved") && !preserveAttachments) {
+        void syncComposeFilesFromDraft(draftId);
+      } else if (draftId && preserveAttachments) {
+        void syncComposeFilesFromDraft(draftId).catch(() => {});
+      }
       return draftId ?? null;
     } catch {
       markDraftSaveError();
@@ -731,7 +766,6 @@ export default function InboxPage() {
       draftLastSavedRef.current = "";
       clearDraftSaveStatusTimer();
       setDraftSaveStatus("idle");
-      setDraftSaveProgressKey(0);
       return;
     }
     if (composeCc.trim() || composeBcc.trim()) {
@@ -739,8 +773,7 @@ export default function InboxPage() {
     }
   }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer]);
 
-  // Debounced auto-save while the user is editing. Header chip shows a ~2s
-  // countdown, then saving / saved states.
+  // Debounced auto-save — status chip only shows while saving / saved / error.
   useEffect(() => {
     if (!composeOpen) return;
     const s = composeStateRef.current;
@@ -748,8 +781,6 @@ export default function InboxPage() {
       setDraftSaveStatus("idle");
       return;
     }
-    setDraftSaveStatus("pending");
-    setDraftSaveProgressKey((k) => k + 1);
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     draftSaveTimerRef.current = setTimeout(() => {
       void saveDraft();
@@ -832,14 +863,38 @@ export default function InboxPage() {
 
   async function handleFileSelect(files: FileList | null, target: "compose" | "inline" = "compose") {
     if (!files) return;
-    const GMAIL_LIMIT = 25 * 1024 * 1024; // 25 MB — Gmail's inline attachment cap
     const newFiles: PendingFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (file.size <= GMAIL_LIMIT) {
-        // Small enough to send as a regular attachment.
+      if (file.size <= DRAFT_INLINE_ATTACHMENT_MAX_BYTES) {
         const base64 = await fileToBase64(file);
         newFiles.push({ kind: "new", file, base64 });
+      } else if (file.size <= GMAIL_ATTACHMENT_MAX_BYTES) {
+        // Too large for draft API JSON — store on Drive and link in the body.
+        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
+        try {
+          const driveFile = await uploadLargeFileToDrive(file, (percent) => {
+            setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
+          });
+          newFiles.push({
+            kind: "drive",
+            name: driveFile.name,
+            mimeType: driveFile.mimeType,
+            size: driveFile.size ? parseInt(driveFile.size, 10) : file.size,
+            driveFileId: driveFile.id,
+            webViewLink: driveFile.webViewLink,
+          });
+        } catch (e) {
+          alert(
+            `Failed to upload ${file.name} to Drive: ${e instanceof Error ? e.message : "network error"}. Please try again.`
+          );
+        } finally {
+          setDriveUploadProgress((prev) => {
+            const next = { ...prev };
+            delete next[file.name];
+            return next;
+          });
+        }
       } else {
         // Exceeds Gmail's 25 MB limit — upload to Drive in 4 MB chunks via our API
         // (browser cannot PUT to googleapis.com directly due to CORS).
@@ -3346,7 +3401,6 @@ export default function InboxPage() {
         onAttachClick={() => composeFileRef.current?.click()}
         onFileChange={(files) => void handleFileSelect(files)}
         draftSaveStatus={draftSaveStatus}
-        draftSaveProgressKey={draftSaveProgressKey}
         attachmentChips={
           <GmailPendingAttachments
             files={composeFiles}

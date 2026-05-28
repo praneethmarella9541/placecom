@@ -43,7 +43,6 @@ export type GmailComposeDialogProps = {
   onFileChange: (files: FileList | null) => void;
   attachmentChips?: React.ReactNode;
   draftSaveStatus?: ComposeDraftSaveStatus;
-  draftSaveProgressKey?: number;
 };
 
 /**
@@ -81,7 +80,6 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     onFileChange,
     attachmentChips,
     draftSaveStatus = "idle",
-    draftSaveProgressKey = 0,
   } = props;
 
   const editorRef = useRef<RichTextEditorHandle>(null);
@@ -165,11 +163,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             >
               {subject.trim() || windowTitle}
             </button>
-            <ComposeDraftSaveIndicator
-              status={draftSaveStatus}
-              progressKey={draftSaveProgressKey}
-              className="flex"
-            />
+            <ComposeDraftSaveIndicator status={draftSaveStatus} className="flex" />
           </div>
           <button
             type="button"
@@ -221,11 +215,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           )}
           <div className="flex shrink-0 items-center gap-1 bg-gradient-to-r from-[#1a73e8] via-[#4f46e5] to-[#6366f1] px-2 py-1.5 text-white shadow-[inset_0_-1px_0_rgba(255,255,255,0.12)]">
             <h2 className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium">{windowTitle}</h2>
-            <ComposeDraftSaveIndicator
-              status={draftSaveStatus}
-              progressKey={draftSaveProgressKey}
-              className="mr-1 flex"
-            />
+            <ComposeDraftSaveIndicator status={draftSaveStatus} className="mr-1 flex" />
             <button
               type="button"
               onClick={onMinimize}

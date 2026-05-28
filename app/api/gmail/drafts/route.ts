@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { rebuildDraftRawPreservingAttachments } from "@/lib/gmail-draft-mime";
 import { draftSubjectForCompose, draftSubjectForMime } from "@/lib/gmail-draft-subject";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -257,7 +259,141 @@ type Body = {
   threadId?: string;
   /** Standard-base64 attachment data — same shape the send route accepts. */
   attachments?: DraftAttachment[];
+  /** Update headers/body only; keep existing MIME attachment parts (fast path). */
+  preserveAttachments?: boolean;
+  /** Append `attachments` to files already on the draft (new files only). */
+  mergeExistingAttachments?: boolean;
 };
+
+type MimePart = {
+  mimeType?: string;
+  filename?: string;
+  headers?: { name: string; value: string }[];
+  body?: { data?: string; attachmentId?: string; size?: number };
+  parts?: MimePart[];
+};
+
+function attachmentIdToStandardBase64(data: string): string {
+  let b64 = data.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4;
+  if (pad) b64 += "=".repeat(4 - pad);
+  return b64;
+}
+
+async function fetchDraftRawBase64Url(
+  accessToken: string,
+  draftId: string
+): Promise<string | null> {
+  const res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=raw`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { message?: { raw?: string } };
+  return data.message?.raw ?? null;
+}
+
+async function fetchDraftFull(
+  accessToken: string,
+  draftId: string
+): Promise<{ messageId: string; payload: MimePart } | null> {
+  const res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=full`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as {
+    message?: { id: string; payload?: MimePart };
+  };
+  if (!data.message?.id) return null;
+  return { messageId: data.message.id, payload: data.message.payload ?? {} };
+}
+
+async function fetchGmailAttachmentBase64(
+  accessToken: string,
+  messageId: string,
+  attachmentId: string
+): Promise<string> {
+  const res = await fetch(
+    `${GMAIL_API}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  if (!res.ok) {
+    throw new Error(`Gmail attachment ${res.status}`);
+  }
+  const data = (await res.json()) as { data?: string };
+  if (!data.data) throw new Error("Empty attachment data");
+  return attachmentIdToStandardBase64(data.data);
+}
+
+function collectAttachmentMeta(
+  payload: MimePart
+): Array<{ attachmentId: string; filename: string; mimeType: string }> {
+  const results: Array<{ attachmentId: string; filename: string; mimeType: string }> = [];
+  const mime = payload.mimeType ?? "";
+  if (payload.body?.attachmentId && !mime.startsWith("multipart/")) {
+    const name =
+      payload.filename?.trim() ||
+      `attachment-${payload.body.attachmentId.slice(0, 8)}`;
+    results.push({
+      attachmentId: payload.body.attachmentId,
+      filename: name,
+      mimeType: mime || "application/octet-stream",
+    });
+  }
+  if (Array.isArray(payload.parts)) {
+    for (const part of payload.parts) {
+      results.push(...collectAttachmentMeta(part));
+    }
+  }
+  return results;
+}
+
+async function buildDraftRaw(
+  accessToken: string,
+  body: Body
+): Promise<string> {
+  const base = {
+    to: body.to ?? "",
+    cc: body.cc,
+    bcc: body.bcc,
+    subject: body.subject ?? "",
+    textBody: body.textBody ?? "",
+    htmlBody: body.htmlBody,
+  };
+
+  if (body.draftId && body.preserveAttachments) {
+    const existingRaw = await fetchDraftRawBase64Url(accessToken, body.draftId);
+    if (existingRaw) {
+      try {
+        return rebuildDraftRawPreservingAttachments(existingRaw, base);
+      } catch (e) {
+        console.warn("[drafts] preserveAttachments fallback:", e);
+      }
+    }
+  }
+
+  let attachments = body.attachments ?? [];
+
+  if (body.draftId && body.mergeExistingAttachments) {
+    const draft = await fetchDraftFull(accessToken, body.draftId);
+    if (draft) {
+      const existing = collectAttachmentMeta(draft.payload);
+      const existingData = await Promise.all(
+        existing.map(async (a) => ({
+          filename: a.filename,
+          mimeType: a.mimeType,
+          base64Data: await fetchGmailAttachmentBase64(
+            accessToken,
+            draft.messageId,
+            a.attachmentId
+          ),
+        }))
+      );
+      attachments = [...existingData, ...attachments];
+    }
+  }
+
+  return buildRaw({ ...base, attachments });
+}
 
 export async function POST(request: Request) {
   const auth = await requireGmailAccessToken(request);
@@ -272,15 +408,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const raw = buildRaw({
-    to: body.to ?? "",
-    cc: body.cc,
-    bcc: body.bcc,
-    subject: body.subject ?? "",
-    textBody: body.textBody ?? "",
-    htmlBody: body.htmlBody,
-    attachments: body.attachments,
-  });
+  const attachmentBytes = (body.attachments ?? []).reduce(
+    (sum, a) => sum + (a.base64Data?.length ?? 0),
+    0
+  );
+  if (attachmentBytes > 4 * 1024 * 1024) {
+    return NextResponse.json(
+      {
+        error:
+          "Attachment is too large to save inline. Files over 3 MB are uploaded to Drive automatically — wait for the upload to finish, then try again.",
+      },
+      { status: 413 }
+    );
+  }
+
+  let raw: string;
+  try {
+    raw = await buildDraftRaw(auth.accessToken, body);
+  } catch (e) {
+    const err = e as Error;
+    console.error("[drafts] build raw", err);
+    return NextResponse.json(
+      { error: err.message || "Failed to prepare draft" },
+      { status: 500 }
+    );
+  }
 
   const message: Record<string, unknown> = { raw };
   if (body.threadId) message.threadId = body.threadId;

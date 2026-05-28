@@ -2154,7 +2154,14 @@ export default function InboxPage() {
         Left rail  : Compose + Inbox/Sent/Drafts + Labels  (desktop only)
         Right area : Category tabs (top) + search + thread list OR thread detail
     ──────────────────────────────────────────────────────────────────────── */}
-    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+    <div
+      className={cn(
+        "flex min-h-0 overflow-hidden",
+        /* Cancel WorkspaceChrome padding so the pane is exactly viewport-tall (no page scroll). */
+        "-mx-4 -mt-[calc(56px+16px)] -mb-6 h-[calc(100dvh-40px)]",
+        "md:-mx-6 md:-mt-6 md:-mb-6 md:h-[calc(100dvh-48px)]"
+      )}
+    >
 
       {/* ══ LEFT RAIL — desktop only ══ */}
       <aside
@@ -2336,10 +2343,10 @@ export default function InboxPage() {
       </aside>
 
       {/* ══ RIGHT CONTENT AREA ══ */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
 
         {/* Mobile folder tabs (replaces left rail on small screens) */}
-        <div className="flex border-b border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
+        <div className="flex shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
           <div className="flex flex-1 overflow-x-auto">
             {FOLDER_NAV.map(({ key, label, Icon, countId, unreadOnly }) => {
               const count = countId ? labelCounts[countId] : undefined;
@@ -2406,7 +2413,7 @@ export default function InboxPage() {
 
         {/* ── Category tabs (Primary / Promotions / Social…) — top of right area, only on Inbox ── */}
         {folder === "inbox" && !filterLabelId && (
-          <div className="flex gap-0 overflow-x-auto border-b border-[#e8eaed] bg-[#f6f8fc]">
+          <div className="flex shrink-0 gap-0 overflow-x-auto border-b border-[#e8eaed] bg-[#f6f8fc]">
             {(
               [
                 { key: "primary"    as const, label: "Primary"    },
@@ -2440,7 +2447,7 @@ export default function InboxPage() {
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <div
             className={cn(
-              "relative flex flex-col overflow-hidden bg-[#f6f8fc]",
+              "relative flex min-h-0 flex-col overflow-hidden bg-[#f6f8fc]",
               selectedId
                 ? "hidden w-full shrink-0 border-[#e8eaed] md:flex md:border-r"
                 : "flex flex-1",
@@ -2457,8 +2464,8 @@ export default function InboxPage() {
               aria-hidden
             />
 
-            {/* Search bar + advanced filter popover trigger */}
-            <div ref={filterPanelRef} className="relative border-b border-[#e8eaed] bg-[#f6f8fc] px-3 py-2">
+            {/* Search bar + advanced filter popover trigger — fixed; only the list scrolls */}
+            <div ref={filterPanelRef} className="relative shrink-0 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 py-2">
               <div className="relative">
                 <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5f6368]" />
                 <input
@@ -2578,7 +2585,7 @@ export default function InboxPage() {
 
             {/* Bulk-action / select-all toolbar */}
             {threads.length > 0 && (
-              <div className="flex h-12 items-center gap-2 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 text-[12px]">
+              <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 text-[12px]">
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -2640,7 +2647,7 @@ export default function InboxPage() {
 
             {/* Thread rows */}
             {loadingList ? (
-              <ul>
+              <ul className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
                 {[...Array(20)].map((_, i) => {
                   // Vary widths slightly per row so the skeleton looks like
                   // a real list (different sender name lengths + subject lengths)
@@ -2673,9 +2680,9 @@ export default function InboxPage() {
                 })}
               </ul>
             ) : listError ? (
-              <div className="p-6 text-sm text-[var(--color-danger)]">{listError}</div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-6 text-sm text-[var(--color-danger)]">{listError}</div>
             ) : threads.length === 0 ? (
-              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8">
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto p-8">
                 <div className="flex h-14 w-14 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--color-surface-offset)]">
                   {folder === "drafts"
                     ? <FilePen className="h-7 w-7 text-[var(--color-text-faint)] stroke-[1.25]" />
@@ -2703,7 +2710,7 @@ export default function InboxPage() {
                 </p>
               </div>
             ) : (
-              <ul ref={listScrollRef} className="scrollbar-thin flex-1 overflow-y-auto">
+              <ul ref={listScrollRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
                 {threads.map((t) => {
                   const name = senderName(t.from);
                   const isSelected = selectedThreadIds.has(t.id);

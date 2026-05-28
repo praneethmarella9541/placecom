@@ -5,7 +5,7 @@ import {
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
   Plus, Trash2, Snowflake, RefreshCw, Loader2, Undo2, Redo2,
-  BarChart3, ExternalLink, X,
+  BarChart3, ExternalLink, X, TableCellsMerge, TableCellsSplit, Palette,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +32,7 @@ type SheetTab = {
   frozenColumnCount: number;
 };
 type SpreadsheetMeta = { spreadsheetId: string; title: string; tabs: SheetTab[] };
+type MergeRange = { startRow: number; endRow: number; startCol: number; endCol: number };
 type SheetData = {
   title: string;
   cells: SheetCell[][];
@@ -40,6 +41,7 @@ type SheetData = {
   frozenRowCount: number;
   columnWidths: number[];
   rowHeights: number[];
+  merges: MergeRange[];
 };
 
 type Pos = { row: number; col: number };
@@ -843,6 +845,38 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     [spreadsheetId, loadCharts]
   );
 
+  // Merge lookup: for each "covered" cell (not the top-left) we skip render;
+  // the top-left cell spans the merge's column width. (Horizontal spans render
+  // exactly; vertical spans blank the covered rows — content stays on top-left.)
+  const mergeMap = useMemo(() => {
+    const anchors = new Map<string, MergeRange>(); // "r,c" → merge (top-left)
+    const covered = new Set<string>(); // "r,c" covered but not anchor
+    for (const m of data?.merges ?? []) {
+      anchors.set(`${m.startRow},${m.startCol}`, m);
+      for (let r = m.startRow; r < m.endRow; r++) {
+        for (let c = m.startCol; c < m.endCol; c++) {
+          if (r === m.startRow && c === m.startCol) continue;
+          covered.add(`${r},${c}`);
+        }
+      }
+    }
+    return { anchors, covered };
+  }, [data]);
+
+  const mergeSelection = useCallback(
+    async (merge: boolean) => {
+      if (!activeTab) return;
+      const { r1, r2, c1, c2 } = selRect;
+      await structuralOp({
+        op: merge ? "merge" : "unmerge",
+        startRow: r1, endRow: r2, startCol: c1, endCol: c2,
+      });
+    },
+    [activeTab, selRect, structuralOp]
+  );
+
+  const [condFmtOpen, setCondFmtOpen] = useState(false);
+
   const selCell = data ? cellAt(selected.row, selected.col) : null;
 
   // Windowed rows: render a buffer of rows around the viewport. Frozen rows
@@ -889,7 +923,14 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
         </div>
         {/* Cells */}
         {Array.from({ length: data.columnCount }).map((_, c) => {
+          // Skip cells covered by a merge (the anchor renders the span).
+          if (mergeMap.covered.has(`${r},${c}`)) return null;
           const cell = cellAt(r, c);
+          // If this cell anchors a merge, span its columns' combined width.
+          const merge = mergeMap.anchors.get(`${r},${c}`);
+          const spanCols = merge ? merge.endCol - merge.startCol : 1;
+          let cellW = 0;
+          for (let cc = c; cc < c + spanCols; cc++) cellW += colWidth(cc);
           const isFocus = selected.row === r && selected.col === c;
           const isSel = inSelection(r, c);
           const isRange = isSel && !(selRect.r1 === selRect.r2 && selRect.c1 === selRect.c2);
@@ -924,7 +965,7 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
                 isFocus && !isEdit && "ring-2 ring-inset ring-[var(--color-primary)]"
               )}
               style={{
-                width: colWidth(c),
+                width: cellW,
                 height: rh,
                 lineHeight: `${rh - 2}px`,
                 fontWeight: cell.bold ? 700 : undefined,
@@ -1125,6 +1166,21 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
           )}
         </div>
 
+        <Divider />
+
+        {/* Merge / unmerge */}
+        <ToolBtn title="Merge cells" onClick={() => void mergeSelection(true)}>
+          <TableCellsMerge className="h-4 w-4" />
+        </ToolBtn>
+        <ToolBtn title="Unmerge cells" onClick={() => void mergeSelection(false)}>
+          <TableCellsSplit className="h-4 w-4" />
+        </ToolBtn>
+
+        {/* Conditional formatting */}
+        <ToolBtn title="Conditional formatting" active={condFmtOpen} onClick={() => setCondFmtOpen(true)}>
+          <Palette className="h-4 w-4" />
+        </ToolBtn>
+
         <div className="ml-auto flex items-center gap-2">
           {saving && <Loader2 className="h-4 w-4 animate-spin text-[var(--color-text-muted)]" />}
           <ToolBtn title="Refresh" onClick={() => void loadSheet(activeSheet)}>
@@ -1311,6 +1367,91 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
           )}
         </div>
       )}
+
+      {/* Conditional-format dialog */}
+      {condFmtOpen && activeTab && (
+        <CondFmtDialog
+          rangeLabel={`${colToLetter(selRect.c1)}${selRect.r1 + 1}:${colToLetter(selRect.c2)}${selRect.r2 + 1}`}
+          onClose={() => setCondFmtOpen(false)}
+          onApply={async (ruleType, value, bgColor) => {
+            setCondFmtOpen(false);
+            await structuralOp({
+              op: "condformat",
+              startRow: selRect.r1, endRow: selRect.r2,
+              startCol: selRect.c1, endCol: selRect.c2,
+              ruleType, value, bgColor,
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Modal to add a single conditional-format rule to the current selection. */
+function CondFmtDialog({
+  rangeLabel,
+  onClose,
+  onApply,
+}: {
+  rangeLabel: string;
+  onClose: () => void;
+  onApply: (
+    ruleType: "NUMBER_GREATER" | "NUMBER_LESS" | "NUMBER_EQ" | "TEXT_CONTAINS",
+    value: string,
+    bgColor: string
+  ) => void;
+}) {
+  const [ruleType, setRuleType] = useState<"NUMBER_GREATER" | "NUMBER_LESS" | "NUMBER_EQ" | "TEXT_CONTAINS">("NUMBER_GREATER");
+  const [value, setValue] = useState("");
+  const [bgColor, setBgColor] = useState("#fff2cc");
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-sm rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-[15px] font-semibold text-[var(--color-text)]">Conditional formatting</h3>
+          <button type="button" onClick={onClose} className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="mb-3 text-[12px] text-[var(--color-text-muted)]">
+          Applies to <span className="font-medium text-[var(--color-text)]">{rangeLabel}</span>
+        </p>
+        <label className="mb-1.5 block text-[12px] font-medium text-[var(--color-text-muted)]">Condition</label>
+        <select
+          value={ruleType}
+          onChange={(e) => setRuleType(e.target.value as typeof ruleType)}
+          className="input-field mb-3 w-full text-[13px]"
+        >
+          <option value="NUMBER_GREATER">Greater than</option>
+          <option value="NUMBER_LESS">Less than</option>
+          <option value="NUMBER_EQ">Equal to</option>
+          <option value="TEXT_CONTAINS">Text contains</option>
+        </select>
+        <label className="mb-1.5 block text-[12px] font-medium text-[var(--color-text-muted)]">Value</label>
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={ruleType === "TEXT_CONTAINS" ? "text…" : "number…"}
+          className="input-field mb-3 w-full text-[13px]"
+        />
+        <label className="mb-1.5 block text-[12px] font-medium text-[var(--color-text-muted)]">Fill color</label>
+        <input type="color" value={bgColor} onChange={(e) => setBgColor(e.target.value)} className="mb-4 h-9 w-16 cursor-pointer rounded border border-[var(--color-border)]" />
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-ghost px-4 py-2 text-[13px]">Cancel</button>
+          <button
+            type="button"
+            disabled={!value.trim()}
+            onClick={() => onApply(ruleType, value.trim(), bgColor)}
+            className="btn-primary px-4 py-2 text-[13px] disabled:opacity-50"
+          >
+            Add rule
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

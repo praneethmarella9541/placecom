@@ -273,6 +273,15 @@ export type SheetData = {
   columnWidths: number[];
   /** Pixel height per row (index = row). Missing/0 → use default. */
   rowHeights: number[];
+  /** Merged cell ranges (0-based, end-exclusive). */
+  merges: MergeRange[];
+};
+
+export type MergeRange = {
+  startRow: number;
+  endRow: number; // exclusive
+  startCol: number;
+  endCol: number; // exclusive
 };
 
 function rgbToHex(c?: { red?: number; green?: number; blue?: number }): string | undefined {
@@ -363,7 +372,7 @@ export async function getSheetData(
 ): Promise<SheetData> {
   const range = encodeURIComponent(sheetTitle);
   const fields =
-    "properties.title,sheets(properties(title,gridProperties),data(rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat(textFormat,backgroundColor,horizontalAlignment))),columnMetadata(pixelSize),rowMetadata(pixelSize)))";
+    "properties.title,sheets(properties(title,gridProperties),merges,data(rowData(values(formattedValue,userEnteredValue,effectiveValue,effectiveFormat(backgroundColor),userEnteredFormat(textFormat,backgroundColor,horizontalAlignment))),columnMetadata(pixelSize),rowMetadata(pixelSize)))";
   const url = `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}?ranges=${range}&includeGridData=true&fields=${fields}`;
   const res = await sheetsFetch(accessToken, url);
   const data = (await res.json()) as {
@@ -376,6 +385,12 @@ export async function getSheetData(
           frozenRowCount?: number;
         };
       };
+      merges?: {
+        startRowIndex?: number;
+        endRowIndex?: number;
+        startColumnIndex?: number;
+        endColumnIndex?: number;
+      }[];
       data?: {
         columnMetadata?: { pixelSize?: number }[];
         rowMetadata?: { pixelSize?: number }[];
@@ -387,6 +402,9 @@ export async function getSheetData(
               numberValue?: number;
               boolValue?: boolean;
               formulaValue?: string;
+            };
+            effectiveFormat?: {
+              backgroundColor?: { red?: number; green?: number; blue?: number };
             };
             userEnteredFormat?: {
               textFormat?: {
@@ -443,7 +461,9 @@ export async function getSheetData(
       else raw = cell.formattedValue ?? "";
 
       const tf = cell.userEnteredFormat?.textFormat;
-      const bg = cell.userEnteredFormat?.backgroundColor;
+      // Prefer effectiveFormat bg so conditional-formatting colors show; fall
+      // back to the user-entered fill.
+      const bg = cell.effectiveFormat?.backgroundColor ?? cell.userEnteredFormat?.backgroundColor;
       const bgHex = rgbToHex(bg);
       row.push({
         display: cell.formattedValue ?? "",
@@ -470,6 +490,13 @@ export async function getSheetData(
     rowHeights.push(rowMetadata[r]?.pixelSize ?? 0);
   }
 
+  const merges: MergeRange[] = (sheet?.merges ?? []).map((m) => ({
+    startRow: m.startRowIndex ?? 0,
+    endRow: m.endRowIndex ?? 0,
+    startCol: m.startColumnIndex ?? 0,
+    endCol: m.endColumnIndex ?? 0,
+  }));
+
   return {
     title: sheet?.properties?.title ?? sheetTitle,
     cells,
@@ -478,6 +505,7 @@ export async function getSheetData(
     frozenRowCount,
     columnWidths,
     rowHeights,
+    merges,
   };
 }
 
@@ -1052,6 +1080,104 @@ export async function deleteChart(
     {
       method: "POST",
       body: JSON.stringify({ requests: [{ deleteEmbeddedObject: { objectId: chartId } }] }),
+    }
+  );
+}
+
+/* ── Merge cells ── */
+
+type GridRangeFull = {
+  sheetId: number;
+  startRowIndex: number;
+  endRowIndex: number;
+  startColumnIndex: number;
+  endColumnIndex: number;
+};
+
+/** Merge a rectangular range into one cell (MERGE_ALL). */
+export async function mergeCells(
+  accessToken: string,
+  spreadsheetId: string,
+  range: GridRangeFull
+): Promise<void> {
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [{ mergeCells: { range, mergeType: "MERGE_ALL" } }],
+      }),
+    }
+  );
+}
+
+/** Unmerge any merges intersecting a range. */
+export async function unmergeCells(
+  accessToken: string,
+  spreadsheetId: string,
+  range: GridRangeFull
+): Promise<void> {
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ requests: [{ unmergeCells: { range } }] }),
+    }
+  );
+}
+
+/* ── Conditional formatting ── */
+
+export type ConditionalRuleType =
+  | "NUMBER_GREATER"
+  | "NUMBER_LESS"
+  | "NUMBER_EQ"
+  | "TEXT_CONTAINS";
+
+/**
+ * Add a basic conditional-format rule to a range: when a cell matches the
+ * condition, fill it with `bgColor`. Mirrors Google's "single color" rules.
+ */
+export async function addConditionalFormat(
+  accessToken: string,
+  spreadsheetId: string,
+  range: GridRangeFull,
+  ruleType: ConditionalRuleType,
+  value: string,
+  bgColor: string
+): Promise<void> {
+  const typeMap: Record<ConditionalRuleType, string> = {
+    NUMBER_GREATER: "NUMBER_GREATER",
+    NUMBER_LESS: "NUMBER_LESS",
+    NUMBER_EQ: "NUMBER_EQ",
+    TEXT_CONTAINS: "TEXT_CONTAINS",
+  };
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [
+          {
+            addConditionalFormatRule: {
+              rule: {
+                ranges: [range],
+                booleanRule: {
+                  condition: {
+                    type: typeMap[ruleType],
+                    values: [{ userEnteredValue: value }],
+                  },
+                  format: { backgroundColor: hexToRgb(bgColor) },
+                },
+              },
+              index: 0,
+            },
+          },
+        ],
+      }),
     }
   );
 }

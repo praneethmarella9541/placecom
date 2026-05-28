@@ -7,8 +7,12 @@ import {
   setFrozenRows,
   setColumnWidth,
   setRowHeight,
+  mergeCells,
+  unmergeCells,
+  addConditionalFormat,
   getSheetData,
   type CellFormat,
+  type ConditionalRuleType,
 } from "@/lib/sheets";
 import { SHEETS_INSUFFICIENT_SCOPE } from "@/lib/sheets-scope-error";
 
@@ -52,8 +56,27 @@ type DeleteOp = {
 type FreezeOp = { op: "freeze"; sheetId: number; frozenRowCount: number };
 type ColWidthOp = { op: "colwidth"; sheetId: number; columnIndex: number; pixelSize: number };
 type RowHeightOp = { op: "rowheight"; sheetId: number; rowIndex: number; pixelSize: number };
+type MergeOp = {
+  op: "merge" | "unmerge";
+  sheetId: number;
+  startRow: number;
+  endRow: number;
+  startCol: number;
+  endCol: number;
+};
+type CondFmtOp = {
+  op: "condformat";
+  sheetId: number;
+  startRow: number;
+  endRow: number;
+  startCol: number;
+  endCol: number;
+  ruleType: ConditionalRuleType;
+  value: string;
+  bgColor: string;
+};
 
-type Body = (FormatOp | InsertOp | DeleteOp | FreezeOp | ColWidthOp | RowHeightOp) & {
+type Body = (FormatOp | InsertOp | DeleteOp | FreezeOp | ColWidthOp | RowHeightOp | MergeOp | CondFmtOp) & {
   /** Tab title to re-read after the op so the client can refresh the grid. */
   refreshSheet?: string;
 };
@@ -124,6 +147,35 @@ export async function POST(
         break;
       case "rowheight":
         await setRowHeight(auth.accessToken, id, body.sheetId, body.rowIndex, body.pixelSize);
+        break;
+      case "merge":
+      case "unmerge": {
+        const range = {
+          sheetId: body.sheetId,
+          startRowIndex: body.startRow,
+          endRowIndex: body.endRow + 1,
+          startColumnIndex: body.startCol,
+          endColumnIndex: body.endCol + 1,
+        };
+        if (body.op === "merge") await mergeCells(auth.accessToken, id, range);
+        else await unmergeCells(auth.accessToken, id, range);
+        break;
+      }
+      case "condformat":
+        await addConditionalFormat(
+          auth.accessToken,
+          id,
+          {
+            sheetId: body.sheetId,
+            startRowIndex: body.startRow,
+            endRowIndex: body.endRow + 1,
+            startColumnIndex: body.startCol,
+            endColumnIndex: body.endCol + 1,
+          },
+          body.ruleType,
+          body.value,
+          body.bgColor
+        );
         break;
       default:
         return NextResponse.json({ error: "Unknown op" }, { status: 400 });

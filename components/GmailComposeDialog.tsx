@@ -154,7 +154,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           <button
             type="button"
             onClick={onMinimize}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
             title={titleCase("Expand")}
           >
             <Maximize2 className="h-4 w-4" strokeWidth={2} />
@@ -163,7 +163,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             <button
               type="button"
               onClick={onMinimize}
-              className="min-w-0 flex-1 truncate text-left text-[13px] font-medium"
+              className="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-white"
             >
               {subject.trim() || windowTitle}
             </button>
@@ -172,7 +172,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
             aria-label={titleCase("Close")}
           >
             <IconX className="h-4 w-4" />
@@ -219,12 +219,12 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             />
           )}
           <div className={cn("flex shrink-0 items-center gap-1 px-2 py-1.5", GMAIL_COMPOSE_HEADER)}>
-            <h2 className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium">{windowTitle}</h2>
+            <h2 className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium text-white">{windowTitle}</h2>
             <ComposeDraftSaveIndicator status={draftSaveStatus} className="mr-1 flex" />
             <button
               type="button"
               onClick={onMinimize}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
               title={titleCase("Minimize")}
             >
               <Minus className="h-4 w-4" strokeWidth={2} />
@@ -232,7 +232,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             <button
               type="button"
               onClick={onToggleFullscreen}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
               title={fullscreen ? titleCase("Exit full screen") : titleCase("Full screen")}
             >
               {fullscreen ? (
@@ -244,7 +244,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             <button
               type="button"
               onClick={onClose}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
               aria-label={titleCase("Close")}
             >
               <IconX className="h-4 w-4" />

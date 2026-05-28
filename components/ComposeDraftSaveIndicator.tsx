@@ -22,8 +22,8 @@ export function ComposeDraftSaveIndicator({ status, className }: Props) {
       aria-atomic="true"
     >
       {status === "saving" && (
-        <span className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-medium text-white/90">
-          <svg className="h-3 w-3 shrink-0 animate-spin text-white/70" viewBox="0 0 24 24" fill="none" aria-hidden>
+        <span className="flex items-center gap-1.5 whitespace-nowrap text-[10px] font-medium text-[#202124]">
+          <svg className="h-3 w-3 shrink-0 animate-spin text-[#5f6368]" viewBox="0 0 24 24" fill="none" aria-hidden>
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
@@ -31,13 +31,13 @@ export function ComposeDraftSaveIndicator({ status, className }: Props) {
         </span>
       )}
       {status === "saved" && (
-        <span className="flex items-center gap-1 whitespace-nowrap text-[10px] font-medium text-emerald-200">
-          <IconCheck className="h-3 w-3 shrink-0" />
+        <span className="flex items-center gap-1 whitespace-nowrap text-[10px] font-medium text-[#202124]">
+          <IconCheck className="h-3 w-3 shrink-0 text-[#202124]" />
           {titleCase("Draft saved")}
         </span>
       )}
       {status === "error" && (
-        <span className="whitespace-nowrap text-[10px] font-medium text-amber-200">
+        <span className="whitespace-nowrap text-[10px] font-medium text-[#202124]">
           {titleCase("Couldn't save draft")}
         </span>
       )}

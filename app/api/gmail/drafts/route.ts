@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { takeStagedAttachment } from "@/lib/draft-attachment-staging";
+import {
+  getStagedAttachment,
+  releaseStagedAttachments,
+} from "@/lib/draft-attachment-staging";
 import { rebuildDraftRawPreservingAttachments } from "@/lib/gmail-draft-mime";
 import { draftSubjectForCompose, draftSubjectForMime } from "@/lib/gmail-draft-subject";
 
@@ -377,12 +380,13 @@ async function buildDraftRaw(
 
   let attachments = body.attachments ?? [];
 
-  if (body.stagedUploadIds?.length) {
-    for (const uploadId of body.stagedUploadIds) {
-      const staged = takeStagedAttachment(userId, uploadId);
+  const stagedIds = body.stagedUploadIds ?? [];
+  if (stagedIds.length) {
+    for (const uploadId of stagedIds) {
+      const staged = await getStagedAttachment(userId, uploadId);
       if (!staged) {
         throw new Error(
-          "A staged attachment expired before save. Please remove and re-attach the file."
+          "Attachment upload did not finish or expired. Wait for the upload to complete, then try again."
         );
       }
       attachments.push(staged);
@@ -438,6 +442,8 @@ export async function POST(request: Request) {
     );
   }
 
+  const stagedIdsForRelease = body.stagedUploadIds ?? [];
+
   let raw: string;
   try {
     raw = await buildDraftRaw(auth.accessToken, auth.userId, body);
@@ -483,6 +489,9 @@ export async function POST(request: Request) {
     }
 
     const data = (await res.json()) as { id: string; message?: { id: string; threadId: string } };
+    if (stagedIdsForRelease.length > 0) {
+      await releaseStagedAttachments(auth.userId, stagedIdsForRelease);
+    }
     return NextResponse.json({ draftId: data.id, messageId: data.message?.id, threadId: data.message?.threadId });
   } catch (e) {
     const err = e as Error;

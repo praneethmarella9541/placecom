@@ -649,6 +649,12 @@ export default function InboxPage() {
       return s.draftId;
     }
 
+    const uploadsInFlight = Object.keys(driveUploadProgress).length > 0;
+    if (s.files.some((f) => f.kind === "staged") && uploadsInFlight) {
+      setDraftSaveStatus("idle");
+      return s.draftId;
+    }
+
     setDraftSaveStatus("saving");
     draftSavingRef.current = true;
     try {
@@ -722,7 +728,6 @@ export default function InboxPage() {
         }
         return null;
       }
-      draftLastSavedRef.current = snapshot;
       const draftId = data.draftId ?? s.draftId;
       if (data.draftId && data.draftId !== s.draftId) {
         composeStateRef.current.draftId = data.draftId;
@@ -736,15 +741,21 @@ export default function InboxPage() {
         composeStateRef.current.files = withMessageId;
         setComposeFiles(withMessageId);
       }
+
+      const attachmentPayloadSent =
+        stagedUploadIds.length > 0 || attachments.length > 0;
+      if (preserveAttachments) {
+        draftLastSavedRef.current = snapshot;
+      } else if (draftId && attachmentPayloadSent) {
+        await syncComposeFilesFromDraft(draftId);
+      } else {
+        draftLastSavedRef.current = snapshot;
+      }
+
       markDraftSaved();
       const wasNewDraft = !s.draftId && !!data.draftId;
       onDraftCountChangeRef.current(wasNewDraft);
-      if (
-        draftId &&
-        (s.files.some((f) => f.kind === "saved" || f.kind === "staged") && !preserveAttachments)
-      ) {
-        void syncComposeFilesFromDraft(draftId);
-      } else if (draftId && preserveAttachments) {
+      if (draftId && preserveAttachments) {
         void syncComposeFilesFromDraft(draftId).catch(() => {});
       }
       return draftId ?? null;
@@ -760,7 +771,13 @@ export default function InboxPage() {
         });
       }
     }
-  }, [syncComposeFilesFromDraft, composeHasDraftableContent, markDraftSaved, markDraftSaveError]);
+  }, [
+    syncComposeFilesFromDraft,
+    composeHasDraftableContent,
+    markDraftSaved,
+    markDraftSaveError,
+    driveUploadProgress,
+  ]);
 
   // closeComposeAndSaveDraft + discardComposeDraft are declared later — they
   // depend on scheduleCountRefresh and loadThreads which are defined further down.

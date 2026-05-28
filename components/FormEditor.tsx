@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ClipboardList,
   Copy,
+  Inbox,
   Loader2,
   Plus,
   Trash2,
@@ -74,6 +75,15 @@ function blockLabel(block: EditorBlock): string {
   }
 }
 
+function ResponsesTab(_props: { formId: string; editorBlocks: EditorBlock[] }) {
+  void _props;
+  return (
+    <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-12 text-center text-[13px] text-[var(--color-text-muted)]">
+      {titleCase("Responses are available in Google Forms. Use the share link above to collect submissions.")}
+    </p>
+  );
+}
+
 export function FormEditor({ formId }: { formId: string }) {
   const [loading, setLoading] = useState(true);
   const [saveBusy, setSaveBusy] = useState(false);
@@ -81,6 +91,7 @@ export function FormEditor({ formId }: { formId: string }) {
   const [editor, setEditor] = useState<EditorState>(() => emptyEditorState());
   const [responderUri, setResponderUri] = useState<string | null>(null);
   const [copyDone, setCopyDone] = useState(false);
+  const [tab, setTab] = useState<"questions" | "responses">("questions");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -321,6 +332,33 @@ export function FormEditor({ formId }: { formId: string }) {
         ) : null}
       </div>
 
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-[var(--color-border)]">
+        {(["questions", "responses"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-medium transition-colors ${
+              tab === t
+                ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            }`}
+          >
+            {t === "questions" ? (
+              <ClipboardList className="h-3.5 w-3.5" strokeWidth={2} />
+            ) : (
+              <Inbox className="h-3.5 w-3.5" strokeWidth={2} />
+            )}
+            {titleCase(t === "questions" ? "Questions" : "Responses")}
+          </button>
+        ))}
+      </div>
+
+      {tab === "responses" ? (
+        <ResponsesTab formId={formId} editorBlocks={editor.blocks} />
+      ) : (
+      <>
       <div className="space-y-3">
         <h2 className="flex items-center gap-2 font-display text-[15px] font-bold text-[var(--color-text)]">
           <ClipboardList className="h-4 w-4 text-[var(--color-primary)]" strokeWidth={2} />
@@ -592,6 +630,8 @@ export function FormEditor({ formId }: { formId: string }) {
           ))}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

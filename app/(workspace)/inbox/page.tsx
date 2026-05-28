@@ -12,7 +12,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal, Bookmark } from "lucide-react";
+import { PencilLine, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal, Bookmark, Loader2 } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -1084,6 +1084,9 @@ export default function InboxPage() {
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
+  // Names of files currently being uploaded to Drive (>25 MB path).
+  // Shows a "Uploading to Drive…" placeholder chip until the upload settles.
+  const [driveUploading, setDriveUploading] = useState<Set<string>>(new Set());
   const [composeCcBccOpen, setComposeCcBccOpen] = useState(false);
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeFullscreen, setComposeFullscreen] = useState(false);
@@ -1385,8 +1388,9 @@ export default function InboxPage() {
         const base64 = await fileToBase64(file);
         newFiles.push({ kind: "new", file, base64 });
       } else {
-        // Exceeds Gmail's limit — upload to Drive and insert a sharing link,
-        // mirroring Gmail's own behaviour when you attach a large file.
+        // Exceeds Gmail's 25 MB limit — upload to Drive, insert a sharing link.
+        // Show a placeholder chip immediately so the user sees feedback.
+        setDriveUploading((s) => new Set(s).add(file.name));
         try {
           const fd = new FormData();
           fd.set("file", file, file.name);
@@ -1412,6 +1416,8 @@ export default function InboxPage() {
           });
         } catch {
           alert(`Failed to upload ${file.name} to Drive. Please try again.`);
+        } finally {
+          setDriveUploading((s) => { const n = new Set(s); n.delete(file.name); return n; });
         }
       }
     }
@@ -3963,9 +3969,18 @@ export default function InboxPage() {
                       placeholder={titleCase("Compose email")}
                     />
 
-                    {composeFiles.length > 0 ? (
+                    {(composeFiles.length > 0 || driveUploading.size > 0) ? (
                       <div className="border-t border-[#f1f3f4] px-3 py-2">
                         <ul className="flex flex-col gap-1.5">
+                          {/* In-progress Drive uploads — show immediately when file is picked */}
+                          {Array.from(driveUploading).map((name) => (
+                            <li key={`uploading-${name}`} className="flex items-center gap-2 rounded border border-[#c5e1f5] bg-[#e8f4fd] px-2 py-1.5 text-[12px]">
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#1a73e8]" />
+                              <span className="min-w-0 flex-1 truncate font-medium text-[#5f6368]">{name}</span>
+                              <span className="shrink-0 text-[11px] text-[#1a73e8]">Uploading to Drive…</span>
+                            </li>
+                          ))}
+                          {/* Settled attachments */}
                           {composeFiles.map((f, i) => (
                             <li
                               key={i}
@@ -3977,7 +3992,6 @@ export default function InboxPage() {
                             >
                               <span className="flex min-w-0 items-center gap-2">
                                 {f.kind === "drive" ? (
-                                  /* Google Drive colour logo */
                                   <svg viewBox="0 0 87.3 78" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
                                     <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0a7.3 7.3 0 003.3 3.3z" fill="#0066da"/>
                                     <path d="M43.65 25L29.9 1.2a7.2 7.2 0 00-3.3 3.3L.95 50.5H27.5z" fill="#00ac47"/>

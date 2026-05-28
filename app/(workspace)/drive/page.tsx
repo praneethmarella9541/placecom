@@ -1246,16 +1246,17 @@ export default function DrivePage() {
         />
       ) : null}
 
-      {/* Download-in-progress toast — appears bottom-left while any file is
-          being fetched, mirrors Google Drive's own "Preparing download" bar. */}
+      {/* Download-in-progress toast — bottom-right, styled like Google Drive's
+          own "Preparing download" bar. Sits above the upload queue when open. */}
       {downloadingIds.size > 0 && (
-        <div className="fixed bottom-4 left-4 z-50 flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
-          <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400 shrink-0" />
-          <span className="text-[13px] text-zinc-700 dark:text-zinc-200">
-            {downloadingIds.size === 1
-              ? "Preparing download…"
-              : `Preparing ${downloadingIds.size} downloads…`}
-          </span>
+        <div className={`fixed right-4 z-50 flex w-72 items-center gap-3 rounded-lg bg-zinc-800 px-5 py-4 shadow-2xl dark:bg-zinc-950 transition-all ${uploadQueue.length > 0 ? "bottom-[352px]" : "bottom-6"}`}>
+          <Loader2 className="h-5 w-5 animate-spin text-white shrink-0" />
+          <div className="flex flex-col min-w-0">
+            <span className="text-[14px] font-medium text-white leading-tight">
+              {downloadingIds.size === 1 ? "Preparing download…" : `Preparing ${downloadingIds.size} downloads…`}
+            </span>
+            <span className="text-[12px] text-zinc-400 leading-tight mt-0.5">This may take a moment</span>
+          </div>
         </div>
       )}
 

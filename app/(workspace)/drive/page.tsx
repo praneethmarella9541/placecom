@@ -17,7 +17,7 @@ import {
 import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
-import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput, ArrowUp, ArrowDown, FileUp, FolderUp, ChevronDown } from "lucide-react";
+import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput, ArrowUp, ArrowDown, FileUp, FolderUp, ChevronDown, LayoutGrid, List } from "lucide-react";
 
 type DriveView = "my-drive" | "shared-with-me" | "starred";
 type SharedDrive = { id: string; name: string };
@@ -82,6 +82,15 @@ export default function DrivePage() {
   const [renameValue, setRenameValue] = useState("");
   // Row-action menu (kebab) open state — keyed by file id.
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  // List vs. grid layout (persisted to localStorage). Mirrors Google Drive.
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem("drive-view-mode") : null;
+    if (saved === "grid" || saved === "list") setViewMode(saved);
+  }, []);
+  useEffect(() => {
+    if (typeof window !== "undefined") localStorage.setItem("drive-view-mode", viewMode);
+  }, [viewMode]);
   // "New folder" modal state.
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -485,6 +494,21 @@ export default function DrivePage() {
     setDriveFiles((rows) => rows.filter((r) => r.id !== file.id));
   }
 
+  /** Download a file directly, or a folder as a .zip. Uses a transient
+   *  anchor so the browser handles the streamed attachment + Save dialog. */
+  function downloadItem(file: DriveFileRow) {
+    const isFolder = file.mimeType === "application/vnd.google-apps.folder";
+    const url = isFolder
+      ? `/api/drive/folder/${encodeURIComponent(file.id)}/download`
+      : `/api/drive/file/${encodeURIComponent(file.id)}?mode=download`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.rel = "noopener";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
   /** Create a new folder under the current location and refresh. */
   async function createFolder() {
     const name = newFolderName.trim();
@@ -754,6 +778,15 @@ export default function DrivePage() {
           </div>
           <button
             type="button"
+            onClick={() => setViewMode((m) => (m === "list" ? "grid" : "list"))}
+            className="btn-ghost shrink-0 rounded-lg p-2"
+            title={viewMode === "list" ? titleCase("Grid view") : titleCase("List view")}
+            aria-label={viewMode === "list" ? "Switch to grid view" : "Switch to list view"}
+          >
+            {viewMode === "list" ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
             onClick={() => void loadDriveFiles({ append: false, bust: true })}
             className="btn-ghost shrink-0 rounded-lg p-2"
             title={titleCase("Refresh")}
@@ -793,10 +826,8 @@ export default function DrivePage() {
           </div>
         ) : (
           <>
-            {/* Column headers — Google Drive-style sortable bar. The arrow
-                icon next to a header shows the active sort column + dir.
-                Mobile note: the right two columns hide on narrower screens
-                so the layout stays usable; Name + actions are always shown. */}
+            {/* Column headers — Google Drive-style sortable bar (list view only). */}
+            {viewMode === "list" && (
             <div className="sticky top-0 z-[5] flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-muted)]">
               <SortHeader
                 label="Name"
@@ -821,10 +852,16 @@ export default function DrivePage() {
               />
               <span className="w-7 shrink-0" aria-hidden />
             </div>
+            )}
 
             <ul
               ref={listScrollRef}
-              className="scrollbar-thin flex-1 divide-y divide-zinc-100 overflow-y-auto dark:divide-zinc-800/60"
+              className={cn(
+                "scrollbar-thin flex-1 overflow-y-auto",
+                viewMode === "list"
+                  ? "divide-y divide-zinc-100 dark:divide-zinc-800/60"
+                  : "grid grid-cols-2 content-start gap-3 p-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
+              )}
             >
               {sortedFiles.map((file) => {
                 const isFolder = file.mimeType === "application/vnd.google-apps.folder";
@@ -842,10 +879,7 @@ export default function DrivePage() {
                         e.stopPropagation();
                         setMenuOpenId(menuOpenId === file.id ? null : file.id);
                       }}
-                      className={cn(
-                        "shrink-0 rounded-md p-1.5 text-zinc-500 transition-opacity hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100",
-                        menuOpenId === file.id ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100"
-                      )}
+                      className="shrink-0 rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
                       title="More actions"
                       aria-label="More actions"
                       aria-haspopup="menu"
@@ -872,6 +906,11 @@ export default function DrivePage() {
                           icon={<FolderInput className="h-3.5 w-3.5" />}
                           label="Move"
                           onClick={() => { setMenuOpenId(null); setMoveTarget(file); }}
+                        />
+                        <RowMenuItem
+                          icon={<IconDownload className="h-3.5 w-3.5" />}
+                          label={isFolder ? "Download (.zip)" : "Download"}
+                          onClick={() => { setMenuOpenId(null); downloadItem(file); }}
                         />
                       </div>
                     )}
@@ -909,6 +948,41 @@ export default function DrivePage() {
                   if (isFolder) enterFolder(file.id, file.name);
                   else setPreviewFile(file);
                 };
+
+                if (viewMode === "grid") {
+                  return (
+                    <li
+                      key={file.id}
+                      className="group relative flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-colors hover:border-[var(--color-primary)] hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                    >
+                      {/* Kebab — top-right corner */}
+                      <div className="absolute right-1.5 top-1.5 z-10">{RowMenu}</div>
+
+                      <button
+                        type="button"
+                        onClick={rowOnClick}
+                        className="flex flex-col items-center gap-3 pt-2 text-center"
+                      >
+                        <span
+                          className={cn(
+                            "flex h-12 w-12 items-center justify-center rounded-lg",
+                            isFolder
+                              ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                              : "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+                          )}
+                        >
+                          {isFolder ? <IconFolder className="h-6 w-6" /> : <IconFile className="h-6 w-6" />}
+                        </span>
+                        <span className="line-clamp-2 w-full break-words px-1 text-[13px] text-zinc-900 dark:text-zinc-100">
+                          {isRenaming ? NameOrEditor : file.name}
+                        </span>
+                      </button>
+                      <span className="mt-auto truncate text-center text-[11px] text-zinc-400">
+                        {isFolder ? dateLabel : `${sizeLabel} · ${dateLabel}`}
+                      </span>
+                    </li>
+                  );
+                }
 
                 return (
                   <li
@@ -954,23 +1028,34 @@ export default function DrivePage() {
                 );
               })}
 
-              {/* Skeleton rows appended while loading the next page — also
-                  match the new table column layout. */}
-              {loadingMore && [0, 1, 2, 3].map((i) => (
-                <li key={`skel-${i}`} className="flex items-center gap-3 px-4 py-2">
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <Skeleton className="skeleton-shimmer h-6 w-6 shrink-0 rounded" />
-                    <Skeleton className="skeleton-shimmer h-3.5 w-[55%] rounded" />
-                  </div>
-                  <Skeleton className="skeleton-shimmer hidden h-3 w-[100px] shrink-0 rounded sm:block" />
-                  <Skeleton className="skeleton-shimmer hidden h-3 w-[60px] shrink-0 rounded sm:block" />
-                  <Skeleton className="skeleton-shimmer h-4 w-4 shrink-0 rounded" />
-                </li>
-              ))}
+              {/* Skeleton placeholders while loading the next page. */}
+              {loadingMore && [0, 1, 2, 3].map((i) =>
+                viewMode === "grid" ? (
+                  <li key={`skel-${i}`} className="flex flex-col items-center gap-3 rounded-xl border border-[var(--color-border)] p-3">
+                    <Skeleton className="skeleton-shimmer h-12 w-12 rounded-lg" />
+                    <Skeleton className="skeleton-shimmer h-3 w-[70%] rounded" />
+                  </li>
+                ) : (
+                  <li key={`skel-${i}`} className="flex items-center gap-3 px-4 py-2">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                      <Skeleton className="skeleton-shimmer h-6 w-6 shrink-0 rounded" />
+                      <Skeleton className="skeleton-shimmer h-3.5 w-[55%] rounded" />
+                    </div>
+                    <Skeleton className="skeleton-shimmer hidden h-3 w-[100px] shrink-0 rounded sm:block" />
+                    <Skeleton className="skeleton-shimmer hidden h-3 w-[60px] shrink-0 rounded sm:block" />
+                    <Skeleton className="skeleton-shimmer h-4 w-4 shrink-0 rounded" />
+                  </li>
+                )
+              )}
 
-              {/* Sentinel: scrolls into view at bottom; IntersectionObserver fires load-more */}
+              {/* Sentinel: scrolls into view at bottom; IntersectionObserver fires load-more.
+                  In grid mode it spans all columns so it stays at the very bottom. */}
               {driveNextPageToken && (
-                <li ref={loadMoreSentinelRef} className="h-4 list-none" aria-hidden />
+                <li
+                  ref={loadMoreSentinelRef}
+                  className={cn("h-4 list-none", viewMode === "grid" && "col-span-full")}
+                  aria-hidden
+                />
               )}
             </ul>
           </>

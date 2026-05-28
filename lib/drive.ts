@@ -628,3 +628,76 @@ export async function getDriveFileParent(
   const data = (await res.json()) as { parents?: string[] };
   return data.parents?.[0] ?? null;
 }
+
+/** Fetch a file/folder's name + mimeType (used by the folder-zip download). */
+export async function getDriveFileMeta(
+  accessToken: string,
+  fileId: string,
+): Promise<{ id: string; name: string; mimeType: string }> {
+  const params = new URLSearchParams({
+    fields: "id,name,mimeType",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (file meta)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive meta ${res.status}: ${text}`) as Error & { code?: string };
+    if (res.status === 401) err.code = "UNAUTHORIZED";
+    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+    throw err;
+  }
+  return (await res.json()) as { id: string; name: string; mimeType: string };
+}
+
+/**
+ * List all direct children of a folder (pages through every result). Used to
+ * walk a folder tree for zip downloads. Returns id/name/mimeType only.
+ */
+export async function listFolderChildren(
+  accessToken: string,
+  folderId: string,
+): Promise<{ id: string; name: string; mimeType: string }[]> {
+  const out: { id: string; name: string; mimeType: string }[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      q: `'${escapeDriveQFragment(folderId)}' in parents and trashed = false`,
+      fields: "nextPageToken, files(id, name, mimeType)",
+      pageSize: "1000",
+      includeItemsFromAllDrives: "true",
+      supportsAllDrives: "true",
+      corpora: "allDrives",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    let res: Response;
+    try {
+      res = await fetch(`${DRIVE_API}/files?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } catch (e) {
+      throw new Error(describeUpstreamFetchError(e, "Google Drive API (folder children)"));
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      const err = new Error(`Drive children ${res.status}: ${text}`) as Error & { code?: string };
+      if (res.status === 401) err.code = "UNAUTHORIZED";
+      else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
+      throw err;
+    }
+    const data = (await res.json()) as {
+      nextPageToken?: string;
+      files?: { id: string; name: string; mimeType: string }[];
+    };
+    out.push(...(data.files ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return out;
+}

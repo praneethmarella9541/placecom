@@ -4,6 +4,10 @@ const nextConfig = {
   // and improves tree-shaking. See https://nextjs.org/docs/app/api-reference/next-config-js/optimizePackageImports
   experimental: {
     optimizePackageImports: ["lucide-react"],
+    // archiver (used for folder-as-zip downloads) pulls in deps with exports
+    // maps webpack can't bundle ("Default condition should be last one").
+    // Keep it as a runtime server external so Node require()s it directly.
+    serverComponentsExternalPackages: ["archiver"],
   },
   webpack: (config, { dev }) => {
     if (dev) {

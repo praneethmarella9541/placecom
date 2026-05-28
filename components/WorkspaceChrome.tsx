@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Rss,
   ScanText,
+  Table,
   Users,
   Video,
   X,
@@ -40,6 +41,7 @@ const primaryNav = [
 
 const secondaryNav = [
   { href: "/drive",         label: "Drive",        Icon: HardDrive },
+  { href: "/sheets",        label: "Sheets",       Icon: Table },
   { href: "/forms",         label: "Forms",        Icon: FileSpreadsheet },
   { href: "/broadcasting",  label: "Broadcasting", Icon: Rss },
   { href: "/sms",           label: "SMS",          Icon: MessageSquare },

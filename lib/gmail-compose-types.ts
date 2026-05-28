@@ -36,3 +36,31 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** Cheap fingerprint for draft save de-duplication. */
+export function pendingFileFingerprint(f: PendingFile): string {
+  if (f.kind === "new") return `new:${f.file.name}:${f.file.size}`;
+  if (f.kind === "drive") return `drive:${f.driveFileId}`;
+  return `saved:${f.attachmentId}`;
+}
+
+export type DraftApiAttachment = {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  messageId: string;
+};
+
+export function pendingFilesFromDraftAttachments(
+  attachments: DraftApiAttachment[]
+): PendingFile[] {
+  return attachments.map((a) => ({
+    kind: "saved" as const,
+    name: a.filename,
+    mimeType: a.mimeType,
+    size: a.size,
+    messageId: a.messageId,
+    attachmentId: a.attachmentId,
+  }));
+}

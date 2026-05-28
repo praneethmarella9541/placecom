@@ -5,8 +5,10 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2 } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
+import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
 import { IconX } from "@/components/Icons";
+import type { ComposeDraftSaveStatus } from "@/lib/gmail-draft-autosave";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 
@@ -40,6 +42,8 @@ export type GmailComposeDialogProps = {
   onAttachClick: () => void;
   onFileChange: (files: FileList | null) => void;
   attachmentChips?: React.ReactNode;
+  draftSaveStatus?: ComposeDraftSaveStatus;
+  draftSaveProgressKey?: number;
 };
 
 /**
@@ -76,6 +80,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     onAttachClick,
     onFileChange,
     attachmentChips,
+    draftSaveStatus = "idle",
+    draftSaveProgressKey = 0,
   } = props;
 
   const editorRef = useRef<RichTextEditorHandle>(null);
@@ -151,13 +157,20 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           >
             <Maximize2 className="h-4 w-4" strokeWidth={2} />
           </button>
-          <button
-            type="button"
-            onClick={onMinimize}
-            className="min-w-0 flex-1 truncate text-left text-[13px] font-medium"
-          >
-            {subject.trim() || windowTitle}
-          </button>
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <button
+              type="button"
+              onClick={onMinimize}
+              className="min-w-0 flex-1 truncate text-left text-[13px] font-medium"
+            >
+              {subject.trim() || windowTitle}
+            </button>
+            <ComposeDraftSaveIndicator
+              status={draftSaveStatus}
+              progressKey={draftSaveProgressKey}
+              className="flex"
+            />
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -208,6 +221,11 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           )}
           <div className="flex shrink-0 items-center gap-1 bg-gradient-to-r from-[#1a73e8] via-[#4f46e5] to-[#6366f1] px-2 py-1.5 text-white shadow-[inset_0_-1px_0_rgba(255,255,255,0.12)]">
             <h2 className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium">{windowTitle}</h2>
+            <ComposeDraftSaveIndicator
+              status={draftSaveStatus}
+              progressKey={draftSaveProgressKey}
+              className="mr-1 flex"
+            />
             <button
               type="button"
               onClick={onMinimize}

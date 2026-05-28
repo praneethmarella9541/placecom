@@ -588,6 +588,12 @@
   40%           { transform: scale(1);   opacity: 1; }
 }
 
+/* Compose draft auto-save countdown bar (duration set inline). */
+@keyframes compose-draft-autosave {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+
 /* ── Spin (used by refresh icon) ───────────────────────── */
 @keyframes spin-smooth {
   from { transform: rotate(0deg); }

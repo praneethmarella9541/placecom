@@ -9,6 +9,16 @@ function toBase64Url(buf: Buffer): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/** RFC 2045: base64 bodies in MIME should be wrapped at 76 columns. */
+function formatMimeBase64(b64: string): string {
+  const clean = b64.replace(/\s/g, "");
+  const lines: string[] = [];
+  for (let i = 0; i < clean.length; i += 76) {
+    lines.push(clean.slice(i, i + 76));
+  }
+  return lines.join("\r\n");
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
 }
@@ -103,7 +113,7 @@ function buildRaw(opts: {
         "Content-Transfer-Encoding: base64",
         `Content-Disposition: attachment; filename="${att.filename}"`,
         "",
-        att.base64Data
+        formatMimeBase64(att.base64Data)
       );
     }
     parts.push(`--${mixedBoundary}--`);
@@ -151,9 +161,21 @@ export async function GET(request: Request) {
   type MimePart = {
     mimeType?: string;
     filename?: string;
+    headers?: { name: string; value: string }[];
     body?: { data?: string; attachmentId?: string; size?: number };
     parts?: MimePart[];
   };
+
+  function filenameFromPart(part: MimePart): string {
+    if (part.filename?.trim()) return part.filename.trim();
+    const cd =
+      part.headers?.find((h) => h.name.toLowerCase() === "content-disposition")?.value ?? "";
+    const quoted = /filename\*?=(?:UTF-8''|")([^";\n]+)/i.exec(cd);
+    if (quoted?.[1]) return decodeURIComponent(quoted[1].replace(/"/g, ""));
+    const plain = /filename=([^;\s]+)/i.exec(cd);
+    if (plain?.[1]) return plain[1].replace(/"/g, "");
+    return "";
+  }
 
   function collectText(payload: MimePart): string {
     if (payload.mimeType === 'text/plain' && payload.body?.data) {
@@ -185,11 +207,13 @@ export async function GET(request: Request) {
 
   function collectAttachments(payload: MimePart): Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> {
     const results: Array<{ attachmentId: string; filename: string; mimeType: string; size: number }> = [];
-    if (payload.body?.attachmentId && payload.filename) {
+    const mime = payload.mimeType ?? "";
+    if (payload.body?.attachmentId && !mime.startsWith("multipart/")) {
+      const name = filenameFromPart(payload);
       results.push({
         attachmentId: payload.body.attachmentId,
-        filename: payload.filename,
-        mimeType: payload.mimeType ?? 'application/octet-stream',
+        filename: name || `attachment-${payload.body.attachmentId.slice(0, 8)}`,
+        mimeType: mime || "application/octet-stream",
         size: payload.body.size ?? 0,
       });
     }

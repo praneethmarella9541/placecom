@@ -14,7 +14,16 @@ import { GmailInlineReply, type InlineReplyMode } from "@/components/GmailInline
 import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
 import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
 import { uploadLargeFileToDrive } from "@/lib/upload-large-file-to-drive";
-import type { PendingFile } from "@/lib/gmail-compose-types";
+import {
+  DRAFT_AUTOSAVE_DELAY_MS,
+  type ComposeDraftSaveStatus,
+} from "@/lib/gmail-draft-autosave";
+import {
+  pendingFileFingerprint,
+  pendingFilesFromDraftAttachments,
+  type DraftApiAttachment,
+  type PendingFile,
+} from "@/lib/gmail-compose-types";
 import {
   mergeInboxUnread,
   readSessionInboxUnread,
@@ -454,6 +463,11 @@ export default function InboxPage() {
   const draftLastSavedRef = useRef<string>("");
   // True if a save is in-flight — prevents overlapping POSTs while typing fast.
   const draftSavingRef = useRef(false);
+  /** Set when a save was skipped because another was in-flight — flushed in finally. */
+  const draftSavePendingRef = useRef(false);
+  const [draftSaveStatus, setDraftSaveStatus] = useState<ComposeDraftSaveStatus>("idle");
+  const [draftSaveProgressKey, setDraftSaveProgressKey] = useState(0);
+  const draftSaveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const composeFileRef = useRef<HTMLInputElement>(null);
   // Scroll-position preservation: save the list's scrollTop before opening a
   // thread, then restore it the moment the list becomes visible again.
@@ -534,6 +548,67 @@ export default function InboxPage() {
     };
   }, [composeTo, composeCc, composeBcc, composeSubject, composeBody, composeDraftId, composeFiles]);
 
+  const clearDraftSaveStatusTimer = useCallback(() => {
+    if (draftSaveStatusTimerRef.current) {
+      clearTimeout(draftSaveStatusTimerRef.current);
+      draftSaveStatusTimerRef.current = null;
+    }
+  }, []);
+
+  const markDraftSaved = useCallback(() => {
+    clearDraftSaveStatusTimer();
+    setDraftSaveStatus("saved");
+    draftSaveStatusTimerRef.current = setTimeout(() => {
+      setDraftSaveStatus("idle");
+      draftSaveStatusTimerRef.current = null;
+    }, 2500);
+  }, [clearDraftSaveStatusTimer]);
+
+  const markDraftSaveError = useCallback(() => {
+    clearDraftSaveStatusTimer();
+    setDraftSaveStatus("error");
+    draftSaveStatusTimerRef.current = setTimeout(() => {
+      setDraftSaveStatus("idle");
+      draftSaveStatusTimerRef.current = null;
+    }, 5000);
+  }, [clearDraftSaveStatusTimer]);
+
+  const composeHasDraftableContent = useCallback(
+    (s: typeof composeStateRef.current) =>
+      !!(
+        s.to.trim() ||
+        s.cc.trim() ||
+        s.bcc.trim() ||
+        s.subject.trim() ||
+        !richTextIsEmpty(s.body) ||
+        s.files.length > 0
+      ),
+    []
+  );
+
+  /** After a draft save, Gmail rotates messageId/attachmentId — rehydrate from server. */
+  const syncComposeFilesFromDraft = useCallback(async (draftId: string) => {
+    const res = await fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { attachments?: DraftApiAttachment[] };
+    const serverFiles = pendingFilesFromDraftAttachments(data.attachments ?? []);
+    const driveFiles = composeStateRef.current.files.filter((f) => f.kind === "drive");
+    const merged = [...serverFiles, ...driveFiles];
+    composeStateRef.current.files = merged;
+    setComposeFiles(merged);
+    const s = composeStateRef.current;
+    draftLastSavedRef.current = JSON.stringify({
+      to: s.to,
+      cc: s.cc,
+      bcc: s.bcc,
+      subject: s.subject,
+      body: s.body,
+      files: merged.map(pendingFileFingerprint),
+    });
+  }, []);
+
   /**
    * Save the current compose contents as a Gmail draft. Idempotent: when
    * composeDraftId is set we PUT (update), otherwise we POST (create new) and
@@ -544,27 +619,28 @@ export default function InboxPage() {
    */
   const saveDraft = useCallback(async (): Promise<string | null> => {
     const s = composeStateRef.current;
-    const hasContent =
-      s.to.trim() || s.cc.trim() || s.bcc.trim() ||
-      s.subject.trim() || !richTextIsEmpty(s.body) || s.files.length > 0;
-    if (!hasContent) return null;
+    if (!composeHasDraftableContent(s)) {
+      setDraftSaveStatus("idle");
+      return null;
+    }
 
     // Fingerprint the files cheaply for the no-op guard. Real bytes are only
     // resolved (fetched/encoded) once we know we're actually going to POST.
-    const fileFingerprints = s.files.map((f) =>
-      f.kind === "new"
-        ? `new:${f.file.name}:${f.file.size}`
-        : f.kind === "drive"
-          ? `drive:${f.driveFileId}`
-          : `saved:${f.attachmentId}`
-    );
+    const fileFingerprints = s.files.map(pendingFileFingerprint);
     const snapshot = JSON.stringify({
       to: s.to, cc: s.cc, bcc: s.bcc, subject: s.subject, body: s.body,
       files: fileFingerprints,
     });
-    if (snapshot === draftLastSavedRef.current) return s.draftId;
-    if (draftSavingRef.current) return s.draftId;
+    if (snapshot === draftLastSavedRef.current) {
+      setDraftSaveStatus("idle");
+      return s.draftId;
+    }
+    if (draftSavingRef.current) {
+      draftSavePendingRef.current = true;
+      return s.draftId;
+    }
 
+    setDraftSaveStatus("saving");
     draftSavingRef.current = true;
     try {
       // Resolve attachments to base64 just-in-time. For "saved" attachments
@@ -578,6 +654,7 @@ export default function InboxPage() {
           // If we can't fetch the bytes (rare — usually network), bail out
           // rather than overwrite the existing draft with an attachment-less
           // version that would silently lose user data.
+          markDraftSaveError();
           return null;
         }
       }
@@ -598,29 +675,39 @@ export default function InboxPage() {
           ...(attachments.length > 0 ? { attachments } : {}),
         }),
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        markDraftSaveError();
+        return null;
+      }
       const data = (await res.json()) as { draftId?: string; messageId?: string };
       draftLastSavedRef.current = snapshot;
       // Adopt the new draftId so subsequent edits update the same draft.
+      const draftId = data.draftId ?? s.draftId;
       if (data.draftId && data.draftId !== s.draftId) {
         composeStateRef.current.draftId = data.draftId;
         setComposeDraftId(data.draftId);
       }
-      // After a successful save, all attachments are now "saved" on Gmail.
-      // Convert any "new" entries into "saved" references using the returned
-      // messageId — this means subsequent auto-saves won't re-base64-encode
-      // them (the saved-variant just holds a pointer).
-      // We can only do this re-mapping if we know the messageId for each
-      // attachment, which Gmail doesn't return individually for a draft.
-      // Leaving "new" entries as-is is safe — the snapshot dedup will skip
-      // re-uploads until the user actually changes the attachment list.
-      return data.draftId ?? s.draftId;
+      // Gmail rotates messageId + attachmentIds on every draft update. Refresh
+      // our saved pointers from the server so the next auto-save can fetch all
+      // attachments (stale ids otherwise break multi-attachment drafts).
+      if (draftId && s.files.length > 0) {
+        await syncComposeFilesFromDraft(draftId);
+      }
+      markDraftSaved();
+      return draftId ?? null;
     } catch {
+      markDraftSaveError();
       return null;
     } finally {
       draftSavingRef.current = false;
+      if (draftSavePendingRef.current) {
+        draftSavePendingRef.current = false;
+        queueMicrotask(() => {
+          void saveDraft();
+        });
+      }
     }
-  }, []);
+  }, [syncComposeFilesFromDraft, composeHasDraftableContent, markDraftSaved, markDraftSaveError]);
 
   // closeComposeAndSaveDraft + discardComposeDraft are declared later — they
   // depend on scheduleCountRefresh and loadThreads which are defined further down.
@@ -642,26 +729,45 @@ export default function InboxPage() {
       setComposeBody("");
       setComposeFiles([]);
       draftLastSavedRef.current = "";
+      clearDraftSaveStatusTimer();
+      setDraftSaveStatus("idle");
+      setDraftSaveProgressKey(0);
       return;
     }
     if (composeCc.trim() || composeBcc.trim()) {
       setComposeCcBccOpen(true);
     }
-  }, [composeOpen, composeCc, composeBcc]);
+  }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer]);
 
-  // Debounced auto-save while the user is editing. Matches Gmail: ~2s after
-  // the last keystroke we silently POST the current contents as a draft.
-  // No spinners/UI — feels invisible like Gmail's own auto-save.
+  // Debounced auto-save while the user is editing. Header chip shows a ~2s
+  // countdown, then saving / saved states.
   useEffect(() => {
     if (!composeOpen) return;
+    const s = composeStateRef.current;
+    if (!composeHasDraftableContent(s)) {
+      setDraftSaveStatus("idle");
+      return;
+    }
+    setDraftSaveStatus("pending");
+    setDraftSaveProgressKey((k) => k + 1);
     if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     draftSaveTimerRef.current = setTimeout(() => {
       void saveDraft();
-    }, 2000);
+    }, DRAFT_AUTOSAVE_DELAY_MS);
     return () => {
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
     };
-  }, [composeOpen, composeTo, composeCc, composeBcc, composeSubject, composeBody, composeFiles, saveDraft]);
+  }, [
+    composeOpen,
+    composeTo,
+    composeCc,
+    composeBcc,
+    composeSubject,
+    composeBody,
+    composeFiles,
+    saveDraft,
+    composeHasDraftableContent,
+  ]);
 
   const composeRecipientSuggestions = useMemo((): RecipientSuggestion[] => {
     const map = new Map<string, string>();
@@ -1050,9 +1156,8 @@ export default function InboxPage() {
     setComposeCcBccOpen(false);
     if (hadContent) {
       void saveDraft().then(() => {
-        // Invalidate cached list views so the drafts folder shows the new draft.
-        listCacheRef.current.clear();
-        if (folder === "drafts") void loadThreads({ append: false, forceRefresh: true });
+        // Background SWR refresh — keep cached list visible (no full-page reload).
+        if (folder === "drafts") void loadThreads({ append: false });
         scheduleCountRefresh();
       });
     }
@@ -1075,8 +1180,7 @@ export default function InboxPage() {
         method: "DELETE",
       })
         .then(() => {
-          listCacheRef.current.clear();
-          if (folder === "drafts") void loadThreads({ append: false, forceRefresh: true });
+          if (folder === "drafts") void loadThreads({ append: false });
           scheduleCountRefresh();
         })
         .catch(() => {/* non-fatal */});
@@ -1255,14 +1359,9 @@ export default function InboxPage() {
       if (!res.ok) throw new Error(data.error || "Failed to open draft");
       // Hydrate any existing attachments as "saved" references — the bytes
       // are not fetched until/unless the user saves or sends.
-      const loadedFiles: PendingFile[] = (data.attachments ?? []).map((a) => ({
-        kind: "saved" as const,
-        name: a.filename,
-        mimeType: a.mimeType,
-        size: a.size,
-        messageId: a.messageId,
-        attachmentId: a.attachmentId,
-      }));
+      const loadedFiles = pendingFilesFromDraftAttachments(
+        (data.attachments ?? []) as DraftApiAttachment[]
+      );
       // composeBody is HTML.  Prefer the saved HTML part; fall back to
       // textBody wrapped in a <p> so plain-text drafts still display
       // readably in the rich editor.
@@ -1282,14 +1381,13 @@ export default function InboxPage() {
       setComposeFiles(loadedFiles);
       // Seed the last-saved snapshot so auto-save sees no diff and stays
       // quiet until the user actually edits something.
-      const fileFingerprints = loadedFiles.map((f) =>
-        f.kind === "saved" ? `saved:${f.attachmentId}` : `new:${(f as { file: File }).file.name}:${(f as { file: File }).file.size}`
-      );
+      const fileFingerprints = loadedFiles.map(pendingFileFingerprint);
       draftLastSavedRef.current = JSON.stringify({
         to: data.to ?? "", cc: data.cc ?? "", bcc: data.bcc ?? "",
         subject: data.subject ?? "", body: loadedHtmlBody,
         files: fileFingerprints,
       });
+      markDraftSaved();
       setComposeKind("new");
       setComposeThreadId(null);
       setComposeInReplyToId(null);
@@ -1300,7 +1398,7 @@ export default function InboxPage() {
     } finally {
       draftLoadingRef.current = false;
     }
-  }, []);
+  }, [markDraftSaved]);
 
   const fetchThreadData = useCallback((threadId: string): Promise<ThreadCacheData> => {
     const existing = threadDataCache.current.get(threadId);
@@ -3246,6 +3344,8 @@ export default function InboxPage() {
         fileInputRef={composeFileRef}
         onAttachClick={() => composeFileRef.current?.click()}
         onFileChange={(files) => void handleFileSelect(files)}
+        draftSaveStatus={draftSaveStatus}
+        draftSaveProgressKey={draftSaveProgressKey}
         attachmentChips={
           <GmailPendingAttachments
             files={composeFiles}

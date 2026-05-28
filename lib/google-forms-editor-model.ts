@@ -534,6 +534,7 @@ export function buildBatchUpdateRequests(
         requests.push({
           updateItem: {
             item: fullItem,
+            location: { index: idx },
             updateMask: updateMaskForItem(fullItem),
           },
         });

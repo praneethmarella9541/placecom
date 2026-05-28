@@ -189,6 +189,8 @@ type TrackingRow = {
  * - `kind: 'saved'` — an attachment already stored on a draft on the server;
  *   we hold a reference (messageId + attachmentId) and only fetch the bytes
  *   if we have to (re-saving the draft or sending).
+ * - `kind: 'drive'` — a file that exceeded Gmail's 25 MB limit and was
+ *   uploaded to the sender's Drive. Sent as a link, not an attachment.
  */
 type PendingFile =
   | {
@@ -203,6 +205,14 @@ type PendingFile =
       size: number;
       messageId: string;
       attachmentId: string;
+    }
+  | {
+      kind: "drive";
+      name: string;
+      mimeType: string;
+      size: number;
+      driveFileId: string;
+      webViewLink: string;
     };
 
 /** Display-name for a PendingFile regardless of variant. */
@@ -1194,7 +1204,9 @@ export default function InboxPage() {
     const fileFingerprints = s.files.map((f) =>
       f.kind === "new"
         ? `new:${f.file.name}:${f.file.size}`
-        : `saved:${f.attachmentId}`
+        : f.kind === "drive"
+          ? `drive:${f.driveFileId}`
+          : `saved:${f.attachmentId}`
     );
     const snapshot = JSON.stringify({
       to: s.to, cc: s.cc, bcc: s.bcc, subject: s.subject, body: s.body,
@@ -1331,7 +1343,7 @@ export default function InboxPage() {
   async function resolveAttachmentsForUpload(
     list: PendingFile[]
   ): Promise<Array<{ filename: string; mimeType: string; base64Data: string }>> {
-    return Promise.all(
+    const results = await Promise.all(
       list.map(async (f) => {
         if (f.kind === "new") {
           return {
@@ -1340,6 +1352,8 @@ export default function InboxPage() {
             base64Data: f.base64,
           };
         }
+        // Drive links are sent as body text, not embedded attachments.
+        if (f.kind === "drive") return null;
         // Saved attachment — fetch the bytes from Gmail and base64-encode them.
         const url = `/api/gmail/attachment?messageId=${encodeURIComponent(f.messageId)}&attachmentId=${encodeURIComponent(f.attachmentId)}&filename=${encodeURIComponent(f.name)}&mimeType=${encodeURIComponent(f.mimeType)}`;
         const res = await fetch(url);
@@ -1357,16 +1371,49 @@ export default function InboxPage() {
         return { filename: f.name, mimeType: f.mimeType, base64Data: base64 };
       })
     );
+    return results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
   async function handleFileSelect(files: FileList | null, target: "compose" | "reply") {
     if (!files) return;
+    const GMAIL_LIMIT = 25 * 1024 * 1024; // 25 MB — Gmail's inline attachment cap
     const newFiles: PendingFile[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (file.size > 25 * 1024 * 1024) { alert(`${file.name} is too large (max 25 MB)`); continue; }
-      const base64 = await fileToBase64(file);
-      newFiles.push({ kind: "new", file, base64 });
+      if (file.size <= GMAIL_LIMIT) {
+        // Small enough to send as a regular attachment.
+        const base64 = await fileToBase64(file);
+        newFiles.push({ kind: "new", file, base64 });
+      } else {
+        // Exceeds Gmail's limit — upload to Drive and insert a sharing link,
+        // mirroring Gmail's own behaviour when you attach a large file.
+        try {
+          const fd = new FormData();
+          fd.set("file", file, file.name);
+          const res = await fetch("/api/drive/upload-for-email", {
+            method: "POST",
+            body: fd,
+          });
+          const data = (await res.json()) as {
+            file?: { id: string; name: string; mimeType: string; size?: string; webViewLink: string };
+            error?: string;
+          };
+          if (!res.ok || !data.file) {
+            alert(data.error || `Could not upload ${file.name} to Drive`);
+            continue;
+          }
+          newFiles.push({
+            kind: "drive",
+            name: data.file.name,
+            mimeType: data.file.mimeType,
+            size: data.file.size ? parseInt(data.file.size, 10) : file.size,
+            driveFileId: data.file.id,
+            webViewLink: data.file.webViewLink,
+          });
+        } catch {
+          alert(`Failed to upload ${file.name} to Drive. Please try again.`);
+        }
+      }
     }
     if (target === "compose") setComposeFiles((prev) => [...prev, ...newFiles]);
     else setReplyFiles((prev) => [...prev, ...newFiles]);
@@ -2472,6 +2519,30 @@ export default function InboxPage() {
     // ── Background send ───────────────────────────────────────────────────
     try {
       const attachments = await resolveAttachmentsForUpload(snapshot.files);
+
+      // Append Drive-link entries as a footer section in the HTML body,
+      // exactly like Gmail does: a small separator + Drive icon + file name
+      // as a hyperlink. This way the recipient sees a clickable link.
+      const driveLinks = snapshot.files.filter((f) => f.kind === "drive") as Extract<PendingFile, { kind: "drive" }>[];
+      let finalHtmlBody = snapshot.htmlBody;
+      if (driveLinks.length > 0) {
+        const linkHtml = driveLinks
+          .map(
+            (f) =>
+              `<tr><td style="padding:4px 0;font-size:13px;color:#1a73e8;">` +
+              `<a href="${f.webViewLink}" style="color:#1a73e8;text-decoration:none;" target="_blank">` +
+              `📎 ${f.name}</a>` +
+              `<span style="color:#5f6368;font-size:11px;margin-left:6px;">(Drive)</span></td></tr>`
+          )
+          .join("");
+        finalHtmlBody =
+          `${snapshot.htmlBody}` +
+          `<br><table style="border-top:1px solid #e0e0e0;margin-top:12px;padding-top:8px;width:100%">` +
+          `<tr><td style="font-size:11px;color:#5f6368;padding-bottom:4px;">Files shared from Google Drive</td></tr>` +
+          linkHtml +
+          `</table>`;
+      }
+
       const res = await fetch("/api/gmail/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2480,7 +2551,7 @@ export default function InboxPage() {
           bcc: snapshot.bcc || undefined,
           subject: snapshot.subject,
           textBody: "",
-          htmlBody: snapshot.htmlBody,
+          htmlBody: finalHtmlBody,
           attachments: attachments.length ? attachments : undefined,
         }),
       });
@@ -3898,12 +3969,33 @@ export default function InboxPage() {
                           {composeFiles.map((f, i) => (
                             <li
                               key={i}
-                              className="flex items-center justify-between gap-2 rounded border border-[#dadce0] bg-[#f8f9fa] px-2 py-1.5 text-[12px]"
+                              className={`flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-[12px] ${
+                                f.kind === "drive"
+                                  ? "border-[#c5e1f5] bg-[#e8f4fd]"
+                                  : "border-[#dadce0] bg-[#f8f9fa]"
+                              }`}
                             >
                               <span className="flex min-w-0 items-center gap-2">
-                                <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
+                                {f.kind === "drive" ? (
+                                  /* Google Drive colour logo */
+                                  <svg viewBox="0 0 87.3 78" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                                    <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0a7.3 7.3 0 003.3 3.3z" fill="#0066da"/>
+                                    <path d="M43.65 25L29.9 1.2a7.2 7.2 0 00-3.3 3.3L.95 50.5H27.5z" fill="#00ac47"/>
+                                    <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25a7.3 7.3 0 000-7.3H60.5l5.85 12.35z" fill="#ea4335"/>
+                                    <path d="M43.65 25L57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                                    <path d="M60.5 50.5H27.5L13.75 74.3c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                                    <path d="M73.4 26.05l-14.3-24.8a7.2 7.2 0 00-1.7-1.1L43.65 25l16.85 25.5h26.45a7.3 7.3 0 00-.95-3.65z" fill="#ffba00"/>
+                                  </svg>
+                                ) : (
+                                  <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
+                                )}
                                 <span className="truncate font-medium">{pendingFileName(f)}</span>
                                 <span className="shrink-0 text-[#5f6368]">({formatBytes(pendingFileSize(f))})</span>
+                                {f.kind === "drive" && (
+                                  <span className="shrink-0 rounded bg-[#1a73e8] px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                    Drive link
+                                  </span>
+                                )}
                               </span>
                               <button
                                 type="button"

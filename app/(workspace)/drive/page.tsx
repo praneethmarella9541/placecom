@@ -18,7 +18,7 @@ import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
 import { DriveUploadQueue, type UploadQueueItem } from "@/components/DriveUploadQueue";
-import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput, ArrowUp, ArrowDown, FileUp, FolderUp, ChevronDown, LayoutGrid, List } from "lucide-react";
+import { Share2, HardDrive, Users, Star, FolderPlus, MoreVertical, Pencil, FolderInput, ArrowUp, ArrowDown, FileUp, FolderUp, ChevronDown, LayoutGrid, List, Loader2 } from "lucide-react";
 
 type DriveView = "my-drive" | "shared-with-me" | "starred";
 type SharedDrive = { id: string; name: string };
@@ -110,6 +110,9 @@ export default function DrivePage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  // IDs of files/folders currently being downloaded — drives the spinner
+  // and bottom toast so the user knows the request is in flight.
+  const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
   const [uploadBusy, setUploadBusy] = useState(false);
   // Per-item upload queue, mirroring Google Drive's bottom-right status card.
   // Each file/folder gets a row with a live status; the old single-line
@@ -550,19 +553,45 @@ export default function DrivePage() {
     setDriveFiles((rows) => rows.filter((r) => r.id !== file.id));
   }
 
-  /** Download a file directly, or a folder as a .zip. Uses a transient
-   *  anchor so the browser handles the streamed attachment + Save dialog. */
-  function downloadItem(file: DriveFileRow) {
+  /** Download a file or folder, showing a spinner while the server streams
+   *  the response. Uses fetch → blob URL so we hold the "downloading" state
+   *  for the full duration — unlike a bare anchor click which fires and
+   *  forgets immediately with no visual feedback. */
+  async function downloadItem(file: DriveFileRow) {
+    if (downloadingIds.has(file.id)) return; // already in flight
     const isFolder = file.mimeType === "application/vnd.google-apps.folder";
     const url = isFolder
       ? `/api/drive/folder/${encodeURIComponent(file.id)}/download`
       : `/api/drive/file/${encodeURIComponent(file.id)}?mode=download`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+
+    setDownloadingIds((s) => new Set(s).add(file.id));
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const msg = await res.json().then((j: { error?: string }) => j.error).catch(() => null);
+        alert(msg || `Download failed (${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") ?? "";
+      // Extract filename from Content-Disposition header if present.
+      const match = /filename\*?=(?:UTF-8'')?["']?([^"';\r\n]+)/i.exec(disposition);
+      const filename = match
+        ? decodeURIComponent(match[1].trim())
+        : isFolder ? `${file.name}.zip` : file.name;
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    } catch {
+      alert("Download failed. Please try again.");
+    } finally {
+      setDownloadingIds((s) => { const n = new Set(s); n.delete(file.id); return n; });
+    }
   }
 
   /** Create a new folder under the current location and refresh. */
@@ -954,9 +983,13 @@ export default function DrivePage() {
                           onClick={() => { setMenuOpenId(null); setMoveTarget(file); }}
                         />
                         <RowMenuItem
-                          icon={<IconDownload className="h-3.5 w-3.5" />}
-                          label={isFolder ? "Download (.zip)" : "Download"}
-                          onClick={() => { setMenuOpenId(null); downloadItem(file); }}
+                          icon={downloadingIds.has(file.id)
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <IconDownload className="h-3.5 w-3.5" />}
+                          label={downloadingIds.has(file.id)
+                            ? "Downloading…"
+                            : isFolder ? "Download (.zip)" : "Download"}
+                          onClick={() => { setMenuOpenId(null); void downloadItem(file); }}
                         />
                       </div>
                     )}
@@ -1176,13 +1209,17 @@ export default function DrivePage() {
                   {titleCase("Open in Drive")}
                 </a>
               ) : null}
-              <a
-                href={`/api/drive/file/${encodeURIComponent(previewFile.id)}?mode=download`}
-                className="btn-primary gap-2"
+              <button
+                type="button"
+                onClick={() => void downloadItem(previewFile)}
+                disabled={downloadingIds.has(previewFile.id)}
+                className="btn-primary gap-2 disabled:opacity-60"
               >
-                <IconDownload className="h-4 w-4" />
-                {titleCase("Download")}
-              </a>
+                {downloadingIds.has(previewFile.id)
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : <IconDownload className="h-4 w-4" />}
+                {downloadingIds.has(previewFile.id) ? titleCase("Downloading…") : titleCase("Download")}
+              </button>
             </div>
           </div>
         </div>
@@ -1208,6 +1245,19 @@ export default function DrivePage() {
           onClose={() => setMoveTarget(null)}
         />
       ) : null}
+
+      {/* Download-in-progress toast — appears bottom-left while any file is
+          being fetched, mirrors Google Drive's own "Preparing download" bar. */}
+      {downloadingIds.size > 0 && (
+        <div className="fixed bottom-4 left-4 z-50 flex items-center gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+          <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400 shrink-0" />
+          <span className="text-[13px] text-zinc-700 dark:text-zinc-200">
+            {downloadingIds.size === 1
+              ? "Preparing download…"
+              : `Preparing ${downloadingIds.size} downloads…`}
+          </span>
+        </div>
+      )}
 
       {/* Drive-style upload status card (bottom-right). */}
       <DriveUploadQueue

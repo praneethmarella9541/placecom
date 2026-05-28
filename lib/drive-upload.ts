@@ -10,6 +10,7 @@ export type DriveUploadResult = {
   mimeType: string;
   modifiedTime: string;
   size?: string;
+  webViewLink?: string;
 };
 
 /**
@@ -36,7 +37,7 @@ export async function uploadBinaryToDrive(
   let initRes: Response;
   try {
     initRes = await fetch(
-      `${UPLOAD_API}/files?uploadType=resumable&fields=id,name,mimeType,modifiedTime,size`,
+      `${UPLOAD_API}/files?uploadType=resumable&fields=id,name,mimeType,modifiedTime,size,webViewLink`,
       {
         method: "POST",
         headers: {

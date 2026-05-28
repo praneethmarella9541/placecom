@@ -258,6 +258,8 @@ export type SheetCell = {
   bgColor?: string;
   /** "LEFT" | "CENTER" | "RIGHT" */
   align?: string;
+  /** Font size in points, if non-default. */
+  fontSize?: number;
 };
 
 export type SheetData = {
@@ -267,6 +269,8 @@ export type SheetData = {
   rowCount: number;
   columnCount: number;
   frozenRowCount: number;
+  /** Pixel width per column (index = column). Missing → use default. */
+  columnWidths: number[];
 };
 
 function rgbToHex(c?: { red?: number; green?: number; blue?: number }): string | undefined {
@@ -357,7 +361,7 @@ export async function getSheetData(
 ): Promise<SheetData> {
   const range = encodeURIComponent(sheetTitle);
   const fields =
-    "properties.title,sheets(properties(title,gridProperties),data(rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat(textFormat,backgroundColor,horizontalAlignment)))))";
+    "properties.title,sheets(properties(title,gridProperties),data(rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat(textFormat,backgroundColor,horizontalAlignment))),columnMetadata(pixelSize)))";
   const url = `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}?ranges=${range}&includeGridData=true&fields=${fields}`;
   const res = await sheetsFetch(accessToken, url);
   const data = (await res.json()) as {
@@ -371,6 +375,7 @@ export async function getSheetData(
         };
       };
       data?: {
+        columnMetadata?: { pixelSize?: number }[];
         rowData?: {
           values?: {
             formattedValue?: string;
@@ -386,6 +391,7 @@ export async function getSheetData(
                 italic?: boolean;
                 strikethrough?: boolean;
                 underline?: boolean;
+                fontSize?: number;
                 foregroundColor?: { red?: number; green?: number; blue?: number };
               };
               backgroundColor?: { red?: number; green?: number; blue?: number };
@@ -400,6 +406,7 @@ export async function getSheetData(
   const sheet = data.sheets?.[0];
   const grid = sheet?.data?.[0];
   const rowData = grid?.rowData ?? [];
+  const columnMetadata = grid?.columnMetadata ?? [];
   const declaredRows = sheet?.properties?.gridProperties?.rowCount ?? 1000;
   const declaredCols = sheet?.properties?.gridProperties?.columnCount ?? 26;
   const frozenRowCount = sheet?.properties?.gridProperties?.frozenRowCount ?? 0;
@@ -441,6 +448,7 @@ export async function getSheetData(
         italic: tf?.italic || undefined,
         strikethrough: tf?.strikethrough || undefined,
         underline: tf?.underline || undefined,
+        fontSize: tf?.fontSize || undefined,
         textColor: rgbToHex(tf?.foregroundColor),
         bgColor: bgHex === "#ffffff" ? undefined : bgHex,
         align: cell.userEnteredFormat?.horizontalAlignment,
@@ -449,12 +457,18 @@ export async function getSheetData(
     cells.push(row);
   }
 
+  const columnWidths: number[] = [];
+  for (let c = 0; c < columnCount; c++) {
+    columnWidths.push(columnMetadata[c]?.pixelSize ?? 0);
+  }
+
   return {
     title: sheet?.properties?.title ?? sheetTitle,
     cells,
     rowCount,
     columnCount,
     frozenRowCount,
+    columnWidths,
   };
 }
 
@@ -575,6 +589,7 @@ export type CellFormat = {
   italic?: boolean;
   strikethrough?: boolean;
   underline?: boolean;
+  fontSize?: number;
   textColor?: string | null; // null clears
   bgColor?: string | null; // null clears
   align?: "LEFT" | "CENTER" | "RIGHT" | null;
@@ -611,6 +626,7 @@ export async function formatRange(
   if (format.italic !== undefined) { textFormat.italic = format.italic; fields.push("userEnteredFormat.textFormat.italic"); }
   if (format.strikethrough !== undefined) { textFormat.strikethrough = format.strikethrough; fields.push("userEnteredFormat.textFormat.strikethrough"); }
   if (format.underline !== undefined) { textFormat.underline = format.underline; fields.push("userEnteredFormat.textFormat.underline"); }
+  if (format.fontSize !== undefined) { textFormat.fontSize = format.fontSize; fields.push("userEnteredFormat.textFormat.fontSize"); }
   if (format.textColor !== undefined) {
     textFormat.foregroundColor = format.textColor ? hexToRgb(format.textColor) : { red: 0, green: 0, blue: 0 };
     fields.push("userEnteredFormat.textFormat.foregroundColor");
@@ -817,6 +833,39 @@ export async function moveSheetTab(
             updateSheetProperties: {
               properties: { sheetId, index: newIndex },
               fields: "index",
+            },
+          },
+        ],
+      }),
+    }
+  );
+}
+
+/** Set a column's pixel width (persisted), via updateDimensionProperties. */
+export async function setColumnWidth(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetId: number,
+  columnIndex: number,
+  pixelSize: number
+): Promise<void> {
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [
+          {
+            updateDimensionProperties: {
+              range: {
+                sheetId,
+                dimension: "COLUMNS",
+                startIndex: columnIndex,
+                endIndex: columnIndex + 1,
+              },
+              properties: { pixelSize: Math.max(20, Math.round(pixelSize)) },
+              fields: "pixelSize",
             },
           },
         ],

@@ -16,6 +16,7 @@ type SheetCell = {
   italic?: boolean;
   strikethrough?: boolean;
   underline?: boolean;
+  fontSize?: number;
   textColor?: string;
   bgColor?: string;
   align?: string;
@@ -36,14 +37,16 @@ type SheetData = {
   rowCount: number;
   columnCount: number;
   frozenRowCount: number;
+  columnWidths: number[];
 };
 
 type Pos = { row: number; col: number };
 
-const COL_W = 120;
+const DEFAULT_COL_W = 120;
 const ROW_H = 28;
 const HEADER_H = 24;
 const ROWNUM_W = 48;
+const MIN_COL_W = 40;
 
 function colToLetter(col: number): string {
   let s = "";
@@ -78,6 +81,19 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
   const clipboardRef = useRef<string[][] | null>(null);
   // Right-click context menu for a tab: { sheetId, title, x, y } or null.
   const [tabMenu, setTabMenu] = useState<{ sheetId: number; title: string; x: number; y: number } | null>(null);
+  // Live column-width overrides while dragging (col index → px). Cleared
+  // after the resize is persisted and data reloads.
+  const [colWidthOverride, setColWidthOverride] = useState<Record<number, number>>({});
+  const resizeRef = useRef<{ col: number; startX: number; startW: number } | null>(null);
+
+  const colWidth = useCallback(
+    (c: number): number => {
+      if (colWidthOverride[c] != null) return colWidthOverride[c];
+      const w = data?.columnWidths?.[c];
+      return w && w > 0 ? w : DEFAULT_COL_W;
+    },
+    [colWidthOverride, data]
+  );
 
   // Normalized selection rectangle (top-left → bottom-right).
   const selRect = useMemo(() => {
@@ -149,6 +165,55 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
   }, []);
+
+  // Column-resize drag: track mouse globally so the drag continues even when
+  // the cursor leaves the thin handle. On release, persist the new width.
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      const rs = resizeRef.current;
+      if (!rs) return;
+      const next = Math.max(MIN_COL_W, rs.startW + (e.clientX - rs.startX));
+      setColWidthOverride((prev) => ({ ...prev, [rs.col]: next }));
+    }
+    async function onUp() {
+      const rs = resizeRef.current;
+      if (!rs || !activeTab) return;
+      resizeRef.current = null;
+      const finalW = colWidthOverride[rs.col] ?? rs.startW;
+      try {
+        await fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/batch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            op: "colwidth",
+            sheetId: activeTab.sheetId,
+            columnIndex: rs.col,
+            pixelSize: Math.round(finalW),
+          }),
+        });
+        // Persist into data so the override can be dropped.
+        setData((d) => {
+          if (!d) return d;
+          const widths = d.columnWidths.slice();
+          widths[rs.col] = Math.round(finalW);
+          return { ...d, columnWidths: widths };
+        });
+        setColWidthOverride((prev) => {
+          const { [rs.col]: _drop, ...rest } = prev;
+          void _drop;
+          return rest;
+        });
+      } catch {
+        /* keep the override on failure so the UI still reflects the drag */
+      }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [activeTab, spreadsheetId, colWidthOverride]);
 
   /* ── Cell helpers ── */
   function cellAt(row: number, col: number): SheetCell {
@@ -545,9 +610,26 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
 
         <Divider />
 
+        {/* Font size */}
+        <select
+          title="Font size"
+          value={selCell?.fontSize ?? 10}
+          onChange={(e) => applyFormat({ fontSize: parseInt(e.target.value, 10) })}
+          className="h-8 rounded border border-[var(--color-border)] bg-[var(--color-surface)] px-1 text-[12px] text-[var(--color-text)]"
+        >
+          {[8, 9, 10, 11, 12, 14, 16, 18, 24, 36].map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+
+        <Divider />
+
         {/* Number formats */}
         <button type="button" title="Currency" onClick={() => applyFormat({ numberFormat: { type: "CURRENCY", pattern: "\"$\"#,##0.00" } })} className="flex h-8 w-8 items-center justify-center rounded text-[13px] hover:bg-[var(--color-surface-offset)]">$</button>
         <button type="button" title="Percent" onClick={() => applyFormat({ numberFormat: { type: "PERCENT", pattern: "0.00%" } })} className="flex h-8 w-8 items-center justify-center rounded text-[13px] hover:bg-[var(--color-surface-offset)]">%</button>
+        <button type="button" title="Number (1,000.00)" onClick={() => applyFormat({ numberFormat: { type: "NUMBER", pattern: "#,##0.00" } })} className="flex h-8 items-center justify-center rounded px-1.5 text-[12px] hover:bg-[var(--color-surface-offset)]">1.0</button>
+        <button type="button" title="Date" onClick={() => applyFormat({ numberFormat: { type: "DATE", pattern: "yyyy-mm-dd" } })} className="flex h-8 items-center justify-center rounded px-1.5 text-[12px] hover:bg-[var(--color-surface-offset)]">Date</button>
+        <button type="button" title="Plain text" onClick={() => applyFormat({ numberFormat: { type: "TEXT" } })} className="flex h-8 items-center justify-center rounded px-1.5 text-[12px] hover:bg-[var(--color-surface-offset)]">Abc</button>
 
         <Divider />
 
@@ -615,12 +697,21 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
               <div
                 key={c}
                 className={cn(
-                  "flex shrink-0 items-center justify-center border-b border-r border-[var(--color-border)] text-[11px] font-medium text-[var(--color-text-muted)]",
+                  "relative flex shrink-0 items-center justify-center border-b border-r border-[var(--color-border)] text-[11px] font-medium text-[var(--color-text-muted)]",
                   selected.col === c && "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                 )}
-                style={{ width: COL_W, height: HEADER_H }}
+                style={{ width: colWidth(c), height: HEADER_H }}
               >
                 {colToLetter(c)}
+                {/* Resize handle on the right edge */}
+                <span
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    resizeRef.current = { col: c, startX: e.clientX, startW: colWidth(c) };
+                  }}
+                  className="absolute right-0 top-0 z-10 h-full w-1.5 cursor-col-resize hover:bg-[var(--color-primary)]"
+                />
               </div>
             ))}
           </div>
@@ -669,10 +760,11 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
                         isFocus && !isEdit && "ring-2 ring-inset ring-[var(--color-primary)]"
                       )}
                       style={{
-                        width: COL_W,
+                        width: colWidth(c),
                         height: ROW_H,
                         fontWeight: cell.bold ? 700 : undefined,
                         fontStyle: cell.italic ? "italic" : undefined,
+                        fontSize: cell.fontSize ? `${cell.fontSize}px` : undefined,
                         textDecoration: [
                           cell.underline ? "underline" : "",
                           cell.strikethrough ? "line-through" : "",

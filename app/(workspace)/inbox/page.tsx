@@ -922,7 +922,8 @@ export default function InboxPage() {
               : folder === "allmail"
                 ? "allmail"
                 : folder;
-      const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
+      // Use 50 for search — after thread dedup we need extra headroom.
+      const params = new URLSearchParams({ folder: apiFolder, maxResults: mailSearch ? "50" : "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
       // When a search query is active, drop the category/label filter so results

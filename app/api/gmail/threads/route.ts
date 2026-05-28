@@ -33,7 +33,7 @@ export async function GET(request: Request) {
   const searchQuery = searchParams.get("search")?.trim() || undefined;
   const labelId = searchParams.get("labelId")?.trim() || undefined;
   const maxResults = Math.min(
-    50,
+    100,
     Math.max(5, parseInt(searchParams.get("maxResults") || "25", 10) || 25)
   );
 

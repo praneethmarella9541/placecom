@@ -251,9 +251,10 @@ export async function listThreadsPage(
   //     We then dedupe by threadId. Without this, queries like "bug" miss
   //     threads where only an older message contained the word.
   const requestedMax = Math.min(Math.max(options.maxResults, 1), 100);
-  // Over-fetch messages because multiple msgs in the same thread collapse
-  // to one row after dedup — otherwise the user sees fewer than expected.
-  const fetchSize = isSearch ? Math.min(100, requestedMax * 3) : requestedMax;
+  // Over-fetch messages in search mode: multiple messages in the same thread
+  // collapse to one row after dedup, so we need many more raw messages to
+  // fill the requested number of distinct threads. Gmail API cap is 500.
+  const fetchSize = isSearch ? 500 : requestedMax;
   const params = new URLSearchParams({ maxResults: String(fetchSize) });
   for (const l of labels) params.append("labelIds", l);
   if (q) params.set("q", q);

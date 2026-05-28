@@ -256,7 +256,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             {attachmentChips}
           </div>
 
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[#f1f3f4] bg-white px-3 py-2">
+          <div className="flex shrink-0 items-center gap-1 border-t border-[#f1f3f4] bg-white px-2 py-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -269,29 +269,32 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             />
             <button
               type="button"
+              disabled={sendDisabled}
+              onClick={onSend}
+              className="rounded-full bg-[#0b57d0] px-6 py-2 text-[14px] font-medium text-white shadow-sm hover:bg-[#0842a0] disabled:cursor-not-allowed disabled:bg-[#a8c7fa]"
+            >
+              {titleCase("Send")}
+            </button>
+            <button
+              type="button"
               onClick={onAttachClick}
               className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
               title={titleCase("Attach files")}
             >
               <Paperclip className="h-5 w-5" strokeWidth={2} />
             </button>
-            <div className="flex flex-1 items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={onDiscard}
-                className="rounded-full px-4 py-2 text-[13px] font-medium text-[#5f6368] hover:bg-[#f1f3f4]"
-              >
-                {titleCase("Discard")}
-              </button>
-              <button
-                type="button"
-                disabled={sendDisabled}
-                onClick={onSend}
-                className="rounded-full bg-[#1a73e8] px-6 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-[#1557b0] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {titleCase("Send")}
-              </button>
-            </div>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={onDiscard}
+              className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
+              title={titleCase("Discard")}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+              </svg>
+            </button>
           </div>
         </div>
       )}

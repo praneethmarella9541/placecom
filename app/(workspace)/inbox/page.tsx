@@ -7,6 +7,12 @@ import { LabelPicker } from "@/components/LabelPicker";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { EmailHtmlBody } from "@/components/EmailHtmlBody";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
+import { GmailInlineReply, type InlineReplyMode } from "@/components/GmailInlineReply";
+import {
+  mergeInboxUnread,
+  readSessionInboxUnread,
+  writeSessionInboxUnread,
+} from "@/lib/inbox-unread-session";
 import { createPortal } from "react-dom";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractEmailAddress } from "@/lib/email-parse";
@@ -19,9 +25,6 @@ import {
   IconInbox,
   IconSend,
   IconStar,
-  IconReply,
-  IconReplyAll,
-  IconForward,
   IconRefresh,
   IconX,
   IconEye,
@@ -874,10 +877,18 @@ export default function InboxPage() {
   const [showNewLabelForm, setShowNewLabelForm] = useState(false);
   const newLabelInputRef = useRef<HTMLInputElement>(null);
 
-  type ComposeKind = "new" | "reply" | "replyAll" | "forward";
+  type ComposeKind = "new" | "forward";
   const [composeKind, setComposeKind] = useState<ComposeKind>("new");
   const [composeThreadId, setComposeThreadId] = useState<string | null>(null);
   const [composeInReplyToId, setComposeInReplyToId] = useState<string | null>(null);
+
+  const [inlineReplyMode, setInlineReplyMode] = useState<InlineReplyMode>(null);
+  const [inlineReplyTo, setInlineReplyTo] = useState("");
+  const [inlineReplyCc, setInlineReplyCc] = useState("");
+  const [inlineReplyBody, setInlineReplyBody] = useState("");
+  const [inlineReplyFiles, setInlineReplyFiles] = useState<PendingFile[]>([]);
+  const [inlineReplySending, setInlineReplySending] = useState(false);
+  const inlineReplyFileRef = useRef<HTMLInputElement>(null);
   // The current user's own Gmail address — used to exclude self from Reply All
   const [myEmail, setMyEmail] = useState("");
 
@@ -1199,7 +1210,7 @@ export default function InboxPage() {
     return results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
-  async function handleFileSelect(files: FileList | null) {
+  async function handleFileSelect(files: FileList | null, target: "compose" | "inline" = "compose") {
     if (!files) return;
     const GMAIL_LIMIT = 25 * 1024 * 1024; // 25 MB — Gmail's inline attachment cap
     const newFiles: PendingFile[] = [];
@@ -1280,7 +1291,8 @@ export default function InboxPage() {
         }
       }
     }
-    setComposeFiles((prev) => [...prev, ...newFiles]);
+    if (target === "inline") setInlineReplyFiles((prev) => [...prev, ...newFiles]);
+    else setComposeFiles((prev) => [...prev, ...newFiles]);
   }
 
   useEffect(() => {
@@ -1460,14 +1472,16 @@ export default function InboxPage() {
   // stay correct across navigations without any client-side cache logic.
   const [labelCounts, setLabelCounts] = useState<Record<string, { total: number; unread: number }>>({});
 
-  /** Instant Inbox unread badge update — server refresh may lag several seconds. */
+  /** Instant Inbox unread badge — persisted for the tab session so folder switches don't reset. */
   const adjustInboxUnread = useCallback((delta: number) => {
     if (delta === 0) return;
     setLabelCounts((prev) => {
-      const cur = prev.INBOX ?? { total: 0, unread: 0 };
+      const cur = prev.INBOX?.unread ?? readSessionInboxUnread() ?? 0;
+      const next = Math.max(0, cur + delta);
+      writeSessionInboxUnread(next);
       return {
         ...prev,
-        INBOX: { ...cur, unread: Math.max(0, cur.unread + delta) },
+        INBOX: { total: prev.INBOX?.total ?? 0, unread: next },
       };
     });
   }, []);
@@ -1510,16 +1524,20 @@ export default function InboxPage() {
       const j = (await res.json()) as { counts?: Record<string, { total: number; unread: number }> };
       const incoming = j.counts ?? {};
       setLabelCounts((prev) => {
-        // Gmail's unread count API lags behind mark-read; keep optimistic
-        // Inbox badge during the mutation cooldown window.
+        if (!incoming.INBOX) return incoming;
+        const serverUnread = incoming.INBOX.unread ?? 0;
+        const sessionUnread = readSessionInboxUnread();
+        const mergedUnread = mergeInboxUnread(serverUnread, sessionUnread);
+        writeSessionInboxUnread(mergedUnread);
         if (
           Date.now() - lastMutationAtRef.current < MUTATION_COOLDOWN_MS &&
-          prev.INBOX &&
-          incoming.INBOX
+          prev.INBOX
         ) {
-          return { ...incoming, INBOX: { ...incoming.INBOX, unread: prev.INBOX.unread } };
+          const unread = Math.min(prev.INBOX.unread, mergedUnread);
+          writeSessionInboxUnread(unread);
+          return { ...incoming, INBOX: { ...incoming.INBOX, unread } };
         }
-        return incoming;
+        return { ...incoming, INBOX: { ...incoming.INBOX, unread: mergedUnread } };
       });
     } catch { /* ignore */ }
   }, [allLabels]);
@@ -2339,28 +2357,84 @@ export default function InboxPage() {
     setComposeOpen(true);
   }
 
-  /** Open the Gmail-style compose dock for Reply or Reply All. */
-  function openReplyCompose(mode: "reply" | "replyAll") {
-    if (!messages?.length || !selectedId) return;
-    const last = messages[messages.length - 1];
-    const subj = last.subject || "";
-    const reSubject = /^re:/i.test(subj) ? subj : `Re: ${subj}`;
-    const cc = mode === "replyAll" ? buildReplyAllCc(last) : "";
+  function resetInlineReply() {
+    setInlineReplyMode(null);
+    setInlineReplyTo("");
+    setInlineReplyCc("");
+    setInlineReplyBody("");
+    setInlineReplyFiles([]);
+  }
 
-    setComposeKind(mode);
-    setComposeThreadId(selectedId);
-    setComposeInReplyToId(last.id);
-    setComposeTo(extractEmailAddress(last.from));
-    setComposeCc(cc);
-    setComposeBcc("");
-    setComposeSubject(reSubject);
-    setComposeBody("");
-    setComposeFiles([]);
-    setComposeDraftId(null);
-    setComposeCcBccOpen(mode === "replyAll" || cc.length > 0);
-    setComposeMinimized(false);
-    setComposeFullscreen(false);
-    setComposeOpen(true);
+  function startInlineReply(mode: "reply" | "replyAll") {
+    if (!messages?.length) return;
+    const last = messages[messages.length - 1];
+    setInlineReplyMode(mode);
+    setInlineReplyTo(extractEmailAddress(last.from));
+    setInlineReplyCc(mode === "replyAll" ? buildReplyAllCc(last) : "");
+    setInlineReplyBody("");
+    setInlineReplyFiles([]);
+  }
+
+  async function sendInlineReply() {
+    if (!selectedId || !messages?.length || !inlineReplyMode || richTextIsEmpty(inlineReplyBody)) return;
+    const last = messages[messages.length - 1];
+    const to = inlineReplyTo.trim() || extractEmailAddress(last.from);
+    const cc = inlineReplyCc.trim() || undefined;
+    const snapshot = {
+      mode: inlineReplyMode,
+      htmlBody: inlineReplyBody,
+      files: inlineReplyFiles,
+      threadId: selectedId,
+      lastId: last.id,
+      to,
+      cc,
+    };
+
+    resetInlineReply();
+    setInlineReplySending(true);
+    showSendSnack({ phase: "sending" });
+
+    try {
+      const attachments = await resolveAttachmentsForUpload(snapshot.files);
+      const res = await fetch("/api/gmail/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: snapshot.to,
+          cc: snapshot.cc,
+          subject: "",
+          textBody: "",
+          htmlBody: snapshot.htmlBody,
+          threadId: snapshot.threadId,
+          inReplyToMessageId: snapshot.lastId,
+          attachments: attachments.length ? attachments : undefined,
+        }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Send failed");
+
+      threadDataCache.current.delete(snapshot.threadId);
+      void openThread(snapshot.threadId);
+      listCacheRef.current.delete("sent||");
+      void loadTracking();
+      showSendSnack({ phase: "sent" }, 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Send failed";
+      showSendSnack({
+        phase: "error",
+        message: msg,
+        retry: () => {
+          setSendSnack(null);
+          setInlineReplyMode(snapshot.mode);
+          setInlineReplyTo(snapshot.to);
+          setInlineReplyCc(snapshot.cc ?? "");
+          setInlineReplyBody(snapshot.htmlBody);
+          setInlineReplyFiles(snapshot.files);
+        },
+      });
+    } finally {
+      setInlineReplySending(false);
+    }
   }
 
   /**
@@ -2512,7 +2586,6 @@ export default function InboxPage() {
           `</table>`;
       }
 
-      const isReply = snapshot.kind === "reply" || snapshot.kind === "replyAll";
       const res = await fetch("/api/gmail/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2520,21 +2593,14 @@ export default function InboxPage() {
           to: snapshot.to,
           cc: snapshot.cc || undefined,
           bcc: snapshot.bcc || undefined,
-          subject: isReply ? "" : snapshot.subject,
+          subject: snapshot.subject,
           textBody: "",
           htmlBody: finalHtmlBody,
-          threadId: isReply ? snapshot.threadId ?? undefined : undefined,
-          inReplyToMessageId: isReply ? snapshot.inReplyToMessageId ?? undefined : undefined,
           attachments: attachments.length ? attachments : undefined,
         }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Send failed");
-
-      if (isReply && snapshot.threadId) {
-        threadDataCache.current.delete(snapshot.threadId);
-        void openThread(snapshot.threadId);
-      }
 
       // Delete the draft it was based on (fire-and-forget).
       if (snapshot.draftId) {
@@ -2596,19 +2662,12 @@ export default function InboxPage() {
     setSelectedId(null);
     setMessages(null);
     setThreadError(null);
+    resetInlineReply();
   };
 
   const composeWindowTitle = useMemo(() => {
-    switch (composeKind) {
-      case "reply":
-        return titleCase("Reply");
-      case "replyAll":
-        return titleCase("Reply All");
-      case "forward":
-        return titleCase("Forward");
-      default:
-        return composeDraftId ? titleCase("Edit Draft") : titleCase("New Message");
-    }
+    if (composeKind === "forward") return titleCase("Forward");
+    return composeDraftId ? titleCase("Edit Draft") : titleCase("New Message");
   }, [composeKind, composeDraftId]);
 
   // Folder nav items — shared between left rail (desktop) and mobile tab bar.
@@ -3560,35 +3619,55 @@ export default function InboxPage() {
                   ))}
                 </div>
 
-                {/* Reply / Reply All / Forward — opens Gmail compose dock */}
-                <div className="sticky bottom-0 z-10 border-t border-[#e8eaed] bg-white px-4 py-3 md:px-6">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openReplyCompose("reply")}
-                      className="inline-flex h-9 items-center gap-2 rounded-full border border-[#dadce0] bg-white px-4 text-[13px] font-medium text-[#444746] hover:bg-[#f1f3f4]"
-                    >
-                      <IconReply className="h-4 w-4" />
-                      {titleCase("Reply")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openReplyCompose("replyAll")}
-                      className="inline-flex h-9 items-center gap-2 rounded-full border border-[#dadce0] bg-white px-4 text-[13px] font-medium text-[#444746] hover:bg-[#f1f3f4]"
-                    >
-                      <IconReplyAll className="h-4 w-4" />
-                      {titleCase("Reply All")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openForward()}
-                      className="inline-flex h-9 items-center gap-2 rounded-full border border-[#dadce0] bg-white px-4 text-[13px] font-medium text-[#444746] hover:bg-[#f1f3f4]"
-                    >
-                      <IconForward className="h-4 w-4" />
-                      {titleCase("Forward")}
-                    </button>
-                  </div>
-                </div>
+                <GmailInlineReply
+                  mode={inlineReplyMode}
+                  replyLabel={senderName(messages[messages.length - 1]?.from || "")}
+                  to={inlineReplyTo}
+                  onToChange={setInlineReplyTo}
+                  cc={inlineReplyCc}
+                  onCcChange={setInlineReplyCc}
+                  showCc={inlineReplyMode === "replyAll"}
+                  body={inlineReplyBody}
+                  onBodyChange={setInlineReplyBody}
+                  suggestions={composeRecipientSuggestions}
+                  onStartReply={() => startInlineReply("reply")}
+                  onStartReplyAll={() => startInlineReply("replyAll")}
+                  onForward={() => openForward()}
+                  onDiscard={resetInlineReply}
+                  onSend={() => void sendInlineReply()}
+                  onAttach={() => inlineReplyFileRef.current?.click()}
+                  sending={inlineReplySending}
+                  attachmentList={
+                    inlineReplyFiles.length > 0 ? (
+                      <div className="border-t border-[#f1f3f4] px-3 py-2">
+                        <ul className="flex flex-col gap-1">
+                          {inlineReplyFiles.map((f, i) => (
+                            <li key={i} className="flex items-center justify-between gap-2 rounded border border-[#dadce0] bg-[#f8f9fa] px-2 py-1 text-[12px]">
+                              <span className="truncate">{pendingFileName(f)}</span>
+                              <button
+                                type="button"
+                                onClick={() => setInlineReplyFiles((prev) => prev.filter((_, j) => j !== i))}
+                                className="text-[#5f6368] hover:text-[#202124]"
+                              >
+                                <IconX className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null
+                  }
+                />
+                <input
+                  ref={inlineReplyFileRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    void handleFileSelect(e.target.files, "inline");
+                    e.target.value = "";
+                  }}
+                />
               </>
             ) : (
               <div className="flex flex-1 flex-col gap-4 p-6">
@@ -3673,7 +3752,7 @@ export default function InboxPage() {
         minimized={composeMinimized}
         fullscreen={composeFullscreen}
         windowTitle={composeWindowTitle}
-        showSubject={composeKind !== "reply" && composeKind !== "replyAll"}
+        showSubject
         to={composeTo}
         onToChange={setComposeTo}
         cc={composeCc}

@@ -1,0 +1,121 @@
+"use client";
+
+import { useState } from "react";
+import { ChevronDown, ChevronUp, X, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { IconFile, IconFolder } from "@/components/Icons";
+
+/** Status of a single item in the upload queue. */
+export type UploadItemStatus = "queued" | "uploading" | "done" | "error";
+
+export type UploadQueueItem = {
+  /** Stable id for React keys + status updates. */
+  id: string;
+  name: string;
+  /** "folder" rows are the directories created during a folder upload. */
+  kind: "file" | "folder";
+  status: UploadItemStatus;
+  /** Populated when status === "error". */
+  error?: string;
+};
+
+type Props = {
+  items: UploadQueueItem[];
+  /** True while any item is still queued/uploading. */
+  busy: boolean;
+  /** Dismiss the card (only offered once the queue settles). */
+  onClose: () => void;
+};
+
+/**
+ * Google-Drive-style upload status card, pinned bottom-right. Shows an
+ * aggregate header ("Uploading N items" / "N uploads complete") that
+ * collapses the per-item list, and one row per file/folder with a live
+ * status icon (spinner → check, or error). Mirrors Drive's upload toast.
+ */
+export function DriveUploadQueue({ items, busy, onClose }: Props) {
+  const [collapsed, setCollapsed] = useState(false);
+  if (items.length === 0) return null;
+
+  const total = items.length;
+  const done = items.filter((i) => i.status === "done").length;
+  const failed = items.filter((i) => i.status === "error").length;
+  const inFlight = items.find((i) => i.status === "uploading");
+
+  // Header text mirrors Drive: live count while uploading, summary when done.
+  let heading: string;
+  if (busy) {
+    const settled = done + failed;
+    heading = `Uploading ${Math.min(settled + 1, total)} of ${total}…`;
+  } else if (failed > 0) {
+    heading = failed === total ? `${failed} uploads failed` : `${done} done, ${failed} failed`;
+  } else {
+    heading = total === 1 ? "Upload complete" : `${total} uploads complete`;
+  }
+
+  return (
+    <div className="fixed bottom-4 right-4 z-50 w-80 overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+      <div className="flex items-center justify-between gap-2 bg-zinc-800 px-3 py-2 text-white dark:bg-zinc-950">
+        <span className="truncate text-[13px] font-medium">{heading}</span>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setCollapsed((v) => !v)}
+            className="rounded p-1 text-zinc-300 hover:bg-white/10 hover:text-white"
+            aria-label={collapsed ? "Expand" : "Collapse"}
+            title={collapsed ? "Expand" : "Collapse"}
+          >
+            {collapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="rounded p-1 text-zinc-300 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="Dismiss"
+            title={busy ? "Upload in progress" : "Dismiss"}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {!collapsed && (
+        <ul className="max-h-72 overflow-y-auto">
+          {items.map((item) => (
+            <li
+              key={item.id}
+              className="flex items-center gap-2 border-b border-zinc-100 px-3 py-2 last:border-b-0 dark:border-zinc-800"
+            >
+              <span className="shrink-0 text-zinc-400">
+                {item.kind === "folder" ? (
+                  <IconFolder className="h-4 w-4" />
+                ) : (
+                  <IconFile className="h-4 w-4" />
+                )}
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-700 dark:text-zinc-200" title={item.name}>
+                {item.name}
+              </span>
+              <span className="shrink-0">
+                {item.status === "done" ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-500" />
+                ) : item.status === "error" ? (
+                  <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-500" />
+                ) : item.status === "uploading" ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
+                ) : (
+                  <span className="block h-4 w-4 rounded-full border-2 border-zinc-200 dark:border-zinc-700" />
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!collapsed && inFlight && (
+        <div className="border-t border-zinc-100 px-3 py-1.5 text-[11px] text-zinc-400 dark:border-zinc-800">
+          {inFlight.name}
+        </div>
+      )}
+    </div>
+  );
+}

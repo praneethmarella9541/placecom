@@ -429,50 +429,47 @@ export default function DrivePage() {
       (a, b) => a.split("/").length - b.split("/").length
     );
 
-    // Seed queue rows: folders first (created up front), then files — in the
-    // same order they'll be processed, so the card reads top-to-bottom.
-    const folderItems: UploadQueueItem[] = sortedDirs.map((dirPath, i) => ({
+    // Only show one queue row per top-level folder — Google Drive does not list
+    // individual files inside a folder upload. The header shows "Uploading folder".
+    const rootFolderNames = Array.from(
+      new Set(
+        list.map((f) => {
+          const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
+          return rel.split("/")[0] || f.name;
+        })
+      )
+    );
+    const rootFolderItems: UploadQueueItem[] = rootFolderNames.map((name, i) => ({
       id: `d-${Date.now()}-${i}`,
-      name: dirPath.split("/").pop() || dirPath,
+      name,
       kind: "folder",
       status: "queued",
     }));
-    const fileItems: UploadQueueItem[] = list.map((f, i) => {
-      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
-      const parts = rel.split("/");
-      return {
-        id: `ff-${Date.now()}-${i}`,
-        name: parts[parts.length - 1] || f.name,
-        kind: "file",
-        status: "queued",
-      };
-    });
-    setUploadQueue([...folderItems, ...fileItems]);
+    setUploadQueue(rootFolderItems);
     setUploadBusy(true);
+
+    // Mark all root-folder rows as "uploading" immediately (they upload in parallel
+    // with their contents; we flip to done once all their files are done).
+    for (const item of rootFolderItems) {
+      updateQueueItem(item.id, { status: "uploading" });
+    }
 
     try {
       const folderIdByPath = new Map<string, string>();
       folderIdByPath.set("", currentParentId);
 
-      // Track which top-level Drive folder rows to prepend after all uploads.
-      // For a folder upload, we only show the root folder in the current view —
-      // its sub-folders/files are nested inside and appear when the user enters it.
       const topLevelFolderRows: DriveFileRow[] = [];
 
       // Create folders in depth order, mapping each path → new Drive id.
       for (let i = 0; i < sortedDirs.length; i++) {
         const dirPath = sortedDirs[i];
-        const item = folderItems[i];
         const parts = dirPath.split("/");
         const parentDirPath = parts.slice(0, -1).join("/");
         const parentId = folderIdByPath.get(parentDirPath) ?? currentParentId;
         const name = parts[parts.length - 1];
-        updateQueueItem(item.id, { status: "uploading" });
         try {
           const newId = await createFolderUnder(name, parentId);
           folderIdByPath.set(dirPath, newId);
-          updateQueueItem(item.id, { status: "done" });
-          // Only the root folder (depth 1) appears directly in the current view.
           if (parts.length === 1) {
             topLevelFolderRows.push({
               id: newId,
@@ -481,33 +478,41 @@ export default function DrivePage() {
               modifiedTime: new Date().toISOString(),
             });
           }
-        } catch (e) {
-          updateQueueItem(item.id, {
-            status: "error",
-            error: e instanceof Error ? e.message : "Failed to create folder",
-          });
+        } catch {
+          // Mark the root folder row as errored if the top-level folder fails.
+          if (parts.length === 1) {
+            const rootItem = rootFolderItems.find((it) => it.name === name);
+            if (rootItem) updateQueueItem(rootItem.id, { status: "error", error: "Failed to create folder" });
+          }
         }
       }
 
       // Upload each file into its computed parent folder.
+      const fileErrors = new Map<string, boolean>(); // rootFolderName → had error
       for (let i = 0; i < list.length; i++) {
         const f = list[i];
-        const item = fileItems[i];
         const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
         const parts = rel.split("/");
+        const rootName = parts[0] || f.name;
         const dirPath = parts.slice(0, -1).join("/");
         const parentId = folderIdByPath.get(dirPath) ?? currentParentId;
-        updateQueueItem(item.id, { status: "uploading" });
         try {
           await uploadSingleFile(f, parentId);
-          updateQueueItem(item.id, { status: "done" });
-        } catch (e) {
+        } catch {
+          fileErrors.set(rootName, true);
+        }
+      }
+
+      // Flip each root-folder row to done/error based on whether its files had errors.
+      for (const item of rootFolderItems) {
+        if (item.status !== "error") {
           updateQueueItem(item.id, {
-            status: "error",
-            error: e instanceof Error ? e.message : "Upload failed",
+            status: fileErrors.get(item.name) ? "error" : "done",
+            error: fileErrors.get(item.name) ? "Some files failed to upload" : undefined,
           });
         }
       }
+
       // Prepend top-level folder(s) so they appear without reloading the whole list.
       if (topLevelFolderRows.length > 0) {
         setDriveFiles((prev) => [...topLevelFolderRows, ...prev]);

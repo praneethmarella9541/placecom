@@ -40,14 +40,21 @@ export function DriveUploadQueue({ items, busy, onClose }: Props) {
   const done = items.filter((i) => i.status === "done").length;
   const failed = items.filter((i) => i.status === "error").length;
   const inFlight = items.find((i) => i.status === "uploading");
+  const allFolders = items.every((i) => i.kind === "folder");
 
   // Header text mirrors Drive: live count while uploading, summary when done.
   let heading: string;
   if (busy) {
-    const settled = done + failed;
-    heading = `Uploading ${Math.min(settled + 1, total)} of ${total}…`;
+    if (allFolders && total === 1) {
+      heading = `Uploading "${items[0].name}"…`;
+    } else if (allFolders) {
+      heading = `Uploading ${total} folder${total > 1 ? "s" : ""}…`;
+    } else {
+      const settled = done + failed;
+      heading = `Uploading ${Math.min(settled + 1, total)} of ${total}…`;
+    }
   } else if (failed > 0) {
-    heading = failed === total ? `${failed} uploads failed` : `${done} done, ${failed} failed`;
+    heading = failed === total ? `${failed} upload${failed > 1 ? "s" : ""} failed` : `${done} done, ${failed} failed`;
   } else {
     heading = total === 1 ? "Upload complete" : `${total} uploads complete`;
   }

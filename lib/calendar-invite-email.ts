@@ -25,8 +25,36 @@ export type CalendarInviteParsed = {
 const INVITATION_SUBJECT_RE =
   /^(?:invitation|updated invitation|cancelled event|accepted|declined|tentatively accepted):\s*/i;
 
+/** Drive / Docs / Sheets share notifications (not calendar events). */
+const WORKSPACE_SHARE_SUBJECT_RE =
+  /^(?:spreadsheet|document|file|folder|presentation|form) shared with you\b/i;
+
+const WORKSPACE_SHARE_FROM_RE =
+  /(?:drive-shares-dm-noreply|doclist-noreply|documentcomment|mail-noreply)@google\.com/i;
+
+const WORKSPACE_SHARE_HTML_RE =
+  /docs\.google\.com\/(?:spreadsheets|document|presentation|forms)|drive\.google\.com\/(?:file|open|folders)/i;
+
+/** Google Drive, Docs, or Sheets share emails — must not use the calendar invite card. */
+export function isGoogleWorkspaceShareNotification(msg: CalendarInviteMessage): boolean {
+  const from = msg.from || "";
+  if (WORKSPACE_SHARE_FROM_RE.test(from)) return true;
+  if (/via Google (?:Sheets|Docs|Drive)/i.test(from)) return true;
+  const subj = (msg.subject || "").trim();
+  if (WORKSPACE_SHARE_SUBJECT_RE.test(subj)) return true;
+  const html = msg.bodyHtml || "";
+  if (WORKSPACE_SHARE_HTML_RE.test(html)) return true;
+  if (/shared a (?:spreadsheet|document|presentation|folder|file)/i.test(html)) return true;
+  if (/has invited you to (?:edit|view|comment on) the following (?:spreadsheet|document|file)/i.test(html)) {
+    return true;
+  }
+  return false;
+}
+
 /** Detect Google Calendar invitation emails (list + reading pane). */
 export function isCalendarInvite(msg: CalendarInviteMessage): boolean {
+  if (isGoogleWorkspaceShareNotification(msg)) return false;
+
   const from = (msg.from || "").toLowerCase();
   if (from.includes("calendar-notification@google.com")) return true;
   if (from.includes("@group.calendar.google.com")) return true;
@@ -40,9 +68,16 @@ export function isCalendarInvite(msg: CalendarInviteMessage): boolean {
   const subj = msg.subject || "";
   if (INVITATION_SUBJECT_RE.test(subj)) return true;
   const html = msg.bodyHtml || "";
+  // Footer text like "Invitation from Google Calendar" appears on many Google
+  // emails — require an actual calendar event link, not generic branding.
   if (html.includes("calendar.google.com/calendar/event")) return true;
-  if (html.includes("meet.google.com/")) return true;
-  if (/View on Google Calendar/i.test(html)) return true;
+  if (/href="https:\/\/calendar\.google\.com\/calendar\/event/i.test(html)) return true;
+  if (
+    html.includes("meet.google.com/") &&
+    (INVITATION_SUBJECT_RE.test(subj) || html.includes("calendar.google.com/calendar/event"))
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -208,5 +243,9 @@ export function parseCalendarInviteHtml(
 /** True when we have enough structure to render the Gmail-style invite card. */
 export function hasCalendarInviteCardData(parsed: CalendarInviteParsed | null): boolean {
   if (!parsed) return false;
-  return Boolean(parsed.when || parsed.meetLink || parsed.organizer || parsed.rsvp.yes);
+  if (parsed.rsvp.yes || parsed.rsvp.no || parsed.rsvp.maybe || parsed.meetLink || parsed.viewEventLink) {
+    return true;
+  }
+  if (parsed.when && (parsed.organizer || parsed.guests.length > 0)) return true;
+  return false;
 }

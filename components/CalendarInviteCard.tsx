@@ -6,6 +6,7 @@ import { Video } from "lucide-react";
 import {
   extractCalendarEventId,
   hasCalendarInviteCardData,
+  isGoogleWorkspaceShareNotification,
   parseCalendarInviteHtml,
   type CalendarInviteParsed,
 } from "@/lib/calendar-invite-email";
@@ -26,10 +27,17 @@ export function CalendarInviteOrHtml({
   plain,
   className,
 }: CalendarInviteCardProps & { plain?: string }) {
+  const isWorkspaceShare = useMemo(
+    () => isGoogleWorkspaceShareNotification({ subject, bodyHtml }),
+    [subject, bodyHtml]
+  );
   const parsed = useMemo(
     () => (bodyHtml ? parseCalendarInviteHtml(bodyHtml, subject) : null),
     [bodyHtml, subject]
   );
+  if (isWorkspaceShare) {
+    return <EmailHtmlBody html={bodyHtml} plain={plain} />;
+  }
   if (parsed && hasCalendarInviteCardData(parsed)) {
     return <CalendarInviteCard subject={subject} bodyHtml={bodyHtml} className={className} />;
   }

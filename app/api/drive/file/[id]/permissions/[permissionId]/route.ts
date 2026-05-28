@@ -16,6 +16,16 @@ function errResponse(e: unknown) {
       { status: 401 }
     );
   }
+  if (err.code === "DRIVE_NO_SHARE_PERMISSION") {
+    return NextResponse.json(
+      {
+        error: "DRIVE_NO_SHARE_PERMISSION",
+        message:
+          "You don't have permission to change sharing on this item. Only the owner (or someone they've given sharing rights to) can do that.",
+      },
+      { status: 403 }
+    );
+  }
   if (err.code === "DRIVE_INSUFFICIENT_SCOPE") {
     return NextResponse.json(
       {

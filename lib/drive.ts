@@ -275,6 +275,16 @@ async function driveAuthFetch(
     if (res.status === 401) err.code = "UNAUTHORIZED";
     else if (
       res.status === 403 &&
+      (text.includes("insufficientFilePermissions") ||
+        text.includes("PERMISSION_DENIED") ||
+        text.includes("cannotShareFile") ||
+        text.includes("sharingRateLimitExceeded"))
+    ) {
+      // The user is authenticated and has the scope, but doesn't have rights
+      // to manage sharing on THIS file/folder (not the owner / no share perm).
+      err.code = "DRIVE_NO_SHARE_PERMISSION";
+    } else if (
+      res.status === 403 &&
       (text.includes("insufficientPermissions") ||
         text.includes("ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
     ) {

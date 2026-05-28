@@ -66,8 +66,9 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
         permissions?: Permission[];
         shareLink?: string | null;
         error?: string;
+        message?: string;
       };
-      if (!res.ok) throw new Error(j.error || "Failed to load sharing settings");
+      if (!res.ok) throw new Error(j.message || j.error || "Failed to load sharing settings");
       setPermissions(j.permissions ?? []);
       setShareLink(j.shareLink ?? null);
     } catch (e) {
@@ -105,19 +106,20 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
               emailMessage: pendingNote.trim() || undefined,
             }),
           }).then(async (r) => {
-            const j = (await r.json()) as { permission?: Permission; error?: string };
-            if (!r.ok) throw new Error(j.error || "Add failed");
+            const j = (await r.json()) as { permission?: Permission; error?: string; message?: string };
+            if (!r.ok) throw new Error(j.message || j.error || "Add failed");
             return j.permission!;
           })
         )
       );
       const failures = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
       if (failures.length > 0) {
-        setError(
-          `Failed to share with ${failures.length} of ${emails.length} recipient(s): ${
-            failures.map((f) => (f.reason as Error).message).join(", ")
-          }`
+        // Dedupe identical reasons (e.g. all recipients hit the same
+        // "you can't share this item" error) for a cleaner message.
+        const reasons = Array.from(
+          new Set(failures.map((f) => (f.reason as Error).message))
         );
+        setError(reasons.join(" "));
       }
       setEmailInput("");
       setPendingNote("");
@@ -142,8 +144,8 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
         }
       );
       if (!res.ok) {
-        const j = (await res.json()) as { error?: string };
-        throw new Error(j.error || "Failed to update role");
+        const j = (await res.json()) as { error?: string; message?: string };
+        throw new Error(j.message || j.error || "Failed to update role");
       }
       await load();
     } catch (e) {
@@ -162,8 +164,8 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
         { method: "DELETE" }
       );
       if (!res.ok) {
-        const j = (await res.json()) as { error?: string };
-        throw new Error(j.error || "Failed to remove");
+        const j = (await res.json()) as { error?: string; message?: string };
+        throw new Error(j.message || j.error || "Failed to remove");
       }
       await load();
     } catch (e) {
@@ -185,8 +187,8 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
           { method: "DELETE" }
         );
         if (!res.ok) {
-          const j = (await res.json()) as { error?: string };
-          throw new Error(j.error || "Failed to disable link sharing");
+          const j = (await res.json()) as { error?: string; message?: string };
+          throw new Error(j.message || j.error || "Failed to disable link sharing");
         }
       } else if (anyonePermission) {
         // Change existing anyone permission's role
@@ -200,8 +202,8 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
           }
         );
         if (!res.ok) {
-          const j = (await res.json()) as { error?: string };
-          throw new Error(j.error || "Failed to update link access");
+          const j = (await res.json()) as { error?: string; message?: string };
+          throw new Error(j.message || j.error || "Failed to update link access");
         }
       } else {
         // Add a new "anyone" permission
@@ -211,8 +213,8 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
           body: JSON.stringify({ role: nextRole, type: "anyone" }),
         });
         if (!res.ok) {
-          const j = (await res.json()) as { error?: string };
-          throw new Error(j.error || "Failed to enable link sharing");
+          const j = (await res.json()) as { error?: string; message?: string };
+          throw new Error(j.message || j.error || "Failed to enable link sharing");
         }
       }
       await load();

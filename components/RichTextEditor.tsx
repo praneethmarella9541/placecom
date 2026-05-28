@@ -178,33 +178,99 @@ export function RichTextEditor({ value, onChange, placeholder, className, autoFo
         />
       </div>
 
-      {/* Toolbar — Gmail places this BELOW the editor, just above the
-          Send/Discard footer.  Active formatting buttons get a highlighted
-          background so the user can see what's on at the caret. */}
-      <div className="flex shrink-0 items-center gap-0.5 border-t border-[#f1f3f4] bg-[#f8f9fa] px-2 py-1">
+      {/* Formatting toolbar — sits between the editor body and the footer,
+          matching Gmail's layout. Always visible (Gmail shows it by default). */}
+      <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-t border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5">
+        {/* Sans Serif font picker (decorative — execCommand fontName is unreliable) */}
+        <button
+          type="button"
+          className="flex h-7 items-center gap-0.5 rounded px-1.5 text-[12px] text-[#444746] hover:bg-[#e8eaed]"
+          title="Font"
+        >
+          <span>Sans Serif</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden><polyline points="6 9 12 15 18 9" /></svg>
+        </button>
+        {/* Text size picker */}
+        <button
+          type="button"
+          className="flex h-7 items-center gap-0.5 rounded px-1 text-[12px] text-[#444746] hover:bg-[#e8eaed]"
+          title="Text size"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <text x="2" y="18" fontSize="14" fontWeight="700" stroke="none" fill="currentColor">T</text>
+            <text x="12" y="14" fontSize="9" stroke="none" fill="currentColor">T</text>
+          </svg>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden><polyline points="6 9 12 15 18 9" /></svg>
+        </button>
+        <ToolbarDivider />
         <ToolbarBtn active={activeCmds.bold} title="Bold (Ctrl+B)" onClick={() => exec("bold")}>
-          <Bold className="h-3.5 w-3.5" strokeWidth={2.5} />
+          <Bold className="h-[15px] w-[15px]" strokeWidth={2.5} />
         </ToolbarBtn>
         <ToolbarBtn active={activeCmds.italic} title="Italic (Ctrl+I)" onClick={() => exec("italic")}>
-          <Italic className="h-3.5 w-3.5" strokeWidth={2.5} />
+          <Italic className="h-[15px] w-[15px]" strokeWidth={2.5} />
         </ToolbarBtn>
         <ToolbarBtn active={activeCmds.underline} title="Underline (Ctrl+U)" onClick={() => exec("underline")}>
-          <Underline className="h-3.5 w-3.5" strokeWidth={2.5} />
+          <Underline className="h-[15px] w-[15px]" strokeWidth={2.5} />
         </ToolbarBtn>
-        <ToolbarBtn active={activeCmds.strikeThrough} title="Strikethrough" onClick={() => exec("strikeThrough")}>
-          <Strikethrough className="h-3.5 w-3.5" strokeWidth={2.5} />
-        </ToolbarBtn>
+        {/* Text colour (decorative) */}
+        <button
+          type="button"
+          className="flex h-7 w-7 flex-col items-center justify-center gap-0 rounded text-[#444746] hover:bg-[#e8eaed]"
+          title="Text color"
+        >
+          <span className="text-[12px] font-semibold leading-none" style={{ fontFamily: "serif" }}>A</span>
+          <span className="mt-0.5 h-[3px] w-4 rounded-sm bg-[#e84335]" />
+        </button>
         <ToolbarDivider />
-        <ToolbarBtn active={activeCmds.insertUnorderedList} title="Bulleted list" onClick={() => exec("insertUnorderedList")}>
-          <List className="h-3.5 w-3.5" strokeWidth={2.5} />
+        {/* Align */}
+        <ToolbarBtn title="Align" onClick={() => {}}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="15" y2="18" />
+          </svg>
         </ToolbarBtn>
         <ToolbarBtn active={activeCmds.insertOrderedList} title="Numbered list" onClick={() => exec("insertOrderedList")}>
-          <ListOrdered className="h-3.5 w-3.5" strokeWidth={2.5} />
+          <ListOrdered className="h-[15px] w-[15px]" strokeWidth={2.5} />
+        </ToolbarBtn>
+        <ToolbarBtn active={activeCmds.insertUnorderedList} title="Bulleted list" onClick={() => exec("insertUnorderedList")}>
+          <List className="h-[15px] w-[15px]" strokeWidth={2.5} />
+        </ToolbarBtn>
+        {/* Indent / outdent */}
+        <ToolbarBtn title="Decrease indent" onClick={() => exec("outdent")}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <line x1="21" y1="6" x2="3" y2="6" /><line x1="21" y1="12" x2="9" y2="12" /><line x1="21" y1="18" x2="3" y2="18" />
+            <polyline points="7 9 3 12 7 15" />
+          </svg>
+        </ToolbarBtn>
+        <ToolbarBtn title="Increase indent" onClick={() => exec("indent")}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="15" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
+            <polyline points="9 9 13 12 9 15" />
+          </svg>
+        </ToolbarBtn>
+        {/* Blockquote */}
+        <ToolbarBtn title="Quote" onClick={() => exec("formatBlock", "blockquote")}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z" />
+            <path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z" />
+          </svg>
         </ToolbarBtn>
         <ToolbarDivider />
-        <ToolbarBtn title="Insert link" onClick={handleLink}>
-          <LinkIcon className="h-3.5 w-3.5" strokeWidth={2.5} />
+        <ToolbarBtn active={activeCmds.strikeThrough} title="Strikethrough" onClick={() => exec("strikeThrough")}>
+          <Strikethrough className="h-[15px] w-[15px]" strokeWidth={2.5} />
         </ToolbarBtn>
+        <ToolbarBtn title="Insert link" onClick={handleLink}>
+          <LinkIcon className="h-[15px] w-[15px]" strokeWidth={2.5} />
+        </ToolbarBtn>
+        {/* More formatting */}
+        <button
+          type="button"
+          className="flex h-7 w-7 items-center justify-center rounded text-[#444746] hover:bg-[#e8eaed]"
+          title="More formatting options"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
       </div>
     </div>
   );

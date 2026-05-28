@@ -168,60 +168,49 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           </div>
 
           <div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto bg-white">
-            <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-4 py-2">
-              <span className="w-10 shrink-0 pt-2 text-right text-[13px] leading-none text-[#5f6368]">
-                {titleCase("To")}
-              </span>
-              <div className={cn("min-w-0 flex-1", fieldGroupClass)}>
+
+            {/* To row — Cc/Bcc links float right when collapsed, matching Gmail */}
+            <div className="flex items-center border-b border-[#f1f3f4] px-3">
+              <div className={cn("min-w-0 flex-1 py-0.5", fieldGroupClass)}>
                 <RecipientField
-                  placeholder={titleCase("Recipients")}
+                  placeholder="Recipients"
                   value={to}
                   onChange={onToChange}
                   suggestions={suggestions}
                 />
               </div>
+              {!ccBccOpen && (
+                <div className="flex shrink-0 items-center gap-3 pl-2">
+                  <button
+                    type="button"
+                    onClick={() => onCcBccOpenChange(true)}
+                    className="text-[13px] font-medium text-[#444746] hover:text-[#0b57d0]"
+                  >
+                    Cc
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onCcBccOpenChange(true)}
+                    className="text-[13px] font-medium text-[#444746] hover:text-[#0b57d0]"
+                  >
+                    Bcc
+                  </button>
+                </div>
+              )}
             </div>
 
-            {!ccBccOpen ? (
-              <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-4 py-1.5">
-                <span className="w-10 shrink-0" aria-hidden />
-                <button
-                  type="button"
-                  onClick={() => onCcBccOpenChange(true)}
-                  className="text-[13px] font-medium text-[#1a73e8] hover:underline"
-                >
-                  {titleCase("Cc")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onCcBccOpenChange(true)}
-                  className="text-[13px] font-medium text-[#1a73e8] hover:underline"
-                >
-                  {titleCase("Bcc")}
-                </button>
-              </div>
-            ) : (
+            {ccBccOpen && (
               <>
-                <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-4 py-2">
-                  <span className="w-10 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Cc")}</span>
-                  <div className={cn("min-w-0 flex-1", fieldGroupClass)}>
-                    <RecipientField
-                      placeholder={titleCase("Cc")}
-                      value={cc}
-                      onChange={onCcChange}
-                      suggestions={suggestions}
-                    />
+                <div className="flex items-center border-b border-[#f1f3f4] px-3">
+                  <span className="w-7 shrink-0 text-[13px] text-[#444746]">Cc</span>
+                  <div className={cn("min-w-0 flex-1 py-0.5", fieldGroupClass)}>
+                    <RecipientField placeholder="Cc" value={cc} onChange={onCcChange} suggestions={suggestions} />
                   </div>
                 </div>
-                <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-4 py-2">
-                  <span className="w-10 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Bcc")}</span>
-                  <div className={cn("min-w-0 flex-1", fieldGroupClass)}>
-                    <RecipientField
-                      placeholder={titleCase("Bcc")}
-                      value={bcc}
-                      onChange={onBccChange}
-                      suggestions={suggestions}
-                    />
+                <div className="flex items-center border-b border-[#f1f3f4] px-3">
+                  <span className="w-7 shrink-0 text-[13px] text-[#444746]">Bcc</span>
+                  <div className={cn("min-w-0 flex-1 py-0.5", fieldGroupClass)}>
+                    <RecipientField placeholder="Bcc" value={bcc} onChange={onBccChange} suggestions={suggestions} />
                   </div>
                 </div>
               </>
@@ -233,22 +222,22 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               </p>
             ) : null}
 
-            {showSubject ? (
-              <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-4 py-2">
-                <span className="w-10 shrink-0 text-right text-[13px] text-[#5f6368]">{titleCase("Subject")}</span>
+            {showSubject && (
+              <div className="border-b border-[#f1f3f4] px-3 py-2.5">
                 <input
                   type="text"
                   value={subject}
                   onChange={(e) => onSubjectChange(e.target.value)}
-                  className="min-w-0 flex-1 border-0 bg-transparent text-[13px] text-[#202124] outline-none"
+                  placeholder="Subject"
+                  className="w-full border-0 bg-transparent text-[15px] font-medium text-[#202124] outline-none placeholder:font-normal placeholder:text-[#777]"
                 />
               </div>
-            ) : null}
+            )}
 
             <RichTextEditor
               value={body}
               onChange={onBodyChange}
-              placeholder={titleCase("Compose email")}
+              placeholder="Compose email"
               autoFocus
             />
 

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { PassThrough } from "node:stream";
-import archiver from "archiver";
+import { createRequire } from "node:module";
+const _require = createRequire(import.meta.url);
+const archiver = _require("archiver") as typeof import("archiver").default;
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   getDriveFileMeta,

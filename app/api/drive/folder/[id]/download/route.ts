@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import { PassThrough, Readable } from "node:stream";
-import { createGzip } from "node:zlib";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   getDriveFileMeta,
@@ -17,6 +15,30 @@ const MAX_DEPTH = 25;
 
 type Entry = { id: string; name: string; mimeType: string; path: string };
 
+// Precomputed CRC-32 lookup table (IEEE polynomial 0xEDB88320). The ZIP
+// format requires a valid CRC-32 of each entry's uncompressed bytes;
+// unzip tools (notably macOS Archive Utility) reject archives whose stored
+// CRC doesn't match the data, which is why a hardcoded 0 produced corrupt zips.
+const CRC_TABLE: number[] = (() => {
+  const table = new Array<number>(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(data: Buffer): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < data.length; i++) {
+    crc = CRC_TABLE[(crc ^ data[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
 class ZipWriter {
   private files: Buffer[] = [];
   private offset = 0;
@@ -24,18 +46,19 @@ class ZipWriter {
   private fileHeaders: Array<{ offset: number; header: Buffer }> = [];
 
   async addFile(name: string, data: Buffer) {
-    const nameBuf = Buffer.from(name, "utf8");
-    const header = this.createLocalFileHeader(name, data.length);
+    const crc = crc32(data);
+    const localOffset = this.offset;
+    const header = this.createLocalFileHeader(name, data.length, crc);
 
-    this.fileHeaders.push({ offset: this.offset, header });
+    this.fileHeaders.push({ offset: localOffset, header });
     this.files.push(header, data);
     this.offset += header.length + data.length;
 
-    const centralEntry = this.createCentralDirectory(name, data.length, this.fileHeaders[this.fileHeaders.length - 1].offset);
+    const centralEntry = this.createCentralDirectory(name, data.length, crc, localOffset);
     this.centralDir.push(centralEntry);
   }
 
-  private createLocalFileHeader(name: string, dataSize: number): Buffer {
+  private createLocalFileHeader(name: string, dataSize: number, crc: number): Buffer {
     const nameBuf = Buffer.from(name, "utf8");
     const buf = Buffer.alloc(30 + nameBuf.length);
     let offset = 0;
@@ -46,7 +69,7 @@ class ZipWriter {
     buf.writeUInt16LE(0, offset); offset += 2; // compression method (0 = no compression)
     buf.writeUInt16LE(0, offset); offset += 2; // last mod file time
     buf.writeUInt16LE(0, offset); offset += 2; // last mod file date
-    buf.writeUInt32LE(0, offset); offset += 4; // crc-32
+    buf.writeUInt32LE(crc, offset); offset += 4; // crc-32
     buf.writeUInt32LE(dataSize, offset); offset += 4; // compressed size
     buf.writeUInt32LE(dataSize, offset); offset += 4; // uncompressed size
     buf.writeUInt16LE(nameBuf.length, offset); offset += 2; // file name length
@@ -56,7 +79,7 @@ class ZipWriter {
     return buf;
   }
 
-  private createCentralDirectory(name: string, dataSize: number, localHeaderOffset: number): Buffer {
+  private createCentralDirectory(name: string, dataSize: number, crc: number, localHeaderOffset: number): Buffer {
     const nameBuf = Buffer.from(name, "utf8");
     const buf = Buffer.alloc(46 + nameBuf.length);
     let offset = 0;
@@ -68,7 +91,7 @@ class ZipWriter {
     buf.writeUInt16LE(0, offset); offset += 2; // compression method
     buf.writeUInt16LE(0, offset); offset += 2; // last mod file time
     buf.writeUInt16LE(0, offset); offset += 2; // last mod file date
-    buf.writeUInt32LE(0, offset); offset += 4; // crc-32
+    buf.writeUInt32LE(crc, offset); offset += 4; // crc-32
     buf.writeUInt32LE(dataSize, offset); offset += 4; // compressed size
     buf.writeUInt32LE(dataSize, offset); offset += 4; // uncompressed size
     buf.writeUInt16LE(nameBuf.length, offset); offset += 2; // file name length
@@ -86,7 +109,6 @@ class ZipWriter {
   getBuffer(): Buffer {
     const centralDirStart = this.offset;
     const centralDirBuf = Buffer.concat(this.centralDir);
-    const centralDirEnd = centralDirStart + centralDirBuf.length;
 
     const endOfCentralDir = Buffer.alloc(22);
     let offset = 0;
@@ -152,6 +174,7 @@ export async function GET(
   }
 
   const zip = new ZipWriter();
+  const usedNames = new Set<string>();
 
   for (const f of files) {
     const built = buildDriveContentFetch(f.id, f.mimeType, "download");
@@ -175,7 +198,7 @@ export async function GET(
       }
 
       const data = Buffer.concat(chunks.map(c => Buffer.from(c)));
-      const entryName = adjustName(f.path, built.resultMime);
+      const entryName = dedupeName(adjustName(f.path, built.resultMime), usedNames);
       await zip.addFile(entryName, data);
     } catch {
       // Skip failed files
@@ -185,7 +208,9 @@ export async function GET(
   const zipBuffer = zip.getBuffer();
   const zipName = `${sanitize(rootName)}.zip`;
 
-  return new NextResponse(zipBuffer, {
+  // Buffer is a valid response body at runtime; the cast sidesteps a spurious
+  // Buffer<ArrayBufferLike> vs BodyInit mismatch from @types/node version drift.
+  return new NextResponse(zipBuffer as unknown as BodyInit, {
     status: 200,
     headers: {
       "Content-Type": "application/zip",
@@ -220,4 +245,30 @@ function adjustName(path: string, resultMime: string): string {
   const dir = slash >= 0 ? path.slice(0, slash + 1) : "";
   const base = slash >= 0 ? path.slice(slash + 1) : path;
   return dir + suggestedDownloadName(base, resultMime);
+}
+
+/**
+ * Ensure each zip entry path is unique. Two files in the same folder can
+ * collide after export-mime normalization (e.g. two Google Docs both become
+ * "report.pdf"); duplicate paths make some unzip tools drop or error on
+ * entries, so we append " (2)", " (3)", … before the extension.
+ */
+function dedupeName(name: string, used: Set<string>): string {
+  if (!used.has(name)) {
+    used.add(name);
+    return name;
+  }
+  const dot = name.lastIndexOf(".");
+  const slash = name.lastIndexOf("/");
+  const hasExt = dot > slash && dot !== -1;
+  const stem = hasExt ? name.slice(0, dot) : name;
+  const ext = hasExt ? name.slice(dot) : "";
+  let n = 2;
+  let candidate = `${stem} (${n})${ext}`;
+  while (used.has(candidate)) {
+    n += 1;
+    candidate = `${stem} (${n})${ext}`;
+  }
+  used.add(candidate);
+  return candidate;
 }

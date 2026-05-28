@@ -84,6 +84,12 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
   const draggingRef = useRef(false);
   // In-app clipboard: a 2-D block of raw values copied/cut from a range.
   const clipboardRef = useRef<string[][] | null>(null);
+  // Live refs so background save callbacks read current state without stale
+  // closures (avoids re-creating the save fn on every keystroke).
+  const dataRef = useRef<SheetData | null>(null);
+  const editingRef = useRef<Pos | null>(null);
+  useEffect(() => { dataRef.current = data; }, [data]);
+  useEffect(() => { editingRef.current = editing; }, [editing]);
   // Right-click context menu for a tab: { sheetId, title, x, y } or null.
   const [tabMenu, setTabMenu] = useState<{ sheetId: number; title: string; x: number; y: number } | null>(null);
   // Live column-width overrides while dragging (col index → px). Cleared
@@ -347,8 +353,77 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     [data]
   );
 
+  /** Push an undo entry and clear the redo stack (new action branch). */
+  const recordHistory = useCallback((entry: HistoryEntry) => {
+    undoStackRef.current.push(entry);
+    if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    setHistoryTick((t) => t + 1);
+  }, []);
+
+  // Tracks how many cell-saves are in flight so we only re-pull computed
+  // formula values once the writes settle (avoids clobbering fast typing).
+  const pendingSavesRef = useRef(0);
+
+  /**
+   * Persist a single cell in the background. Does NOT block the UI — the
+   * optimistic value is already on screen, so the user can keep typing in
+   * the next cell immediately (Gmail/Sheets-style). After the write settles
+   * we only re-pull computed values if the sheet actually has formulas, and
+   * we never overwrite the cell the user is currently editing.
+   */
+  const saveCellBackground = useCallback(
+    (sheet: string, row: number, col: number, value: string) => {
+      pendingSavesRef.current += 1;
+      setSaving(true);
+      fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/data`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet, row, col, value }),
+      })
+        .then(async (res) => {
+          const j = (await res.json()) as { ok?: boolean; values?: string[][]; error?: string };
+          if (!res.ok) throw new Error(j.error || "Save failed");
+          // Only the LAST settling save refreshes formula results, and only
+          // if a formula exists somewhere — plain text needs no server echo.
+          const lastInFlight = pendingSavesRef.current === 1;
+          const hasFormula =
+            j.values != null &&
+            (dataRef.current?.cells.some((r) => r.some((c) => c.raw.startsWith("="))) ?? false);
+          if (lastInFlight && hasFormula && j.values) {
+            const vals = j.values;
+            setData((d) => {
+              if (!d) return d;
+              const cells = d.cells.map((r) => r.slice());
+              for (let r = 0; r < d.rowCount; r++) {
+                for (let c = 0; c < d.columnCount; c++) {
+                  // Never stomp the cell being actively edited.
+                  if (editingRef.current && editingRef.current.row === r && editingRef.current.col === c) continue;
+                  const display = vals[r]?.[c] ?? "";
+                  const existing = cells[r]?.[c] ?? { display: "", raw: "" };
+                  if (cells[r]) cells[r][c] = { ...existing, display };
+                }
+              }
+              return { ...d, cells };
+            });
+          }
+        })
+        .catch((e) => {
+          setError(e instanceof Error ? e.message : "Save failed");
+        })
+        .finally(() => {
+          pendingSavesRef.current -= 1;
+          if (pendingSavesRef.current <= 0) {
+            pendingSavesRef.current = 0;
+            setSaving(false);
+          }
+        });
+    },
+    [spreadsheetId]
+  );
+
   const commitEdit = useCallback(
-    async (move?: Pos) => {
+    (move?: Pos) => {
       if (!editing || !activeSheet) {
         setEditing(null);
         if (move) selectCell(move);
@@ -371,7 +446,7 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
         after: [[value]],
       });
 
-      // Optimistic display update.
+      // Optimistic display update — instant; user can keep typing.
       setData((d) => {
         if (!d) return d;
         const cells = d.cells.map((r) => r.slice());
@@ -380,39 +455,11 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
         return { ...d, cells };
       });
 
-      setSaving(true);
-      try {
-        const res = await fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/data`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sheet: activeSheet, row: pos.row, col: pos.col, value }),
-        });
-        const j = (await res.json()) as { ok?: boolean; values?: string[][]; error?: string };
-        if (!res.ok) throw new Error(j.error || "Save failed");
-        // Refresh displayed (computed) values so formulas recalc.
-        if (j.values) {
-          setData((d) => {
-            if (!d) return d;
-            const cells = d.cells.map((r) => r.slice());
-            for (let r = 0; r < d.rowCount; r++) {
-              for (let c = 0; c < d.columnCount; c++) {
-                const display = j.values?.[r]?.[c] ?? "";
-                const existing = cells[r]?.[c] ?? { display: "", raw: "" };
-                if (cells[r]) cells[r][c] = { ...existing, display };
-              }
-            }
-            return { ...d, cells };
-          });
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Save failed");
-        void loadSheet(activeSheet); // resync on failure
-      } finally {
-        setSaving(false);
-      }
+      // Fire-and-forget the network write.
+      saveCellBackground(activeSheet, pos.row, pos.col, value);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [editing, editValue, activeSheet, spreadsheetId, data]
+    [editing, editValue, activeSheet, saveCellBackground]
   );
 
   /** Apply a fresh computed-values matrix from the server onto the grid. */
@@ -444,14 +491,6 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     },
     [data]
   );
-
-  /** Push an undo entry and clear the redo stack (new action branch). */
-  const recordHistory = useCallback((entry: HistoryEntry) => {
-    undoStackRef.current.push(entry);
-    if (undoStackRef.current.length > 100) undoStackRef.current.shift();
-    redoStackRef.current = [];
-    setHistoryTick((t) => t + 1);
-  }, []);
 
   /** Clear all values in the current selection rectangle. */
   const clearSelection = useCallback(async () => {

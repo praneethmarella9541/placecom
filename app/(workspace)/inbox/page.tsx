@@ -2309,8 +2309,9 @@ export default function InboxPage() {
         Right area : Category tabs (top) + search + thread list OR thread detail
     ──────────────────────────────────────────────────────────────────────── */}
     <div
+      data-gmail-mail
       className={cn(
-        "flex min-h-0 overflow-hidden",
+        "flex min-h-0 overflow-hidden bg-[#f6f8fc] text-[#202124]",
         /* Cancel WorkspaceChrome padding so the pane is exactly viewport-tall (no page scroll). */
         "-mx-4 -mt-[calc(56px+16px)] -mb-6 h-[calc(100dvh-40px)]",
         "md:-mx-6 md:-mt-6 md:-mb-6 md:h-[calc(100dvh-48px)]"
@@ -2386,7 +2387,7 @@ export default function InboxPage() {
                 {badge !== null && (
                   <span className={cn(
                     "min-w-[20px] rounded-full px-1.5 py-[1px] text-center text-[11px] font-bold tabular-nums",
-                    active ? "text-[var(--color-primary)]" : "text-[var(--color-text-muted)]"
+                    active ? "text-[#0b57d0]" : "text-[#5f6368]"
                   )}>
                     {badge > 9999 ? `${Math.floor(badge / 1000)}k` : badge}
                   </span>
@@ -2465,8 +2466,8 @@ export default function InboxPage() {
                     className={cn(
                       "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-4 pr-3 text-[13px] font-medium transition-colors",
                       active
-                        ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                        : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]",
+                        ? "bg-[#d3e3fd] font-semibold text-[#001d35]"
+                        : "text-[#444746] hover:bg-[#e8eaed]",
                     )}
                   >
                     {/* Colour dot from label if set */}
@@ -2500,7 +2501,7 @@ export default function InboxPage() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
 
         {/* Mobile folder tabs (replaces left rail on small screens) */}
-        <div className="flex shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
+        <div className="flex shrink-0 border-b border-[#e8eaed] bg-white md:hidden">
           <div className="flex flex-1 overflow-x-auto">
             {FOLDER_NAV.map(({ key, label, Icon, countId, unreadOnly }) => {
               const count = countId ? labelCounts[countId] : undefined;
@@ -2525,8 +2526,8 @@ export default function InboxPage() {
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-3 text-[13px] font-medium transition-colors",
                     active
-                      ? "border-[var(--color-primary)] text-[var(--color-primary)]"
-                      : "border-transparent text-[var(--color-text-muted)]",
+                      ? "border-[#0b57d0] text-[#0b57d0]"
+                      : "border-transparent text-[#5f6368]",
                   )}
                 >
                   <Icon className="h-4 w-4" />
@@ -2601,7 +2602,7 @@ export default function InboxPage() {
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <div
             className={cn(
-              "relative flex min-h-0 flex-col overflow-hidden bg-[#f6f8fc]",
+                "relative flex min-h-0 flex-col overflow-hidden bg-white md:bg-[#f6f8fc]",
               selectedId
                 ? "hidden w-full shrink-0 border-[#e8eaed] md:flex md:border-r"
                 : "flex flex-1",
@@ -3104,7 +3105,7 @@ export default function InboxPage() {
                   {[0, 1].map((idx) => (
                     <article
                       key={idx}
-                      className="surface-card rounded-[var(--radius-lg)] p-5 shadow-[var(--shadow-sm)] md:p-6"
+                      className="rounded-lg border border-[#e8eaed] bg-white p-5 md:p-6"
                     >
                       {/* Top row: avatar + from/to + date */}
                       <div className="flex items-start justify-between gap-2">

@@ -129,6 +129,29 @@
     --accent-soft: var(--color-primary-light);
   }
 
+  /* /inbox mail UI — lock tokens to Gmail web colors */
+  [data-gmail-mail] {
+    --color-bg: #f6f8fc;
+    --color-surface: #ffffff;
+    --color-surface-2: #f8f9fa;
+    --color-surface-offset: #f1f3f4;
+    --color-border: rgba(0, 0, 0, 0.12);
+    --color-border-strong: rgba(0, 0, 0, 0.18);
+    --color-text: #202124;
+    --color-text-muted: #444746;
+    --color-text-faint: #70757a;
+    --color-primary: #0b57d0;
+    --color-primary-hover: #1765cc;
+    --color-primary-light: #d3e3fd;
+    --color-primary-tint: #e8f0fe;
+    --color-blue: #1a73e8;
+    --color-success: #188038;
+    --color-success-light: #e6f4ea;
+    --color-danger: #d93025;
+    --color-danger-light: #fce8e6;
+    --shadow-glow: 0 0 0 1px rgba(11, 87, 208, 0.2), 0 4px 16px rgba(11, 87, 208, 0.12);
+  }
+
   *,
   *::before,
   *::after {

@@ -25,22 +25,21 @@ export function GmailComposeFooter({
   const label = sending ? "Sending…" : sendLabel ?? "Send";
 
   return (
-    <div className="shrink-0 border-t border-[#c7d2fe] bg-gradient-to-r from-[#f0f4ff] via-[#eef2ff] to-[#f8faff]">
+    <div className="shrink-0 border-t border-[#e8eaed] bg-[#f8f9fa]">
       <div className="flex items-center gap-1 px-3 py-2">
-        {/* Send split-pill — joined with no gap, opacity dims when disabled */}
-        <div className={cn("flex shrink-0 items-center rounded-full bg-gradient-to-r from-[#0b57d0] to-[#4f46e5] shadow-sm shadow-indigo-200/80", (sendDisabled || sending) && "opacity-50 cursor-not-allowed")}>
+        <div className={cn("flex shrink-0 items-center rounded-full bg-[#0b57d0]", (sendDisabled || sending) && "opacity-50 cursor-not-allowed")}>
           <button
             type="button"
             disabled={sendDisabled || sending}
             onClick={onSend}
-            className="rounded-l-full px-5 py-[7px] text-[14px] font-medium text-white leading-none hover:bg-white/10 disabled:pointer-events-none"
+            className="rounded-l-full px-5 py-[7px] text-[14px] font-medium text-white leading-none hover:bg-[#1765cc] disabled:pointer-events-none"
           >
             {label}
           </button>
           <button
             type="button"
             disabled={sendDisabled || sending}
-            className="flex h-[34px] w-8 items-center justify-center rounded-r-full border-l border-white/25 hover:bg-white/10 disabled:pointer-events-none"
+            className="flex h-[34px] w-8 items-center justify-center rounded-r-full border-l border-white/25 hover:bg-[#1765cc] disabled:pointer-events-none"
             title="More send options"
             aria-label="More send options"
           >
@@ -48,22 +47,19 @@ export function GmailComposeFooter({
           </button>
         </div>
 
-        {/* Attach files */}
-        <FooterBtn title="Attach files" onClick={onAttach} tone="attach">
+        <FooterBtn title="Attach files" onClick={onAttach}>
           <Paperclip className="h-[18px] w-[18px]" strokeWidth={2} />
         </FooterBtn>
 
-        {/* Photo — image-only file picker */}
         {onAttachPhoto && (
-          <FooterBtn title="Insert photo" onClick={onAttachPhoto} tone="photo">
+          <FooterBtn title="Insert photo" onClick={onAttachPhoto}>
             <PhotoIcon />
           </FooterBtn>
         )}
 
         <div className="flex-1" />
 
-        {/* Discard */}
-        <FooterBtn title="Discard draft" onClick={onDiscard} tone="discard">
+        <FooterBtn title="Discard draft" onClick={onDiscard}>
           <TrashIcon />
         </FooterBtn>
       </div>
@@ -71,20 +67,12 @@ export function GmailComposeFooter({
   );
 }
 
-const footerToneClass = {
-  default: "text-[#4338ca] hover:bg-[#e0e7ff]",
-  attach: "text-[#188038] hover:bg-[#e6f4ea]",
-  photo: "text-[#b06000] hover:bg-[#fef7e0]",
-  discard: "text-[#c5221f] hover:bg-[#fce8e6]",
-} as const;
-
 function FooterBtn({
-  title, onClick, children, tone = "default",
+  title, onClick, children,
 }: {
   title: string;
   onClick: () => void;
   children: React.ReactNode;
-  tone?: keyof typeof footerToneClass;
 }) {
   return (
     <button
@@ -92,10 +80,7 @@ function FooterBtn({
       title={title}
       aria-label={title}
       onClick={onClick}
-      className={cn(
-        "flex h-9 w-9 items-center justify-center rounded-full transition-colors",
-        footerToneClass[tone]
-      )}
+      className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#e8eaed]"
     >
       {children}
     </button>

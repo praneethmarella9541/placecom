@@ -31,12 +31,8 @@ export function getGoogleOAuthClientId(): string {
  *   list refreshes.
  * - contacts.readonly + contacts.other.readonly: People API — saved contacts & “Other contacts” for compose suggestions
  * - forms.body: create Google Forms via Forms API (/forms workspace)
- * - spreadsheets: read/write Google Sheets cells, formulas, formatting, tabs,
- *   charts via the Sheets API (/sheets workspace). File-level operations
- *   (create/list/rename/move/delete/share) reuse the existing Drive scope.
  * Enable **People API** in the same Google Cloud project (APIs & Services → Enable APIs).
  * Enable **Google Forms API** for programmatic form creation.
- * Enable **Google Sheets API** for spreadsheet read/write.
  * Google must allow these scopes for your OAuth client or tokens will lack Gmail access
  * (403 ACCESS_TOKEN_SCOPE_INSUFFICIENT). Configure: Google Cloud Console → Google Auth
  * Platform → Data access (Scopes) — add the same Gmail URLs; enable Gmail API for the project.
@@ -57,7 +53,6 @@ export const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/contacts.readonly",
   "https://www.googleapis.com/auth/contacts.other.readonly",
   "https://www.googleapis.com/auth/forms.body",
-  "https://www.googleapis.com/auth/spreadsheets",
 ].join(" ");
 
 /** Last few characters for UI diagnostics (not sensitive, but avoids full dump). */

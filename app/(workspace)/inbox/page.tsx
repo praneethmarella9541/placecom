@@ -11,6 +11,7 @@ import { GmailComposeDialog } from "@/components/GmailComposeDialog";
 import { GmailInlineReply, type InlineReplyMode } from "@/components/GmailInlineReply";
 import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
 import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
+import { uploadLargeFileToDrive } from "@/lib/upload-large-file-to-drive";
 import {
   formatBytes,
   type PendingFile,
@@ -1167,73 +1168,29 @@ export default function InboxPage() {
         const base64 = await fileToBase64(file);
         newFiles.push({ kind: "new", file, base64 });
       } else {
-        // Exceeds Gmail's 25 MB limit — upload directly to Drive from the browser
-        // (no proxy through Next.js to avoid server body-size limits) then insert
-        // a sharing link. Two steps:
-        //   1. Ask our server to create a Drive resumable-upload session → get session URL.
-        //   2. PUT the file bytes directly to Drive using that URL.
-        //   3. Ask our server to set public-read permissions and return metadata.
+        // Exceeds Gmail's 25 MB limit — upload to Drive in 4 MB chunks via our API
+        // (browser cannot PUT to googleapis.com directly due to CORS).
         setDriveUploading((s) => new Set(s).add(file.name));
         try {
-          // Step 1 — create upload session.
-          const sessionRes = await fetch("/api/drive/upload-session", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream", size: file.size }),
-          });
-          const sessionRaw = await sessionRes.text();
-          let sessionData: { sessionUrl?: string; error?: string } = {};
-          try { sessionData = sessionRaw ? JSON.parse(sessionRaw) : {}; } catch { /* non-JSON */ }
-          if (!sessionRes.ok || !sessionData.sessionUrl) {
-            alert(sessionData.error || `Could not start Drive upload (${sessionRes.status}). Check that Drive access is enabled.`);
-            continue;
-          }
-
-          // Step 2 — PUT file bytes directly to Drive (bypasses Next.js body limit).
-          const putRes = await fetch(sessionData.sessionUrl, {
-            method: "PUT",
-            headers: {
-              "Content-Length": String(file.size),
-              "Content-Type": file.type || "application/octet-stream",
-            },
-            body: file,
-          });
-          if (!putRes.ok) {
-            alert(`Drive upload failed (${putRes.status}). Please try again.`);
-            continue;
-          }
-          const putData = (await putRes.json()) as { id?: string; error?: { message?: string } };
-          const fileId = putData.id;
-          if (!fileId) {
-            alert("Drive upload completed but returned no file ID. Please try again.");
-            continue;
-          }
-
-          // Step 3 — set permissions and fetch metadata.
-          const finalRes = await fetch("/api/drive/upload-session", {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ fileId }),
-          });
-          const finalRaw = await finalRes.text();
-          let finalData: { file?: { id: string; name: string; mimeType: string; size?: string; webViewLink: string }; error?: string } = {};
-          try { finalData = finalRaw ? JSON.parse(finalRaw) : {}; } catch { /* non-JSON */ }
-          if (!finalRes.ok || !finalData.file) {
-            alert(finalData.error || `Could not finalize Drive upload (${finalRes.status}).`);
-            continue;
-          }
+          const driveFile = await uploadLargeFileToDrive(file);
           newFiles.push({
             kind: "drive",
-            name: finalData.file.name,
-            mimeType: finalData.file.mimeType,
-            size: finalData.file.size ? parseInt(finalData.file.size, 10) : file.size,
-            driveFileId: finalData.file.id,
-            webViewLink: finalData.file.webViewLink,
+            name: driveFile.name,
+            mimeType: driveFile.mimeType,
+            size: driveFile.size ? parseInt(driveFile.size, 10) : file.size,
+            driveFileId: driveFile.id,
+            webViewLink: driveFile.webViewLink,
           });
         } catch (e) {
-          alert(`Failed to upload ${file.name} to Drive: ${e instanceof Error ? e.message : "network error"}. Please try again.`);
+          alert(
+            `Failed to upload ${file.name} to Drive: ${e instanceof Error ? e.message : "network error"}. Please try again.`
+          );
         } finally {
-          setDriveUploading((s) => { const n = new Set(s); n.delete(file.name); return n; });
+          setDriveUploading((s) => {
+            const n = new Set(s);
+            n.delete(file.name);
+            return n;
+          });
         }
       }
     }

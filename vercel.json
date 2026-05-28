@@ -8,6 +8,12 @@
     },
     "app/api/meetings/sync/route.ts": {
       "maxDuration": 120
+    },
+    "app/api/drive/upload-chunk/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/drive/upload-session/route.ts": {
+      "maxDuration": 60
     }
   }
 }

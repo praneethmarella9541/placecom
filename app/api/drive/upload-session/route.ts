@@ -10,12 +10,11 @@ const DRIVE_API = "https://www.googleapis.com/drive/v3";
  * POST /api/drive/upload-session
  * Body: { fileName, mimeType, size }
  *
- * Creates a Google Drive resumable upload session and returns the session URL
- * so the browser can PUT the file bytes directly to Google — bypassing the
- * Next.js server body size limit entirely.
+ * Creates a Google Drive resumable upload session and returns the session URL.
+ * The client uploads via POST /api/drive/upload-chunk (4 MB chunks, server-side
+ * PUT to Google) to avoid browser CORS failures on direct googleapis.com calls.
  *
- * After the client finishes the PUT it calls POST /api/drive/upload-session/finalize
- * with the file id to set "anyone with the link can view" and return metadata.
+ * After upload completes, PATCH this route with fileId to share the link.
  */
 export async function POST(request: Request) {
   const auth = await requireGmailAccessToken(request);

@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef } from "react";
-import { Paperclip, Trash2 } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { RichTextEditor, richTextIsEmpty } from "@/components/RichTextEditor";
+import { GmailComposeFooter } from "@/components/GmailComposeFooter";
+import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
 import { IconForward, IconReply, IconReplyAll } from "@/components/Icons";
+import type { PendingFile } from "@/lib/gmail-compose-types";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 
@@ -28,12 +29,17 @@ type GmailInlineReplyProps = {
   onSend: () => void;
   onAttach: () => void;
   sending?: boolean;
-  attachmentList?: React.ReactNode;
+  files: PendingFile[];
+  driveUploading: Set<string>;
+  onRemoveFile: (index: number) => void;
 };
 
+const actionBtnClass =
+  "inline-flex items-center gap-2 rounded-full border border-[#dadce0] bg-white px-5 py-2.5 text-[14px] font-normal text-[#5f6368] shadow-sm transition hover:border-[#c6c6c6] hover:bg-[#f8f9fa] hover:shadow-md";
+
 /**
- * Gmail reading-pane reply UX: collapsed "Reply" stubs, expanded inline composer
- * with Send on the left and formatting toolbar above the footer.
+ * Gmail reading-pane reply: horizontal Reply / Reply all / Forward row,
+ * then expanded inline composer with formatting toolbar and Send footer.
  */
 export function GmailInlineReply({
   mode,
@@ -53,71 +59,51 @@ export function GmailInlineReply({
   onSend,
   onAttach,
   sending,
-  attachmentList,
+  files,
+  driveUploading,
+  onRemoveFile,
 }: GmailInlineReplyProps) {
-  const fileRef = useRef<HTMLInputElement>(null);
-
   if (!mode) {
     return (
-      <div className="space-y-2 bg-[#f6f8fc] px-4 py-4 md:px-6">
-        <button
-          type="button"
-          onClick={onStartReply}
-          className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-[#f1f3f4] px-4 py-3 text-left text-[14px] text-[#5f6368] transition hover:border-[#dadce0] hover:bg-[#e8eaed] hover:shadow-sm"
-        >
-          <IconReply className="h-5 w-5 shrink-0 text-[#5f6368]" />
+      <div className="flex flex-wrap items-center gap-2 border-t border-[#e8eaed] bg-white px-4 py-4 md:px-8">
+        <button type="button" onClick={onStartReply} className={actionBtnClass}>
+          <IconReply className="h-[18px] w-[18px] shrink-0 text-[#5f6368]" />
           <span>{titleCase("Reply")}</span>
         </button>
-        <button
-          type="button"
-          onClick={onStartReplyAll}
-          className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-[#f1f3f4] px-4 py-3 text-left text-[14px] text-[#5f6368] transition hover:border-[#dadce0] hover:bg-[#e8eaed] hover:shadow-sm"
-        >
-          <IconReplyAll className="h-5 w-5 shrink-0 text-[#5f6368]" />
+        <button type="button" onClick={onStartReplyAll} className={actionBtnClass}>
+          <IconReplyAll className="h-[18px] w-[18px] shrink-0 text-[#5f6368]" />
           <span>{titleCase("Reply all")}</span>
         </button>
-        <button
-          type="button"
-          onClick={onForward}
-          className="flex w-full items-center gap-3 rounded-lg border border-transparent bg-[#f1f3f4] px-4 py-3 text-left text-[14px] text-[#5f6368] transition hover:border-[#dadce0] hover:bg-[#e8eaed] hover:shadow-sm"
-        >
-          <IconForward className="h-5 w-5 shrink-0 text-[#5f6368]" />
+        <button type="button" onClick={onForward} className={actionBtnClass}>
+          <IconForward className="h-[18px] w-[18px] shrink-0 text-[#5f6368]" />
           <span>{titleCase("Forward")}</span>
         </button>
       </div>
     );
   }
 
+  const sendDisabled = richTextIsEmpty(body) || !to.trim();
+
   return (
-    <div className="border-t border-[#e8eaed] bg-white px-4 py-3 md:px-6">
+    <div className="border-t border-[#e8eaed] bg-white px-4 py-4 md:px-8">
       <div className="overflow-hidden rounded-lg border border-[#dadce0] bg-white shadow-sm">
-        <div className="border-b border-[#f1f3f4] px-3 py-2 text-[13px] text-[#5f6368]">
+        <div className="border-b border-[#f1f3f4] px-4 py-2.5 text-[13px] text-[#5f6368]">
           {mode === "replyAll" ? titleCase("Reply all") : titleCase("Reply")}
           <span className="text-[#202124]"> — {replyLabel}</span>
         </div>
 
         <div className="flex items-start gap-2 border-b border-[#f1f3f4] px-3 py-2">
-          <span className="w-8 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("To")}</span>
+          <span className="w-9 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("To")}</span>
           <div className="min-w-0 flex-1 [&_[role=group]]:min-h-[32px] [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:shadow-none">
-            <RecipientField
-              value={to}
-              onChange={onToChange}
-              suggestions={suggestions}
-              placeholder=""
-            />
+            <RecipientField value={to} onChange={onToChange} suggestions={suggestions} placeholder="" />
           </div>
         </div>
 
         {showCc && (
           <div className="flex items-start gap-2 border-b border-[#f1f3f4] px-3 py-2">
-            <span className="w-8 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Cc")}</span>
+            <span className="w-9 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Cc")}</span>
             <div className="min-w-0 flex-1 [&_[role=group]]:min-h-[32px] [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:shadow-none">
-              <RecipientField
-                value={cc}
-                onChange={onCcChange}
-                suggestions={suggestions}
-                placeholder=""
-              />
+              <RecipientField value={cc} onChange={onCcChange} suggestions={suggestions} placeholder="" />
             </div>
           </div>
         )}
@@ -127,45 +113,23 @@ export function GmailInlineReply({
           onChange={onBodyChange}
           placeholder=""
           autoFocus
-          className="min-h-[160px]"
+          className={cn("min-h-[140px] [&_[contenteditable]]:min-h-[120px]")}
         />
 
-        {attachmentList}
+        <GmailPendingAttachments
+          files={files}
+          driveUploading={driveUploading}
+          onRemove={onRemoveFile}
+        />
 
-        <div className="flex items-center gap-1 border-t border-[#f1f3f4] bg-white px-2 py-2">
-          <button
-            type="button"
-            disabled={sending || richTextIsEmpty(body) || !to.trim()}
-            onClick={onSend}
-            className={cn(
-              "rounded-full px-6 py-2 text-[14px] font-medium text-white shadow-sm",
-              sending || richTextIsEmpty(body) || !to.trim()
-                ? "cursor-not-allowed bg-[#a8c7fa]"
-                : "bg-[#0b57d0] hover:bg-[#0842a0]"
-            )}
-          >
-            {sending ? titleCase("Sending…") : titleCase("Send")}
-          </button>
-          <button
-            type="button"
-            onClick={onAttach}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-            title={titleCase("Attach files")}
-          >
-            <Paperclip className="h-5 w-5" strokeWidth={2} />
-          </button>
-          <div className="flex-1" />
-          <button
-            type="button"
-            onClick={onDiscard}
-            className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-            title={titleCase("Discard draft")}
-          >
-            <Trash2 className="h-5 w-5" strokeWidth={2} />
-          </button>
-        </div>
+        <GmailComposeFooter
+          onSend={onSend}
+          onAttach={onAttach}
+          onDiscard={onDiscard}
+          sendDisabled={sendDisabled}
+          sending={sending}
+        />
       </div>
-      <input ref={fileRef} type="file" multiple className="hidden" aria-hidden />
     </div>
   );
 }

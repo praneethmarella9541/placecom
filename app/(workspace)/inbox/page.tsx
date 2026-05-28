@@ -6,8 +6,15 @@ import { LabelChip } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { EmailHtmlBody } from "@/components/EmailHtmlBody";
+import { GmailAvatar } from "@/components/GmailAvatar";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
 import { GmailInlineReply, type InlineReplyMode } from "@/components/GmailInlineReply";
+import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
+import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
+import {
+  formatBytes,
+  type PendingFile,
+} from "@/lib/gmail-compose-types";
 import {
   mergeInboxUnread,
   readSessionInboxUnread,
@@ -20,7 +27,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, Paperclip, FilePen, SlidersHorizontal, Bookmark, Loader2, Trash2, AlertOctagon, Mail } from "lucide-react";
+import { PencilLine, FilePen, SlidersHorizontal, Bookmark, Trash2, AlertOctagon, Mail } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -157,20 +164,6 @@ function senderName(from: string): string {
   return from;
 }
 
-/** First letter/digit of a display name — skips quotes, punctuation, whitespace. */
-function avatarInitial(name: string): string {
-  for (let i = 0; i < name.length; i++) {
-    const ch = name.charAt(i);
-    // ASCII alphanumeric — covers the common case without needing the `u`
-    // regex flag (which requires an es2018+ TS target this project doesn't set).
-    if ((ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9")) {
-      return ch.toUpperCase();
-    }
-  }
-  // Non-ASCII names (Cyrillic, CJK, etc.): fall back to the first non-whitespace char.
-  const trimmed = name.trim();
-  return (trimmed.charAt(0) || "?").toUpperCase();
-}
 type AttachmentView = {
   attachmentId: string;
   filename: string;
@@ -197,53 +190,6 @@ type TrackingRow = {
   opened_at: string | null;
   open_count: number;
 };
-
-/**
- * Attachment in the compose window.
- * - `kind: 'new'` — a freshly picked File whose base64 has been read into memory.
- * - `kind: 'saved'` — an attachment already stored on a draft on the server;
- *   we hold a reference (messageId + attachmentId) and only fetch the bytes
- *   if we have to (re-saving the draft or sending).
- * - `kind: 'drive'` — a file that exceeded Gmail's 25 MB limit and was
- *   uploaded to the sender's Drive. Sent as a link, not an attachment.
- */
-type PendingFile =
-  | {
-      kind: "new";
-      file: File;
-      base64: string;
-    }
-  | {
-      kind: "saved";
-      name: string;
-      mimeType: string;
-      size: number;
-      messageId: string;
-      attachmentId: string;
-    }
-  | {
-      kind: "drive";
-      name: string;
-      mimeType: string;
-      size: number;
-      driveFileId: string;
-      webViewLink: string;
-    };
-
-/** Display-name for a PendingFile regardless of variant. */
-function pendingFileName(f: PendingFile): string {
-  return f.kind === "new" ? f.file.name : f.name;
-}
-/** Display-size for a PendingFile regardless of variant. */
-function pendingFileSize(f: PendingFile): number {
-  return f.kind === "new" ? f.file.size : f.size;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -2396,6 +2342,7 @@ export default function InboxPage() {
 
     try {
       const attachments = await resolveAttachmentsForUpload(snapshot.files);
+      const finalHtmlBody = appendDriveLinksToHtml(snapshot.htmlBody, snapshot.files);
       const res = await fetch("/api/gmail/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2404,7 +2351,7 @@ export default function InboxPage() {
           cc: snapshot.cc,
           subject: "",
           textBody: "",
-          htmlBody: snapshot.htmlBody,
+          htmlBody: finalHtmlBody,
           threadId: snapshot.threadId,
           inReplyToMessageId: snapshot.lastId,
           attachments: attachments.length ? attachments : undefined,
@@ -2563,28 +2510,7 @@ export default function InboxPage() {
     try {
       const attachments = await resolveAttachmentsForUpload(snapshot.files);
 
-      // Append Drive-link entries as a footer section in the HTML body,
-      // exactly like Gmail does: a small separator + Drive icon + file name
-      // as a hyperlink. This way the recipient sees a clickable link.
-      const driveLinks = snapshot.files.filter((f) => f.kind === "drive") as Extract<PendingFile, { kind: "drive" }>[];
-      let finalHtmlBody = snapshot.htmlBody;
-      if (driveLinks.length > 0) {
-        const linkHtml = driveLinks
-          .map(
-            (f) =>
-              `<tr><td style="padding:4px 0;font-size:13px;color:#1a73e8;">` +
-              `<a href="${f.webViewLink}" style="color:#1a73e8;text-decoration:none;" target="_blank">` +
-              `📎 ${f.name}</a>` +
-              `<span style="color:#5f6368;font-size:11px;margin-left:6px;">(Drive)</span></td></tr>`
-          )
-          .join("");
-        finalHtmlBody =
-          `${snapshot.htmlBody}` +
-          `<br><table style="border-top:1px solid #e0e0e0;margin-top:12px;padding-top:8px;width:100%">` +
-          `<tr><td style="font-size:11px;color:#5f6368;padding-bottom:4px;">Files shared from Google Drive</td></tr>` +
-          linkHtml +
-          `</table>`;
-      }
+      const finalHtmlBody = appendDriveLinksToHtml(snapshot.htmlBody, snapshot.files);
 
       const res = await fetch("/api/gmail/send", {
         method: "POST",
@@ -3537,19 +3463,22 @@ export default function InboxPage() {
                   </p>
                 </div>
 
-                {/* Messages */}
-                <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto p-4 md:p-6">
-                  {messages.map((m) => (
-                    <article key={m.id} className="border-b border-[#f1f3f4] bg-white px-4 py-4 md:px-6">
+                {/* Messages + reply actions (scroll together like Gmail) */}
+                <div className="scrollbar-thin flex-1 overflow-y-auto">
+                  {messages.map((m) => {
+                    const fromEmail = extractEmailAddress(m.from || "");
+                    const fromName = senderName(m.from || "");
+                    return (
+                    <article key={m.id} className="flex gap-4 border-b border-[#f1f3f4] px-4 py-5 md:px-8">
+                      <GmailAvatar seed={fromEmail} name={fromName} size={40} className="mt-0.5" />
+                      <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-[var(--nucleus-mist)] to-[var(--color-surface-offset)] text-[10px] font-bold text-[var(--color-text-muted)]">
-                            {avatarInitial(senderName(m.from || ""))}
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{m.from}</p>
-                            <p className="text-[10px] text-zinc-400">to {m.to || "—"}{m.cc ? <span className="ml-1">cc {m.cc}</span> : null}</p>
-                          </div>
+                        <div className="min-w-0">
+                            <p className="truncate text-[14px] font-medium text-[#202124]">{fromName}</p>
+                            <p className="truncate text-[12px] text-[#5f6368]">
+                              {titleCase("to")} {m.to || "—"}
+                              {m.cc ? <span className="ml-1">· {titleCase("cc")} {m.cc}</span> : null}
+                            </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           {(() => {
@@ -3570,7 +3499,7 @@ export default function InboxPage() {
                               </span>
                             );
                           })()}
-                          <time className="text-[10px] text-zinc-400">{formatDate(m.date)}</time>
+                          <time className="whitespace-nowrap text-[12px] text-[#5f6368]">{formatDate(m.date)}</time>
                         </div>
                       </div>
                       {/* Inline calendar-invite actions — only render when
@@ -3611,53 +3540,42 @@ export default function InboxPage() {
                           </div>
                         );
                       })()}
-                      <EmailHtmlBody html={m.bodyHtml} plain={m.body} />
-                      {m.attachments && m.attachments.length > 0 && (
-                        <AttachmentChips attachments={m.attachments} messageId={m.id} />
-                      )}
-                    </article>
-                  ))}
-                </div>
-
-                <GmailInlineReply
-                  mode={inlineReplyMode}
-                  replyLabel={senderName(messages[messages.length - 1]?.from || "")}
-                  to={inlineReplyTo}
-                  onToChange={setInlineReplyTo}
-                  cc={inlineReplyCc}
-                  onCcChange={setInlineReplyCc}
-                  showCc={inlineReplyMode === "replyAll"}
-                  body={inlineReplyBody}
-                  onBodyChange={setInlineReplyBody}
-                  suggestions={composeRecipientSuggestions}
-                  onStartReply={() => startInlineReply("reply")}
-                  onStartReplyAll={() => startInlineReply("replyAll")}
-                  onForward={() => openForward()}
-                  onDiscard={resetInlineReply}
-                  onSend={() => void sendInlineReply()}
-                  onAttach={() => inlineReplyFileRef.current?.click()}
-                  sending={inlineReplySending}
-                  attachmentList={
-                    inlineReplyFiles.length > 0 ? (
-                      <div className="border-t border-[#f1f3f4] px-3 py-2">
-                        <ul className="flex flex-col gap-1">
-                          {inlineReplyFiles.map((f, i) => (
-                            <li key={i} className="flex items-center justify-between gap-2 rounded border border-[#dadce0] bg-[#f8f9fa] px-2 py-1 text-[12px]">
-                              <span className="truncate">{pendingFileName(f)}</span>
-                              <button
-                                type="button"
-                                onClick={() => setInlineReplyFiles((prev) => prev.filter((_, j) => j !== i))}
-                                className="text-[#5f6368] hover:text-[#202124]"
-                              >
-                                <IconX className="h-3.5 w-3.5" />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
+                      <div className="mt-3">
+                        <EmailHtmlBody html={m.bodyHtml} plain={m.body} />
                       </div>
-                    ) : null
-                  }
-                />
+                      {m.attachments && m.attachments.length > 0 && (
+                        <div className="mt-3">
+                          <AttachmentChips attachments={m.attachments} messageId={m.id} />
+                        </div>
+                      )}
+                      </div>
+                    </article>
+                  );
+                  })}
+
+                  <GmailInlineReply
+                    mode={inlineReplyMode}
+                    replyLabel={senderName(messages[messages.length - 1]?.from || "")}
+                    to={inlineReplyTo}
+                    onToChange={setInlineReplyTo}
+                    cc={inlineReplyCc}
+                    onCcChange={setInlineReplyCc}
+                    showCc={inlineReplyMode === "replyAll"}
+                    body={inlineReplyBody}
+                    onBodyChange={setInlineReplyBody}
+                    suggestions={composeRecipientSuggestions}
+                    onStartReply={() => startInlineReply("reply")}
+                    onStartReplyAll={() => startInlineReply("replyAll")}
+                    onForward={() => openForward()}
+                    onDiscard={resetInlineReply}
+                    onSend={() => void sendInlineReply()}
+                    onAttach={() => inlineReplyFileRef.current?.click()}
+                    sending={inlineReplySending}
+                    files={inlineReplyFiles}
+                    driveUploading={driveUploading}
+                    onRemoveFile={(i) => setInlineReplyFiles((prev) => prev.filter((_, j) => j !== i))}
+                  />
+                </div>
                 <input
                   ref={inlineReplyFileRef}
                   type="file"
@@ -3777,55 +3695,11 @@ export default function InboxPage() {
         onAttachClick={() => composeFileRef.current?.click()}
         onFileChange={(files) => void handleFileSelect(files)}
         attachmentChips={
-          composeFiles.length > 0 || driveUploading.size > 0 ? (
-            <div className="border-t border-[#f1f3f4] px-3 py-2">
-              <ul className="flex flex-col gap-1.5">
-                {Array.from(driveUploading).map((name) => (
-                  <li key={`uploading-${name}`} className="flex items-center gap-2 rounded border border-[#c5e1f5] bg-[#e8f4fd] px-2 py-1.5 text-[12px]">
-                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#1a73e8]" />
-                    <span className="min-w-0 flex-1 truncate font-medium text-[#5f6368]">{name}</span>
-                    <span className="shrink-0 text-[11px] text-[#1a73e8]">Uploading to Drive…</span>
-                  </li>
-                ))}
-                {composeFiles.map((f, i) => (
-                  <li
-                    key={i}
-                    className={`flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-[12px] ${
-                      f.kind === "drive" ? "border-[#c5e1f5] bg-[#e8f4fd]" : "border-[#dadce0] bg-[#f8f9fa]"
-                    }`}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      {f.kind === "drive" ? (
-                        <svg viewBox="0 0 87.3 78" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
-                          <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0a7.3 7.3 0 003.3 3.3z" fill="#0066da"/>
-                          <path d="M43.65 25L29.9 1.2a7.2 7.2 0 00-3.3 3.3L.95 50.5H27.5z" fill="#00ac47"/>
-                          <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25a7.3 7.3 0 000-7.3H60.5l5.85 12.35z" fill="#ea4335"/>
-                          <path d="M43.65 25L57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
-                          <path d="M60.5 50.5H27.5L13.75 74.3c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
-                          <path d="M73.4 26.05l-14.3-24.8a7.2 7.2 0 00-1.7-1.1L43.65 25l16.85 25.5h26.45a7.3 7.3 0 00-.95-3.65z" fill="#ffba00"/>
-                        </svg>
-                      ) : (
-                        <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
-                      )}
-                      <span className="truncate font-medium">{pendingFileName(f)}</span>
-                      <span className="shrink-0 text-[#5f6368]">({formatBytes(pendingFileSize(f))})</span>
-                      {f.kind === "drive" && (
-                        <span className="shrink-0 rounded bg-[#1a73e8] px-1.5 py-0.5 text-[10px] font-medium text-white">Drive link</span>
-                      )}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setComposeFiles((prev) => prev.filter((_, j) => j !== i))}
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-                      aria-label={titleCase("Remove attachment")}
-                    >
-                      <IconX className="h-3.5 w-3.5" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null
+          <GmailPendingAttachments
+            files={composeFiles}
+            driveUploading={driveUploading}
+            onRemove={(i) => setComposeFiles((prev) => prev.filter((_, j) => j !== i))}
+          />
         }
       />
 

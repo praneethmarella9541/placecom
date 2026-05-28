@@ -1,9 +1,10 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { Paperclip, Minus, Maximize, Minimize, Maximize2 } from "lucide-react";
+import { Minus, Maximize, Minimize, Maximize2 } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { RichTextEditor } from "@/components/RichTextEditor";
+import { GmailComposeFooter } from "@/components/GmailComposeFooter";
 import { IconX } from "@/components/Icons";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
@@ -12,9 +13,7 @@ export type GmailComposeDialogProps = {
   open: boolean;
   minimized: boolean;
   fullscreen: boolean;
-  /** Window title: New Message, Reply, Reply All, Forward */
   windowTitle: string;
-  /** Hide subject row for replies (Gmail keeps it but read-only feel — we show Re: subject) */
   showSubject?: boolean;
   to: string;
   onToChange: (v: string) => void;
@@ -43,7 +42,7 @@ export type GmailComposeDialogProps = {
 };
 
 /**
- * Gmail-style floating compose / reply / forward window (bottom-right dock).
+ * Gmail-style floating compose window (bottom-right dock).
  */
 export function GmailComposeDialog(props: GmailComposeDialogProps) {
   const {
@@ -96,7 +95,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
 
       {minimized ? (
         <div
-          className="fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border border-[#dadce0] bg-[#323232] px-2 text-white shadow-[0_-4px_16px_rgba(60,64,67,0.25)] lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[528px] lg:rounded-lg lg:shadow-lg"
+          className="fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border border-[#dadce0] bg-[#323232] px-2 text-white shadow-[0_-4px_16px_rgba(60,64,67,0.25)] lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[560px] lg:rounded-t-lg lg:shadow-lg"
           role="dialog"
           aria-label={windowTitle}
         >
@@ -130,13 +129,13 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             "fixed z-[999] flex flex-col overflow-hidden bg-white text-[#202124] [color-scheme:light]",
             fullscreen
               ? "left-[2.5%] right-[2.5%] top-[2.5%] bottom-[2.5%] rounded-lg border border-[#dadce0] shadow-[0_24px_48px_rgba(60,64,67,0.3)]"
-              : "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t border-[#dadce0] shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:bottom-6 lg:left-auto lg:right-6 lg:max-h-[min(620px,calc(100vh-96px))] lg:w-[528px] lg:rounded-t-lg lg:border lg:shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)]"
+              : "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t border-[#dadce0] shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:bottom-6 lg:left-auto lg:right-6 lg:max-h-[min(640px,calc(100vh-96px))] lg:w-[560px] lg:rounded-t-lg lg:border lg:shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)]"
           )}
           role="dialog"
           aria-modal="true"
           aria-label={windowTitle}
         >
-          <div className="flex shrink-0 items-center gap-1 bg-[#404040] px-2 py-1.5 text-white">
+          <div className="flex shrink-0 items-center gap-1 bg-[#323232] px-2 py-1.5 text-white">
             <h2 className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium">{windowTitle}</h2>
             <button
               type="button"
@@ -169,8 +168,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           </div>
 
           <div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto bg-white">
-            <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
-              <span className="w-9 shrink-0 pt-2 text-right text-[13px] leading-none text-[#5f6368]">
+            <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-4 py-2">
+              <span className="w-10 shrink-0 pt-2 text-right text-[13px] leading-none text-[#5f6368]">
                 {titleCase("To")}
               </span>
               <div className={cn("min-w-0 flex-1", fieldGroupClass)}>
@@ -184,8 +183,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             </div>
 
             {!ccBccOpen ? (
-              <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-3 py-1.5">
-                <span className="w-9 shrink-0" aria-hidden />
+              <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-4 py-1.5">
+                <span className="w-10 shrink-0" aria-hidden />
                 <button
                   type="button"
                   onClick={() => onCcBccOpenChange(true)}
@@ -203,8 +202,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               </div>
             ) : (
               <>
-                <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                  <span className="w-9 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Cc")}</span>
+                <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-4 py-2">
+                  <span className="w-10 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Cc")}</span>
                   <div className={cn("min-w-0 flex-1", fieldGroupClass)}>
                     <RecipientField
                       placeholder={titleCase("Cc")}
@@ -214,8 +213,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                     />
                   </div>
                 </div>
-                <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                  <span className="w-9 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Bcc")}</span>
+                <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-4 py-2">
+                  <span className="w-10 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Bcc")}</span>
                   <div className={cn("min-w-0 flex-1", fieldGroupClass)}>
                     <RecipientField
                       placeholder={titleCase("Bcc")}
@@ -229,14 +228,14 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             )}
 
             {contactsHint ? (
-              <p className="border-b border-[#f1f3f4] bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-900">
+              <p className="border-b border-[#f1f3f4] bg-amber-50 px-4 py-2 text-[12px] leading-snug text-amber-900">
                 {contactsHint}
               </p>
             ) : null}
 
             {showSubject ? (
-              <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                <span className="w-9 shrink-0 text-right text-[13px] text-[#5f6368]">{titleCase("Subject")}</span>
+              <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-4 py-2">
+                <span className="w-10 shrink-0 text-right text-[13px] text-[#5f6368]">{titleCase("Subject")}</span>
                 <input
                   type="text"
                   value={subject}
@@ -256,46 +255,22 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             {attachmentChips}
           </div>
 
-          <div className="flex shrink-0 items-center gap-1 border-t border-[#f1f3f4] bg-white px-2 py-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                onFileChange(e.target.files);
-                e.target.value = "";
-              }}
-            />
-            <button
-              type="button"
-              disabled={sendDisabled}
-              onClick={onSend}
-              className="rounded-full bg-[#0b57d0] px-6 py-2 text-[14px] font-medium text-white shadow-sm hover:bg-[#0842a0] disabled:cursor-not-allowed disabled:bg-[#a8c7fa]"
-            >
-              {titleCase("Send")}
-            </button>
-            <button
-              type="button"
-              onClick={onAttachClick}
-              className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-              title={titleCase("Attach files")}
-            >
-              <Paperclip className="h-5 w-5" strokeWidth={2} />
-            </button>
-            <div className="flex-1" />
-            <button
-              type="button"
-              onClick={onDiscard}
-              className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-              title={titleCase("Discard")}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              </svg>
-            </button>
-          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              onFileChange(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <GmailComposeFooter
+            onSend={onSend}
+            onAttach={onAttachClick}
+            onDiscard={onDiscard}
+            sendDisabled={sendDisabled}
+          />
         </div>
       )}
     </>,

@@ -3,92 +3,82 @@
 @tailwind utilities;
 
 /* ───────────────────────────────────────────────────────────────
- * The Nucleus design system
+ * Gmail-matched design tokens
  * ───────────────────────────────────────────────────────────────
- * Light mode is the canonical experience: warm cream background,
- * indigo brand color, dark navy text. Dark mode mirrors the same
- * palette inverted with a deep midnight background.
- *
- * Brand palette (from thenucleus.in):
- *   --nucleus-bright:  #4f46e5   (primary indigo)
- *   --nucleus-core:    #4338ca   (deeper indigo, hover)
- *   --nucleus-deep:    #1e1b4b   (midnight navy)
- *   --nucleus-mist:    #c7d2fe   (light indigo, soft fills)
- *   --nucleus-aurora:  #0ea5e9   (sky accent)
- *   Wordmark gradient: #3730a3 → #4f46e5
+ * Light mode: Google's exact surface/text/brand palette.
+ * Dark mode: Gmail's dark theme approximation.
  * ─────────────────────────────────────────────────────────────── */
 
 @layer base {
   :root {
-    /* ── Brand tokens ─────────────────────────────────────────── */
-    --nucleus-bright: #4f46e5;
-    --nucleus-core: #4338ca;
-    --nucleus-deep: #1e1b4b;
-    --nucleus-mist: #c7d2fe;
-    --nucleus-aurora: #0ea5e9;
-    --nucleus-soft: #6366f1;
-    --nucleus-glow: rgba(79, 70, 229, 0.40);
-    --nucleus-wordmark-from: #3730a3;
-    --nucleus-wordmark-to: #4f46e5;
-    --nucleus-wordmark-aurora: #0369a1;
+    /* ── Brand tokens (kept for component references) ─────────── */
+    --nucleus-bright: #1a73e8;
+    --nucleus-core: #1557b0;
+    --nucleus-deep: #001d35;
+    --nucleus-mist: #d3e3fd;
+    --nucleus-aurora: #1a73e8;
+    --nucleus-soft: #4285f4;
+    --nucleus-glow: rgba(26, 115, 232, 0.30);
+    --nucleus-wordmark-from: #1557b0;
+    --nucleus-wordmark-to: #1a73e8;
+    --nucleus-wordmark-aurora: #0b57d0;
 
     /* ── Typography ───────────────────────────────────────────── */
-    /* Next/font injects --font-dm-sans, --font-space-grotesk, --font-jetbrains-mono */
-    --font-display: var(--font-space-grotesk, "Space Grotesk"), "DM Sans", ui-sans-serif, system-ui, sans-serif;
-    --font-body: var(--font-dm-sans, "DM Sans"), ui-sans-serif, system-ui, sans-serif;
+    --font-display: "Google Sans", var(--font-space-grotesk, "Space Grotesk"), ui-sans-serif, system-ui, sans-serif;
+    --font-body: "Google Sans", var(--font-dm-sans, "DM Sans"), ui-sans-serif, system-ui, sans-serif;
     --font-mono: var(--font-jetbrains-mono, "JetBrains Mono"), ui-monospace, "SF Mono", Menlo, monospace;
 
     /* ── Surfaces ─────────────────────────────────────────────── */
-    --color-bg: #f9f8f5;            /* warm cream — Nucleus signature */
-    --color-surface: #ffffff;        /* cards, panels */
-    --color-surface-2: #fdfcfa;
-    --color-surface-offset: #f3f2ee; /* muted, hover bg */
-    --color-border: rgba(13, 16, 33, 0.09);
-    --color-border-strong: rgba(13, 16, 33, 0.14);
+    --color-bg: #f6f8fc;             /* Gmail's page background */
+    --color-surface: #ffffff;
+    --color-surface-2: #f8f9fa;
+    --color-surface-offset: #f1f3f4; /* hover / muted fill */
+    --color-border: rgba(0, 0, 0, 0.12);
+    --color-border-strong: rgba(0, 0, 0, 0.18);
 
     /* ── Text ─────────────────────────────────────────────────── */
-    --color-text: #0d1021;          /* deep navy-black */
-    --color-text-muted: rgba(13, 16, 33, 0.62);
-    --color-text-faint: rgba(13, 16, 33, 0.38);
+    --color-text: #202124;
+    --color-text-muted: #444746;
+    --color-text-faint: #80868b;
 
     /* ── Brand semantic ───────────────────────────────────────── */
-    --color-primary: var(--nucleus-bright);
-    --color-primary-hover: var(--nucleus-core);
-    --color-primary-light: #eef2ff;
-    --color-primary-tint: #e0e7ff;
+    --color-primary: #1a73e8;
+    --color-primary-hover: #1557b0;
+    --color-primary-light: #d3e3fd;   /* Gmail active nav pill */
+    --color-primary-tint: #e8f0fe;
 
     /* ── Status ───────────────────────────────────────────────── */
-    --color-danger: #e40014;
-    --color-danger-light: #fee2e2;
-    --color-success: #16a34a;
-    --color-success-light: #dcfce7;
-    --color-warning: #d97706;
-    --color-warning-light: #fef3c7;
-    --color-blue: var(--nucleus-aurora);
-    --color-gold: #d97706;
+    --color-danger: #d93025;
+    --color-danger-light: #fce8e6;
+    --color-success: #188038;
+    --color-success-light: #e6f4ea;
+    --color-warning: #f29900;
+    --color-warning-light: #fef7e0;
+    --color-blue: #1a73e8;
+    --color-gold: #f29900;
 
-    /* ── Radii (slightly more generous than before) ──────────── */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 18px;
+    /* ── Radii ───────────────────────────────────────────────── */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
     --radius-2xl: 24px;
 
-    /* ── Shadows (softer, more layered) ───────────────────────── */
-    --shadow-sm: 0 1px 2px rgba(13, 16, 33, 0.04),
-                 0 1px 3px rgba(13, 16, 33, 0.06);
-    --shadow-md: 0 2px 6px rgba(13, 16, 33, 0.05),
-                 0 8px 24px rgba(13, 16, 33, 0.08);
-    --shadow-lg: 0 4px 12px rgba(13, 16, 33, 0.06),
-                 0 20px 48px rgba(13, 16, 33, 0.12);
-    --shadow-glow: 0 0 0 1px rgba(79, 70, 229, 0.18),
-                   0 8px 32px rgba(79, 70, 229, 0.18);
+    /* ── Shadows ─────────────────────────────────────────────── */
+    --shadow-sm: 0 1px 2px rgba(60, 64, 67, 0.10),
+                 0 1px 3px rgba(60, 64, 67, 0.08);
+    --shadow-md: 0 1px 3px rgba(60, 64, 67, 0.12),
+                 0 4px 12px rgba(60, 64, 67, 0.10);
+    --shadow-lg: 0 2px 6px rgba(60, 64, 67, 0.12),
+                 0 8px 24px rgba(60, 64, 67, 0.14);
+    --shadow-glow: 0 0 0 1px rgba(26, 115, 232, 0.20),
+                   0 4px 16px rgba(26, 115, 232, 0.16);
 
     /* ── Layout ──────────────────────────────────────────────── */
     --sidebar-width: 220px;
     --topbar-height: 56px;
 
-    /* ── shadcn-style aliases (used by some components) ──────── */
+    /* ── shadcn-style aliases ─────────────────────────────────── */
     --background: var(--color-bg);
     --foreground: var(--color-text);
     --card: var(--color-surface);
@@ -101,31 +91,31 @@
   }
 
   [data-theme="dark"] {
-    /* ── Dark mode — midnight navy ───────────────────────────── */
-    --color-bg: #0a0e1e;
-    --color-surface: #111827;
-    --color-surface-2: #161e35;
-    --color-surface-offset: #1e293b;
-    --color-border: rgba(255, 255, 255, 0.09);
-    --color-border-strong: rgba(255, 255, 255, 0.14);
+    /* ── Dark mode — Gmail dark approximation ─────────────────── */
+    --color-bg: #202124;
+    --color-surface: #2d2e30;
+    --color-surface-2: #35363a;
+    --color-surface-offset: #3c3d40;
+    --color-border: rgba(255, 255, 255, 0.10);
+    --color-border-strong: rgba(255, 255, 255, 0.16);
 
-    --color-text: #f1f5f9;
-    --color-text-muted: rgba(241, 245, 249, 0.62);
-    --color-text-faint: rgba(241, 245, 249, 0.32);
+    --color-text: #e8eaed;
+    --color-text-muted: #9aa0a6;
+    --color-text-faint: #5f6368;
 
-    --color-primary: var(--nucleus-soft);
-    --color-primary-hover: #818cf8;
-    --color-primary-light: rgba(99, 102, 241, 0.18);
-    --color-primary-tint: rgba(99, 102, 241, 0.28);
+    --color-primary: #8ab4f8;
+    --color-primary-hover: #aecbfa;
+    --color-primary-light: rgba(138, 180, 248, 0.16);
+    --color-primary-tint: rgba(138, 180, 248, 0.24);
 
-    --color-danger: #ff6568;
-    --color-danger-light: rgba(255, 101, 104, 0.15);
-    --color-success: #34d399;
-    --color-success-light: rgba(52, 211, 153, 0.15);
-    --color-warning: #fbbf24;
-    --color-warning-light: rgba(251, 191, 36, 0.15);
+    --color-danger: #f28b82;
+    --color-danger-light: rgba(242, 139, 130, 0.14);
+    --color-success: #81c995;
+    --color-success-light: rgba(129, 201, 149, 0.14);
+    --color-warning: #fdd663;
+    --color-warning-light: rgba(253, 214, 99, 0.14);
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
     --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.45);
     --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.35), 0 20px 48px rgba(0, 0, 0, 0.55);
 
@@ -182,11 +172,11 @@
     outline-offset: 2px;
   }
 
-  /* Focus-visible ring — clean, accessible */
+  /* Focus-visible ring */
   :focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
-    border-radius: 4px;
+    border-radius: 3px;
   }
 
   /* Respect reduced-motion preferences */
@@ -209,20 +199,12 @@
     font-family: var(--font-mono);
   }
 
-  /* ── Nucleus wordmark — indigo gradient ────────────────────── */
+  /* ── Wordmark ──────────────────────────────────────────────── */
   .nucleus-wordmark {
-    background: linear-gradient(
-      to right,
-      var(--nucleus-wordmark-from),
-      var(--nucleus-bright),
-      var(--nucleus-wordmark-to)
-    );
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--color-primary);
     font-family: var(--font-display);
-    font-weight: 700;
-    letter-spacing: -0.02em;
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 
   /* ── Surface cards ─────────────────────────────────────────── */
@@ -250,62 +232,45 @@
     transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
   }
 
-  /* ── Buttons ───────────────────────────────────────────────── */
+  /* ── Buttons — Google Material You style ──────────────────── */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50;
-    height: 40px;
-    padding-left: 1.125rem;
-    padding-right: 1.125rem;
-    border-radius: var(--radius-md);
+    @apply inline-flex items-center justify-center gap-2 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50;
+    height: 36px;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+    border-radius: var(--radius-xl);
     background: var(--color-primary);
     font-size: 14px;
-    letter-spacing: -0.005em;
-    box-shadow: 0 1px 2px rgba(79, 70, 229, 0.18),
-                inset 0 1px 0 rgba(255, 255, 255, 0.15);
-    transition: background 0.18s ease, box-shadow 0.18s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
-    position: relative;
-    overflow: hidden;
-  }
-  .btn-primary::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(180deg, rgba(255,255,255,0.12) 0%, transparent 60%);
-    pointer-events: none;
+    letter-spacing: 0.01em;
+    transition: background 0.15s ease, box-shadow 0.15s ease;
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--color-primary-hover);
-    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35),
-                inset 0 1px 0 rgba(255, 255, 255, 0.15);
-    transform: translateY(-1.5px) scale(1.01);
+    box-shadow: 0 1px 3px rgba(60, 64, 67, 0.20), 0 4px 8px rgba(60, 64, 67, 0.15);
   }
   .btn-primary:active:not(:disabled) {
-    transform: translateY(0) scale(0.98);
-    box-shadow: 0 1px 4px rgba(79, 70, 229, 0.2);
-    transition-duration: 0.08s;
+    background: var(--color-primary-hover);
+    box-shadow: none;
   }
 
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 font-medium disabled:opacity-50;
-    height: 40px;
+    height: 36px;
     padding-left: 1rem;
     padding-right: 1rem;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-xl);
     border: 1px solid var(--color-border-strong);
     background: var(--color-surface);
-    color: var(--color-text);
+    color: var(--color-primary);
     font-size: 14px;
-    transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition: background 0.15s ease, box-shadow 0.15s ease;
   }
   .btn-secondary:hover:not(:disabled) {
-    background: var(--color-surface-offset);
-    border-color: var(--color-text-muted);
-    box-shadow: 0 2px 8px rgba(13, 16, 33, 0.07);
-    transform: translateY(-1px);
+    background: var(--color-primary-tint);
+    box-shadow: 0 1px 3px rgba(60, 64, 67, 0.12);
   }
   .btn-secondary:active:not(:disabled) {
-    transform: translateY(0) scale(0.98);
-    transition-duration: 0.08s;
+    background: var(--color-primary-light);
   }
 
   .btn-ghost {
@@ -315,36 +280,28 @@
     font-size: 14px;
     color: var(--color-text-muted);
     background: transparent;
-    transition: background 0.15s ease, color 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition: background 0.15s ease, color 0.15s ease;
   }
   .btn-ghost:hover:not(:disabled) {
     background: var(--color-surface-offset);
     color: var(--color-text);
-    transform: scale(1.04);
   }
   .btn-ghost:active:not(:disabled) {
-    transform: scale(0.96);
-    transition-duration: 0.08s;
+    background: var(--color-primary-tint);
   }
 
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 font-semibold disabled:opacity-50;
-    border-radius: var(--radius-md);
-    border: 1px solid rgba(228, 0, 20, 0.30);
+    @apply inline-flex items-center justify-center gap-2 font-medium disabled:opacity-50;
+    border-radius: var(--radius-xl);
+    border: 1px solid rgba(217, 48, 37, 0.30);
     background: var(--color-danger-light);
     color: var(--color-danger);
     padding: 0.5rem 1rem;
     font-size: 14px;
-    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition: background 0.15s ease;
   }
   .btn-danger:hover:not(:disabled) {
-    background: rgba(228, 0, 20, 0.12);
-    border-color: rgba(228, 0, 20, 0.50);
-    transform: translateY(-1px);
-  }
-  .btn-danger:active:not(:disabled) {
-    transform: translateY(0) scale(0.98);
-    transition-duration: 0.08s;
+    background: rgba(217, 48, 37, 0.12);
   }
 
   /* ── Inputs ────────────────────────────────────────────────── */
@@ -365,7 +322,7 @@
   }
   .input-field:focus {
     border-color: var(--color-primary);
-    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.14), 0 1px 4px rgba(79, 70, 229, 0.08);
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.20);
   }
 
   /* ── Badges (status pills) ─────────────────────────────────── */
@@ -397,45 +354,17 @@
     color: var(--color-text-muted);
   }
 
-  /* ── Hero-style gradient surface (cards-on-cream) ──────────── */
+  /* ── Card surface ───────────────────────────────────────────── */
   .nucleus-glow-card {
-    border-radius: var(--radius-xl);
-    background: linear-gradient(
-      135deg,
-      var(--color-surface) 0%,
-      var(--color-surface-2) 100%
-    );
+    border-radius: var(--radius-lg);
+    background: var(--color-surface);
     border: 1px solid var(--color-border);
-    box-shadow: var(--shadow-md);
-    position: relative;
-    overflow: hidden;
-    transition: box-shadow 0.25s ease, border-color 0.25s ease, transform 0.2s ease;
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
   }
   .nucleus-glow-card:hover {
-    box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.15),
-                0 8px 32px rgba(79, 70, 229, 0.12),
-                0 20px 48px rgba(13, 16, 33, 0.08);
-    border-color: rgba(79, 70, 229, 0.18);
-    transform: translateY(-1px);
-  }
-  .nucleus-glow-card::before {
-    content: "";
-    position: absolute;
-    top: -50%;
-    right: -10%;
-    width: 320px;
-    height: 320px;
-    background: radial-gradient(
-      circle,
-      var(--nucleus-glow) 0%,
-      transparent 65%
-    );
-    pointer-events: none;
-    opacity: 0.5;
-    transition: opacity 0.25s ease;
-  }
-  .nucleus-glow-card:hover::before {
-    opacity: 0.8;
+    box-shadow: var(--shadow-md);
+    border-color: var(--color-border-strong);
   }
 
   /* ── Details / animations ──────────────────────────────────── */
@@ -676,18 +605,16 @@
     transform: translateY(0);
   }
 
-  /* Interactive card — hover lifts + border glow */
+  /* Interactive card */
   .card-interactive {
-    transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
     cursor: pointer;
   }
   .card-interactive:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 16px rgba(79, 70, 229, 0.12), 0 12px 40px rgba(13, 16, 33, 0.08);
-    border-color: rgba(79, 70, 229, 0.22);
+    box-shadow: var(--shadow-md);
+    border-color: rgba(26, 115, 232, 0.30);
   }
   .card-interactive:active {
-    transform: translateY(0);
     box-shadow: var(--shadow-sm);
   }
 
@@ -748,14 +675,9 @@
   .dot-pulse > span:nth-child(2) { animation-delay: 0.2s; }
   .dot-pulse > span:nth-child(3) { animation-delay: 0.4s; }
 
-  /* Glow text — animated gradient */
+  /* Brand text */
   .text-gradient-animated {
-    background: linear-gradient(90deg, var(--nucleus-wordmark-from), var(--nucleus-bright), var(--nucleus-aurora), var(--nucleus-bright), var(--nucleus-wordmark-from));
-    background-size: 300% auto;
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    animation: gradient-x 5s linear infinite;
+    color: var(--color-primary);
   }
 
   /* Container width matching Nucleus' container-wide */

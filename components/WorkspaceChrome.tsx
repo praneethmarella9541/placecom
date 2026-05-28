@@ -85,20 +85,20 @@ function NavItem({
         "group relative flex items-center gap-3 rounded-lg px-3 transition-all duration-150",
         size === "md" ? "py-2.5 text-[13.5px]" : "py-2 text-[13px]",
         active
-          ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
+          ? "bg-[#d3e3fd] font-semibold text-[#001d35]"
           : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]",
       )}
     >
       {/* Active indicator bar */}
       {active && (
-        <span className="absolute left-0 top-1/2 h-[52%] w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--color-primary)]" />
+        <span className="absolute left-0 top-1/2 h-[52%] w-[3px] -translate-y-1/2 rounded-r-full bg-[#1a73e8]" />
       )}
       <Icon
         className={cn(
           "shrink-0 transition-colors duration-150",
           size === "md" ? "h-[17px] w-[17px]" : "h-[16px] w-[16px]",
           active
-            ? "text-[var(--color-primary)]"
+            ? "text-[#001d35]"
             : "text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]",
         )}
         strokeWidth={active ? 2.5 : 2}
@@ -146,7 +146,7 @@ function UserProfile({
         )}
       >
         {/* Avatar */}
-        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[var(--nucleus-bright)] to-[var(--nucleus-core)] text-[11px] font-bold uppercase text-white shadow-sm">
+        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1a73e8] text-[11px] font-bold uppercase text-white shadow-sm">
           {initials}
           <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--color-surface)] bg-[var(--color-success)]" />
         </div>

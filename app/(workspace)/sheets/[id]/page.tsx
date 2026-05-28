@@ -1,34 +1,28 @@
 "use client";
 
-import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { titleCase } from "@/lib/title-case";
+import { SheetEditor } from "@/components/SheetEditor";
 
 /**
- * Opens a single spreadsheet using Google's own embedded Sheets editor.
- * The iframe gives users 100% of Sheets editing (formulas, formatting,
- * charts, collaboration) without us rebuilding the grid. Requires the
- * user to be signed into the same Google account in their browser — which
- * they are, via the app's Google OAuth.
+ * Native spreadsheet editor backed by the Google Sheets API using the
+ * app's server-side token (the same one Gmail/Drive use). We do NOT iframe
+ * docs.google.com — that requires the user's browser to be logged into the
+ * Google account, which our shared-mailbox model can't guarantee. Instead
+ * we render cells, formatting, and tabs ourselves and write edits back via
+ * the API.
  */
 export default function SheetEditorPage() {
   const params = useParams();
   const id = typeof params.id === "string" ? params.id : "";
   const router = useRouter();
-  const [loaded, setLoaded] = useState(false);
 
-  // Load the FULL Google Sheets editor inside the iframe — no `rm=minimal`
-  // and no `embedded=true`, both of which strip the menus and toolbar.
-  // `widget=true&headers=false` keeps Google's own page title bar hidden
-  // (we render our own back bar) while preserving the File/Edit/View menus,
-  // the formatting toolbar, and the formula bar.
-  const editUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/edit?widget=true&headers=false`;
   const newTabUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/edit`;
 
   return (
     <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] flex-col overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
-      {/* Toolbar */}
+      {/* Top bar */}
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5">
         <button
           type="button"
@@ -49,25 +43,9 @@ export default function SheetEditorPage() {
         </a>
       </div>
 
-      {/* Embedded editor */}
-      <div className="relative flex-1">
-        {!loaded && (
-          <div className="absolute inset-0 flex items-center justify-center bg-[var(--color-surface)]">
-            <div className="flex flex-col items-center gap-3">
-              <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-border)] border-t-[var(--color-primary)]" />
-              <p className="text-[13px] text-[var(--color-text-muted)]">
-                {titleCase("Loading spreadsheet…")}
-              </p>
-            </div>
-          </div>
-        )}
-        <iframe
-          src={editUrl}
-          title="Google Sheets editor"
-          className="h-full w-full border-0"
-          onLoad={() => setLoaded(true)}
-          allow="clipboard-read; clipboard-write"
-        />
+      {/* Native editor */}
+      <div className="flex-1 overflow-hidden">
+        <SheetEditor spreadsheetId={id} />
       </div>
     </div>
   );

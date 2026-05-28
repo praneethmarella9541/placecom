@@ -12,7 +12,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal, Bookmark, Loader2, Archive, Trash2, AlertOctagon, Mail } from "lucide-react";
+import { PencilLine, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal, Bookmark, Loader2, Trash2, AlertOctagon, Mail } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -886,6 +886,65 @@ function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
   );
 }
 
+const STORAGE_SIDEBAR_W = "placecom-inbox-sidebar-w";
+const STORAGE_LIST_W = "placecom-inbox-list-w";
+
+function readStoredWidth(key: string, fallback: number, min: number, max: number): number {
+  if (typeof window === "undefined") return fallback;
+  const n = parseInt(localStorage.getItem(key) ?? "", 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Vertical drag handle between resizable mail panes. */
+function PaneResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize pane"
+      onMouseDown={onMouseDown}
+      className="absolute right-0 top-0 z-20 h-full w-1.5 -translate-x-1/2 cursor-col-resize touch-none bg-transparent hover:bg-[#0b57d0]/25 active:bg-[#0b57d0]/40"
+    />
+  );
+}
+
+function useResizablePane(storageKey: string, defaultWidth: number, min: number, max: number) {
+  const [width, setWidth] = useState(defaultWidth);
+
+  useEffect(() => {
+    setWidth(readStoredWidth(storageKey, defaultWidth, min, max));
+  }, [storageKey, defaultWidth, min, max]);
+
+  const onResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = width;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      function onMove(ev: MouseEvent) {
+        setWidth(Math.min(max, Math.max(min, startW + ev.clientX - startX)));
+      }
+      function onUp(ev: MouseEvent) {
+        const finalW = Math.min(max, Math.max(min, startW + ev.clientX - startX));
+        setWidth(finalW);
+        localStorage.setItem(storageKey, String(finalW));
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      }
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [width, storageKey, min, max]
+  );
+
+  return { width, onResizeStart };
+}
+
 export default function InboxPage() {
   const router = useRouter();
   const [folder, setFolder] = useState<Folder>("inbox");
@@ -1651,8 +1710,32 @@ export default function InboxPage() {
   // stay correct across navigations without any client-side cache logic.
   const [labelCounts, setLabelCounts] = useState<Record<string, { total: number; unread: number }>>({});
 
+  /** Instant Inbox unread badge update — server refresh may lag several seconds. */
+  const adjustInboxUnread = useCallback((delta: number) => {
+    if (delta === 0) return;
+    setLabelCounts((prev) => {
+      const cur = prev.INBOX ?? { total: 0, unread: 0 };
+      return {
+        ...prev,
+        INBOX: { ...cur, unread: Math.max(0, cur.unread + delta) },
+      };
+    });
+  }, []);
+
+  const { width: sidebarWidth, onResizeStart: onSidebarResizeStart } = useResizablePane(
+    STORAGE_SIDEBAR_W,
+    256,
+    180,
+    400
+  );
+  const { width: listPaneWidth, onResizeStart: onListPaneResizeStart } = useResizablePane(
+    STORAGE_LIST_W,
+    420,
+    280,
+    720
+  );
+
   const loadCounts = useCallback(async () => {
-    if (allLabels.length === 0) return;
     const ids = [
       "INBOX",
       "SENT",
@@ -1675,7 +1758,19 @@ export default function InboxPage() {
       );
       if (!res.ok) return;
       const j = (await res.json()) as { counts?: Record<string, { total: number; unread: number }> };
-      setLabelCounts(j.counts ?? {});
+      const incoming = j.counts ?? {};
+      setLabelCounts((prev) => {
+        // Gmail's unread count API lags behind mark-read; keep optimistic
+        // Inbox badge during the mutation cooldown window.
+        if (
+          Date.now() - lastMutationAtRef.current < MUTATION_COOLDOWN_MS &&
+          prev.INBOX &&
+          incoming.INBOX
+        ) {
+          return { ...incoming, INBOX: { ...incoming.INBOX, unread: prev.INBOX.unread } };
+        }
+        return incoming;
+      });
     } catch { /* ignore */ }
   }, [allLabels]);
 
@@ -1686,9 +1781,8 @@ export default function InboxPage() {
    * (in case Gmail responds fast); the second covers the typical lag.
    */
   const scheduleCountRefresh = useCallback(() => {
-    void loadCounts();
     const t1 = setTimeout(() => void loadCounts(), 1500);
-    const t2 = setTimeout(() => void loadCounts(), 4000);
+    const t2 = setTimeout(() => void loadCounts(), 5000);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [loadCounts]);
 
@@ -1998,13 +2092,19 @@ export default function InboxPage() {
     // Fire-and-forget the read API call in parallel; refresh counts on success
     // so the Inbox unread badge moves in sync with the row losing bold.
     const wasUnread = threads.find((r) => r.id === threadId)?.unread;
+    if (wasUnread) {
+      adjustInboxUnread(-1);
+      lastMutationAtRef.current = Date.now();
+    }
     fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}/labels`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ remove: ["UNREAD"] }),
     })
       .then(() => { if (wasUnread) scheduleCountRefresh(); })
-      .catch(() => {/* non-critical */});
+      .catch(() => {
+        if (wasUnread) adjustInboxUnread(1);
+      });
 
     setSelectedId(threadId);
     setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false); setReplyTo(""); setReplyCc("");
@@ -2025,7 +2125,7 @@ export default function InboxPage() {
       void loadTracking();
     } catch (e) { setThreadError(e instanceof Error ? e.message : "Error"); }
     finally { setLoadingThread(false); }
-  }, [loadTracking, threads, scheduleCountRefresh, mutateThreads]);
+  }, [loadTracking, threads, scheduleCountRefresh, mutateThreads, adjustInboxUnread]);
 
   // Add or remove a label on the currently-open thread. Optimistic — flips
   // local chips immediately and rolls back if the server rejects.
@@ -2187,6 +2287,19 @@ export default function InboxPage() {
       if (ids.length === 0) return;
 
       const idSet = new Set(ids);
+      const unreadInSelection = ids.filter((id) => threads.find((t) => t.id === id)?.unread).length;
+
+      if (action === "markRead" && unreadInSelection > 0) {
+        adjustInboxUnread(-unreadInSelection);
+      } else if (action === "markUnread" && folder === "inbox") {
+        adjustInboxUnread(ids.length);
+      } else if (
+        (action === "archive" || action === "trash" || action === "spam") &&
+        unreadInSelection > 0
+      ) {
+        adjustInboxUnread(-unreadInSelection);
+      }
+
       const removeFromList =
         action === "archive" ||
         action === "trash" ||
@@ -2278,20 +2391,12 @@ export default function InboxPage() {
         })
         .catch(rollback);
     },
-    [selectedThreadIds, threads, selectedId, scheduleCountRefresh, mutateThreads, loadThreads]
+    [selectedThreadIds, threads, selectedId, folder, scheduleCountRefresh, mutateThreads, loadThreads, adjustInboxUnread]
   );
 
   const performBulkAction = useCallback(
     (action: BulkAction) => applyThreadAction(action, Array.from(selectedThreadIds)),
     [applyThreadAction, selectedThreadIds]
-  );
-
-  const performDetailAction = useCallback(
-    (action: BulkAction) => {
-      if (!selectedId) return;
-      applyThreadAction(action, [selectedId], { clearSelection: false, closeDetail: true });
-    },
-    [applyThreadAction, selectedId]
   );
 
   // Re-compute union of labels across selected threads whenever selection changes,
@@ -2744,50 +2849,6 @@ export default function InboxPage() {
     { key: "trash"     as const, label: "Trash",     Icon: Trash2,     countId: "TRASH",     unreadOnly: false },
   ] as const;
 
-  /** Gmail-style toolbar actions for the current folder context. */
-  function BulkToolbarActions({ onAction }: { onAction: (a: BulkAction) => void }) {
-    if (folder === "trash") {
-      return (
-        <>
-          <RowAction title="Delete forever" onClick={() => onAction("deleteForever")}>
-            <Trash2 className="h-[15px] w-[15px]" strokeWidth={2} />
-          </RowAction>
-          <RowAction title="Move to Inbox" onClick={() => onAction("moveToInbox")}>
-            <IconInbox className="h-[15px] w-[15px]" />
-          </RowAction>
-        </>
-      );
-    }
-    if (folder === "spam") {
-      return (
-        <>
-          <RowAction title="Not spam" onClick={() => onAction("notSpam")}>
-            <IconInbox className="h-[15px] w-[15px]" />
-          </RowAction>
-          <RowAction title="Delete forever" onClick={() => onAction("deleteForever")}>
-            <Trash2 className="h-[15px] w-[15px]" strokeWidth={2} />
-          </RowAction>
-        </>
-      );
-    }
-    if (folder === "drafts") return null;
-    return (
-      <>
-        {folder !== "sent" && folder !== "allmail" && (
-          <RowAction title="Archive" onClick={() => onAction("archive")}>
-            <Archive className="h-[15px] w-[15px]" strokeWidth={2} />
-          </RowAction>
-        )}
-        <RowAction title="Report spam" onClick={() => onAction("spam")}>
-          <AlertOctagon className="h-[15px] w-[15px]" strokeWidth={2} />
-        </RowAction>
-        <RowAction title="Delete" onClick={() => onAction("trash")}>
-          <Trash2 className="h-[15px] w-[15px]" strokeWidth={2} />
-        </RowAction>
-      </>
-    );
-  }
-
   return (
     <>
     {/* ── Gmail-style three-column layout ────────────────────────────────────
@@ -2797,7 +2858,10 @@ export default function InboxPage() {
     <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
 
       {/* ══ LEFT RAIL — desktop only ══ */}
-      <aside className="hidden w-[256px] shrink-0 flex-col overflow-y-auto border-r border-[#e8eaed] bg-[#f6f8fc] md:flex">
+      <aside
+        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-[#e8eaed] bg-[#f6f8fc] md:flex"
+        style={{ width: sidebarWidth }}
+      >
         {/* Compose + Refresh — Gmail pill compose button */}
         <div className="flex items-center gap-2 px-3 py-3">
           <button
@@ -2969,6 +3033,7 @@ export default function InboxPage() {
           </div>
         </>
 
+        <PaneResizeHandle onMouseDown={onSidebarResizeStart} />
       </aside>
 
       {/* ══ RIGHT CONTENT AREA ══ */}
@@ -3078,9 +3143,10 @@ export default function InboxPage() {
             className={cn(
               "relative flex flex-col overflow-hidden bg-[#f6f8fc]",
               selectedId
-                ? "hidden w-full md:flex md:w-[min(420px,42%)] md:max-w-[480px] md:shrink-0 md:border-r md:border-[#e8eaed]"
+                ? "hidden w-full shrink-0 border-[#e8eaed] md:flex md:border-r"
                 : "flex flex-1",
             )}
+            style={selectedId ? { width: listPaneWidth } : undefined}
           >
 
             {/* Slim progress bar at top — visible only while loading more pages */}
@@ -3226,7 +3292,6 @@ export default function InboxPage() {
                   <>
                     <span className="text-[var(--color-text-muted)]">{selectedThreadIds.size} selected</span>
                     <div className="ml-2 flex items-center gap-0.5">
-                      <BulkToolbarActions onAction={(a) => void performBulkAction(a)} />
                       {folder !== "drafts" && (
                         <LabelPicker
                           allLabels={allLabels.filter((l) => l.type === "user")}
@@ -3512,6 +3577,7 @@ export default function InboxPage() {
                 )}
               </ul>
             )}
+            {selectedId && <PaneResizeHandle onMouseDown={onListPaneResizeStart} />}
           </div>
 
         {/* ── THREAD DETAIL view ── */}
@@ -3597,13 +3663,13 @@ export default function InboxPage() {
                     >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
                     </button>
-                    <BulkToolbarActions onAction={(a) => void performDetailAction(a)} />
                     <LabelPicker
                       allLabels={allLabels}
                       selected={new Set(threadLabelIds)}
                       onToggle={(id, checked) => void toggleThreadLabel(id, checked)}
                       onCreate={createAndApplyLabel}
                       busy={labelBusy}
+                      align="left"
                     />
                   </div>
                   <h2 className="px-2 text-xl font-normal text-[#202124] md:px-0">

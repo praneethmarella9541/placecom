@@ -64,12 +64,44 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // `selected` is the active (focus) cell; `anchor` is the other corner of
+  // the selection rectangle. When they're equal, a single cell is selected.
   const [selected, setSelected] = useState<Pos>({ row: 0, col: 0 });
+  const [anchor, setAnchor] = useState<Pos>({ row: 0, col: 0 });
   const [editing, setEditing] = useState<Pos | null>(null);
   const [editValue, setEditValue] = useState("");
 
   const editInputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  // In-app clipboard: a 2-D block of raw values copied/cut from a range.
+  const clipboardRef = useRef<string[][] | null>(null);
+
+  // Normalized selection rectangle (top-left → bottom-right).
+  const selRect = useMemo(() => {
+    const r1 = Math.min(anchor.row, selected.row);
+    const r2 = Math.max(anchor.row, selected.row);
+    const c1 = Math.min(anchor.col, selected.col);
+    const c2 = Math.max(anchor.col, selected.col);
+    return { r1, r2, c1, c2 };
+  }, [anchor, selected]);
+
+  const inSelection = useCallback(
+    (row: number, col: number) =>
+      row >= selRect.r1 && row <= selRect.r2 && col >= selRect.c1 && col <= selRect.c2,
+    [selRect]
+  );
+
+  /** Move focus cell and collapse the selection to it (single-cell select). */
+  const selectCell = useCallback((pos: Pos) => {
+    setSelected(pos);
+    setAnchor(pos);
+  }, []);
+
+  /** Extend the selection: keep the anchor, move only the focus cell. */
+  const extendTo = useCallback((pos: Pos) => {
+    setSelected(pos);
+  }, []);
 
   const activeTab = useMemo(
     () => meta?.tabs.find((t) => t.title === activeSheet) ?? null,
@@ -109,6 +141,13 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     void loadSheet();
   }, [loadSheet]);
 
+  // End drag-select when the mouse is released anywhere.
+  useEffect(() => {
+    const onUp = () => { draggingRef.current = false; };
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, []);
+
   /* ── Cell helpers ── */
   function cellAt(row: number, col: number): SheetCell {
     return data?.cells[row]?.[col] ?? { display: "", raw: "" };
@@ -130,14 +169,14 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     async (move?: Pos) => {
       if (!editing || !activeSheet) {
         setEditing(null);
-        if (move) setSelected(move);
+        if (move) selectCell(move);
         return;
       }
       const pos = editing;
       const value = editValue;
       const prev = cellAt(pos.row, pos.col);
       setEditing(null);
-      if (move) setSelected(move);
+      if (move) selectCell(move);
 
       if (value === prev.raw) return; // no change
 
@@ -185,6 +224,125 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     [editing, editValue, activeSheet, spreadsheetId, data]
   );
 
+  /** Apply a fresh computed-values matrix from the server onto the grid. */
+  const applyValuesRefresh = useCallback((values: string[][]) => {
+    setData((d) => {
+      if (!d) return d;
+      const cells = d.cells.map((r) => r.slice());
+      for (let r = 0; r < d.rowCount; r++) {
+        for (let c = 0; c < d.columnCount; c++) {
+          const display = values?.[r]?.[c] ?? "";
+          const existing = cells[r]?.[c] ?? { display: "", raw: "" };
+          if (cells[r]) cells[r][c] = { ...existing, display };
+        }
+      }
+      return { ...d, cells };
+    });
+  }, []);
+
+  /** Clear all values in the current selection rectangle. */
+  const clearSelection = useCallback(async () => {
+    if (!activeSheet) return;
+    const { r1, r2, c1, c2 } = selRect;
+    // Optimistic clear.
+    setData((d) => {
+      if (!d) return d;
+      const cells = d.cells.map((r) => r.slice());
+      for (let r = r1; r <= r2; r++) {
+        for (let c = c1; c <= c2; c++) {
+          if (cells[r]?.[c]) cells[r][c] = { ...cells[r][c], raw: "", display: "" };
+        }
+      }
+      return { ...d, cells };
+    });
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/data`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sheet: activeSheet, mode: "clear", row: r1, col: c1, endRow: r2, endCol: c2 }),
+      });
+      const j = (await res.json()) as { values?: string[][]; error?: string };
+      if (!res.ok) throw new Error(j.error || "Clear failed");
+      if (j.values) applyValuesRefresh(j.values);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Clear failed");
+      void loadSheet(activeSheet);
+    } finally {
+      setSaving(false);
+    }
+  }, [activeSheet, selRect, spreadsheetId, applyValuesRefresh, loadSheet]);
+
+  /** Copy the raw values of the current selection into the in-app clipboard. */
+  const copySelection = useCallback(() => {
+    if (!data) return;
+    const { r1, r2, c1, c2 } = selRect;
+    const block: string[][] = [];
+    for (let r = r1; r <= r2; r++) {
+      const row: string[] = [];
+      for (let c = c1; c <= c2; c++) row.push(data.cells[r]?.[c]?.raw ?? "");
+      block.push(row);
+    }
+    clipboardRef.current = block;
+    // Also push to the OS clipboard as TSV so paste into other apps works.
+    try {
+      void navigator.clipboard?.writeText(block.map((r) => r.join("\t")).join("\n"));
+    } catch { /* clipboard may be unavailable; in-app copy still works */ }
+  }, [data, selRect]);
+
+  /** Write a 2-D block anchored at (startRow, startCol). */
+  const writeRange = useCallback(
+    async (startRow: number, startCol: number, values: string[][]) => {
+      if (!activeSheet || !values.length) return;
+      // Optimistic display.
+      setData((d) => {
+        if (!d) return d;
+        const cells = d.cells.map((r) => r.slice());
+        for (let i = 0; i < values.length; i++) {
+          for (let j = 0; j < values[i].length; j++) {
+            const r = startRow + i;
+            const c = startCol + j;
+            if (cells[r]) {
+              const existing = cells[r][c] ?? { display: "", raw: "" };
+              cells[r][c] = { ...existing, raw: values[i][j], display: values[i][j] };
+            }
+          }
+        }
+        return { ...d, cells };
+      });
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/data`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sheet: activeSheet, mode: "range", row: startRow, col: startCol, values }),
+        });
+        const j = (await res.json()) as { values?: string[][]; error?: string };
+        if (!res.ok) throw new Error(j.error || "Paste failed");
+        if (j.values) applyValuesRefresh(j.values);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Paste failed");
+        void loadSheet(activeSheet);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [activeSheet, spreadsheetId, applyValuesRefresh, loadSheet]
+  );
+
+  /** Paste: prefer the in-app clipboard; fall back to OS clipboard (TSV). */
+  const pasteClipboard = useCallback(async () => {
+    let block = clipboardRef.current;
+    if (!block) {
+      try {
+        const text = await navigator.clipboard?.readText();
+        if (text) block = text.split(/\r?\n/).map((line) => line.split("\t"));
+      } catch { /* ignore */ }
+    }
+    if (!block || !block.length) return;
+    await writeRange(selRect.r1, selRect.c1, block);
+  }, [selRect, writeRange]);
+
   /* ── Keyboard navigation on the grid ── */
   const onGridKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -193,21 +351,36 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
       const { row, col } = selected;
       const maxR = data.rowCount - 1;
       const maxC = data.columnCount - 1;
-      if (e.key === "ArrowUp") { e.preventDefault(); setSelected({ row: Math.max(0, row - 1), col }); }
-      else if (e.key === "ArrowDown") { e.preventDefault(); setSelected({ row: Math.min(maxR, row + 1), col }); }
-      else if (e.key === "ArrowLeft") { e.preventDefault(); setSelected({ row, col: Math.max(0, col - 1) }); }
-      else if (e.key === "ArrowRight" || e.key === "Tab") { e.preventDefault(); setSelected({ row, col: Math.min(maxC, col + 1) }); }
+      const meta = e.metaKey || e.ctrlKey;
+
+      // Clipboard shortcuts.
+      if (meta && (e.key === "c" || e.key === "C")) { e.preventDefault(); copySelection(); return; }
+      if (meta && (e.key === "x" || e.key === "X")) { e.preventDefault(); copySelection(); void clearSelection(); return; }
+      if (meta && (e.key === "v" || e.key === "V")) { e.preventDefault(); void pasteClipboard(); return; }
+      if (meta && (e.key === "a" || e.key === "A")) {
+        e.preventDefault();
+        setAnchor({ row: 0, col: 0 });
+        setSelected({ row: maxR, col: maxC });
+        return;
+      }
+
+      // Shift+arrow extends the selection; plain arrow moves + collapses.
+      const moveOrExtend = (p: Pos) => { if (e.shiftKey) extendTo(p); else selectCell(p); };
+      if (e.key === "ArrowUp") { e.preventDefault(); moveOrExtend({ row: Math.max(0, row - 1), col }); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); moveOrExtend({ row: Math.min(maxR, row + 1), col }); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); moveOrExtend({ row, col: Math.max(0, col - 1) }); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); moveOrExtend({ row, col: Math.min(maxC, col + 1) }); }
+      else if (e.key === "Tab") { e.preventDefault(); selectCell({ row, col: Math.min(maxC, col + 1) }); }
       else if (e.key === "Enter") { e.preventDefault(); beginEdit(selected); }
       else if (e.key === "Backspace" || e.key === "Delete") {
         e.preventDefault();
-        beginEdit(selected, "");
-        void commitEdit();
-      } else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        void clearSelection();
+      } else if (e.key.length === 1 && !meta && !e.altKey) {
         // Start typing replaces cell content.
         beginEdit(selected, e.key);
       }
     },
-    [editing, data, selected, beginEdit, commitEdit]
+    [editing, data, selected, beginEdit, copySelection, clearSelection, pasteClipboard, extendTo, selectCell]
   );
 
   /* ── Formatting actions ── */
@@ -222,10 +395,10 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
           body: JSON.stringify({
             op: "format",
             sheetId: activeTab.sheetId,
-            startRow: selected.row,
-            endRow: selected.row + 1,
-            startCol: selected.col,
-            endCol: selected.col + 1,
+            startRow: selRect.r1,
+            endRow: selRect.r2 + 1,
+            startCol: selRect.c1,
+            endCol: selRect.c2 + 1,
             format,
             refreshSheet: activeSheet,
           }),
@@ -239,7 +412,7 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
         setSaving(false);
       }
     },
-    [activeTab, activeSheet, spreadsheetId, selected]
+    [activeTab, activeSheet, spreadsheetId, selRect]
   );
 
   const structuralOp = useCallback(
@@ -432,20 +605,30 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
                 {/* Cells */}
                 {Array.from({ length: data.columnCount }).map((_, c) => {
                   const cell = cellAt(r, c);
-                  const isSel = selected.row === r && selected.col === c;
+                  const isFocus = selected.row === r && selected.col === c;
+                  const isSel = inSelection(r, c);
+                  const isRange = isSel && !(selRect.r1 === selRect.r2 && selRect.c1 === selRect.c2);
                   const isEdit = editing?.row === r && editing?.col === c;
                   return (
                     <div
                       key={c}
-                      onMouseDown={() => {
+                      onMouseDown={(e) => {
                         if (editing) void commitEdit();
-                        setSelected({ row: r, col: c });
+                        if (e.shiftKey) {
+                          extendTo({ row: r, col: c });
+                        } else {
+                          draggingRef.current = true;
+                          selectCell({ row: r, col: c });
+                        }
                         gridRef.current?.focus();
+                      }}
+                      onMouseEnter={() => {
+                        if (draggingRef.current) extendTo({ row: r, col: c });
                       }}
                       onDoubleClick={() => beginEdit({ row: r, col: c })}
                       className={cn(
                         "relative shrink-0 cursor-cell overflow-hidden border-b border-r border-[var(--color-border)] px-1.5 text-[13px] leading-[26px] text-[var(--color-text)]",
-                        isSel && !isEdit && "ring-2 ring-inset ring-[var(--color-primary)]"
+                        isFocus && !isEdit && "ring-2 ring-inset ring-[var(--color-primary)]"
                       )}
                       style={{
                         width: COL_W,
@@ -461,6 +644,9 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
                         textAlign: (cell.align?.toLowerCase() as "left" | "center" | "right") || "left",
                       }}
                     >
+                      {isRange && (
+                        <span className="pointer-events-none absolute inset-0 bg-[var(--color-primary)] opacity-10" />
+                      )}
                       {isEdit ? (
                         <input
                           ref={editInputRef}

@@ -498,6 +498,63 @@ export async function updateCell(
   });
 }
 
+/** Build an A1 range ref for a tab, e.g. "Sheet1!B3:D7" (end inclusive). */
+export function a1Range(
+  sheetTitle: string,
+  startRow0: number,
+  startCol0: number,
+  endRow0: number,
+  endCol0: number
+): string {
+  const tab = sheetTitle.replace(/'/g, "''");
+  const start = `${colToLetter(startCol0)}${startRow0 + 1}`;
+  const end = `${colToLetter(endCol0)}${endRow0 + 1}`;
+  return `'${tab}'!${start}:${end}`;
+}
+
+/**
+ * Write a rectangular block of values (paste). `values` is row-major; the
+ * range is anchored at (startRow0, startCol0). USER_ENTERED so formulas and
+ * numbers parse as in the UI.
+ */
+export async function updateRange(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetTitle: string,
+  startRow0: number,
+  startCol0: number,
+  values: string[][]
+): Promise<void> {
+  if (!values.length) return;
+  const endRow0 = startRow0 + values.length - 1;
+  const endCol0 = startCol0 + Math.max(...values.map((r) => r.length)) - 1;
+  const ref = a1Range(sheetTitle, startRow0, startCol0, endRow0, endCol0);
+  const url = `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(
+    ref
+  )}?valueInputOption=USER_ENTERED`;
+  await sheetsFetch(accessToken, url, {
+    method: "PUT",
+    body: JSON.stringify({ range: ref, values }),
+  });
+}
+
+/** Clear the values in a rectangular range (Delete/cut). Formatting is kept. */
+export async function clearRange(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetTitle: string,
+  startRow0: number,
+  startCol0: number,
+  endRow0: number,
+  endCol0: number
+): Promise<void> {
+  const ref = a1Range(sheetTitle, startRow0, startCol0, endRow0, endCol0);
+  const url = `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(
+    ref
+  )}:clear`;
+  await sheetsFetch(accessToken, url, { method: "POST", body: JSON.stringify({}) });
+}
+
 /** Read computed (formatted) values for a single tab — used to refresh after an edit. */
 export async function getSheetValues(
   accessToken: string,

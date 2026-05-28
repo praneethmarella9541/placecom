@@ -4,6 +4,8 @@ import {
   getSpreadsheetMeta,
   getSheetData,
   updateCell,
+  updateRange,
+  clearRange,
   getSheetValues,
 } from "@/lib/sheets";
 import { SHEETS_INSUFFICIENT_SCOPE } from "@/lib/sheets-scope-error";
@@ -60,15 +62,20 @@ export async function GET(
 
 type PutBody = {
   sheet: string;
-  row: number; // 0-based
-  col: number; // 0-based
-  value: string;
+  /** "cell" (default): write one cell. "range": paste a block. "clear": clear a block. */
+  mode?: "cell" | "range" | "clear";
+  row: number; // 0-based anchor / start row
+  col: number; // 0-based anchor / start col
+  value?: string; // for mode "cell"
+  values?: string[][]; // for mode "range"
+  endRow?: number; // for mode "clear" (0-based, inclusive)
+  endCol?: number; // for mode "clear" (0-based, inclusive)
 };
 
 /**
- * PUT — write a single cell (USER_ENTERED so formulas/numbers parse), then
- * return the refreshed computed values for the whole tab so any dependent
- * formula cells update in the grid.
+ * PUT — write a single cell, paste a range of values, or clear a range
+ * (USER_ENTERED so formulas/numbers parse), then return the refreshed
+ * computed values for the whole tab so dependent formula cells update.
  */
 export async function PUT(
   request: Request,
@@ -93,8 +100,21 @@ export async function PUT(
     return NextResponse.json({ error: "row and col must be non-negative numbers" }, { status: 400 });
   }
 
+  const mode = body.mode ?? "cell";
+
   try {
-    await updateCell(auth.accessToken, id, sheet, body.row, body.col, body.value ?? "");
+    if (mode === "range") {
+      if (!Array.isArray(body.values) || !body.values.length) {
+        return NextResponse.json({ error: "values is required for range mode" }, { status: 400 });
+      }
+      await updateRange(auth.accessToken, id, sheet, body.row, body.col, body.values);
+    } else if (mode === "clear") {
+      const endRow = typeof body.endRow === "number" ? body.endRow : body.row;
+      const endCol = typeof body.endCol === "number" ? body.endCol : body.col;
+      await clearRange(auth.accessToken, id, sheet, body.row, body.col, endRow, endCol);
+    } else {
+      await updateCell(auth.accessToken, id, sheet, body.row, body.col, body.value ?? "");
+    }
     // Re-fetch computed values so formula cells reflect the change.
     const values = await getSheetValues(auth.accessToken, id, sheet);
     return NextResponse.json({ ok: true, values });

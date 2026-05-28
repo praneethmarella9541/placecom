@@ -732,3 +732,95 @@ export async function setFrozenRows(
     }
   );
 }
+
+/* ── Tab management ── */
+
+/** Add a new tab. Returns the new tab's title (Google assigns if omitted). */
+export async function addSheetTab(
+  accessToken: string,
+  spreadsheetId: string,
+  title?: string
+): Promise<string> {
+  const properties: Record<string, unknown> = {};
+  if (title?.trim()) properties.title = title.trim();
+  const res = await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ requests: [{ addSheet: { properties } }] }),
+    }
+  );
+  const data = (await res.json()) as {
+    replies?: { addSheet?: { properties?: { title?: string } } }[];
+  };
+  return data.replies?.[0]?.addSheet?.properties?.title ?? title ?? "Sheet";
+}
+
+/** Delete a tab by sheetId. */
+export async function deleteSheetTab(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetId: number
+): Promise<void> {
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ requests: [{ deleteSheet: { sheetId } }] }),
+    }
+  );
+}
+
+/** Rename a tab. */
+export async function renameSheetTab(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetId: number,
+  title: string
+): Promise<void> {
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [
+          {
+            updateSheetProperties: {
+              properties: { sheetId, title },
+              fields: "title",
+            },
+          },
+        ],
+      }),
+    }
+  );
+}
+
+/** Move a tab to a new 0-based index (reorder). */
+export async function moveSheetTab(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetId: number,
+  newIndex: number
+): Promise<void> {
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [
+          {
+            updateSheetProperties: {
+              properties: { sheetId, index: newIndex },
+              fields: "index",
+            },
+          },
+        ],
+      }),
+    }
+  );
+}

@@ -76,6 +76,8 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
   const draggingRef = useRef(false);
   // In-app clipboard: a 2-D block of raw values copied/cut from a range.
   const clipboardRef = useRef<string[][] | null>(null);
+  // Right-click context menu for a tab: { sheetId, title, x, y } or null.
+  const [tabMenu, setTabMenu] = useState<{ sheetId: number; title: string; x: number; y: number } | null>(null);
 
   // Normalized selection rectangle (top-left → bottom-right).
   const selRect = useMemo(() => {
@@ -437,6 +439,42 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     [activeTab, activeSheet, spreadsheetId]
   );
 
+  /** Tab management: add / delete / rename / move. Updates meta + active tab. */
+  const tabOp = useCallback(
+    async (payload: Record<string, unknown>) => {
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/tabs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const j = (await res.json()) as { meta?: SpreadsheetMeta; newTabTitle?: string; error?: string };
+        if (!res.ok) throw new Error(j.error || "Tab operation failed");
+        if (j.meta) {
+          setMeta(j.meta);
+          // If the active tab was deleted, fall back to the first remaining one.
+          const stillExists = j.meta.tabs.some((t) => t.title === activeSheet);
+          const nextTab = j.newTabTitle || (stillExists ? activeSheet : j.meta.tabs[0]?.title);
+          if (nextTab && nextTab !== activeSheet) void loadSheet(nextTab);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Tab operation failed");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [spreadsheetId, activeSheet, loadSheet]
+  );
+
+  // Close the tab context menu on any outside click.
+  useEffect(() => {
+    if (!tabMenu) return;
+    const close = () => setTabMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [tabMenu]);
+
   const selCell = data ? cellAt(selected.row, selected.col) : null;
 
   /* ── Render ── */
@@ -675,11 +713,29 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
       {/* Tab bar */}
       {meta && meta.tabs.length > 0 && (
         <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] px-2 py-1">
+          <button
+            type="button"
+            title="Add sheet"
+            onClick={() => void tabOp({ op: "add" })}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
           {meta.tabs.map((t) => (
             <button
               key={t.sheetId}
               type="button"
               onClick={() => { if (t.title !== activeSheet) void loadSheet(t.title); }}
+              onDoubleClick={() => {
+                const next = window.prompt("Rename sheet", t.title);
+                if (next && next.trim() && next.trim() !== t.title) {
+                  void tabOp({ op: "rename", sheetId: t.sheetId, title: next.trim() });
+                }
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setTabMenu({ sheetId: t.sheetId, title: t.title, x: e.clientX, y: e.clientY });
+              }}
               className={cn(
                 "shrink-0 rounded-md px-3 py-1 text-[13px] font-medium transition-colors",
                 t.title === activeSheet
@@ -690,6 +746,43 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
               {t.title}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Tab context menu (right-click) */}
+      {tabMenu && (
+        <div
+          className="fixed z-50 w-40 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+          style={{ top: tabMenu.y, left: tabMenu.x }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              const next = window.prompt("Rename sheet", tabMenu.title);
+              setTabMenu(null);
+              if (next && next.trim() && next.trim() !== tabMenu.title) {
+                void tabOp({ op: "rename", sheetId: tabMenu.sheetId, title: next.trim() });
+              }
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[var(--color-text)] hover:bg-[var(--color-surface-offset)]"
+          >
+            Rename
+          </button>
+          {meta && meta.tabs.length > 1 && (
+            <button
+              type="button"
+              onClick={() => {
+                setTabMenu(null);
+                if (window.confirm(`Delete sheet "${tabMenu.title}"? This cannot be undone.`)) {
+                  void tabOp({ op: "delete", sheetId: tabMenu.sheetId });
+                }
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
+            >
+              Delete
+            </button>
+          )}
         </div>
       )}
     </div>

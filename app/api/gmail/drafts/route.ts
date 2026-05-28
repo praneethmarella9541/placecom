@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { draftSubjectForCompose, draftSubjectForMime } from "@/lib/gmail-draft-subject";
 
 export const runtime = "nodejs";
 
@@ -90,7 +91,7 @@ function buildRaw(opts: {
     `To: ${opts.to}`,
     ...(opts.cc ? [`Cc: ${opts.cc}`] : []),
     ...(opts.bcc ? [`Bcc: ${opts.bcc}`] : []),
-    `Subject: ${(opts.subject || "").trim() || "(no subject)"}`,
+    `Subject: ${draftSubjectForMime(opts.subject ?? "")}`,
     "MIME-Version: 1.0",
   ];
 
@@ -235,7 +236,7 @@ export async function GET(request: Request) {
     to: get('To'),
     cc: get('Cc'),
     bcc: get('Bcc'),
-    subject: get('Subject'),
+    subject: draftSubjectForCompose(get("Subject")),
     textBody: collectText(payload),
     htmlBody: collectHtml(payload),
     attachments: collectAttachments(payload).map((a) => ({ ...a, messageId })),

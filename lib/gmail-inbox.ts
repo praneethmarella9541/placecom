@@ -1,5 +1,6 @@
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
+import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -156,7 +157,7 @@ export async function listDraftsPage(
         return {
           id: d.id, // use draftId as the unique row id to avoid threadId collisions
           snippet,
-          subject: "(no subject)",
+          subject: draftSubjectForDisplay(""),
           from: "",
           date: "",
           draftId: d.id,
@@ -168,7 +169,7 @@ export async function listDraftsPage(
       return {
         id: d.id, // use draftId as the unique row id to avoid threadId collisions
         snippet: snippet || meta.subject || "",
-        subject: meta.subject,
+        subject: draftSubjectForDisplay(meta.subject),
         from: displayLine,
         date: meta.date,
         draftId: d.id,

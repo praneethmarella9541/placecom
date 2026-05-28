@@ -5,6 +5,7 @@ import { LabelChip } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
+import { ThreadActionsMenu } from "@/components/ThreadActionsMenu";
 import { GmailAttachmentPreviews } from "@/components/GmailAttachmentPreviews";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
@@ -402,6 +403,7 @@ export default function InboxPage() {
   const [inlineReplyFiles, setInlineReplyFiles] = useState<PendingFile[]>([]);
   const [inlineReplySending, setInlineReplySending] = useState(false);
   const inlineReplyFileRef = useRef<HTMLInputElement>(null);
+  const inlineReplyRef = useRef<HTMLDivElement>(null);
   // The current user's own Gmail address — used to exclude self from Reply All
   const [myEmail, setMyEmail] = useState("");
 
@@ -1843,6 +1845,9 @@ export default function InboxPage() {
     setInlineReplyCc(mode === "replyAll" ? buildReplyAllCc(last) : "");
     setInlineReplyBody("");
     setInlineReplyFiles([]);
+    requestAnimationFrame(() => {
+      inlineReplyRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
   }
 
   async function sendInlineReply() {
@@ -2995,9 +3000,16 @@ export default function InboxPage() {
                       className="ml-auto hidden md:inline-flex"
                     />
                   </div>
-                  <h2 className="px-2 text-xl font-normal text-[#202124] md:px-0">
-                    {messages[0]?.subject || "(no subject)"}
-                  </h2>
+                  <div className="flex items-start gap-1 px-2 md:px-0">
+                    <h2 className="min-w-0 flex-1 text-xl font-normal leading-snug text-[#202124]">
+                      {messages[0]?.subject || "(no subject)"}
+                    </h2>
+                    <ThreadActionsMenu
+                      onReply={() => startInlineReply("reply")}
+                      onReplyAll={() => startInlineReply("replyAll")}
+                      onForward={() => openForward()}
+                    />
+                  </div>
                   {threadLabelIds.length > 0 && (
                     <div className="mb-2 flex flex-wrap gap-1 pl-12">
                       {threadLabelIds
@@ -3084,6 +3096,7 @@ export default function InboxPage() {
                   );
                   })}
 
+                  <div ref={inlineReplyRef}>
                   <GmailInlineReply
                     mode={inlineReplyMode}
                     replyLabel={senderName(messages[messages.length - 1]?.from || "")}
@@ -3106,6 +3119,7 @@ export default function InboxPage() {
                     driveUploadProgress={driveUploadProgress}
                     onRemoveFile={(i) => setInlineReplyFiles((prev) => prev.filter((_, j) => j !== i))}
                   />
+                  </div>
                 </div>
                 <input
                   ref={inlineReplyFileRef}

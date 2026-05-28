@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { LabelChip } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { RichTextEditor, richTextIsEmpty } from "@/components/RichTextEditor";
+import { EmailHtmlBody } from "@/components/EmailHtmlBody";
+import { GmailComposeDialog } from "@/components/GmailComposeDialog";
 import { createPortal } from "react-dom";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractEmailAddress } from "@/lib/email-parse";
@@ -12,7 +14,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal, Bookmark, Loader2, Trash2, AlertOctagon, Mail } from "lucide-react";
+import { PencilLine, Paperclip, FilePen, SlidersHorizontal, Bookmark, Loader2, Trash2, AlertOctagon, Mail } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -638,253 +640,6 @@ function AttachmentChips({ attachments, messageId }: { attachments: AttachmentVi
   );
 }
 
-function HtmlBody({ html, plain }: { html?: string; plain?: string }) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(120);
-
-  useEffect(() => {
-    const iframe = iframeRef.current;
-    if (!iframe || !html) return;
-    const doc = iframe.contentDocument;
-    if (!doc) return;
-
-    const isDark = document.documentElement.classList.contains("dark");
-    const bg = isDark ? "#18181b" : "#ffffff";
-    const fg = isDark ? "#d4d4d8" : "#27272a";
-
-    doc.open();
-    doc.write(`<!DOCTYPE html><html><head>
-      <!-- Force every anchor without an explicit target to open in a new
-           tab. With <base target="_blank"> we don't have to crawl the
-           DOM rewriting links (which would break on lazy-rendered emails)
-           and we also can't accidentally navigate THIS iframe away. -->
-      <base target="_blank">
-      <style>
-        *, *::before, *::after { box-sizing: border-box; }
-        html, body {
-          margin: 0; padding: 0;
-          /* overflow: visible so the iframe can measure the true scrollHeight
-             and expand to fit — no internal scrollbars. */
-          overflow: visible;
-        }
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-          font-size: 14px; line-height: 1.6;
-          color: ${fg}; background: ${bg};
-          word-break: break-word; overflow-wrap: break-word;
-        }
-        a { color: #1a73e8; }
-        /* Images must never overflow the readable column width */
-        img { max-width: 100%; height: auto; display: block; }
-        blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid #d4d4d8; color: #71717a; }
-        /* Wide email tables (common in bank/marketing HTML): scale down to
-           fit the iframe width instead of overflowing and causing clipping. */
-        table { border-collapse: collapse; max-width: 100%; width: 100%; }
-        pre { white-space: pre-wrap; overflow-x: auto; }
-      </style>
-    </head><body>${html}</body></html>`);
-    doc.close();
-
-    // Belt-and-braces: even with <base target="_blank">, some sandbox
-    // configurations silently swallow the click. Intercept anchor clicks
-    // at capture and re-open the URL via the parent window.open — which
-    // is unaffected by the iframe's sandbox.
-    const onLinkClick = (e: Event) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      const anchor = target.closest("a[href]") as HTMLAnchorElement | null;
-      if (!anchor) return;
-      const href = anchor.getAttribute("href") ?? "";
-      // Skip in-page anchors and mailto/tel (let the browser handle those).
-      if (!href || href.startsWith("#")) return;
-      // Convert relative URLs to absolute using the iframe document's base
-      // URL if any, falling back to about:blank-safe behaviour.
-      let abs: string;
-      try { abs = new URL(href, doc.baseURI).toString(); }
-      catch { abs = href; }
-      // mailto:/tel:/etc — let the browser navigate normally.
-      if (/^(mailto|tel|sms):/i.test(abs)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      window.open(abs, "_blank", "noopener,noreferrer");
-    };
-    doc.addEventListener("click", onLinkClick, true);
-
-    /**
-     * Walk the rendered iframe and bump any element whose text is too low-
-     * contrast against the background to a readable shade. This handles
-     * calendar invites (Google emits an inline grey that cascades through
-     * the whole left column) and any other dim-text email — much more
-     * reliable than allowlisting specific hex values via CSS selectors.
-     *
-     * Rules:
-     *   - Compute the element's actual text colour via getComputedStyle.
-     *   - If the colour is "dim" (in light mode: luminance > 0.30 i.e.
-     *     lighter than ~#777; in dark mode: luminance < 0.55), set its
-     *     inline color to the body's `fg`.
-     *   - Skip elements with `background-color` set (button/CTA chips,
-     *     coloured badges) so we don't break designer-styled UI.
-     *   - Skip <a> tags — they already have our anchor color rule.
-     *   - Re-run if the document mutates (some clients lazy-render).
-     */
-    function relLuma(r: number, g: number, b: number) {
-      // Approx luminance: 0 = black, 1 = white.
-      const f = (c: number) => {
-        const v = c / 255;
-        return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-      };
-      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-    }
-    function parseRgb(s: string): [number, number, number] | null {
-      const m = s.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-      if (!m) return null;
-      return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
-    }
-    // Pin non-null references for the helper closures below (TS narrowing
-    // is lost inside nested function expressions).
-    const iframeEl = iframe;
-    const docEl = doc;
-    // Body background luminance — used to detect whether an ancestor's
-    // background differs enough to be considered "styled" (button / badge)
-    // vs just an invisible card-on-card that matches our page bg.
-    const bodyBgLum = isDark ? 0.05 : 0.97; // approx luma of body bg
-    /** True iff the element itself OR any ancestor has a background colour
-     *  meaningfully different from the page background. Buttons / coloured
-     *  badges / callouts qualify; the generic white card the email sits
-     *  on does NOT. Used to preserve author-chosen text on styled UI. */
-    function hasStyledBgInChain(el: HTMLElement | null): boolean {
-      let cur: HTMLElement | null = el;
-      const win = iframeEl.contentWindow || window;
-      while (cur && cur !== docEl.body && cur !== docEl.documentElement) {
-        const bg = win.getComputedStyle(cur).backgroundColor;
-        if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
-          const alpha = bg.match(/rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\)/);
-          const isOpaque = !alpha || parseFloat(alpha[1]) > 0;
-          if (isOpaque) {
-            const rgb = parseRgb(bg);
-            if (rgb) {
-              const ancestorLum = relLuma(rgb[0], rgb[1], rgb[2]);
-              // Only skip when the bg is materially different from the page
-              // bg — a real button/badge, not another white-ish card.
-              if (Math.abs(ancestorLum - bodyBgLum) > 0.15) return true;
-            }
-          }
-        }
-        cur = cur.parentElement;
-      }
-      return false;
-    }
-    function bumpDimText() {
-      if (!docEl.body) return;
-      const win = iframeEl.contentWindow || window;
-      const all = docEl.body.querySelectorAll<HTMLElement>("*");
-      for (const el of Array.from(all)) {
-        if (el.tagName === "IMG" || el.tagName === "BR") continue;
-        // Skip when the element itself OR an ancestor has a meaningfully-
-        // different background (button / coloured badge / callout). The
-        // author picked the text colour to read on THAT bg, so leave it.
-        if (hasStyledBgInChain(el)) continue;
-        const cs = win.getComputedStyle(el);
-        const rgb = parseRgb(cs.color);
-        if (!rgb) continue;
-        const lum = relLuma(rgb[0], rgb[1], rgb[2]);
-        if (isDark) {
-          // Dark mode: any text darker than ~#888 luma is hard to read.
-          if (lum < 0.45) el.style.color = fg;
-        } else {
-          // Light mode: text with luminance > 0.18 (~#777 and lighter) fails
-          // WCAG AA against white. Bump it to our readable fg.
-          if (lum > 0.18) el.style.color = fg;
-        }
-      }
-    }
-    bumpDimText();
-    // Some clients lazy-render parts of the message; re-run shortly after
-    // first paint to catch them. Two ticks covers fast + slow loaders.
-    setTimeout(bumpDimText, 100);
-    setTimeout(bumpDimText, 500);
-
-    const resize = () => {
-      if (!doc.body) return;
-      // Use the maximum of body and documentElement scrollHeight — different
-      // browsers report the "true" content height on different nodes.
-      // Add 24px bottom padding so the last line is never shaved off.
-      const h = Math.max(
-        doc.body.scrollHeight,
-        doc.documentElement?.scrollHeight ?? 0,
-        doc.body.offsetHeight,
-      );
-      setHeight(Math.max(60, h + 24));
-    };
-
-    const observer = new MutationObserver(resize);
-    observer.observe(doc.body, { childList: true, subtree: true, attributes: true });
-    iframe.addEventListener("load", resize);
-
-    // Re-measure after each image inside the iframe finishes loading.
-    // Without this, scrollHeight is measured before images paint and the
-    // iframe is clipped — showing only the first line of content.
-    const attachImageListeners = () => {
-      const imgs = doc.body?.querySelectorAll<HTMLImageElement>("img") ?? [];
-      for (const img of Array.from(imgs)) {
-        if (!img.complete) {
-          img.addEventListener("load", resize, { once: true });
-          img.addEventListener("error", resize, { once: true });
-        }
-      }
-    };
-    attachImageListeners();
-    // Also catch images added by lazy-rendering email clients.
-    const imgObserver = new MutationObserver(() => {
-      attachImageListeners();
-      resize();
-    });
-    imgObserver.observe(doc.body, { childList: true, subtree: true });
-
-    // Fallback timeouts for emails that don't fire any of the above events.
-    setTimeout(resize, 200);
-    setTimeout(resize, 800);
-    setTimeout(resize, 2000);
-
-    return () => {
-      observer.disconnect();
-      imgObserver.disconnect();
-      iframe.removeEventListener("load", resize);
-      doc.removeEventListener("click", onLinkClick, true);
-    };
-  }, [html]);
-
-  if (!html) {
-    return (
-      <pre className="mt-3 whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-[var(--color-text)]">
-        {plain || "(empty body)"}
-      </pre>
-    );
-  }
-
-  return (
-    <iframe
-      ref={iframeRef}
-      // allow-same-origin: lets doc.write() work and grants the iframe
-      //   access to its own document after write.
-      // allow-popups: required for window.open() in the link-click handler
-      //   to open hrefs in a new tab — without this the sandbox silently
-      //   swallows every link click.
-      // allow-popups-to-escape-sandbox: lets the newly opened tab behave
-      //   like a normal browser tab (not inherit the sandbox restrictions).
-      // NOTE: allow-scripts is intentionally omitted — email HTML must not
-      //   run JavaScript. Images load fine without it; the sandbox does NOT
-      //   block external image/CSS resource fetches (only scripts & forms).
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      className="mt-3 w-full border-0"
-      // overflow:hidden removes the iframe's own scrollbar — the height is
-      // driven entirely by the resize() measurement so the element is always
-      // exactly as tall as its content with no internal scroll.
-      style={{ height: `${height}px`, minHeight: 60, overflow: "hidden" }}
-      title={titleCase("Email body")}
-    />
-  );
-}
 
 const STORAGE_SIDEBAR_W = "placecom-inbox-sidebar-w";
 const STORAGE_LIST_W = "placecom-inbox-list-w";
@@ -1119,13 +874,10 @@ export default function InboxPage() {
   const [showNewLabelForm, setShowNewLabelForm] = useState(false);
   const newLabelInputRef = useRef<HTMLInputElement>(null);
 
-  const [replyText, setReplyText] = useState("");
-  const [replyOpen, setReplyOpen] = useState(false);
-  // "reply" | "replyAll" — which mode opened the reply panel
-  const [replyMode, setReplyMode] = useState<"reply" | "replyAll">("reply");
-  // Editable To / Cc fields for the reply panel (pre-filled from mode)
-  const [replyTo, setReplyTo] = useState("");
-  const [replyCc, setReplyCc] = useState("");
+  type ComposeKind = "new" | "reply" | "replyAll" | "forward";
+  const [composeKind, setComposeKind] = useState<ComposeKind>("new");
+  const [composeThreadId, setComposeThreadId] = useState<string | null>(null);
+  const [composeInReplyToId, setComposeInReplyToId] = useState<string | null>(null);
   // The current user's own Gmail address — used to exclude self from Reply All
   const [myEmail, setMyEmail] = useState("");
 
@@ -1177,15 +929,14 @@ export default function InboxPage() {
   const draftLastSavedRef = useRef<string>("");
   // True if a save is in-flight — prevents overlapping POSTs while typing fast.
   const draftSavingRef = useRef(false);
-  const [replyFiles, setReplyFiles] = useState<PendingFile[]>([]);
   const composeFileRef = useRef<HTMLInputElement>(null);
-  const replyFileRef = useRef<HTMLInputElement>(null);
   // Scroll-position preservation: save the list's scrollTop before opening a
   // thread, then restore it the moment the list becomes visible again.
   const listScrollRef = useRef<HTMLUListElement>(null);
   const savedScrollTop = useRef<number>(0);
   // Prefetch cache: hover over a row starts the fetch so the click is instant.
-  const prefetchCache = useRef<Map<string, Promise<Response>>>(new Map());
+  type ThreadCacheData = { messages: MsgView[]; labelIds: string[] };
+  const threadDataCache = useRef<Map<string, Promise<ThreadCacheData>>>(new Map());
   // Same prefetch cache for draft rows — mirrors prefetchCache but keyed by draftId.
   const draftPrefetchCache = useRef<Map<string, Promise<Response>>>(new Map());
 
@@ -1448,7 +1199,7 @@ export default function InboxPage() {
     return results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
-  async function handleFileSelect(files: FileList | null, target: "compose" | "reply") {
+  async function handleFileSelect(files: FileList | null) {
     if (!files) return;
     const GMAIL_LIMIT = 25 * 1024 * 1024; // 25 MB — Gmail's inline attachment cap
     const newFiles: PendingFile[] = [];
@@ -1529,8 +1280,7 @@ export default function InboxPage() {
         }
       }
     }
-    if (target === "compose") setComposeFiles((prev) => [...prev, ...newFiles]);
-    else setReplyFiles((prev) => [...prev, ...newFiles]);
+    setComposeFiles((prev) => [...prev, ...newFiles]);
   }
 
   useEffect(() => {
@@ -2050,6 +1800,9 @@ export default function InboxPage() {
         subject: data.subject ?? "", body: loadedHtmlBody,
         files: fileFingerprints,
       });
+      setComposeKind("new");
+      setComposeThreadId(null);
+      setComposeInReplyToId(null);
       setComposeOpen(true);
       setComposeMinimized(false);
     } catch (e) {
@@ -2059,15 +1812,37 @@ export default function InboxPage() {
     }
   }, []);
 
-  // Prefetch a thread on hover — stores the in-flight Response promise so
-  // openThread can clone + consume it without starting a new request.
-  const prefetchThread = useCallback((threadId: string) => {
-    if (prefetchCache.current.has(threadId)) return; // already in-flight or done
-    const promise = fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`, { cache: "no-store" });
-    prefetchCache.current.set(threadId, promise);
-    // Auto-evict after 60 s so stale data doesn't accumulate.
-    setTimeout(() => prefetchCache.current.delete(threadId), 60_000);
+  const fetchThreadData = useCallback((threadId: string): Promise<ThreadCacheData> => {
+    const existing = threadDataCache.current.get(threadId);
+    if (existing) return existing;
+    const promise = fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`, {
+      cache: "no-store",
+    }).then(async (res) => {
+      const data = (await res.json()) as {
+        error?: string;
+        messages?: MsgView[];
+        labelIds?: string[];
+      };
+      if (!res.ok) throw new Error(data.error || "Failed to open thread");
+      return {
+        messages: data.messages || [],
+        labelIds: (data.labelIds ?? []).filter((id) => id !== "UNREAD"),
+      };
+    });
+    threadDataCache.current.set(threadId, promise);
+    promise.catch(() => {
+      threadDataCache.current.delete(threadId);
+    });
+    setTimeout(() => threadDataCache.current.delete(threadId), 120_000);
+    return promise;
   }, []);
+
+  const prefetchThread = useCallback(
+    (threadId: string) => {
+      void fetchThreadData(threadId);
+    },
+    [fetchThreadData]
+  );
 
   // Prefetch a draft on hover — same pattern as prefetchThread so openDraft
   // can reuse the already-in-flight response and open instantly on click.
@@ -2107,25 +1882,28 @@ export default function InboxPage() {
       });
 
     setSelectedId(threadId);
-    setMessages(null); setThreadError(null); setReplyText(""); setReplyOpen(false); setReplyTo(""); setReplyCc("");
+    setThreadError(null);
     setThreadLabelIds([]);
-    setLoadingThread(true);
+
+    const cached = threadDataCache.current.get(threadId);
+    if (cached) {
+      setLoadingThread(false);
+    } else {
+      setMessages(null);
+      setLoadingThread(true);
+    }
+
     try {
-      // Reuse prefetch response if hover already started the fetch; otherwise start fresh.
-      const inflight = prefetchCache.current.get(threadId);
-      prefetchCache.current.delete(threadId); // consume — each Response body can only be read once
-      const res = inflight ? await inflight : await fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`, { cache: "no-store" });
-      const data = (await res.json()) as {
-        error?: string; messages?: MsgView[]; labelIds?: string[];
-      };
-      if (!res.ok) throw new Error(data.error || "Failed to open thread");
-      setMessages(data.messages || []);
-      // Strip UNREAD from returned labelIds — already marked read above.
-      setThreadLabelIds((data.labelIds ?? []).filter((id) => id !== "UNREAD"));
+      const data = await fetchThreadData(threadId);
+      setMessages(data.messages);
+      setThreadLabelIds(data.labelIds);
       void loadTracking();
-    } catch (e) { setThreadError(e instanceof Error ? e.message : "Error"); }
-    finally { setLoadingThread(false); }
-  }, [loadTracking, threads, scheduleCountRefresh, mutateThreads, adjustInboxUnread]);
+    } catch (e) {
+      setThreadError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setLoadingThread(false);
+    }
+  }, [loadTracking, threads, scheduleCountRefresh, mutateThreads, adjustInboxUnread, fetchThreadData]);
 
   // Add or remove a label on the currently-open thread. Optimistic — flips
   // local chips immediately and rolls back if the server rejects.
@@ -2336,7 +2114,6 @@ export default function InboxPage() {
         setSelectedId(null);
         setMessages(null);
         setThreadError(null);
-        setReplyOpen(false);
       }
 
       const rollback = () => {
@@ -2545,72 +2322,45 @@ export default function InboxPage() {
     }
   }
 
-  async function sendReply() {
-    if (!selectedId || !messages?.length || richTextIsEmpty(replyText)) return;
+  function openNewCompose() {
+    setComposeKind("new");
+    setComposeThreadId(null);
+    setComposeInReplyToId(null);
+    setComposeTo("");
+    setComposeCc("");
+    setComposeBcc("");
+    setComposeSubject("");
+    setComposeBody("");
+    setComposeFiles([]);
+    setComposeDraftId(null);
+    setComposeCcBccOpen(false);
+    setComposeMinimized(false);
+    setComposeFullscreen(false);
+    setComposeOpen(true);
+  }
+
+  /** Open the Gmail-style compose dock for Reply or Reply All. */
+  function openReplyCompose(mode: "reply" | "replyAll") {
+    if (!messages?.length || !selectedId) return;
     const last = messages[messages.length - 1];
-    // Use the editable replyTo/replyCc fields (pre-filled when panel opened).
-    const to = replyTo.trim() || extractEmailAddress(last.from);
-    const cc = replyCc.trim() || undefined;
+    const subj = last.subject || "";
+    const reSubject = /^re:/i.test(subj) ? subj : `Re: ${subj}`;
+    const cc = mode === "replyAll" ? buildReplyAllCc(last) : "";
 
-    // Snapshot before clearing.
-    const replySnapshot = {
-      htmlBody: replyText,
-      files: replyFiles,
-      threadId: selectedId,
-      lastId: last.id,
-      to,
-      cc,
-      mode: replyMode,
-      replyTo: to,
-    };
-
-    // Close the reply panel immediately — optimistic UX.
-    setReplyText(""); setReplyOpen(false); setReplyFiles([]); setReplyCc(""); setReplyTo("");
-    setThreadError(null);
-    showSendSnack({ phase: "sending" });
-
-    try {
-      const attachments = await resolveAttachmentsForUpload(replySnapshot.files);
-      const res = await fetch("/api/gmail/send", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: replySnapshot.to,
-          cc: replySnapshot.cc,
-          subject: "",
-          textBody: "",
-          htmlBody: replySnapshot.htmlBody,
-          threadId: replySnapshot.threadId,
-          inReplyToMessageId: replySnapshot.lastId,
-          attachments: attachments.length ? attachments : undefined,
-        }),
-      });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(data.error || "Send failed");
-
-      // Refresh the open thread to show the new reply message.
-      void openThread(replySnapshot.threadId);
-      // A reply only affects the open thread and Sent — do NOT clear the
-      // whole cache or re-fetch the current folder list (would cause a
-      // visible inbox refresh even though nothing there changed).
-      listCacheRef.current.delete("sent||");
-      void loadTracking();
-      showSendSnack({ phase: "sent" }, 3000);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Send failed";
-      showSendSnack({
-        phase: "error",
-        message: msg,
-        retry: () => {
-          setSendSnack(null);
-          setReplyText(replySnapshot.htmlBody);
-          setReplyFiles(replySnapshot.files);
-          setReplyTo(replySnapshot.replyTo);
-          setReplyCc(replySnapshot.cc ?? "");
-          setReplyMode(replySnapshot.mode);
-          setReplyOpen(true);
-        },
-      });
-    }
+    setComposeKind(mode);
+    setComposeThreadId(selectedId);
+    setComposeInReplyToId(last.id);
+    setComposeTo(extractEmailAddress(last.from));
+    setComposeCc(cc);
+    setComposeBcc("");
+    setComposeSubject(reSubject);
+    setComposeBody("");
+    setComposeFiles([]);
+    setComposeDraftId(null);
+    setComposeCcBccOpen(mode === "replyAll" || cc.length > 0);
+    setComposeMinimized(false);
+    setComposeFullscreen(false);
+    setComposeOpen(true);
   }
 
   /**
@@ -2655,12 +2405,9 @@ export default function InboxPage() {
     const dateStr = last.date ? new Date(last.date).toLocaleString() : "";
     const quotedHtml = `<br><br>---------- Forwarded message ----------<br>From: ${last.from}<br>Date: ${dateStr}<br>Subject: ${last.subject}<br>To: ${last.to}<br><br>${last.bodyHtml || last.body.replace(/\n/g, "<br>")}`;
 
-    // Close any open reply panel first.
-    setReplyOpen(false);
-    setReplyText("");
-    setReplyCc("");
-
-    // Pre-fill compose — do NOT set composeTo (forward has no recipient yet).
+    setComposeKind("forward");
+    setComposeThreadId(null);
+    setComposeInReplyToId(null);
     setComposeTo("");
     setComposeCc("");
     setComposeBcc("");
@@ -2679,10 +2426,13 @@ export default function InboxPage() {
       alert("Please add at least one recipient before sending.");
       return;
     }
+    if (richTextIsEmpty(composeBody)) {
+      alert("Please write a message before sending.");
+      return;
+    }
 
-    // Snapshot compose state BEFORE closing the window so the retry closure
-    // and the background fetch both see a stable copy.
     const snapshot = {
+      kind: composeKind,
       to: composeTo.trim(),
       cc: composeCc.trim(),
       bcc: composeBcc.trim(),
@@ -2690,15 +2440,21 @@ export default function InboxPage() {
       htmlBody: composeBody,
       files: composeFiles,
       draftId: composeDraftId,
+      threadId: composeThreadId,
+      inReplyToMessageId: composeInReplyToId,
     };
 
-    // ── Gmail-style optimistic close ──────────────────────────────────────
-    // Close the compose window immediately — the user sees "Message sent"
-    // right away. The actual API call runs in the background below.
     setComposeOpen(false);
     setComposeDraftId(null);
-    setComposeTo(""); setComposeCc(""); setComposeBcc("");
-    setComposeSubject(""); setComposeBody(""); setComposeFiles([]);
+    setComposeKind("new");
+    setComposeThreadId(null);
+    setComposeInReplyToId(null);
+    setComposeTo("");
+    setComposeCc("");
+    setComposeBcc("");
+    setComposeSubject("");
+    setComposeBody("");
+    setComposeFiles([]);
     showSendSnack({ phase: "sending" });
 
     // Inject an optimistic row into the Sent list so it appears immediately.
@@ -2756,20 +2512,29 @@ export default function InboxPage() {
           `</table>`;
       }
 
+      const isReply = snapshot.kind === "reply" || snapshot.kind === "replyAll";
       const res = await fetch("/api/gmail/send", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: snapshot.to,
           cc: snapshot.cc || undefined,
           bcc: snapshot.bcc || undefined,
-          subject: snapshot.subject,
+          subject: isReply ? "" : snapshot.subject,
           textBody: "",
           htmlBody: finalHtmlBody,
+          threadId: isReply ? snapshot.threadId ?? undefined : undefined,
+          inReplyToMessageId: isReply ? snapshot.inReplyToMessageId ?? undefined : undefined,
           attachments: attachments.length ? attachments : undefined,
         }),
       });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Send failed");
+
+      if (isReply && snapshot.threadId) {
+        threadDataCache.current.delete(snapshot.threadId);
+        void openThread(snapshot.threadId);
+      }
 
       // Delete the draft it was based on (fire-and-forget).
       if (snapshot.draftId) {
@@ -2809,6 +2574,9 @@ export default function InboxPage() {
         message: msg,
         retry: () => {
           setSendSnack(null);
+          setComposeKind(snapshot.kind);
+          setComposeThreadId(snapshot.threadId);
+          setComposeInReplyToId(snapshot.inReplyToMessageId);
           setComposeTo(snapshot.to);
           setComposeCc(snapshot.cc);
           setComposeBcc(snapshot.bcc);
@@ -2828,12 +2596,20 @@ export default function InboxPage() {
     setSelectedId(null);
     setMessages(null);
     setThreadError(null);
-    setReplyOpen(false);
-    setReplyText("");
-    setReplyFiles([]);
-    setReplyTo("");
-    setReplyCc("");
   };
+
+  const composeWindowTitle = useMemo(() => {
+    switch (composeKind) {
+      case "reply":
+        return titleCase("Reply");
+      case "replyAll":
+        return titleCase("Reply All");
+      case "forward":
+        return titleCase("Forward");
+      default:
+        return composeDraftId ? titleCase("Edit Draft") : titleCase("New Message");
+    }
+  }, [composeKind, composeDraftId]);
 
   // Folder nav items — shared between left rail (desktop) and mobile tab bar.
   // Inbox badge shows INBOX unread (the server computes it via an is:unread
@@ -2866,7 +2642,7 @@ export default function InboxPage() {
         <div className="flex items-center gap-2 px-3 py-3">
           <button
             type="button"
-            onClick={() => { setComposeOpen(true); setComposeMinimized(false); }}
+            onClick={() => openNewCompose()}
             className="inline-flex h-[56px] flex-1 items-center gap-3 rounded-2xl bg-[#c2e7ff] px-5 text-[14px] font-medium text-[#001d35] shadow-sm transition hover:shadow-md"
           >
             <PencilLine className="h-5 w-5" strokeWidth={2} />
@@ -3084,7 +2860,7 @@ export default function InboxPage() {
           <div className="flex shrink-0 items-center gap-1 border-l border-[var(--color-border)] px-2">
             <button
               type="button"
-              onClick={() => { setComposeOpen(true); setComposeMinimized(false); }}
+              onClick={() => openNewCompose()}
               className="btn-ghost h-9 w-9 justify-center p-0"
               title={titleCase("Compose")}
             >
@@ -3419,6 +3195,9 @@ export default function InboxPage() {
                   return (
                     <li
                       key={t.draftId ?? t.id}
+                      onPointerDown={() => {
+                        if (!t.draftId) prefetchThread(t.id);
+                      }}
                       onClick={(e) => {
                         const t0 = e.target as HTMLElement;
                         if (t0.closest("button, input, label, a")) return;
@@ -3702,7 +3481,7 @@ export default function InboxPage() {
                 {/* Messages */}
                 <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto p-4 md:p-6">
                   {messages.map((m) => (
-                    <article key={m.id} className="surface-card rounded-[var(--radius-lg)] p-5 shadow-[var(--shadow-sm)] md:p-6">
+                    <article key={m.id} className="border-b border-[#f1f3f4] bg-white px-4 py-4 md:px-6">
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
                           <div className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-[var(--nucleus-mist)] to-[var(--color-surface-offset)] text-[10px] font-bold text-[var(--color-text-muted)]">
@@ -3773,7 +3552,7 @@ export default function InboxPage() {
                           </div>
                         );
                       })()}
-                      <HtmlBody html={m.bodyHtml} plain={m.body} />
+                      <EmailHtmlBody html={m.bodyHtml} plain={m.body} />
                       {m.attachments && m.attachments.length > 0 && (
                         <AttachmentChips attachments={m.attachments} messageId={m.id} />
                       )}
@@ -3781,162 +3560,34 @@ export default function InboxPage() {
                   ))}
                 </div>
 
-                {/* Reply / Reply All / Forward bar */}
-                <div className="sticky bottom-0 z-10 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 shadow-[0_-4px_24px_rgba(0,0,0,0.06)] md:px-6">
-                  {!replyOpen ? (
-                    /* Action buttons — Reply, Reply All, Forward */
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const last = messages[messages.length - 1];
-                          setReplyMode("reply");
-                          setReplyTo(extractEmailAddress(last.from));
-                          setReplyCc("");
-                          setReplyOpen(true);
-                        }}
-                        className="btn-secondary h-[38px] flex-1 justify-center gap-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
-                      >
-                        <IconReply className="h-4 w-4 text-[var(--color-primary)]" />
-                        {titleCase("Reply")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const last = messages[messages.length - 1];
-                          const cc = buildReplyAllCc(last);
-                          setReplyMode("replyAll");
-                          setReplyTo(extractEmailAddress(last.from));
-                          setReplyCc(cc);
-                          setReplyOpen(true);
-                        }}
-                        className="btn-secondary h-[38px] flex-1 justify-center gap-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
-                      >
-                        <IconReplyAll className="h-4 w-4 text-[var(--color-primary)]" />
-                        {titleCase("Reply All")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openForward()}
-                        className="btn-secondary h-[38px] flex-1 justify-center gap-2 border-dashed border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
-                      >
-                        <IconForward className="h-4 w-4 text-[var(--color-primary)]" />
-                        {titleCase("Forward")}
-                      </button>
-                    </div>
-                  ) : (
-                    /* Reply / Reply All panel — same look as compose window */
-                    <div className="overflow-hidden rounded-lg border border-[#dadce0] bg-white text-[#202124] shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)] [color-scheme:light]">
-                      {/* Title bar — Gmail dark chrome */}
-                      <div className="flex shrink-0 items-center gap-1 bg-[#404040] px-3 py-1.5 text-white">
-                        <h3 className="min-w-0 flex-1 truncate pl-1 text-[13px] font-medium">
-                          {replyMode === "replyAll" ? titleCase("Reply All") : titleCase("Reply")}
-                        </h3>
-                        <button
-                          type="button"
-                          onClick={() => { setReplyOpen(false); setReplyText(""); setReplyFiles([]); setReplyTo(""); setReplyCc(""); }}
-                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
-                          aria-label={titleCase("Discard reply")}
-                        >
-                          <IconX className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      {/* Fields */}
-                      <div className="flex flex-col bg-white">
-                        {/* To */}
-                        <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                          <span className="w-9 shrink-0 pt-2 text-right text-[13px] leading-none text-[#5f6368]">{titleCase("To")}</span>
-                          <div className="min-w-0 flex-1 [&_[role=group]]:min-h-[36px] [&_[role=group]]:rounded-none [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:px-0 [&_[role=group]]:py-1 [&_[role=group]]:shadow-none [&_[role=group]]:focus-within:border-transparent [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-0">
-                            <RecipientField
-                              placeholder={titleCase("Recipients")}
-                              value={replyTo}
-                              onChange={setReplyTo}
-                              suggestions={composeRecipientSuggestions}
-                            />
-                          </div>
-                        </div>
-
-                        {/* Cc — shown for Reply All, hidden for Reply */}
-                        {replyMode === "replyAll" && (
-                          <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                            <span className="w-9 shrink-0 pt-2 text-right text-[13px] leading-none text-[#5f6368]">{titleCase("Cc")}</span>
-                            <div className="min-w-0 flex-1 [&_[role=group]]:min-h-[36px] [&_[role=group]]:rounded-none [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:px-0 [&_[role=group]]:py-1 [&_[role=group]]:shadow-none [&_[role=group]]:focus-within:border-transparent [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-0">
-                              <RecipientField
-                                placeholder={titleCase("Cc")}
-                                value={replyCc}
-                                onChange={setReplyCc}
-                                suggestions={composeRecipientSuggestions}
-                              />
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Body */}
-                        <RichTextEditor
-                          value={replyText}
-                          onChange={setReplyText}
-                          placeholder={titleCase("Write your reply…")}
-                          autoFocus
-                        />
-
-                        {/* Attachments */}
-                        {replyFiles.length > 0 && (
-                          <div className="border-t border-[#f1f3f4] px-3 py-2">
-                            <ul className="flex flex-col gap-1.5">
-                              {replyFiles.map((f, i) => (
-                                <li key={i} className="flex items-center justify-between gap-2 rounded border border-[#dadce0] bg-[#f8f9fa] px-2 py-1.5 text-[12px]">
-                                  <span className="flex min-w-0 items-center gap-2">
-                                    <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
-                                    <span className="truncate font-medium">{pendingFileName(f)}</span>
-                                    <span className="shrink-0 text-[#5f6368]">({formatBytes(pendingFileSize(f))})</span>
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => setReplyFiles((prev) => prev.filter((_, j) => j !== i))}
-                                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-                                    aria-label={titleCase("Remove attachment")}
-                                  >
-                                    <IconX className="h-3.5 w-3.5" />
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Footer — attach icon + Discard text + blue Send button */}
-                      <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[#f1f3f4] bg-white px-3 py-2">
-                        <input ref={replyFileRef} type="file" multiple className="hidden" onChange={(e) => { void handleFileSelect(e.target.files, "reply"); e.target.value = ""; }} />
-                        <button
-                          type="button"
-                          onClick={() => replyFileRef.current?.click()}
-                          className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-                          title={titleCase("Attach files")}
-                        >
-                          <Paperclip className="h-5 w-5" strokeWidth={2} />
-                        </button>
-                        <div className="flex flex-1 items-center justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => { setReplyOpen(false); setReplyText(""); setReplyFiles([]); setReplyTo(""); setReplyCc(""); }}
-                            className="rounded-full px-4 py-2 text-[13px] font-medium text-[#5f6368] hover:bg-[#f1f3f4]"
-                          >
-                            {titleCase("Discard")}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={richTextIsEmpty(replyText)}
-                            onClick={() => void sendReply()}
-                            className="rounded-full bg-[#1a73e8] px-6 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-[#1557b0] disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            {titleCase("Send")}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                {/* Reply / Reply All / Forward — opens Gmail compose dock */}
+                <div className="sticky bottom-0 z-10 border-t border-[#e8eaed] bg-white px-4 py-3 md:px-6">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openReplyCompose("reply")}
+                      className="inline-flex h-9 items-center gap-2 rounded-full border border-[#dadce0] bg-white px-4 text-[13px] font-medium text-[#444746] hover:bg-[#f1f3f4]"
+                    >
+                      <IconReply className="h-4 w-4" />
+                      {titleCase("Reply")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openReplyCompose("replyAll")}
+                      className="inline-flex h-9 items-center gap-2 rounded-full border border-[#dadce0] bg-white px-4 text-[13px] font-medium text-[#444746] hover:bg-[#f1f3f4]"
+                    >
+                      <IconReplyAll className="h-4 w-4" />
+                      {titleCase("Reply All")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openForward()}
+                      className="inline-flex h-9 items-center gap-2 rounded-full border border-[#dadce0] bg-white px-4 text-[13px] font-medium text-[#444746] hover:bg-[#f1f3f4]"
+                    >
+                      <IconForward className="h-4 w-4" />
+                      {titleCase("Forward")}
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (
@@ -4017,302 +3668,88 @@ export default function InboxPage() {
         document.body
       )}
 
-      {/* Gmail-style floating compose */}
-      {composeOpen && typeof document !== "undefined"
-        ? createPortal(
-            <>
-              {!composeMinimized ? (
-                <button
-                  type="button"
-                  className="fixed inset-0 z-[998] bg-black/20 lg:hidden"
-                  aria-label={titleCase("Close compose")}
-                  onClick={closeComposeAndSaveDraft}
-                />
-              ) : null}
-
-              {composeMinimized ? (
-                <div
-                  className="fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border border-[#dadce0] bg-[#323232] px-2 text-white shadow-[0_-4px_16px_rgba(60,64,67,0.25)] lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[528px] lg:rounded-lg lg:shadow-lg"
-                  role="dialog"
-                  aria-label={titleCase("Compose minimized")}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setComposeMinimized(false)}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
-                    title={titleCase("Expand")}
+      <GmailComposeDialog
+        open={composeOpen}
+        minimized={composeMinimized}
+        fullscreen={composeFullscreen}
+        windowTitle={composeWindowTitle}
+        showSubject={composeKind !== "reply" && composeKind !== "replyAll"}
+        to={composeTo}
+        onToChange={setComposeTo}
+        cc={composeCc}
+        onCcChange={setComposeCc}
+        bcc={composeBcc}
+        onBccChange={setComposeBcc}
+        subject={composeSubject}
+        onSubjectChange={setComposeSubject}
+        body={composeBody}
+        onBodyChange={setComposeBody}
+        ccBccOpen={composeCcBccOpen}
+        onCcBccOpenChange={setComposeCcBccOpen}
+        suggestions={composeRecipientSuggestions}
+        contactsHint={contactsHint}
+        sendDisabled={!composeTo.trim()}
+        onMinimize={() => setComposeMinimized((m) => !m)}
+        onToggleFullscreen={() => setComposeFullscreen((v) => !v)}
+        onClose={closeComposeAndSaveDraft}
+        onSend={() => void sendCompose()}
+        onDiscard={discardComposeDraft}
+        fileInputRef={composeFileRef}
+        onAttachClick={() => composeFileRef.current?.click()}
+        onFileChange={(files) => void handleFileSelect(files)}
+        attachmentChips={
+          composeFiles.length > 0 || driveUploading.size > 0 ? (
+            <div className="border-t border-[#f1f3f4] px-3 py-2">
+              <ul className="flex flex-col gap-1.5">
+                {Array.from(driveUploading).map((name) => (
+                  <li key={`uploading-${name}`} className="flex items-center gap-2 rounded border border-[#c5e1f5] bg-[#e8f4fd] px-2 py-1.5 text-[12px]">
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#1a73e8]" />
+                    <span className="min-w-0 flex-1 truncate font-medium text-[#5f6368]">{name}</span>
+                    <span className="shrink-0 text-[11px] text-[#1a73e8]">Uploading to Drive…</span>
+                  </li>
+                ))}
+                {composeFiles.map((f, i) => (
+                  <li
+                    key={i}
+                    className={`flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-[12px] ${
+                      f.kind === "drive" ? "border-[#c5e1f5] bg-[#e8f4fd]" : "border-[#dadce0] bg-[#f8f9fa]"
+                    }`}
                   >
-                    <Maximize2 className="h-4 w-4" strokeWidth={2} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setComposeMinimized(false)}
-                    className="min-w-0 flex-1 truncate text-left text-[13px] font-medium"
-                  >
-                    {composeSubject.trim() || titleCase("New Message")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={closeComposeAndSaveDraft}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
-                    aria-label={titleCase("Close")}
-                  >
-                    <IconX className="h-4 w-4" />
-                  </button>
-                </div>
-              ) : (
-                <div
-                  className={cn(
-                    "fixed z-[999] flex flex-col overflow-hidden bg-white text-[#202124] [color-scheme:light]",
-                    composeFullscreen
-                      // Full-screen mode (Gmail's expanded compose) — covers
-                      // most of the viewport with comfortable margins.
-                      ? "left-[2.5%] right-[2.5%] top-[2.5%] bottom-[2.5%] rounded-lg border border-[#dadce0] shadow-[0_24px_48px_rgba(60,64,67,0.3)]"
-                      // Default Gmail-style bottom-right docked compose.
-                      : "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t border-[#dadce0] shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:bottom-6 lg:left-auto lg:right-6 lg:max-h-[min(620px,calc(100vh-96px))] lg:w-[528px] lg:rounded-t-lg lg:rounded-b-none lg:border lg:shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)]"
-                  )}
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="compose-dialog-title"
-                >
-                  {/* Title bar — Gmail-style dark chrome */}
-                  <div className="flex shrink-0 items-center gap-1 bg-[#404040] px-2 py-1.5 text-white">
-                    <h2 id="compose-dialog-title" className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium">
-                      {composeDraftId ? titleCase("Edit Draft") : titleCase("New Message")}
-                    </h2>
-                    <button
-                      type="button"
-                      onClick={() => setComposeMinimized(true)}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
-                      title={titleCase("Minimize")}
-                    >
-                      <Minus className="h-4 w-4" strokeWidth={2} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setComposeFullscreen((v) => !v)}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
-                      title={composeFullscreen ? titleCase("Exit full screen") : titleCase("Full screen")}
-                    >
-                      {composeFullscreen ? (
-                        <Minimize className="h-4 w-4" strokeWidth={2} />
+                    <span className="flex min-w-0 items-center gap-2">
+                      {f.kind === "drive" ? (
+                        <svg viewBox="0 0 87.3 78" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+                          <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0a7.3 7.3 0 003.3 3.3z" fill="#0066da"/>
+                          <path d="M43.65 25L29.9 1.2a7.2 7.2 0 00-3.3 3.3L.95 50.5H27.5z" fill="#00ac47"/>
+                          <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25a7.3 7.3 0 000-7.3H60.5l5.85 12.35z" fill="#ea4335"/>
+                          <path d="M43.65 25L57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                          <path d="M60.5 50.5H27.5L13.75 74.3c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                          <path d="M73.4 26.05l-14.3-24.8a7.2 7.2 0 00-1.7-1.1L43.65 25l16.85 25.5h26.45a7.3 7.3 0 00-.95-3.65z" fill="#ffba00"/>
+                        </svg>
                       ) : (
-                        <Maximize className="h-4 w-4" strokeWidth={2} />
+                        <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
                       )}
-                    </button>
+                      <span className="truncate font-medium">{pendingFileName(f)}</span>
+                      <span className="shrink-0 text-[#5f6368]">({formatBytes(pendingFileSize(f))})</span>
+                      {f.kind === "drive" && (
+                        <span className="shrink-0 rounded bg-[#1a73e8] px-1.5 py-0.5 text-[10px] font-medium text-white">Drive link</span>
+                      )}
+                    </span>
                     <button
                       type="button"
-                      onClick={closeComposeAndSaveDraft}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full hover:bg-white/10"
-                      aria-label={titleCase("Close")}
+                      onClick={() => setComposeFiles((prev) => prev.filter((_, j) => j !== i))}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
+                      aria-label={titleCase("Remove attachment")}
                     >
-                      <IconX className="h-4 w-4" />
+                      <IconX className="h-3.5 w-3.5" />
                     </button>
-                  </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null
+        }
+      />
 
-                  <div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto bg-white">
-                    {/* To */}
-                    <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                      <span className="w-9 shrink-0 pt-2 text-right text-[13px] leading-none text-[#5f6368]">
-                        {titleCase("To")}
-                      </span>
-                      <div
-                        className={cn(
-                          "min-w-0 flex-1",
-                          "[&_[role=group]]:min-h-[36px] [&_[role=group]]:rounded-none [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:px-0 [&_[role=group]]:py-1 [&_[role=group]]:shadow-none [&_[role=group]]:focus-within:border-transparent [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-0",
-                        )}
-                      >
-                        <RecipientField
-                          placeholder={titleCase("Recipients")}
-                          value={composeTo}
-                          onChange={setComposeTo}
-                          suggestions={composeRecipientSuggestions}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Cc / Bcc toggle — Gmail blue links */}
-                    {!composeCcBccOpen ? (
-                      <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-3 py-1.5">
-                        <span className="w-9 shrink-0" aria-hidden />
-                        <button
-                          type="button"
-                          onClick={() => setComposeCcBccOpen(true)}
-                          className="text-[13px] font-medium text-[#1a73e8] hover:underline"
-                        >
-                          {titleCase("Cc")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setComposeCcBccOpen(true)}
-                          className="text-[13px] font-medium text-[#1a73e8] hover:underline"
-                        >
-                          {titleCase("Bcc")}
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                          <span className="w-9 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Cc")}</span>
-                          <div
-                            className={cn(
-                              "min-w-0 flex-1",
-                              "[&_[role=group]]:min-h-[36px] [&_[role=group]]:rounded-none [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:px-0 [&_[role=group]]:py-1 [&_[role=group]]:shadow-none [&_[role=group]]:focus-within:border-transparent [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-0",
-                            )}
-                          >
-                            <RecipientField
-                              placeholder={titleCase("Cc")}
-                              value={composeCc}
-                              onChange={setComposeCc}
-                              suggestions={composeRecipientSuggestions}
-                            />
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                          <span className="w-9 shrink-0 pt-2 text-right text-[13px] text-[#5f6368]">{titleCase("Bcc")}</span>
-                          <div
-                            className={cn(
-                              "min-w-0 flex-1",
-                              "[&_[role=group]]:min-h-[36px] [&_[role=group]]:rounded-none [&_[role=group]]:border-0 [&_[role=group]]:bg-transparent [&_[role=group]]:px-0 [&_[role=group]]:py-1 [&_[role=group]]:shadow-none [&_[role=group]]:focus-within:border-transparent [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-0",
-                            )}
-                          >
-                            <RecipientField
-                              placeholder={titleCase("Bcc")}
-                              value={composeBcc}
-                              onChange={setComposeBcc}
-                              suggestions={composeRecipientSuggestions}
-                            />
-                          </div>
-                        </div>
-                      </>
-                    )}
-
-                    {contactsHint ? (
-                      <p className="border-b border-[#f1f3f4] bg-amber-50 px-3 py-2 text-[12px] leading-snug text-amber-900">
-                        {contactsHint}
-                      </p>
-                    ) : null}
-
-                    {/* Subject */}
-                    <div className="flex items-center gap-3 border-b border-[#f1f3f4] px-3 py-2">
-                      <span className="w-9 shrink-0 text-right text-[13px] text-[#5f6368]">{titleCase("Subject")}</span>
-                      <input
-                        type="text"
-                        placeholder=""
-                        value={composeSubject}
-                        onChange={(e) => setComposeSubject(e.target.value)}
-                        className="min-w-0 flex-1 border-0 bg-transparent text-[13px] text-[#202124] outline-none placeholder:text-[#70757a]"
-                      />
-                    </div>
-
-                    {/* Body — rich text editor with B/I/U/Strike/Lists/Link toolbar */}
-                    <RichTextEditor
-                      value={composeBody}
-                      onChange={setComposeBody}
-                      placeholder={titleCase("Compose email")}
-                    />
-
-                    {(composeFiles.length > 0 || driveUploading.size > 0) ? (
-                      <div className="border-t border-[#f1f3f4] px-3 py-2">
-                        <ul className="flex flex-col gap-1.5">
-                          {/* In-progress Drive uploads — show immediately when file is picked */}
-                          {Array.from(driveUploading).map((name) => (
-                            <li key={`uploading-${name}`} className="flex items-center gap-2 rounded border border-[#c5e1f5] bg-[#e8f4fd] px-2 py-1.5 text-[12px]">
-                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#1a73e8]" />
-                              <span className="min-w-0 flex-1 truncate font-medium text-[#5f6368]">{name}</span>
-                              <span className="shrink-0 text-[11px] text-[#1a73e8]">Uploading to Drive…</span>
-                            </li>
-                          ))}
-                          {/* Settled attachments */}
-                          {composeFiles.map((f, i) => (
-                            <li
-                              key={i}
-                              className={`flex items-center justify-between gap-2 rounded border px-2 py-1.5 text-[12px] ${
-                                f.kind === "drive"
-                                  ? "border-[#c5e1f5] bg-[#e8f4fd]"
-                                  : "border-[#dadce0] bg-[#f8f9fa]"
-                              }`}
-                            >
-                              <span className="flex min-w-0 items-center gap-2">
-                                {f.kind === "drive" ? (
-                                  <svg viewBox="0 0 87.3 78" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
-                                    <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0a7.3 7.3 0 003.3 3.3z" fill="#0066da"/>
-                                    <path d="M43.65 25L29.9 1.2a7.2 7.2 0 00-3.3 3.3L.95 50.5H27.5z" fill="#00ac47"/>
-                                    <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25a7.3 7.3 0 000-7.3H60.5l5.85 12.35z" fill="#ea4335"/>
-                                    <path d="M43.65 25L57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
-                                    <path d="M60.5 50.5H27.5L13.75 74.3c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
-                                    <path d="M73.4 26.05l-14.3-24.8a7.2 7.2 0 00-1.7-1.1L43.65 25l16.85 25.5h26.45a7.3 7.3 0 00-.95-3.65z" fill="#ffba00"/>
-                                  </svg>
-                                ) : (
-                                  <Paperclip className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
-                                )}
-                                <span className="truncate font-medium">{pendingFileName(f)}</span>
-                                <span className="shrink-0 text-[#5f6368]">({formatBytes(pendingFileSize(f))})</span>
-                                {f.kind === "drive" && (
-                                  <span className="shrink-0 rounded bg-[#1a73e8] px-1.5 py-0.5 text-[10px] font-medium text-white">
-                                    Drive link
-                                  </span>
-                                )}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => setComposeFiles((prev) => prev.filter((_, j) => j !== i))}
-                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-                                aria-label={titleCase("Remove attachment")}
-                              >
-                                <IconX className="h-3.5 w-3.5" />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {/* Footer toolbar */}
-                  <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[#f1f3f4] bg-white px-3 py-2">
-                    <input
-                      ref={composeFileRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => {
-                        void handleFileSelect(e.target.files, "compose");
-                        e.target.value = "";
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => composeFileRef.current?.click()}
-                      className="flex h-9 w-9 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-                      title={titleCase("Attach files")}
-                    >
-                      <Paperclip className="h-5 w-5" strokeWidth={2} />
-                    </button>
-                    <div className="flex flex-1 items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={discardComposeDraft}
-                        className="rounded-full px-4 py-2 text-[13px] font-medium text-[#5f6368] hover:bg-[#f1f3f4]"
-                      >
-                        {titleCase("Discard")}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!composeTo.trim()}
-                        onClick={() => void sendCompose()}
-                        className="rounded-full bg-[#1a73e8] px-6 py-2 text-[13px] font-medium text-white shadow-sm hover:bg-[#1557b0] disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {titleCase("Send")}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>,
-            document.body,
-          )
-        : null}
     </>
   );
 }

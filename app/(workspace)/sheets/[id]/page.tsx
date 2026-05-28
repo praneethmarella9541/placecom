@@ -18,7 +18,12 @@ export default function SheetEditorPage() {
   const router = useRouter();
   const [loaded, setLoaded] = useState(false);
 
-  const editUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/edit?embedded=true&rm=minimal`;
+  // Load the FULL Google Sheets editor inside the iframe — no `rm=minimal`
+  // and no `embedded=true`, both of which strip the menus and toolbar.
+  // `widget=true&headers=false` keeps Google's own page title bar hidden
+  // (we render our own back bar) while preserving the File/Edit/View menus,
+  // the formatting toolbar, and the formula bar.
+  const editUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/edit?widget=true&headers=false`;
   const newTabUrl = `https://docs.google.com/spreadsheets/d/${encodeURIComponent(id)}/edit`;
 
   return (

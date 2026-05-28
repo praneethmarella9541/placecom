@@ -6,6 +6,7 @@ import {
   deleteDimension,
   setFrozenRows,
   setColumnWidth,
+  setRowHeight,
   getSheetData,
   type CellFormat,
 } from "@/lib/sheets";
@@ -50,8 +51,9 @@ type DeleteOp = {
 };
 type FreezeOp = { op: "freeze"; sheetId: number; frozenRowCount: number };
 type ColWidthOp = { op: "colwidth"; sheetId: number; columnIndex: number; pixelSize: number };
+type RowHeightOp = { op: "rowheight"; sheetId: number; rowIndex: number; pixelSize: number };
 
-type Body = (FormatOp | InsertOp | DeleteOp | FreezeOp | ColWidthOp) & {
+type Body = (FormatOp | InsertOp | DeleteOp | FreezeOp | ColWidthOp | RowHeightOp) & {
   /** Tab title to re-read after the op so the client can refresh the grid. */
   refreshSheet?: string;
 };
@@ -119,6 +121,9 @@ export async function POST(
         break;
       case "colwidth":
         await setColumnWidth(auth.accessToken, id, body.sheetId, body.columnIndex, body.pixelSize);
+        break;
+      case "rowheight":
+        await setRowHeight(auth.accessToken, id, body.sheetId, body.rowIndex, body.pixelSize);
         break;
       default:
         return NextResponse.json({ error: "Unknown op" }, { status: 400 });

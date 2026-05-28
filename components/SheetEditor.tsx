@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
-  Plus, Trash2, Snowflake, RefreshCw, Loader2,
+  Plus, Trash2, Snowflake, RefreshCw, Loader2, Undo2, Redo2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +38,7 @@ type SheetData = {
   columnCount: number;
   frozenRowCount: number;
   columnWidths: number[];
+  rowHeights: number[];
 };
 
 type Pos = { row: number; col: number };
@@ -46,6 +47,7 @@ const DEFAULT_COL_W = 120;
 const ROW_H = 28;
 const HEADER_H = 24;
 const ROWNUM_W = 48;
+const MIN_ROW_H = 20;
 const MIN_COL_W = 40;
 
 function colToLetter(col: number): string {
@@ -94,6 +96,35 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     },
     [colWidthOverride, data]
   );
+
+  const [rowHeightOverride, setRowHeightOverride] = useState<Record<number, number>>({});
+  const rowResizeRef = useRef<{ row: number; startY: number; startH: number } | null>(null);
+
+  const rowHeight = useCallback(
+    (r: number): number => {
+      if (rowHeightOverride[r] != null) return rowHeightOverride[r];
+      const h = data?.rowHeights?.[r];
+      return h && h > 0 ? h : ROW_H;
+    },
+    [rowHeightOverride, data]
+  );
+
+  // Drag-fill: while dragging the corner handle, this holds the target cell
+  // the pointer is over; on release we fill the source selection into it.
+  const fillRef = useRef(false);
+  const [fillTarget, setFillTarget] = useState<Pos | null>(null);
+
+  // Undo/redo: each entry restores a rectangular block of raw values.
+  type HistoryEntry = {
+    sheet: string;
+    startRow: number;
+    startCol: number;
+    before: string[][];
+    after: string[][];
+  };
+  const undoStackRef = useRef<HistoryEntry[]>([]);
+  const redoStackRef = useRef<HistoryEntry[]>([]);
+  const [historyTick, setHistoryTick] = useState(0); // forces toolbar re-render
 
   // Row virtualization: render only rows in/near the viewport.
   const [scrollTop, setScrollTop] = useState(0);
@@ -244,6 +275,53 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     };
   }, [activeTab, spreadsheetId, colWidthOverride]);
 
+  // Row-resize drag (mirror of column resize).
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      const rs = rowResizeRef.current;
+      if (!rs) return;
+      const next = Math.max(MIN_ROW_H, rs.startH + (e.clientY - rs.startY));
+      setRowHeightOverride((prev) => ({ ...prev, [rs.row]: next }));
+    }
+    async function onUp() {
+      const rs = rowResizeRef.current;
+      if (!rs || !activeTab) return;
+      rowResizeRef.current = null;
+      const finalH = rowHeightOverride[rs.row] ?? rs.startH;
+      try {
+        await fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/batch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            op: "rowheight",
+            sheetId: activeTab.sheetId,
+            rowIndex: rs.row,
+            pixelSize: Math.round(finalH),
+          }),
+        });
+        setData((d) => {
+          if (!d) return d;
+          const heights = d.rowHeights.slice();
+          heights[rs.row] = Math.round(finalH);
+          return { ...d, rowHeights: heights };
+        });
+        setRowHeightOverride((prev) => {
+          const { [rs.row]: _drop, ...rest } = prev;
+          void _drop;
+          return rest;
+        });
+      } catch {
+        /* keep override on failure */
+      }
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [activeTab, spreadsheetId, rowHeightOverride]);
+
   /* ── Cell helpers ── */
   function cellAt(row: number, col: number): SheetCell {
     return data?.cells[row]?.[col] ?? { display: "", raw: "" };
@@ -275,6 +353,15 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
       if (move) selectCell(move);
 
       if (value === prev.raw) return; // no change
+
+      // Record for undo (before/after of the single cell).
+      recordHistory({
+        sheet: activeSheet,
+        startRow: pos.row,
+        startCol: pos.col,
+        before: [[prev.raw]],
+        after: [[value]],
+      });
 
       // Optimistic display update.
       setData((d) => {
@@ -336,10 +423,36 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     });
   }, []);
 
+  /** Snapshot a rectangle's raw values (for undo history). */
+  const snapshotBlock = useCallback(
+    (r1: number, c1: number, r2: number, c2: number): string[][] => {
+      const block: string[][] = [];
+      for (let r = r1; r <= r2; r++) {
+        const row: string[] = [];
+        for (let c = c1; c <= c2; c++) row.push(data?.cells[r]?.[c]?.raw ?? "");
+        block.push(row);
+      }
+      return block;
+    },
+    [data]
+  );
+
+  /** Push an undo entry and clear the redo stack (new action branch). */
+  const recordHistory = useCallback((entry: HistoryEntry) => {
+    undoStackRef.current.push(entry);
+    if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+    redoStackRef.current = [];
+    setHistoryTick((t) => t + 1);
+  }, []);
+
   /** Clear all values in the current selection rectangle. */
   const clearSelection = useCallback(async () => {
     if (!activeSheet) return;
     const { r1, r2, c1, c2 } = selRect;
+    // Record for undo: before = current values, after = all empty.
+    const before = snapshotBlock(r1, c1, r2, c2);
+    const after = before.map((row) => row.map(() => ""));
+    recordHistory({ sheet: activeSheet, startRow: r1, startCol: c1, before, after });
     // Optimistic clear.
     setData((d) => {
       if (!d) return d;
@@ -367,7 +480,7 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     } finally {
       setSaving(false);
     }
-  }, [activeSheet, selRect, spreadsheetId, applyValuesRefresh, loadSheet]);
+  }, [activeSheet, selRect, spreadsheetId, applyValuesRefresh, loadSheet, snapshotBlock, recordHistory]);
 
   /** Copy the raw values of the current selection into the in-app clipboard. */
   const copySelection = useCallback(() => {
@@ -388,8 +501,14 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
 
   /** Write a 2-D block anchored at (startRow, startCol). */
   const writeRange = useCallback(
-    async (startRow: number, startCol: number, values: string[][]) => {
+    async (startRow: number, startCol: number, values: string[][], recordUndo = true) => {
       if (!activeSheet || !values.length) return;
+      if (recordUndo) {
+        const r2 = startRow + values.length - 1;
+        const c2 = startCol + Math.max(...values.map((row) => row.length)) - 1;
+        const before = snapshotBlock(startRow, startCol, r2, c2);
+        recordHistory({ sheet: activeSheet, startRow, startCol, before, after: values });
+      }
       // Optimistic display.
       setData((d) => {
         if (!d) return d;
@@ -423,8 +542,71 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
         setSaving(false);
       }
     },
-    [activeSheet, spreadsheetId, applyValuesRefresh, loadSheet]
+    [activeSheet, spreadsheetId, applyValuesRefresh, loadSheet, snapshotBlock, recordHistory]
   );
+
+  /** Undo / redo: restore a recorded block, then push to the opposite stack. */
+  const doHistory = useCallback(
+    async (dir: "undo" | "redo") => {
+      const from = dir === "undo" ? undoStackRef.current : redoStackRef.current;
+      const to = dir === "undo" ? redoStackRef.current : undoStackRef.current;
+      const entry = from.pop();
+      if (!entry) return;
+      to.push(entry);
+      setHistoryTick((t) => t + 1);
+      const values = dir === "undo" ? entry.before : entry.after;
+      // Switch to the entry's sheet if needed, then write without re-recording.
+      if (entry.sheet !== activeSheet) await loadSheet(entry.sheet);
+      await writeRange(entry.startRow, entry.startCol, values, false);
+    },
+    [activeSheet, loadSheet, writeRange]
+  );
+
+  /** Commit a drag-fill: replicate the source selection into the fill range. */
+  const commitFill = useCallback(async () => {
+    if (!data) return;
+    const target = fillTarget;
+    fillRef.current = false;
+    setFillTarget(null);
+    if (!target) return;
+    const { r1, r2, c1, c2 } = selRect;
+    const srcH = r2 - r1 + 1;
+    const srcW = c2 - c1 + 1;
+    // Fill direction: down if target row beyond selection, else right.
+    const fillDown = target.row > r2;
+    const fillRight = target.col > c2 && !fillDown;
+    if (!fillDown && !fillRight) return;
+
+    const block: string[][] = [];
+    if (fillDown) {
+      const startR = r2 + 1;
+      for (let r = startR; r <= target.row; r++) {
+        const srcRow = (r - r1) % srcH;
+        const row: string[] = [];
+        for (let c = c1; c <= c2; c++) row.push(data.cells[r1 + srcRow]?.[c]?.raw ?? "");
+        block.push(row);
+      }
+      if (block.length) await writeRange(startR, c1, block);
+    } else {
+      // fillRight
+      for (let r = r1; r <= r2; r++) {
+        const row: string[] = [];
+        for (let c = c2 + 1; c <= target.col; c++) {
+          const srcCol = (c - c1) % srcW;
+          row.push(data.cells[r]?.[c1 + srcCol]?.raw ?? "");
+        }
+        block.push(row);
+      }
+      if (block[0]?.length) await writeRange(r1, c2 + 1, block);
+    }
+  }, [data, fillTarget, selRect, writeRange]);
+
+  // End a drag-fill on mouse release anywhere.
+  useEffect(() => {
+    const onUp = () => { if (fillRef.current) void commitFill(); };
+    window.addEventListener("mouseup", onUp);
+    return () => window.removeEventListener("mouseup", onUp);
+  }, [commitFill]);
 
   /** Paste: prefer the in-app clipboard; fall back to OS clipboard (TSV). */
   const pasteClipboard = useCallback(async () => {
@@ -448,6 +630,10 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
       const maxR = data.rowCount - 1;
       const maxC = data.columnCount - 1;
       const meta = e.metaKey || e.ctrlKey;
+
+      // Undo / redo.
+      if (meta && (e.key === "z" || e.key === "Z") && !e.shiftKey) { e.preventDefault(); void doHistory("undo"); return; }
+      if (meta && ((e.key === "z" || e.key === "Z") && e.shiftKey || e.key === "y" || e.key === "Y")) { e.preventDefault(); void doHistory("redo"); return; }
 
       // Clipboard shortcuts.
       if (meta && (e.key === "c" || e.key === "C")) { e.preventDefault(); copySelection(); return; }
@@ -476,7 +662,7 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
         beginEdit(selected, e.key);
       }
     },
-    [editing, data, selected, beginEdit, copySelection, clearSelection, pasteClipboard, extendTo, selectCell]
+    [editing, data, selected, beginEdit, copySelection, clearSelection, pasteClipboard, extendTo, selectCell, doHistory]
   );
 
   /* ── Formatting actions ── */
@@ -587,22 +773,31 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
   /** Render a single grid row (used for both frozen and windowed rows). */
   function renderRow(r: number, isFrozen: boolean) {
     if (!data) return null;
+    const rh = rowHeight(r);
     return (
       <div
         key={r}
         className={cn("flex", isFrozen && "sticky z-10 bg-[var(--color-surface)]")}
         style={isFrozen ? { top: HEADER_H + r * ROW_H } : undefined}
       >
-        {/* Row number (click → select whole row) */}
+        {/* Row number (click → select whole row; bottom edge → resize) */}
         <div
           onClick={() => { selectRow(r); gridRef.current?.focus(); }}
           className={cn(
             "sticky left-0 z-10 flex shrink-0 cursor-pointer items-center justify-center border-b border-r border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[11px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]",
             inSelection(r, selRect.c1) && "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
           )}
-          style={{ width: ROWNUM_W, height: ROW_H }}
+          style={{ width: ROWNUM_W, height: rh, position: "relative" }}
         >
           {r + 1}
+          <span
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              rowResizeRef.current = { row: r, startY: e.clientY, startH: rh };
+            }}
+            className="absolute bottom-0 left-0 z-10 h-1.5 w-full cursor-row-resize hover:bg-[var(--color-primary)]"
+          />
         </div>
         {/* Cells */}
         {Array.from({ length: data.columnCount }).map((_, c) => {
@@ -611,6 +806,13 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
           const isSel = inSelection(r, c);
           const isRange = isSel && !(selRect.r1 === selRect.r2 && selRect.c1 === selRect.c2);
           const isEdit = editing?.row === r && editing?.col === c;
+          // Fill handle sits on the bottom-right corner of the selection.
+          const isFillCorner = r === selRect.r2 && c === selRect.c2;
+          // Highlight the prospective fill range while dragging the handle.
+          const inFillPreview =
+            fillTarget != null &&
+            ((fillTarget.row > selRect.r2 && c >= selRect.c1 && c <= selRect.c2 && r > selRect.r2 && r <= fillTarget.row) ||
+              (fillTarget.col > selRect.c2 && r >= selRect.r1 && r <= selRect.r2 && c > selRect.c2 && c <= fillTarget.col));
           return (
             <div
               key={c}
@@ -625,16 +827,18 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
                 gridRef.current?.focus();
               }}
               onMouseEnter={() => {
-                if (draggingRef.current) extendTo({ row: r, col: c });
+                if (fillRef.current) setFillTarget({ row: r, col: c });
+                else if (draggingRef.current) extendTo({ row: r, col: c });
               }}
               onDoubleClick={() => beginEdit({ row: r, col: c })}
               className={cn(
-                "relative shrink-0 cursor-cell overflow-hidden border-b border-r border-[var(--color-border)] px-1.5 text-[13px] leading-[26px] text-[var(--color-text)]",
+                "relative shrink-0 cursor-cell overflow-hidden border-b border-r border-[var(--color-border)] px-1.5 text-[13px] text-[var(--color-text)]",
                 isFocus && !isEdit && "ring-2 ring-inset ring-[var(--color-primary)]"
               )}
               style={{
                 width: colWidth(c),
-                height: ROW_H,
+                height: rh,
+                lineHeight: `${rh - 2}px`,
                 fontWeight: cell.bold ? 700 : undefined,
                 fontStyle: cell.italic ? "italic" : undefined,
                 fontSize: cell.fontSize ? `${cell.fontSize}px` : undefined,
@@ -647,7 +851,7 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
                 textAlign: (cell.align?.toLowerCase() as "left" | "center" | "right") || "left",
               }}
             >
-              {isRange && (
+              {(isRange || inFillPreview) && (
                 <span className="pointer-events-none absolute inset-0 bg-[var(--color-primary)] opacity-10" />
               )}
               {isEdit ? (
@@ -665,6 +869,18 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
                 />
               ) : (
                 <span className="block truncate">{cell.display}</span>
+              )}
+              {/* Drag-fill handle */}
+              {isFillCorner && !isEdit && (
+                <span
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    fillRef.current = true;
+                    setFillTarget({ row: r, col: c });
+                  }}
+                  className="absolute -bottom-[3px] -right-[3px] z-20 h-2 w-2 cursor-crosshair rounded-[1px] bg-[var(--color-primary)]"
+                />
               )}
             </div>
           );
@@ -689,7 +905,14 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Toolbar */}
-      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5">
+      <div data-history={historyTick} className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5">
+        <ToolBtn title="Undo (Cmd+Z)" disabled={undoStackRef.current.length === 0} onClick={() => void doHistory("undo")}>
+          <Undo2 className="h-4 w-4" />
+        </ToolBtn>
+        <ToolBtn title="Redo (Cmd+Shift+Z)" disabled={redoStackRef.current.length === 0} onClick={() => void doHistory("redo")}>
+          <Redo2 className="h-4 w-4" />
+        </ToolBtn>
+        <Divider />
         <ToolBtn title="Bold" active={!!selCell?.bold} onClick={() => applyFormat({ bold: !selCell?.bold })}>
           <Bold className="h-4 w-4" />
         </ToolBtn>
@@ -947,11 +1170,13 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
 function ToolBtn({
   title,
   active,
+  disabled,
   onClick,
   children,
 }: {
   title: string;
   active?: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -960,10 +1185,12 @@ function ToolBtn({
       type="button"
       title={title}
       aria-label={title}
+      disabled={disabled}
       onClick={onClick}
       className={cn(
         "flex h-8 min-w-8 items-center justify-center rounded px-1.5 text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-offset)]",
-        active && "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+        active && "bg-[var(--color-primary-light)] text-[var(--color-primary)]",
+        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent"
       )}
     >
       {children}

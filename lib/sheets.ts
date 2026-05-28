@@ -271,6 +271,8 @@ export type SheetData = {
   frozenRowCount: number;
   /** Pixel width per column (index = column). Missing → use default. */
   columnWidths: number[];
+  /** Pixel height per row (index = row). Missing/0 → use default. */
+  rowHeights: number[];
 };
 
 function rgbToHex(c?: { red?: number; green?: number; blue?: number }): string | undefined {
@@ -361,7 +363,7 @@ export async function getSheetData(
 ): Promise<SheetData> {
   const range = encodeURIComponent(sheetTitle);
   const fields =
-    "properties.title,sheets(properties(title,gridProperties),data(rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat(textFormat,backgroundColor,horizontalAlignment))),columnMetadata(pixelSize)))";
+    "properties.title,sheets(properties(title,gridProperties),data(rowData(values(formattedValue,userEnteredValue,effectiveValue,userEnteredFormat(textFormat,backgroundColor,horizontalAlignment))),columnMetadata(pixelSize),rowMetadata(pixelSize)))";
   const url = `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}?ranges=${range}&includeGridData=true&fields=${fields}`;
   const res = await sheetsFetch(accessToken, url);
   const data = (await res.json()) as {
@@ -376,6 +378,7 @@ export async function getSheetData(
       };
       data?: {
         columnMetadata?: { pixelSize?: number }[];
+        rowMetadata?: { pixelSize?: number }[];
         rowData?: {
           values?: {
             formattedValue?: string;
@@ -407,6 +410,7 @@ export async function getSheetData(
   const grid = sheet?.data?.[0];
   const rowData = grid?.rowData ?? [];
   const columnMetadata = grid?.columnMetadata ?? [];
+  const rowMetadata = grid?.rowMetadata ?? [];
   const declaredRows = sheet?.properties?.gridProperties?.rowCount ?? 1000;
   const declaredCols = sheet?.properties?.gridProperties?.columnCount ?? 26;
   const frozenRowCount = sheet?.properties?.gridProperties?.frozenRowCount ?? 0;
@@ -461,6 +465,10 @@ export async function getSheetData(
   for (let c = 0; c < columnCount; c++) {
     columnWidths.push(columnMetadata[c]?.pixelSize ?? 0);
   }
+  const rowHeights: number[] = [];
+  for (let r = 0; r < rowCount; r++) {
+    rowHeights.push(rowMetadata[r]?.pixelSize ?? 0);
+  }
 
   return {
     title: sheet?.properties?.title ?? sheetTitle,
@@ -469,6 +477,7 @@ export async function getSheetData(
     columnCount,
     frozenRowCount,
     columnWidths,
+    rowHeights,
   };
 }
 
@@ -865,6 +874,39 @@ export async function setColumnWidth(
                 endIndex: columnIndex + 1,
               },
               properties: { pixelSize: Math.max(20, Math.round(pixelSize)) },
+              fields: "pixelSize",
+            },
+          },
+        ],
+      }),
+    }
+  );
+}
+
+/** Set a row's pixel height (persisted). */
+export async function setRowHeight(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetId: number,
+  rowIndex: number,
+  pixelSize: number
+): Promise<void> {
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [
+          {
+            updateDimensionProperties: {
+              range: {
+                sheetId,
+                dimension: "ROWS",
+                startIndex: rowIndex,
+                endIndex: rowIndex + 1,
+              },
+              properties: { pixelSize: Math.max(18, Math.round(pixelSize)) },
               fields: "pixelSize",
             },
           },

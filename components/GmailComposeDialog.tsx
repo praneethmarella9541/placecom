@@ -1,7 +1,7 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { useRef } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2 } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
@@ -81,6 +81,46 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
   const editorRef = useRef<RichTextEditorHandle>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
 
+  // Resize state — null means use CSS defaults (560px × 640px)
+  const [resizeW, setResizeW] = useState<number | null>(null);
+  const [resizeH, setResizeH] = useState<number | null>(null);
+  const resizeRef = useRef({ startX: 0, startY: 0, startW: 0, startH: 0, edge: "" });
+
+  const startResize = useCallback((e: React.MouseEvent, edge: string) => {
+    if (fullscreen) return;
+    e.preventDefault();
+    const el = (e.currentTarget as HTMLElement).closest("[data-compose-dialog]") as HTMLElement;
+    resizeRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: el.offsetWidth,
+      startH: el.offsetHeight,
+      edge,
+    };
+    function onMove(mv: MouseEvent) {
+      const { startX, startY, startW, startH, edge: eg } = resizeRef.current;
+      if (eg.includes("w")) {
+        const delta = startX - mv.clientX;
+        setResizeW(Math.max(420, Math.min(900, startW + delta)));
+      }
+      if (eg.includes("n")) {
+        const delta = startY - mv.clientY;
+        setResizeH(Math.max(300, Math.min(window.innerHeight - 80, startH + delta)));
+      }
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [fullscreen]);
+
+  // Reset manual size when going fullscreen
+  useEffect(() => {
+    if (fullscreen) { setResizeW(null); setResizeH(null); }
+  }, [fullscreen]);
+
   if (!open || typeof document === "undefined") return null;
 
   const fieldGroupClass =
@@ -129,16 +169,43 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
         </div>
       ) : (
         <div
+          data-compose-dialog
           className={cn(
             "fixed z-[999] flex flex-col overflow-hidden bg-white text-[#202124] [color-scheme:light]",
             fullscreen
               ? "left-[2.5%] right-[2.5%] top-[2.5%] bottom-[2.5%] rounded-lg border border-[#dadce0] shadow-[0_24px_48px_rgba(60,64,67,0.3)]"
-              : "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t border-[#dadce0] shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:bottom-6 lg:left-auto lg:right-6 lg:max-h-[min(640px,calc(100vh-96px))] lg:w-[560px] lg:rounded-t-lg lg:border lg:shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)]"
+              : "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t border-[#dadce0] shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:bottom-6 lg:left-auto lg:right-6 lg:rounded-t-lg lg:border lg:shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)]"
           )}
+          style={!fullscreen ? {
+            width: resizeW ?? 560,
+            height: resizeH ?? undefined,
+            maxHeight: resizeH ?? "min(640px, calc(100vh - 96px))",
+          } : undefined}
           role="dialog"
           aria-modal="true"
           aria-label={windowTitle}
         >
+          {/* Top resize handle */}
+          {!fullscreen && (
+            <div
+              className="absolute top-0 left-0 right-0 h-1 cursor-n-resize z-10 hidden lg:block"
+              onMouseDown={(e) => startResize(e, "n")}
+            />
+          )}
+          {/* Left resize handle */}
+          {!fullscreen && (
+            <div
+              className="absolute top-0 left-0 bottom-0 w-1 cursor-w-resize z-10 hidden lg:block"
+              onMouseDown={(e) => startResize(e, "w")}
+            />
+          )}
+          {/* Top-left corner resize handle */}
+          {!fullscreen && (
+            <div
+              className="absolute top-0 left-0 h-3 w-3 cursor-nw-resize z-20 hidden lg:block"
+              onMouseDown={(e) => startResize(e, "nw")}
+            />
+          )}
           <div className="flex shrink-0 items-center gap-1 bg-[#323232] px-2 py-1.5 text-white">
             <h2 className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium">{windowTitle}</h2>
             <button

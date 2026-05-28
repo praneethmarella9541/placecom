@@ -483,7 +483,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
             <LinkIcon className="h-[15px] w-[15px]" strokeWidth={2.5} />
           </ToolbarBtn>
           {linkOpen && (
-            <div className="absolute bottom-full left-0 z-50 mb-1 w-72 rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" data-rte-popover>
+            <div className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" data-rte-popover>
               {/* Text field */}
               <div className="mb-2 flex items-center rounded border border-[#dadce0] bg-white px-2 focus-within:border-[#0b57d0] focus-within:ring-1 focus-within:ring-[#0b57d0]">
                 <span className="mr-2 shrink-0 text-[#5f6368]">

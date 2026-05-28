@@ -2152,12 +2152,21 @@ export default function InboxPage() {
   }
 
   // Shared back-to-list action used by thread detail
-  const closeThread = () => {
+  const closeThread = useCallback(() => {
     setSelectedId(null);
     setMessages(null);
     setThreadError(null);
     resetInlineReply();
-  };
+  }, [resetInlineReply]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeThread();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, closeThread]);
 
   const composeWindowTitle = useMemo(() => {
     if (composeKind === "forward") return titleCase("Forward");
@@ -2918,14 +2927,14 @@ export default function InboxPage() {
             {loadingThread ? (
               <div className="flex h-full flex-col">
                 {/* Header skeleton — mirrors the real subject row + sender meta */}
-                <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 md:px-6 md:py-5">
-                  <div className="mb-3 flex items-center gap-3">
-                    {/* Back-button slot */}
-                    <Skeleton className="skeleton-shimmer h-9 w-9 shrink-0 rounded-full" />
-                    {/* Subject line (h2 text-lg/xl) */}
+                <div className="border-b border-[#e8eaed] bg-white px-2 py-2 md:px-4">
+                  <div className="mb-3 flex items-center gap-1 border-b border-[#f1f3f4] pb-2">
+                    <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
+                    <Skeleton className="skeleton-shimmer h-8 w-20 shrink-0 rounded-md" />
+                    <ThreadPaneNavButton variant="close" onClick={closeThread} className="ml-auto hidden md:inline-flex" />
+                  </div>
+                  <div className="mb-3 flex items-center gap-3 px-2 md:px-0">
                     <Skeleton className="skeleton-shimmer h-5 w-2/3 rounded md:h-6" />
-                    {/* Labels button slot */}
-                    <Skeleton className="skeleton-shimmer ml-auto h-8 w-20 shrink-0 rounded-md" />
                   </div>
                   {/* Sender + email + date row (pl-12 in real header) */}
                   <div className="flex items-center gap-3 pl-12">
@@ -2986,15 +2995,7 @@ export default function InboxPage() {
                 {/* Thread header — Gmail action bar + subject */}
                 <div className="border-b border-[#e8eaed] bg-white px-2 py-2 md:px-4">
                   <div className="mb-2 flex items-center gap-1 border-b border-[#f1f3f4] pb-2">
-                    <button
-                      type="button"
-                      onClick={closeThread}
-                      className="btn-ghost inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-0 text-[#444746] hover:bg-[#e8eaed] md:hidden"
-                      aria-label={titleCase("Back")}
-                      title={titleCase("Back")}
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
-                    </button>
+                    <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
                     <LabelPicker
                       allLabels={allLabels}
                       selected={new Set(threadLabelIds)}
@@ -3002,6 +3003,11 @@ export default function InboxPage() {
                       onCreate={createAndApplyLabel}
                       busy={labelBusy}
                       align="left"
+                    />
+                    <ThreadPaneNavButton
+                      variant="close"
+                      onClick={closeThread}
+                      className="ml-auto hidden md:inline-flex"
                     />
                   </div>
                   <h2 className="px-2 text-xl font-normal text-[#202124] md:px-0">
@@ -3272,6 +3278,39 @@ export default function InboxPage() {
       />
 
     </>
+  );
+}
+
+/** Back (mobile) or close (desktop) control for the reading pane. */
+function ThreadPaneNavButton({
+  variant,
+  onClick,
+  className,
+}: {
+  variant: "back" | "close";
+  onClick: () => void;
+  className?: string;
+}) {
+  const label = variant === "back" ? titleCase("Back to list") : titleCase("Close");
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-0 text-[#444746] hover:bg-[#e8eaed]",
+        className
+      )}
+      aria-label={label}
+      title={label}
+    >
+      {variant === "back" ? (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden>
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      ) : (
+        <IconX className="h-5 w-5" strokeWidth={2} />
+      )}
+    </button>
   );
 }
 

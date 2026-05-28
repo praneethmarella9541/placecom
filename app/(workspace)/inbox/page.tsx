@@ -1623,14 +1623,36 @@ export default function InboxPage() {
   // Refresh counts after the list reloads (bulk actions, refresh).
   useEffect(() => { if (!loadingList) void loadCounts(); }, [loadingList, loadCounts]);
 
-  // Poll for new mail every 30 s — keeps the unread badge live (mirrors Gmail).
-  // We skip the tick while the tab is hidden to avoid waking up a backgrounded tab.
+  // Latest poll functions, held in a ref so the polling interval below stays
+  // mounted once (a stable interval) yet always calls the current closures —
+  // loadThreads in particular changes whenever the folder/search/label
+  // changes, and we want the poll to refresh whatever view is active now.
+  const pollRef = useRef({ loadCounts, loadThreads });
   useEffect(() => {
-    const id = setInterval(() => {
-      if (!document.hidden) void loadCounts();
-    }, 30_000);
-    return () => clearInterval(id);
-  }, [loadCounts]);
+    pollRef.current = { loadCounts, loadThreads };
+  }, [loadCounts, loadThreads]);
+
+  // Live refresh, mirroring Gmail: every 30 s pull fresh unread counts AND
+  // re-fetch the current thread list so newly-arrived mail shows up (and the
+  // Inbox badge moves) without a manual refresh. loadThreads does a background
+  // SWR refresh that preserves scroll and respects the post-mutation cooldown,
+  // so this is non-disruptive. We skip the tick while the tab is hidden.
+  useEffect(() => {
+    function refresh() {
+      if (document.hidden) return;
+      void pollRef.current.loadCounts();
+      void pollRef.current.loadThreads({ append: false, forceRefresh: true });
+    }
+    const id = setInterval(refresh, 30_000);
+    // Also refresh the moment the tab regains focus — a backgrounded tab
+    // misses ticks, so without this the count looks stale on return.
+    function onVisible() { if (!document.hidden) refresh(); }
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   useEffect(() => {
     void loadTracking();
@@ -2448,8 +2470,8 @@ export default function InboxPage() {
   };
 
   // Folder nav items — shared between left rail (desktop) and mobile tab bar.
-  // Inbox badge uses CATEGORY_PERSONAL (Primary) unread — same as Gmail sidebar,
-  // which excludes Promotions/Social/etc. from the unread dot.
+  // Inbox badge shows INBOX unread (the server computes it via an is:unread
+  // thread search so it matches Gmail's own sidebar number).
   const FOLDER_NAV = [
     { key: "inbox"     as const, label: "Inbox",     Icon: IconInbox,  countId: "INBOX",     unreadOnly: true  },
     { key: "starred"   as const, label: "Starred",   Icon: IconStar,   countId: "STARRED",   unreadOnly: false },

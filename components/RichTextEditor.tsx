@@ -297,7 +297,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
             <ChevronDownIcon />
           </button>
           {fontOpen && (
-            <div className="absolute left-0 top-full z-50 mt-0.5 w-44 overflow-hidden rounded border border-[#dadce0] bg-white py-1 shadow-lg">
+            <div className="absolute left-0 bottom-full z-50 mb-0.5 w-44 overflow-hidden rounded border border-[#dadce0] bg-white py-1 shadow-lg">
               {FONTS.map((f) => (
                 <button
                   key={f}
@@ -325,7 +325,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
             <ChevronDownIcon />
           </button>
           {sizeOpen && (
-            <div className="absolute left-0 top-full z-50 mt-0.5 w-32 overflow-hidden rounded border border-[#dadce0] bg-white py-1 shadow-lg">
+            <div className="absolute left-0 bottom-full z-50 mb-0.5 w-32 overflow-hidden rounded border border-[#dadce0] bg-white py-1 shadow-lg">
               {SIZES.map((s) => (
                 <button
                   key={s.value}
@@ -367,7 +367,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
             <span className="mt-[2px] h-[3px] w-4 rounded-sm" style={{ backgroundColor: activeColor }} />
           </button>
           {colorOpen && (
-            <div className="absolute left-0 top-full z-50 mt-0.5 rounded border border-[#dadce0] bg-white p-2 shadow-lg" style={{ width: 212 }}>
+            <div className="absolute left-0 bottom-full z-50 mb-0.5 rounded border border-[#dadce0] bg-white p-2 shadow-lg" style={{ width: 212 }}>
               <div className="mb-2 flex gap-2 border-b border-[#e8eaed] pb-2">
                 <button type="button" onMouseDown={(e) => { e.preventDefault(); setColorTab("text"); }} className={`text-[12px] font-medium ${colorTab === "text" ? "text-[#0b57d0] border-b-2 border-[#0b57d0]" : "text-[#444746]"}`}>Text color</button>
                 <button type="button" onMouseDown={(e) => { e.preventDefault(); setColorTab("bg"); }} className={`text-[12px] font-medium ${colorTab === "bg" ? "text-[#0b57d0] border-b-2 border-[#0b57d0]" : "text-[#444746]"}`}>Highlight</button>
@@ -409,7 +409,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
             <ChevronDownIcon />
           </button>
           {alignOpen && (
-            <div className="absolute left-0 top-full z-50 mt-0.5 w-36 overflow-hidden rounded border border-[#dadce0] bg-white py-1 shadow-lg">
+            <div className="absolute left-0 bottom-full z-50 mb-0.5 w-36 overflow-hidden rounded border border-[#dadce0] bg-white py-1 shadow-lg">
               {(["left", "center", "right", "justify"] as const).map((a) => (
                 <button
                   key={a}

@@ -25,9 +25,9 @@ export const GMAIL_COLORS = {
   send: "#0b57d0",
 } as const;
 
-/** Classic Gmail floating compose title bar */
+/** Gmail compose title bar — white bg, dark text */
 export const GMAIL_COMPOSE_HEADER =
-  "bg-[#404040] text-white";
+  "bg-white text-[#202124]";
 
 export const GMAIL_COMPOSE_DIALOG_SHADOW =
   "shadow-[0_8px_10px_1px_rgba(60,64,67,0.14),0_3px_14px_2px_rgba(60,64,67,0.12)]";

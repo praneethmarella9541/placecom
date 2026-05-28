@@ -1,9 +1,10 @@
 "use client";
 
 import { createPortal } from "react-dom";
+import { useRef } from "react";
 import { Minus, Maximize, Minimize, Maximize2 } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
-import { RichTextEditor } from "@/components/RichTextEditor";
+import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
 import { IconX } from "@/components/Icons";
 import { cn } from "@/lib/utils";
@@ -76,6 +77,9 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     onFileChange,
     attachmentChips,
   } = props;
+
+  const editorRef = useRef<RichTextEditorHandle>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -235,6 +239,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             )}
 
             <RichTextEditor
+              ref={editorRef}
               value={body}
               onChange={onBodyChange}
               placeholder="Compose email"
@@ -249,14 +254,21 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             type="file"
             multiple
             className="hidden"
-            onChange={(e) => {
-              onFileChange(e.target.files);
-              e.target.value = "";
-            }}
+            onChange={(e) => { onFileChange(e.target.files); e.target.value = ""; }}
+          />
+          <input
+            ref={photoInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => { onFileChange(e.target.files); e.target.value = ""; }}
           />
           <GmailComposeFooter
             onSend={onSend}
             onAttach={onAttachClick}
+            onAttachPhoto={() => photoInputRef.current?.click()}
+            onInsertLink={() => editorRef.current?.insertLink()}
             onDiscard={onDiscard}
             sendDisabled={sendDisabled}
           />

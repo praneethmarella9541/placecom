@@ -865,9 +865,8 @@ export default function InboxPage() {
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
-  // Names of files currently being uploaded to Drive (>25 MB path).
-  // Shows a "Uploading to Drive…" placeholder chip until the upload settles.
-  const [driveUploading, setDriveUploading] = useState<Set<string>>(new Set());
+  /** File name → 0–100 while a large attachment uploads to Drive. */
+  const [driveUploadProgress, setDriveUploadProgress] = useState<Record<string, number>>({});
   const [composeCcBccOpen, setComposeCcBccOpen] = useState(false);
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeFullscreen, setComposeFullscreen] = useState(false);
@@ -1170,9 +1169,11 @@ export default function InboxPage() {
       } else {
         // Exceeds Gmail's 25 MB limit — upload to Drive in 4 MB chunks via our API
         // (browser cannot PUT to googleapis.com directly due to CORS).
-        setDriveUploading((s) => new Set(s).add(file.name));
+        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
         try {
-          const driveFile = await uploadLargeFileToDrive(file);
+          const driveFile = await uploadLargeFileToDrive(file, (percent) => {
+            setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
+          });
           newFiles.push({
             kind: "drive",
             name: driveFile.name,
@@ -1186,10 +1187,10 @@ export default function InboxPage() {
             `Failed to upload ${file.name} to Drive: ${e instanceof Error ? e.message : "network error"}. Please try again.`
           );
         } finally {
-          setDriveUploading((s) => {
-            const n = new Set(s);
-            n.delete(file.name);
-            return n;
+          setDriveUploadProgress((prev) => {
+            const next = { ...prev };
+            delete next[file.name];
+            return next;
           });
         }
       }
@@ -3529,7 +3530,7 @@ export default function InboxPage() {
                     onAttach={() => inlineReplyFileRef.current?.click()}
                     sending={inlineReplySending}
                     files={inlineReplyFiles}
-                    driveUploading={driveUploading}
+                    driveUploadProgress={driveUploadProgress}
                     onRemoveFile={(i) => setInlineReplyFiles((prev) => prev.filter((_, j) => j !== i))}
                   />
                 </div>
@@ -3654,7 +3655,7 @@ export default function InboxPage() {
         attachmentChips={
           <GmailPendingAttachments
             files={composeFiles}
-            driveUploading={driveUploading}
+            driveUploadProgress={driveUploadProgress}
             onRemove={(i) => setComposeFiles((prev) => prev.filter((_, j) => j !== i))}
           />
         }

@@ -9,12 +9,19 @@ export type DriveUploadFileResult = {
   webViewLink: string;
 };
 
+/** 0–100 upload progress for Drive link attachments. */
+export type DriveUploadProgressMap = Record<string, number>;
+
 /**
  * Upload a large file to Drive via our API (chunked proxy).
  * Avoids browser CORS failures on direct PUT to googleapis.com.
  */
-export async function uploadLargeFileToDrive(file: File): Promise<DriveUploadFileResult> {
+export async function uploadLargeFileToDrive(
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<DriveUploadFileResult> {
   const mimeType = file.type || "application/octet-stream";
+  onProgress?.(0);
 
   const sessionRes = await fetch("/api/drive/upload-session", {
     method: "POST",
@@ -36,6 +43,7 @@ export async function uploadLargeFileToDrive(file: File): Promise<DriveUploadFil
   }
 
   const sessionUrl = sessionData.sessionUrl;
+  onProgress?.(1);
   let offset = 0;
   let fileMeta: DriveUploadFileResult | null = null;
 
@@ -70,6 +78,8 @@ export async function uploadLargeFileToDrive(file: File): Promise<DriveUploadFil
     }
 
     offset = end;
+    const bytesPercent = file.size > 0 ? Math.round((offset / file.size) * 98) : 98;
+    onProgress?.(Math.min(98, Math.max(1, bytesPercent)));
     if (chunkData.done && chunkData.file) {
       fileMeta = chunkData.file;
       break;
@@ -77,6 +87,7 @@ export async function uploadLargeFileToDrive(file: File): Promise<DriveUploadFil
   }
 
   if (fileMeta?.id) {
+    onProgress?.(99);
     const finalRes = await fetch("/api/drive/upload-session", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -89,6 +100,7 @@ export async function uploadLargeFileToDrive(file: File): Promise<DriveUploadFil
     } catch {
       /* non-JSON */
     }
+    onProgress?.(100);
     if (finalRes.ok && finalData.file) {
       return finalData.file;
     }

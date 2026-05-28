@@ -8,35 +8,55 @@ import {
   pendingFileSize,
   type PendingFile,
 } from "@/lib/gmail-compose-types";
+import type { DriveUploadProgressMap } from "@/lib/upload-large-file-to-drive";
 import { titleCase } from "@/lib/title-case";
 
 type GmailPendingAttachmentsProps = {
   files: PendingFile[];
-  driveUploading: Set<string>;
+  driveUploadProgress: DriveUploadProgressMap;
   onRemove: (index: number) => void;
 };
 
 /** Gmail-style attachment chips (regular files + Drive links + upload progress). */
 export function GmailPendingAttachments({
   files,
-  driveUploading,
+  driveUploadProgress,
   onRemove,
 }: GmailPendingAttachmentsProps) {
-  if (files.length === 0 && driveUploading.size === 0) return null;
+  const uploading = Object.entries(driveUploadProgress);
+  if (files.length === 0 && uploading.length === 0) return null;
 
   return (
     <div className="border-t border-[#f1f3f4] px-3 py-2">
       <ul className="flex flex-col gap-1.5">
-        {Array.from(driveUploading).map((name) => (
+        {uploading.map(([name, percent]) => (
           <li
             key={`uploading-${name}`}
-            className="flex items-center gap-2 rounded border border-[#c5e1f5] bg-[#e8f4fd] px-2 py-1.5 text-[12px]"
+            className="rounded border border-[#c5e1f5] bg-[#e8f4fd] px-2 py-2 text-[12px]"
           >
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#1a73e8]" />
-            <span className="min-w-0 flex-1 truncate font-medium text-[#5f6368]">{name}</span>
-            <span className="shrink-0 text-[11px] text-[#1a73e8]">
-              {titleCase("Uploading to Drive…")}
-            </span>
+            <div className="mb-1.5 flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#1a73e8]" />
+              <span className="min-w-0 flex-1 truncate font-medium text-[#202124]" title={name}>
+                {name}
+              </span>
+              <span className="shrink-0 tabular-nums text-[11px] font-medium text-[#1a73e8]">
+                {percent}%
+              </span>
+            </div>
+            <div
+              className="h-1 overflow-hidden rounded-full bg-[#d2e3fc]"
+              role="progressbar"
+              aria-valuenow={percent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`${titleCase("Uploading to Drive")} ${percent}%`}
+            >
+              <div
+                className="h-full rounded-full bg-[#1a73e8] transition-[width] duration-200 ease-out"
+                style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+              />
+            </div>
+            <p className="mt-1 text-[10px] text-[#5f6368]">{titleCase("Uploading to Drive…")}</p>
           </li>
         ))}
         {files.map((f, i) => (

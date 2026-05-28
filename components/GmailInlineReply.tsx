@@ -6,6 +6,7 @@ import { GmailComposeFooter } from "@/components/GmailComposeFooter";
 import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
 import { IconForward, IconReply, IconReplyAll } from "@/components/Icons";
 import type { PendingFile } from "@/lib/gmail-compose-types";
+import type { DriveUploadProgressMap } from "@/lib/upload-large-file-to-drive";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +31,7 @@ type GmailInlineReplyProps = {
   onAttach: () => void;
   sending?: boolean;
   files: PendingFile[];
-  driveUploading: Set<string>;
+  driveUploadProgress: DriveUploadProgressMap;
   onRemoveFile: (index: number) => void;
 };
 
@@ -60,7 +61,7 @@ export function GmailInlineReply({
   onAttach,
   sending,
   files,
-  driveUploading,
+  driveUploadProgress,
   onRemoveFile,
 }: GmailInlineReplyProps) {
   if (!mode) {
@@ -118,7 +119,7 @@ export function GmailInlineReply({
 
         <GmailPendingAttachments
           files={files}
-          driveUploading={driveUploading}
+          driveUploadProgress={driveUploadProgress}
           onRemove={onRemoveFile}
         />
 

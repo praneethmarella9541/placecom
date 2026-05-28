@@ -1,13 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
 import { LabelChip } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
-import { EmailHtmlBody } from "@/components/EmailHtmlBody";
+import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
 import { GmailAttachmentPreviews } from "@/components/GmailAttachmentPreviews";
 import { GmailAvatar } from "@/components/GmailAvatar";
+import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
 import { GmailInlineReply, type InlineReplyMode } from "@/components/GmailInlineReply";
 import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
@@ -36,6 +36,7 @@ import {
   IconEye,
   IconCheck,
   IconSearch,
+  IconCalendar,
 } from "@/components/Icons";
 
 type Folder = "inbox" | "sent" | "drafts" | "starred" | "important" | "trash" | "spam" | "allmail";
@@ -61,6 +62,7 @@ type ThreadRow = {
   starred?: boolean;
   important?: boolean;
   hasAttachments?: boolean;
+  hasCalendarInvite?: boolean;
   historyId?: string;
 };
 
@@ -105,51 +107,6 @@ function FilterRow({ label, children }: { label: string; children: ReactNode }) 
       <div className="min-w-0">{children}</div>
     </div>
   );
-}
-
-/**
- * Detect whether a message body looks like a Google Calendar invite.
- * We use multiple signals (Google-Calendar sender, ICS attachment, subject
- * prefix, calendar.google.com link in body) because individual signals
- * miss edge cases (forwarded invites, alternate sender domains, etc.).
- */
-function isCalendarInvite(msg: {
-  from?: string;
-  subject?: string;
-  bodyHtml?: string;
-  attachments?: { filename: string; mimeType: string }[];
-}): boolean {
-  const from = (msg.from || "").toLowerCase();
-  if (from.includes("calendar-notification@google.com")) return true;
-  if ((msg.attachments ?? []).some((a) => /invite\.ics$/i.test(a.filename) || /^text\/calendar/i.test(a.mimeType))) return true;
-  const subj = msg.subject || "";
-  if (/^(?:invitation|updated invitation|cancelled event|accepted|declined|tentatively accepted):/i.test(subj)) return true;
-  if ((msg.bodyHtml || "").includes("calendar.google.com/calendar/event")) return true;
-  return false;
-}
-
-/**
- * Extract the Google Calendar event id from an invite email's HTML body.
- * Google embeds a "View on Google Calendar" link of the form:
- *   https://calendar.google.com/calendar/event?action=VIEW&eid=<base64>
- * The eid decodes to "{eventId} {calendarId}" — we return the eventId.
- * Returns null if no link is present or the eid can't be decoded.
- */
-function extractCalendarEventId(bodyHtml?: string): string | null {
-  if (!bodyHtml) return null;
-  const m = bodyHtml.match(/[?&]eid=([A-Za-z0-9_\-=%]+)/);
-  if (!m) return null;
-  try {
-    // The eid is base64url + may be URL-encoded.
-    const raw = decodeURIComponent(m[1]).replace(/-/g, "+").replace(/_/g, "/");
-    const pad = raw.length % 4 ? raw + "=".repeat(4 - (raw.length % 4)) : raw;
-    const decoded = atob(pad);
-    // Decoded form: "<eventId> <calendarId>"
-    const eventId = decoded.split(" ")[0];
-    return eventId || null;
-  } catch {
-    return null;
-  }
 }
 
 function senderName(from: string): string {
@@ -261,7 +218,6 @@ function useResizablePane(storageKey: string, defaultWidth: number, min: number,
 }
 
 export default function InboxPage() {
-  const router = useRouter();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
@@ -2868,10 +2824,39 @@ export default function InboxPage() {
                         </span>
                       </button>
 
-                      {/* Right-side: attachment icon + date — fixed width, never shrinks */}
+                      {/* Right-side: calendar / attachment icon + date */}
                       <span className="flex w-[155px] shrink-0 items-center justify-end gap-1.5 pr-4">
-                        {t.hasAttachments && (
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-[var(--color-text-faint)]">
+                        {(() => {
+                          const isCal =
+                            t.hasCalendarInvite ??
+                            isCalendarInviteThread({
+                              subject: t.subject,
+                              from: t.from,
+                              snippet: t.snippet,
+                            });
+                          return isCal ? (
+                            <span title={titleCase("Calendar event")} className="inline-flex shrink-0">
+                              <IconCalendar className="h-[15px] w-[15px] text-[#5f6368]" />
+                            </span>
+                          ) : null;
+                        })()}
+                        {t.hasAttachments &&
+                          !(t.hasCalendarInvite ??
+                            isCalendarInviteThread({
+                              subject: t.subject,
+                              from: t.from,
+                              snippet: t.snippet,
+                            })) && (
+                          <svg
+                            width="13"
+                            height="13"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            className="shrink-0 text-[var(--color-text-faint)]"
+                            aria-label={titleCase("Has attachment")}
+                          >
                             <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.49" />
                           </svg>
                         )}
@@ -3076,52 +3061,24 @@ export default function InboxPage() {
                           <time className="whitespace-nowrap text-[12px] text-[#5f6368]">{formatDate(m.date)}</time>
                         </div>
                       </div>
-                      {/* Inline calendar-invite actions — only render when
-                          the message is a Google Calendar invite AND we can
-                          extract a usable event id from its body. Clicking
-                          a button routes to /calendar with the event-id and
-                          desired action so the existing Edit/Delete modals
-                          (which already support an optional guest note)
-                          open pre-loaded. Mirrors Gmail's inline RSVP UX. */}
+                      <CalendarInviteOrHtml
+                        subject={m.subject}
+                        bodyHtml={m.bodyHtml}
+                        plain={m.body}
+                      />
                       {(() => {
-                        if (!isCalendarInvite(m)) return null;
-                        const eventId = extractCalendarEventId(m.bodyHtml);
-                        if (!eventId) return null;
-                        const go = (action: "edit" | "delete") => {
-                          const qs = new URLSearchParams({ eventId, action });
-                          router.push(`/calendar?${qs.toString()}`);
-                        };
+                        const files = (m.attachments ?? []).filter(
+                          (a) =>
+                            !/invite\.ics$/i.test(a.filename) &&
+                            !/^text\/calendar/i.test(a.mimeType)
+                        );
+                        if (files.length === 0) return null;
                         return (
-                          <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2 text-[12px]">
-                            <span className="font-medium text-[var(--color-text-muted)]">Calendar invite</span>
-                            <span className="text-[var(--color-text-faint)]">·</span>
-                            <button
-                              type="button"
-                              onClick={() => go("edit")}
-                              className="rounded px-2 py-1 font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
-                              title="Edit this meeting (opens Calendar)"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => go("delete")}
-                              className="rounded px-2 py-1 font-medium text-[var(--color-danger)] hover:bg-[var(--color-danger-light)]"
-                              title="Delete this meeting (opens Calendar)"
-                            >
-                              Delete
-                            </button>
+                          <div className="mt-3">
+                            <GmailAttachmentPreviews attachments={files} messageId={m.id} />
                           </div>
                         );
                       })()}
-                      <div className="mt-3">
-                        <EmailHtmlBody html={m.bodyHtml} plain={m.body} />
-                      </div>
-                      {m.attachments && m.attachments.length > 0 && (
-                        <div className="mt-3">
-                          <GmailAttachmentPreviews attachments={m.attachments} messageId={m.id} />
-                        </div>
-                      )}
                       </div>
                     </article>
                   );

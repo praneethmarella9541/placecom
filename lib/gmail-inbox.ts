@@ -1,3 +1,4 @@
+import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
 
@@ -24,6 +25,8 @@ export type ThreadListItem = {
    *  (i.e. it has an attachment). Cheap because we already fetch the
    *  Content-Type header in the metadata call. */
   hasAttachments?: boolean;
+  /** Calendar invitation thread (shows calendar icon instead of paperclip in list). */
+  hasCalendarInvite?: boolean;
   /** Unique label ids across all messages in the thread. The UI maps these
    *  through the labels list to render chips. Excludes folder-state labels
    *  (INBOX/SENT/DRAFT/etc.) AND STARRED (which has its own icon). */
@@ -373,6 +376,11 @@ export async function listThreadsPage(
           )?.value || "";
           return /^multipart\/mixed/i.test(ct);
         });
+        const hasCalendarInvite = isCalendarInviteThread({
+          subject,
+          from,
+          snippet: t.snippet || "",
+        });
         return {
           id: t.id,
           snippet: t.snippet || "",
@@ -385,6 +393,7 @@ export async function listThreadsPage(
           starred: allLabelIds.includes("STARRED"),
           important: allLabelIds.includes("IMPORTANT"),
           hasAttachments,
+          hasCalendarInvite,
         };
       } catch {
         return {

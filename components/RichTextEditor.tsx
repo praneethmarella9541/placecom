@@ -311,7 +311,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
       </div>
 
       {/* Formatting toolbar */}
-      <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-t border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5">
+      <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-t border-[#c7d2fe] bg-gradient-to-r from-[#eef2ff] via-[#f8faff] to-[#e0f2fe] px-2 py-1.5">
 
         {/* Font picker */}
         <div className="relative" data-rte-popover>
@@ -576,8 +576,8 @@ function ToolbarBtn({
       onMouseDown={(e) => { e.preventDefault(); onClick(); }}
       className={
         active
-          ? "flex h-7 w-7 items-center justify-center rounded bg-[#d2e3fc] text-[#1a73e8]"
-          : "flex h-7 w-7 items-center justify-center rounded text-[#5f6368] hover:bg-[#e8eaed]"
+          ? "flex h-7 w-7 items-center justify-center rounded bg-[#c7d2fe] text-[#4338ca] shadow-sm"
+          : "flex h-7 w-7 items-center justify-center rounded text-[#4338ca]/80 hover:bg-[#e0e7ff]"
       }
     >
       {children}

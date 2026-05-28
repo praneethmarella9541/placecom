@@ -139,7 +139,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
 
       {minimized ? (
         <div
-          className="fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border border-[#dadce0] bg-[#323232] px-2 text-white shadow-[0_-4px_16px_rgba(60,64,67,0.25)] lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[560px] lg:rounded-t-lg lg:shadow-lg"
+          className="fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border border-[#818cf8] bg-gradient-to-r from-[#1a73e8] via-[#4f46e5] to-[#6366f1] px-2 text-white shadow-[0_-4px_20px_rgba(79,70,229,0.35)] lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[560px] lg:rounded-t-lg lg:shadow-lg"
           role="dialog"
           aria-label={windowTitle}
         >
@@ -173,8 +173,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           className={cn(
             "fixed z-[999] flex flex-col overflow-hidden bg-white text-[#202124] [color-scheme:light]",
             fullscreen
-              ? "left-[2.5%] right-[2.5%] top-[2.5%] bottom-[2.5%] rounded-lg border border-[#dadce0] shadow-[0_24px_48px_rgba(60,64,67,0.3)]"
-              : "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t border-[#dadce0] shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:bottom-6 lg:left-auto lg:right-6 lg:rounded-t-lg lg:border lg:shadow-[0_8px_10px_1px_rgba(0,0,0,0.14),0_3px_14px_2px_rgba(0,0,0,0.12)]"
+              ? "left-[2.5%] right-[2.5%] top-[2.5%] bottom-[2.5%] rounded-lg border border-[#a5b4fc] shadow-[0_24px_48px_rgba(79,70,229,0.22)]"
+              : "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t border-[#a5b4fc] shadow-[0_-8px_28px_rgba(79,70,229,0.2)] lg:bottom-6 lg:left-auto lg:right-6 lg:rounded-t-lg lg:border lg:shadow-[0_8px_24px_rgba(79,70,229,0.18),0_3px_14px_rgba(26,115,232,0.12)]"
           )}
           style={!fullscreen ? {
             width: resizeW ?? 560,
@@ -206,7 +206,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               onMouseDown={(e) => startResize(e, "nw")}
             />
           )}
-          <div className="flex shrink-0 items-center gap-1 bg-[#323232] px-2 py-1.5 text-white">
+          <div className="flex shrink-0 items-center gap-1 bg-gradient-to-r from-[#1a73e8] via-[#4f46e5] to-[#6366f1] px-2 py-1.5 text-white shadow-[inset_0_-1px_0_rgba(255,255,255,0.12)]">
             <h2 className="min-w-0 flex-1 truncate pl-2 text-[13px] font-medium">{windowTitle}</h2>
             <button
               type="button"
@@ -238,10 +238,10 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             </button>
           </div>
 
-          <div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto bg-white">
+          <div className="scrollbar-thin flex min-h-0 flex-1 flex-col overflow-y-auto bg-gradient-to-b from-[#f8faff] via-white to-[#fafbff]">
 
             {/* To row — Cc/Bcc links float right when collapsed, matching Gmail */}
-            <div className="flex items-center border-b border-[#f1f3f4] px-3">
+            <div className="flex items-center border-b border-[#e0e7ff] bg-white/70 px-3">
               <div className={cn("min-w-0 flex-1 py-0.5", fieldGroupClass)}>
                 <RecipientField
                   placeholder="Recipients"
@@ -255,14 +255,14 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                   <button
                     type="button"
                     onClick={() => onCcBccOpenChange(true)}
-                    className="text-[13px] font-medium text-[#444746] hover:text-[#0b57d0]"
+                    className="text-[13px] font-medium text-[#4338ca] hover:text-[#1a73e8]"
                   >
                     Cc
                   </button>
                   <button
                     type="button"
                     onClick={() => onCcBccOpenChange(true)}
-                    className="text-[13px] font-medium text-[#444746] hover:text-[#0b57d0]"
+                    className="text-[13px] font-medium text-[#4338ca] hover:text-[#1a73e8]"
                   >
                     Bcc
                   </button>
@@ -272,14 +272,14 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
 
             {ccBccOpen && (
               <>
-                <div className="flex items-center border-b border-[#f1f3f4] px-3">
-                  <span className="w-7 shrink-0 text-[13px] text-[#444746]">Cc</span>
+                <div className="flex items-center border-b border-[#e0e7ff] bg-white/60 px-3">
+                  <span className="w-7 shrink-0 text-[13px] font-medium text-[#4f46e5]">Cc</span>
                   <div className={cn("min-w-0 flex-1 py-0.5", fieldGroupClass)}>
                     <RecipientField placeholder="Cc" value={cc} onChange={onCcChange} suggestions={suggestions} />
                   </div>
                 </div>
-                <div className="flex items-center border-b border-[#f1f3f4] px-3">
-                  <span className="w-7 shrink-0 text-[13px] text-[#444746]">Bcc</span>
+                <div className="flex items-center border-b border-[#e0e7ff] bg-white/60 px-3">
+                  <span className="w-7 shrink-0 text-[13px] font-medium text-[#4f46e5]">Bcc</span>
                   <div className={cn("min-w-0 flex-1 py-0.5", fieldGroupClass)}>
                     <RecipientField placeholder="Bcc" value={bcc} onChange={onBccChange} suggestions={suggestions} />
                   </div>
@@ -294,13 +294,13 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             ) : null}
 
             {showSubject && (
-              <div className="border-b border-[#f1f3f4] px-3 py-2.5">
+              <div className="border-b border-[#e0e7ff] bg-[#eef2ff]/40 px-3 py-2.5">
                 <input
                   type="text"
                   value={subject}
                   onChange={(e) => onSubjectChange(e.target.value)}
                   placeholder="Subject"
-                  className="w-full border-0 bg-transparent text-[15px] font-medium text-[#202124] outline-none placeholder:font-normal placeholder:text-[#777]"
+                  className="w-full border-0 bg-transparent text-[15px] font-medium text-[#1e1b4b] outline-none placeholder:font-normal placeholder:text-[#6366f1]/60"
                 />
               </div>
             )}

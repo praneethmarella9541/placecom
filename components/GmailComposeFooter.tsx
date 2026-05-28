@@ -25,10 +25,10 @@ export function GmailComposeFooter({
   const label = sending ? "Sending…" : sendLabel ?? "Send";
 
   return (
-    <div className="shrink-0 border-t border-[#e0e0e0] bg-white">
+    <div className="shrink-0 border-t border-[#c7d2fe] bg-gradient-to-r from-[#f0f4ff] via-[#eef2ff] to-[#f8faff]">
       <div className="flex items-center gap-1 px-3 py-2">
         {/* Send split-pill — joined with no gap, opacity dims when disabled */}
-        <div className={cn("flex shrink-0 items-center rounded-full bg-[#0b57d0]", (sendDisabled || sending) && "opacity-50 cursor-not-allowed")}>
+        <div className={cn("flex shrink-0 items-center rounded-full bg-gradient-to-r from-[#0b57d0] to-[#4f46e5] shadow-sm shadow-indigo-200/80", (sendDisabled || sending) && "opacity-50 cursor-not-allowed")}>
           <button
             type="button"
             disabled={sendDisabled || sending}
@@ -49,13 +49,13 @@ export function GmailComposeFooter({
         </div>
 
         {/* Attach files */}
-        <FooterBtn title="Attach files" onClick={onAttach}>
+        <FooterBtn title="Attach files" onClick={onAttach} tone="attach">
           <Paperclip className="h-[18px] w-[18px]" strokeWidth={2} />
         </FooterBtn>
 
         {/* Photo — image-only file picker */}
         {onAttachPhoto && (
-          <FooterBtn title="Insert photo" onClick={onAttachPhoto}>
+          <FooterBtn title="Insert photo" onClick={onAttachPhoto} tone="photo">
             <PhotoIcon />
           </FooterBtn>
         )}
@@ -63,7 +63,7 @@ export function GmailComposeFooter({
         <div className="flex-1" />
 
         {/* Discard */}
-        <FooterBtn title="Discard draft" onClick={onDiscard}>
+        <FooterBtn title="Discard draft" onClick={onDiscard} tone="discard">
           <TrashIcon />
         </FooterBtn>
       </div>
@@ -71,12 +71,20 @@ export function GmailComposeFooter({
   );
 }
 
+const footerToneClass = {
+  default: "text-[#4338ca] hover:bg-[#e0e7ff]",
+  attach: "text-[#188038] hover:bg-[#e6f4ea]",
+  photo: "text-[#b06000] hover:bg-[#fef7e0]",
+  discard: "text-[#c5221f] hover:bg-[#fce8e6]",
+} as const;
+
 function FooterBtn({
-  title, onClick, children,
+  title, onClick, children, tone = "default",
 }: {
   title: string;
   onClick: () => void;
   children: React.ReactNode;
+  tone?: keyof typeof footerToneClass;
 }) {
   return (
     <button
@@ -84,7 +92,10 @@ function FooterBtn({
       title={title}
       aria-label={title}
       onClick={onClick}
-      className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#f1f3f4]"
+      className={cn(
+        "flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+        footerToneClass[tone]
+      )}
     >
       {children}
     </button>

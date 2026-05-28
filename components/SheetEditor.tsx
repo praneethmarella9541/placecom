@@ -95,6 +95,10 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     [colWidthOverride, data]
   );
 
+  // Row virtualization: render only rows in/near the viewport.
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(600);
+
   // Normalized selection rectangle (top-left → bottom-right).
   const selRect = useMemo(() => {
     const r1 = Math.min(anchor.row, selected.row);
@@ -120,6 +124,20 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
   const extendTo = useCallback((pos: Pos) => {
     setSelected(pos);
   }, []);
+
+  /** Select an entire column (click on its letter header). */
+  const selectColumn = useCallback((col: number) => {
+    if (!data) return;
+    setAnchor({ row: 0, col });
+    setSelected({ row: data.rowCount - 1, col });
+  }, [data]);
+
+  /** Select an entire row (click on its number). */
+  const selectRow = useCallback((row: number) => {
+    if (!data) return;
+    setAnchor({ row, col: 0 });
+    setSelected({ row, col: data.columnCount - 1 });
+  }, [data]);
 
   const activeTab = useMemo(
     () => meta?.tabs.find((t) => t.title === activeSheet) ?? null,
@@ -165,6 +183,17 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
   }, []);
+
+  // Track the grid viewport height so the virtualization window is accurate.
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const measure = () => setViewportH(el.clientHeight || 600);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [data]);
 
   // Column-resize drag: track mouse globally so the drag continues even when
   // the cursor leaves the thin handle. On release, persist the new width.
@@ -542,6 +571,108 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
 
   const selCell = data ? cellAt(selected.row, selected.col) : null;
 
+  // Windowed rows: render a buffer of rows around the viewport. Frozen rows
+  // always render (they're sticky at the top). Keeps large sheets snappy.
+  const OVERSCAN = 8;
+  const totalRows = data?.rowCount ?? 0;
+  const frozen = data?.frozenRowCount ?? 0;
+  const firstVisible = Math.max(frozen, Math.floor(scrollTop / ROW_H) - OVERSCAN);
+  const lastVisible = Math.min(
+    totalRows,
+    Math.ceil((scrollTop + viewportH) / ROW_H) + OVERSCAN
+  );
+  const topSpacer = Math.max(0, (firstVisible - frozen) * ROW_H);
+  const bottomSpacer = Math.max(0, (totalRows - lastVisible) * ROW_H);
+
+  /** Render a single grid row (used for both frozen and windowed rows). */
+  function renderRow(r: number, isFrozen: boolean) {
+    if (!data) return null;
+    return (
+      <div
+        key={r}
+        className={cn("flex", isFrozen && "sticky z-10 bg-[var(--color-surface)]")}
+        style={isFrozen ? { top: HEADER_H + r * ROW_H } : undefined}
+      >
+        {/* Row number (click → select whole row) */}
+        <div
+          onClick={() => { selectRow(r); gridRef.current?.focus(); }}
+          className={cn(
+            "sticky left-0 z-10 flex shrink-0 cursor-pointer items-center justify-center border-b border-r border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[11px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]",
+            inSelection(r, selRect.c1) && "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+          )}
+          style={{ width: ROWNUM_W, height: ROW_H }}
+        >
+          {r + 1}
+        </div>
+        {/* Cells */}
+        {Array.from({ length: data.columnCount }).map((_, c) => {
+          const cell = cellAt(r, c);
+          const isFocus = selected.row === r && selected.col === c;
+          const isSel = inSelection(r, c);
+          const isRange = isSel && !(selRect.r1 === selRect.r2 && selRect.c1 === selRect.c2);
+          const isEdit = editing?.row === r && editing?.col === c;
+          return (
+            <div
+              key={c}
+              onMouseDown={(e) => {
+                if (editing) void commitEdit();
+                if (e.shiftKey) {
+                  extendTo({ row: r, col: c });
+                } else {
+                  draggingRef.current = true;
+                  selectCell({ row: r, col: c });
+                }
+                gridRef.current?.focus();
+              }}
+              onMouseEnter={() => {
+                if (draggingRef.current) extendTo({ row: r, col: c });
+              }}
+              onDoubleClick={() => beginEdit({ row: r, col: c })}
+              className={cn(
+                "relative shrink-0 cursor-cell overflow-hidden border-b border-r border-[var(--color-border)] px-1.5 text-[13px] leading-[26px] text-[var(--color-text)]",
+                isFocus && !isEdit && "ring-2 ring-inset ring-[var(--color-primary)]"
+              )}
+              style={{
+                width: colWidth(c),
+                height: ROW_H,
+                fontWeight: cell.bold ? 700 : undefined,
+                fontStyle: cell.italic ? "italic" : undefined,
+                fontSize: cell.fontSize ? `${cell.fontSize}px` : undefined,
+                textDecoration: [
+                  cell.underline ? "underline" : "",
+                  cell.strikethrough ? "line-through" : "",
+                ].filter(Boolean).join(" ") || undefined,
+                color: cell.textColor || undefined,
+                backgroundColor: cell.bgColor || undefined,
+                textAlign: (cell.align?.toLowerCase() as "left" | "center" | "right") || "left",
+              }}
+            >
+              {isRange && (
+                <span className="pointer-events-none absolute inset-0 bg-[var(--color-primary)] opacity-10" />
+              )}
+              {isEdit ? (
+                <input
+                  ref={editInputRef}
+                  value={editValue}
+                  onChange={(e) => setEditValue(e.target.value)}
+                  onBlur={() => void commitEdit()}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); void commitEdit({ row: Math.min(data.rowCount - 1, r + 1), col: c }); }
+                    else if (e.key === "Tab") { e.preventDefault(); void commitEdit({ row: r, col: Math.min(data.columnCount - 1, c + 1) }); }
+                    else if (e.key === "Escape") { e.preventDefault(); setEditing(null); gridRef.current?.focus(); }
+                  }}
+                  className="absolute inset-0 z-10 h-full w-full border-2 border-[var(--color-primary)] bg-white px-1.5 text-[13px] text-black outline-none"
+                />
+              ) : (
+                <span className="block truncate">{cell.display}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   /* ── Render ── */
   if (loading && !data) {
     return (
@@ -684,6 +815,7 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
         ref={gridRef}
         tabIndex={0}
         onKeyDown={onGridKeyDown}
+        onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
         className="flex-1 overflow-auto bg-[var(--color-surface)] outline-none"
       >
         <div className="inline-block min-w-full">
@@ -696,9 +828,10 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
             {Array.from({ length: data.columnCount }).map((_, c) => (
               <div
                 key={c}
+                onClick={() => { selectColumn(c); gridRef.current?.focus(); }}
                 className={cn(
-                  "relative flex shrink-0 items-center justify-center border-b border-r border-[var(--color-border)] text-[11px] font-medium text-[var(--color-text-muted)]",
-                  selected.col === c && "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                  "relative flex shrink-0 cursor-pointer items-center justify-center border-b border-r border-[var(--color-border)] text-[11px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]",
+                  inSelection(selRect.r1, c) && "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
                 )}
                 style={{ width: colWidth(c), height: HEADER_H }}
               >
@@ -716,89 +849,19 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
             ))}
           </div>
 
-          {/* Rows */}
-          {Array.from({ length: data.rowCount }).map((_, r) => {
-            const frozen = r < data.frozenRowCount;
-            return (
-              <div key={r} className={cn("flex", frozen && "sticky z-10 bg-[var(--color-surface)]")} style={frozen ? { top: HEADER_H + r * ROW_H } : undefined}>
-                {/* Row number */}
-                <div
-                  className={cn(
-                    "sticky left-0 z-10 flex shrink-0 items-center justify-center border-b border-r border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[11px] text-[var(--color-text-muted)]",
-                    selected.row === r && "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                  )}
-                  style={{ width: ROWNUM_W, height: ROW_H }}
-                >
-                  {r + 1}
-                </div>
-                {/* Cells */}
-                {Array.from({ length: data.columnCount }).map((_, c) => {
-                  const cell = cellAt(r, c);
-                  const isFocus = selected.row === r && selected.col === c;
-                  const isSel = inSelection(r, c);
-                  const isRange = isSel && !(selRect.r1 === selRect.r2 && selRect.c1 === selRect.c2);
-                  const isEdit = editing?.row === r && editing?.col === c;
-                  return (
-                    <div
-                      key={c}
-                      onMouseDown={(e) => {
-                        if (editing) void commitEdit();
-                        if (e.shiftKey) {
-                          extendTo({ row: r, col: c });
-                        } else {
-                          draggingRef.current = true;
-                          selectCell({ row: r, col: c });
-                        }
-                        gridRef.current?.focus();
-                      }}
-                      onMouseEnter={() => {
-                        if (draggingRef.current) extendTo({ row: r, col: c });
-                      }}
-                      onDoubleClick={() => beginEdit({ row: r, col: c })}
-                      className={cn(
-                        "relative shrink-0 cursor-cell overflow-hidden border-b border-r border-[var(--color-border)] px-1.5 text-[13px] leading-[26px] text-[var(--color-text)]",
-                        isFocus && !isEdit && "ring-2 ring-inset ring-[var(--color-primary)]"
-                      )}
-                      style={{
-                        width: colWidth(c),
-                        height: ROW_H,
-                        fontWeight: cell.bold ? 700 : undefined,
-                        fontStyle: cell.italic ? "italic" : undefined,
-                        fontSize: cell.fontSize ? `${cell.fontSize}px` : undefined,
-                        textDecoration: [
-                          cell.underline ? "underline" : "",
-                          cell.strikethrough ? "line-through" : "",
-                        ].filter(Boolean).join(" ") || undefined,
-                        color: cell.textColor || undefined,
-                        backgroundColor: cell.bgColor || undefined,
-                        textAlign: (cell.align?.toLowerCase() as "left" | "center" | "right") || "left",
-                      }}
-                    >
-                      {isRange && (
-                        <span className="pointer-events-none absolute inset-0 bg-[var(--color-primary)] opacity-10" />
-                      )}
-                      {isEdit ? (
-                        <input
-                          ref={editInputRef}
-                          value={editValue}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          onBlur={() => void commitEdit()}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); void commitEdit({ row: Math.min(data.rowCount - 1, r + 1), col: c }); }
-                            else if (e.key === "Tab") { e.preventDefault(); void commitEdit({ row: r, col: Math.min(data.columnCount - 1, c + 1) }); }
-                            else if (e.key === "Escape") { e.preventDefault(); setEditing(null); gridRef.current?.focus(); }
-                          }}
-                          className="absolute inset-0 z-10 h-full w-full border-2 border-[var(--color-primary)] bg-white px-1.5 text-[13px] text-black outline-none"
-                        />
-                      ) : (
-                        <span className="block truncate">{cell.display}</span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            );
-          })}
+          {/* Frozen rows (always rendered, sticky under the header) */}
+          {Array.from({ length: frozen }).map((_, r) => renderRow(r, true))}
+
+          {/* Top spacer for virtualized scroll region */}
+          {topSpacer > 0 && <div style={{ height: topSpacer }} />}
+
+          {/* Windowed (visible) rows */}
+          {Array.from({ length: Math.max(0, lastVisible - firstVisible) }).map((_, i) =>
+            renderRow(firstVisible + i, false)
+          )}
+
+          {/* Bottom spacer */}
+          {bottomSpacer > 0 && <div style={{ height: bottomSpacer }} />}
         </div>
       </div>
 

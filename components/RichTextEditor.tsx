@@ -89,6 +89,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   const [colorOpen, setColorOpen] = useState(false);
   const [alignOpen, setAlignOpen] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [linkText, setLinkText] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
   const [activeColor, setActiveColor] = useState("#000000");
   const [activeAlign, setActiveAlign] = useState<"left" | "center" | "right" | "justify">("left");
   const [activeFont, setActiveFont] = useState("Sans Serif");
@@ -163,6 +166,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
         setColorOpen(false);
         setAlignOpen(false);
         setEmojiOpen(false);
+        setLinkOpen(false);
       }
     }
     document.addEventListener("mousedown", onDoc);
@@ -231,14 +235,38 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
     exec("insertText", emoji);
   }
 
-  function handleLink() {
-    const url = window.prompt("Enter URL");
-    if (!url) return;
-    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-    exec("createLink", href);
+  function openLinkPopover() {
+    saveSelection();
+    // Pre-fill text with selected text
+    const sel = window.getSelection();
+    const selectedText = sel && sel.rangeCount > 0 ? sel.toString() : "";
+    setLinkText(selectedText);
+    setLinkUrl("");
+    setLinkOpen(true);
+    setFontOpen(false);
+    setSizeOpen(false);
+    setColorOpen(false);
+    setAlignOpen(false);
+    setEmojiOpen(false);
   }
 
-  useImperativeHandle(ref, () => ({ insertLink: handleLink }));
+  function applyLink() {
+    if (!linkUrl.trim()) { setLinkOpen(false); return; }
+    const href = /^https?:\/\//i.test(linkUrl.trim()) ? linkUrl.trim() : `https://${linkUrl.trim()}`;
+    restoreSelection();
+    const sel = window.getSelection();
+    // If no text selected and linkText provided, insert as new text
+    if (linkText.trim() && sel && sel.isCollapsed) {
+      exec("insertHTML", `<a href="${href}">${linkText.trim()}</a>`);
+    } else {
+      exec("createLink", href);
+    }
+    setLinkOpen(false);
+    setLinkText("");
+    setLinkUrl("");
+  }
+
+  useImperativeHandle(ref, () => ({ insertLink: openLinkPopover }));
 
   function handlePaste(e: React.ClipboardEvent<HTMLDivElement>) {
     const text = e.clipboardData.getData("text/plain");
@@ -448,9 +476,54 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
         <ToolbarBtn active={activeCmds.strikeThrough} title="Strikethrough" onClick={() => exec("strikeThrough")}>
           <Strikethrough className="h-[15px] w-[15px]" strokeWidth={2.5} />
         </ToolbarBtn>
-        <ToolbarBtn title="Insert link (Ctrl+K)" onClick={handleLink}>
-          <LinkIcon className="h-[15px] w-[15px]" strokeWidth={2.5} />
-        </ToolbarBtn>
+
+        {/* Link popover */}
+        <div className="relative" data-rte-popover>
+          <ToolbarBtn title="Insert link (Ctrl+K)" onClick={openLinkPopover}>
+            <LinkIcon className="h-[15px] w-[15px]" strokeWidth={2.5} />
+          </ToolbarBtn>
+          {linkOpen && (
+            <div className="absolute bottom-full left-0 z-50 mb-1 w-72 rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" data-rte-popover>
+              {/* Text field */}
+              <div className="mb-2 flex items-center rounded border border-[#dadce0] bg-white px-2 focus-within:border-[#0b57d0] focus-within:ring-1 focus-within:ring-[#0b57d0]">
+                <span className="mr-2 shrink-0 text-[#5f6368]">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                </span>
+                <input
+                  type="text"
+                  value={linkText}
+                  onChange={(e) => setLinkText(e.target.value)}
+                  placeholder="Text"
+                  autoFocus
+                  className="flex-1 py-1.5 text-[13px] text-[#202124] outline-none placeholder:text-[#80868b]"
+                />
+              </div>
+              {/* URL field + Apply */}
+              <div className="flex items-center gap-2">
+                <div className="flex flex-1 items-center rounded border border-[#dadce0] bg-white px-2 focus-within:border-[#0b57d0] focus-within:ring-1 focus-within:ring-[#0b57d0]">
+                  <span className="mr-2 shrink-0 text-[#5f6368]">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                  </span>
+                  <input
+                    type="url"
+                    value={linkUrl}
+                    onChange={(e) => setLinkUrl(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applyLink(); } }}
+                    placeholder="Type or paste a link"
+                    className="flex-1 py-1.5 text-[13px] text-[#202124] outline-none placeholder:text-[#80868b]"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); applyLink(); }}
+                  className={`shrink-0 text-[13px] font-medium ${linkUrl.trim() ? "text-[#0b57d0] hover:text-[#1a73e8]" : "text-[#80868b] cursor-not-allowed"}`}
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Emoji picker */}
         <div className="relative" data-rte-popover>

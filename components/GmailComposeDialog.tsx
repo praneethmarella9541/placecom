@@ -268,7 +268,6 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             onSend={onSend}
             onAttach={onAttachClick}
             onAttachPhoto={() => photoInputRef.current?.click()}
-            onInsertLink={() => editorRef.current?.insertLink()}
             onDiscard={onDiscard}
             sendDisabled={sendDisabled}
           />

@@ -7,25 +7,16 @@ export type GmailComposeFooterProps = {
   onSend: () => void;
   onAttach: () => void;
   onAttachPhoto?: () => void;
-  onInsertLink?: () => void;
   onDiscard: () => void;
   sendDisabled?: boolean;
   sending?: boolean;
   sendLabel?: string;
 };
 
-/**
- * Gmail-style compose footer.
- * [Send ▾] [Aa] [📎] [🔗] [😊→toolbar] [Drive] [🖼] [⋮]  ···  [🗑]
- *
- * Emoji and link in the footer are shortcuts to the same actions in the
- * formatting toolbar above. Photo triggers an image-only file picker.
- */
 export function GmailComposeFooter({
   onSend,
   onAttach,
   onAttachPhoto,
-  onInsertLink,
   onDiscard,
   sendDisabled,
   sending,
@@ -61,13 +52,6 @@ export function GmailComposeFooter({
         <FooterBtn title="Attach files" onClick={onAttach}>
           <Paperclip className="h-[18px] w-[18px]" strokeWidth={2} />
         </FooterBtn>
-
-        {/* Insert link */}
-        {onInsertLink && (
-          <FooterBtn title="Insert link (Ctrl+K)" onClick={onInsertLink}>
-            <LinkIcon />
-          </FooterBtn>
-        )}
 
         {/* Photo — image-only file picker */}
         {onAttachPhoto && (
@@ -105,10 +89,6 @@ function FooterBtn({
       {children}
     </button>
   );
-}
-
-function LinkIcon() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>;
 }
 
 function PhotoIcon() {

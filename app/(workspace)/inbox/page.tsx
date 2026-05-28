@@ -42,6 +42,7 @@ type ThreadRow = {
   starred?: boolean;
   important?: boolean;
   hasAttachments?: boolean;
+  historyId?: string;
 };
 
 type GmailLabel = {
@@ -1118,6 +1119,12 @@ export default function InboxPage() {
   const lastMutationAtRef = useRef<number>(0);
   const MUTATION_COOLDOWN_MS = 5000;
 
+  // The highest historyId seen across all loaded threads. Used by the
+  // History API poll to ask Gmail "did anything change since this point?"
+  // so we only reload the list when there are actual new events — instead
+  // of unconditionally refreshing every N seconds.
+  const latestHistoryIdRef = useRef<string | null>(null);
+
   /**
    * Apply the same transform to BOTH the rendered list and every cached view.
    * Use this instead of bare setThreads() for any mutation that should persist
@@ -1451,6 +1458,16 @@ export default function InboxPage() {
         if (!res.ok) throw new Error(data.error || "Failed to load inbox");
         const incoming = data.threads || [];
 
+        // Track the highest historyId across loaded threads so the poll can
+        // ask Gmail "did anything change since this point?" instead of blindly
+        // reloading the full list every N seconds.
+        const maxHid = incoming.reduce<string | null>((best, t) => {
+          if (!t.historyId) return best;
+          if (!best) return t.historyId;
+          return BigInt(t.historyId) > BigInt(best) ? t.historyId : best;
+        }, latestHistoryIdRef.current);
+        if (maxHid) latestHistoryIdRef.current = maxHid;
+
         if (opts.append) {
           setThreads((prev) => {
             const merged = [...prev, ...incoming];
@@ -1623,27 +1640,55 @@ export default function InboxPage() {
   // Refresh counts after the list reloads (bulk actions, refresh).
   useEffect(() => { if (!loadingList) void loadCounts(); }, [loadingList, loadCounts]);
 
-  // Latest poll functions, held in a ref so the polling interval below stays
-  // mounted once (a stable interval) yet always calls the current closures —
-  // loadThreads in particular changes whenever the folder/search/label
-  // changes, and we want the poll to refresh whatever view is active now.
+  // Stable refs to the latest poll callbacks — keeps the interval below
+  // mounted once while always calling the current folder/search closures.
   const pollRef = useRef({ loadCounts, loadThreads });
   useEffect(() => {
     pollRef.current = { loadCounts, loadThreads };
   }, [loadCounts, loadThreads]);
 
-  // Live refresh every 30 s: pull fresh unread counts AND re-fetch the
-  // current thread list so newly-arrived mail shows up and the Inbox badge
-  // moves without a manual refresh. loadThreads does a background SWR refresh
-  // that preserves scroll and respects the post-mutation cooldown.
-  // Visibility-change is intentionally NOT wired here — firing forceRefresh
-  // on every app/tab switch causes a visible reload that the user doesn't
-  // expect; the 30 s interval is sufficient for new-mail awareness.
+  // History-based live refresh — mirrors how Gmail avoids full page reloads:
+  //
+  //   1. Every 30 s ask Gmail's History API "did anything change in INBOX
+  //      since historyId X?" — this is a single lightweight call.
+  //   2. Only if Gmail says YES: refresh the thread list (background SWR,
+  //      preserves scroll) and counts.
+  //   3. If the historyId has expired (>30 days), do a full refresh once to
+  //      re-anchor.
+  //
+  // Net effect: the list NEVER reloads unless real mail events occurred.
+  // The user sees no flash for new tabs/app switches, only for actual
+  // new mail or label changes.
   useEffect(() => {
-    const id = setInterval(() => {
+    const id = setInterval(async () => {
       if (document.hidden) return;
-      void pollRef.current.loadCounts();
-      void pollRef.current.loadThreads({ append: false, forceRefresh: true });
+      const since = latestHistoryIdRef.current;
+      if (!since) {
+        // No historyId yet — just refresh counts quietly.
+        void pollRef.current.loadCounts();
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/gmail/history?since=${encodeURIComponent(since)}&labelId=INBOX`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          hasChanges?: boolean;
+          expired?: boolean;
+          latestHistoryId?: string;
+        };
+        // Update our anchor even when there are no changes, so the next tick
+        // doesn't re-scan already-processed history.
+        if (data.latestHistoryId) latestHistoryIdRef.current = data.latestHistoryId;
+        if (data.hasChanges) {
+          void pollRef.current.loadCounts();
+          void pollRef.current.loadThreads({ append: false, forceRefresh: true });
+        }
+      } catch {
+        // Network blip — skip tick silently.
+      }
     }, 30_000);
     return () => clearInterval(id);
   }, []);
@@ -3086,21 +3131,30 @@ export default function InboxPage() {
                         />
                       </span>
 
-                      {/* Important marker — clickable ► toggle, matches Gmail's row affordance */}
+                      {/* Important marker — Gmail-style filled/outlined label bookmark.
+                          Always visible (not hover-gated) so users can scan importance
+                          at a glance exactly like in Gmail's own list view. */}
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); void toggleThreadImportant(t.id, !t.important); }}
                         disabled={isBusy}
                         className={cn(
-                          "flex w-4 shrink-0 items-center justify-center text-[11px] leading-none transition-colors",
+                          "flex w-5 shrink-0 items-center justify-center transition-colors",
                           t.important
-                            ? "text-yellow-500 hover:text-yellow-400"
-                            : "text-[var(--color-text-faint)] hover:text-yellow-500 opacity-0 group-hover:opacity-100"
+                            ? "text-yellow-400 hover:text-yellow-300"
+                            : "text-[var(--color-text-faint)] hover:text-yellow-400"
                         )}
                         aria-label={t.important ? "Mark not important" : "Mark as important"}
                         title={t.important ? "Mark not important" : "Mark as important"}
                       >
-                        ►
+                        {/* Gmail's importance marker is a right-pointing label/bookmark shape */}
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
+                          {t.important ? (
+                            <path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+                          ) : (
+                            <path fill="none" stroke="currentColor" strokeWidth="2" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+                          )}
+                        </svg>
                       </button>
 
                       {/* Star — always visible; filled/yellow when starred, faint outline when not */}

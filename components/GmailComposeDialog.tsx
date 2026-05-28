@@ -1,7 +1,7 @@
 "use client";
 
 import { createPortal } from "react-dom";
-import { Paperclip, Minus, Maximize, Minimize, Maximize2, Loader2 } from "lucide-react";
+import { Paperclip, Minus, Maximize, Minimize, Maximize2 } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { IconX } from "@/components/Icons";

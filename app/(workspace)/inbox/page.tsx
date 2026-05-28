@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useRouter } from "next/navigation";
 import { LabelChip } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
-import { RichTextEditor, richTextIsEmpty } from "@/components/RichTextEditor";
+import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { EmailHtmlBody } from "@/components/EmailHtmlBody";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
 import { createPortal } from "react-dom";
@@ -2168,7 +2168,7 @@ export default function InboxPage() {
         })
         .catch(rollback);
     },
-    [selectedThreadIds, threads, selectedId, folder, scheduleCountRefresh, mutateThreads, loadThreads, adjustInboxUnread]
+    [threads, selectedId, folder, scheduleCountRefresh, mutateThreads, loadThreads, adjustInboxUnread]
   );
 
   const performBulkAction = useCallback(

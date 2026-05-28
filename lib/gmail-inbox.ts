@@ -3,7 +3,7 @@ import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-export type MailFolder = "inbox" | "sent" | "drafts";
+export type MailFolder = "inbox" | "sent" | "drafts" | "trash" | "spam" | "allmail";
 
 export type ThreadListItem = {
   /** Thread id — used to open `/api/gmail/threads/:id` (same as Gmail conversation). */
@@ -40,11 +40,17 @@ type ThreadListFolder = Exclude<MailFolder, "drafts">;
 const LABELS: Record<ThreadListFolder, string[]> = {
   inbox: ["INBOX"],
   sent: ["SENT"],
+  trash: ["TRASH"],
+  spam: ["SPAM"],
+  allmail: [],
 };
 
 const QUERY: Record<ThreadListFolder, string> = {
-  inbox: "", // no category filter — show all inbox mail, not just Primary tab
+  inbox: "",
   sent: "",
+  trash: "",
+  spam: "",
+  allmail: "",
 };
 
 async function fetchMessageMeta(

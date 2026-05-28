@@ -22,7 +22,13 @@ export async function GET(request: Request) {
       ? "sent"
       : folderRaw === "drafts"
         ? "drafts"
-        : "inbox";
+        : folderRaw === "trash"
+          ? "trash"
+          : folderRaw === "spam"
+            ? "spam"
+            : folderRaw === "allmail"
+              ? "allmail"
+              : "inbox";
   const pageToken = searchParams.get("pageToken") || undefined;
   const searchQuery = searchParams.get("search")?.trim() || undefined;
   const labelId = searchParams.get("labelId")?.trim() || undefined;

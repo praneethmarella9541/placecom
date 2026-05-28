@@ -12,7 +12,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal, Bookmark, Loader2 } from "lucide-react";
+import { PencilLine, Paperclip, Maximize2, Minus, FilePen, Maximize, Minimize, SlidersHorizontal, Bookmark, Loader2, Archive, Trash2, AlertOctagon, Mail } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -29,7 +29,17 @@ import {
   IconFile,
 } from "@/components/Icons";
 
-type Folder = "inbox" | "sent" | "drafts" | "starred" | "important";
+type Folder = "inbox" | "sent" | "drafts" | "starred" | "important" | "trash" | "spam" | "allmail";
+type BulkAction =
+  | "archive"
+  | "trash"
+  | "deleteForever"
+  | "markRead"
+  | "markUnread"
+  | "star"
+  | "spam"
+  | "notSpam"
+  | "moveToInbox";
 type ThreadRow = {
   id: string;
   snippet: string;
@@ -1021,7 +1031,9 @@ export default function InboxPage() {
       ? "STARRED"
       : folder === "important"
         ? "IMPORTANT"
-        : filterLabelId ?? (folder === "inbox" ? CATEGORY_LABEL[category] : null);
+        : folder === "trash" || folder === "spam" || folder === "allmail" || folder === "sent" || folder === "drafts"
+          ? null
+          : filterLabelId ?? (folder === "inbox" ? CATEGORY_LABEL[category] : null);
 
   // Multi-select state (Gmail-style row checkboxes).
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
@@ -1501,7 +1513,16 @@ export default function InboxPage() {
     async (opts: { append: boolean; pageToken?: string; forceRefresh?: boolean }) => {
       // "starred" and "important" are virtual folders — pass inbox to the API
       // and use labelId=STARRED / labelId=IMPORTANT to filter.
-      const apiFolder = (folder === "starred" || folder === "important") ? "inbox" : folder;
+      const apiFolder =
+        folder === "starred" || folder === "important"
+          ? "inbox"
+          : folder === "trash"
+            ? "trash"
+            : folder === "spam"
+              ? "spam"
+              : folder === "allmail"
+                ? "allmail"
+                : folder;
       const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
@@ -1638,6 +1659,8 @@ export default function InboxPage() {
       "DRAFT",
       "STARRED",
       "IMPORTANT",
+      "TRASH",
+      "SPAM",
       "CATEGORY_PERSONAL",
       "CATEGORY_PROMOTIONS",
       "CATEGORY_SOCIAL",
@@ -1806,7 +1829,9 @@ export default function InboxPage() {
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current;
     const scroller = listScrollRef.current; // the <ul> that actually scrolls
-    if (!sentinel || !scroller || !nextPageToken || selectedId) return;
+    const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+    // Mobile hides the list while reading — skip load-more until back on list.
+    if (!sentinel || !scroller || !nextPageToken || (selectedId && !isDesktop)) return;
     let fired = false;
     const observer = new IntersectionObserver(
       ([entry]) => {
@@ -2157,30 +2182,31 @@ export default function InboxPage() {
   // for archive/trash, rolls back on failure.
   /** Bulk-action for the toolbar above the list. Removes rows for archive
    *  and trash; updates unread/starred state for the other actions. */
-  const performBulkAction = useCallback(
-    (action: "archive" | "trash" | "markRead" | "markUnread" | "star") => {
-      const ids = Array.from(selectedThreadIds);
+  const applyThreadAction = useCallback(
+    (action: BulkAction, ids: string[], opts?: { clearSelection?: boolean; closeDetail?: boolean }) => {
       if (ids.length === 0) return;
 
-      // 1. Optimistic UI update — instant, no waiting. mutateThreads also
-      //    propagates the change to every cached list view so it survives
-      //    tab switches without waiting for the background refetch.
-      const selectedSet = selectedThreadIds;
-      const removeFromList = action === "archive" || action === "trash";
+      const idSet = new Set(ids);
+      const removeFromList =
+        action === "archive" ||
+        action === "trash" ||
+        action === "deleteForever" ||
+        action === "spam" ||
+        action === "notSpam" ||
+        action === "moveToInbox";
+
       if (removeFromList) {
-        mutateThreads((rows) => rows.filter((r) => !selectedSet.has(r.id)));
+        mutateThreads((rows) => rows.filter((r) => !idSet.has(r.id)));
       } else if (action === "markRead" || action === "markUnread") {
         mutateThreads((rows) =>
           rows.map((r) =>
-            selectedSet.has(r.id) ? { ...r, unread: action === "markUnread" } : r
+            idSet.has(r.id) ? { ...r, unread: action === "markUnread" } : r
           )
         );
       } else if (action === "star") {
         mutateThreads((rows) =>
-          rows.map((r) => (selectedSet.has(r.id) ? { ...r, starred: true } : r))
+          rows.map((r) => (idSet.has(r.id) ? { ...r, starred: true } : r))
         );
-        // Optimistically bump the Starred badge; scheduleCountRefresh below
-        // re-syncs with Gmail's authoritative number after a brief delay.
         const newlyStarred = ids.filter(
           (id) => !threads.find((t) => t.id === id)?.starred
         ).length;
@@ -2192,20 +2218,52 @@ export default function InboxPage() {
         }
       }
 
-      // 2. Clear selection immediately — user is unblocked right away.
-      setSelectedThreadIds(new Set());
+      if (opts?.clearSelection !== false) setSelectedThreadIds(new Set());
+      if (opts?.closeDetail && selectedId && idSet.has(selectedId)) {
+        setSelectedId(null);
+        setMessages(null);
+        setThreadError(null);
+        setReplyOpen(false);
+      }
 
-      // 3. Fire API in the background — roll back silently on failure.
+      const rollback = () => {
+        listCacheRef.current.clear();
+        void loadThreads({ append: false, forceRefresh: true });
+        scheduleCountRefresh();
+      };
+
+      if (action === "deleteForever") {
+        fetch("/api/gmail/threads/batch-delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ threadIds: ids }),
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              const j = (await res.json().catch(() => ({}))) as { error?: string };
+              throw new Error(j.error || "Delete failed");
+            }
+            scheduleCountRefresh();
+          })
+          .catch(rollback);
+        return;
+      }
+
       const body =
         action === "archive"
           ? { add: [] as string[], remove: ["INBOX"] }
           : action === "trash"
             ? { add: ["TRASH"], remove: ["INBOX"] }
-            : action === "markRead"
-              ? { add: [] as string[], remove: ["UNREAD"] }
-              : action === "markUnread"
-                ? { add: ["UNREAD"], remove: [] as string[] }
-                : { add: ["STARRED"], remove: [] as string[] };
+            : action === "spam"
+              ? { add: ["SPAM"], remove: ["INBOX"] }
+              : action === "notSpam" || action === "moveToInbox"
+                ? { add: ["INBOX"], remove: ["TRASH", "SPAM"] }
+                : action === "markRead"
+                  ? { add: [] as string[], remove: ["UNREAD"] }
+                  : action === "markUnread"
+                    ? { add: ["UNREAD"], remove: [] as string[] }
+                    : { add: ["STARRED"], remove: [] as string[] };
+
       fetch("/api/gmail/threads/batch-modify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2214,19 +2272,26 @@ export default function InboxPage() {
         .then(async (res) => {
           if (!res.ok) {
             const j = (await res.json().catch(() => ({}))) as { error?: string };
-            throw new Error(j.error || "Bulk action failed");
+            throw new Error(j.error || "Action failed");
           }
           scheduleCountRefresh();
         })
-        .catch(() => {
-          // Roll back silently — invalidate the SWR cache and refetch so the
-          // server-truth list paints, undoing the optimistic update.
-          listCacheRef.current.clear();
-          void loadThreads({ append: false, forceRefresh: true });
-          scheduleCountRefresh();
-        });
+        .catch(rollback);
     },
-    [selectedThreadIds, threads, scheduleCountRefresh, mutateThreads, loadThreads]
+    [selectedThreadIds, threads, selectedId, scheduleCountRefresh, mutateThreads, loadThreads]
+  );
+
+  const performBulkAction = useCallback(
+    (action: BulkAction) => applyThreadAction(action, Array.from(selectedThreadIds)),
+    [applyThreadAction, selectedThreadIds]
+  );
+
+  const performDetailAction = useCallback(
+    (action: BulkAction) => {
+      if (!selectedId) return;
+      applyThreadAction(action, [selectedId], { clearSelection: false, closeDetail: true });
+    },
+    [applyThreadAction, selectedId]
   );
 
   // Re-compute union of labels across selected threads whenever selection changes,
@@ -2674,7 +2739,54 @@ export default function InboxPage() {
     { key: "important" as const, label: "Important", Icon: Bookmark,   countId: "IMPORTANT", unreadOnly: false },
     { key: "sent"      as const, label: "Sent",      Icon: IconSend,   countId: "SENT",      unreadOnly: false },
     { key: "drafts"    as const, label: "Drafts",    Icon: FilePen,    countId: "DRAFT",     unreadOnly: false },
+    { key: "allmail"   as const, label: "All Mail",  Icon: Mail,       countId: null,        unreadOnly: false },
+    { key: "spam"      as const, label: "Spam",      Icon: AlertOctagon, countId: "SPAM",    unreadOnly: false },
+    { key: "trash"     as const, label: "Trash",     Icon: Trash2,     countId: "TRASH",     unreadOnly: false },
   ] as const;
+
+  /** Gmail-style toolbar actions for the current folder context. */
+  function BulkToolbarActions({ onAction }: { onAction: (a: BulkAction) => void }) {
+    if (folder === "trash") {
+      return (
+        <>
+          <RowAction title="Delete forever" onClick={() => onAction("deleteForever")}>
+            <Trash2 className="h-[15px] w-[15px]" strokeWidth={2} />
+          </RowAction>
+          <RowAction title="Move to Inbox" onClick={() => onAction("moveToInbox")}>
+            <IconInbox className="h-[15px] w-[15px]" />
+          </RowAction>
+        </>
+      );
+    }
+    if (folder === "spam") {
+      return (
+        <>
+          <RowAction title="Not spam" onClick={() => onAction("notSpam")}>
+            <IconInbox className="h-[15px] w-[15px]" />
+          </RowAction>
+          <RowAction title="Delete forever" onClick={() => onAction("deleteForever")}>
+            <Trash2 className="h-[15px] w-[15px]" strokeWidth={2} />
+          </RowAction>
+        </>
+      );
+    }
+    if (folder === "drafts") return null;
+    return (
+      <>
+        {folder !== "sent" && folder !== "allmail" && (
+          <RowAction title="Archive" onClick={() => onAction("archive")}>
+            <Archive className="h-[15px] w-[15px]" strokeWidth={2} />
+          </RowAction>
+        )}
+        <RowAction title="Report spam" onClick={() => onAction("spam")}>
+          <AlertOctagon className="h-[15px] w-[15px]" strokeWidth={2} />
+        </RowAction>
+        <RowAction title="Delete" onClick={() => onAction("trash")}>
+          <Trash2 className="h-[15px] w-[15px]" strokeWidth={2} />
+        </RowAction>
+      </>
+    );
+  }
 
   return (
     <>
@@ -2685,15 +2797,15 @@ export default function InboxPage() {
     <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
 
       {/* ══ LEFT RAIL — desktop only ══ */}
-      <aside className="hidden w-[200px] shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
-        {/* Compose + Refresh */}
-        <div className="flex items-center gap-2 px-3 py-4">
+      <aside className="hidden w-[256px] shrink-0 flex-col overflow-y-auto border-r border-[#e8eaed] bg-[#f6f8fc] md:flex">
+        {/* Compose + Refresh — Gmail pill compose button */}
+        <div className="flex items-center gap-2 px-3 py-3">
           <button
             type="button"
             onClick={() => { setComposeOpen(true); setComposeMinimized(false); }}
-            className="btn-primary inline-flex h-[38px] flex-1 gap-2 px-4 text-[13px]"
+            className="inline-flex h-[56px] flex-1 items-center gap-3 rounded-2xl bg-[#c2e7ff] px-5 text-[14px] font-medium text-[#001d35] shadow-sm transition hover:shadow-md"
           >
-            <PencilLine className="h-4 w-4" strokeWidth={2} />
+            <PencilLine className="h-5 w-5" strokeWidth={2} />
             {titleCase("Compose")}
           </button>
           <button
@@ -2713,12 +2825,12 @@ export default function InboxPage() {
         {/* Folder nav: Inbox / Starred / Sent / Drafts */}
         <nav className="flex flex-col gap-0.5 px-1">
           {FOLDER_NAV.map(({ key, label, Icon, countId, unreadOnly }) => {
-            const count = labelCounts[countId];
-            // For unreadOnly items (Inbox → Primary unread), show unread count.
-            // For others (Starred, Sent, Drafts) show total count.
-            const badge = unreadOnly
-              ? (count?.unread && count.unread > 0 ? count.unread : null)
-              : (count?.total && count.total > 0 ? count.total : null);
+            const count = countId ? labelCounts[countId] : undefined;
+            const badge = countId
+              ? unreadOnly
+                ? (count?.unread && count.unread > 0 ? count.unread : null)
+                : (count?.total && count.total > 0 ? count.total : null)
+              : null;
             const active = folder === key;
             return (
               <button
@@ -2733,10 +2845,10 @@ export default function InboxPage() {
                   setMailSearch("");
                 }}
                 className={cn(
-                  "flex w-full items-center gap-3 rounded-r-full py-[7px] pl-4 pr-3 text-[14px] font-medium transition-colors",
+                  "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-3 pr-3 text-[14px] transition-colors",
                   active
-                    ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
-                    : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]",
+                    ? "bg-[#d3e3fd] font-semibold text-[#001d35]"
+                    : "font-medium text-[#444746] hover:bg-[#e8eaed]",
                 )}
               >
                 <Icon className={cn(
@@ -2866,10 +2978,12 @@ export default function InboxPage() {
         <div className="flex border-b border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
           <div className="flex flex-1 overflow-x-auto">
             {FOLDER_NAV.map(({ key, label, Icon, countId, unreadOnly }) => {
-              const count = labelCounts[countId];
-              const badge = unreadOnly
-                ? (count?.unread && count.unread > 0 ? count.unread : null)
-                : (count?.total && count.total > 0 ? count.total : null);
+              const count = countId ? labelCounts[countId] : undefined;
+              const badge = countId
+                ? unreadOnly
+                  ? (count?.unread && count.unread > 0 ? count.unread : null)
+                  : (count?.total && count.total > 0 ? count.total : null)
+                : null;
               const active = folder === key;
               return (
                 <button
@@ -2927,8 +3041,8 @@ export default function InboxPage() {
         </div>
 
         {/* ── Category tabs (Primary / Promotions / Social…) — top of right area, only on Inbox ── */}
-        {folder === "inbox" && !filterLabelId && !selectedId && (
-          <div className="flex gap-0 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+        {folder === "inbox" && !filterLabelId && (
+          <div className="flex gap-0 overflow-x-auto border-b border-[#e8eaed] bg-[#f6f8fc]">
             {(
               [
                 { key: "primary"    as const, label: "Primary"    },
@@ -2947,8 +3061,8 @@ export default function InboxPage() {
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-5 py-3 text-[13px] font-medium transition-colors",
                     active
-                      ? "border-[var(--color-primary)] text-[var(--color-primary)]"
-                      : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+                      ? "border-[#0b57d0] font-semibold text-[#0b57d0]"
+                      : "border-transparent text-[#444746] hover:bg-[#e8eaed]"
                   )}
                 >
                   {t.label}
@@ -2958,9 +3072,16 @@ export default function InboxPage() {
           </div>
         )}
 
-        {/* ── THREAD LIST view ── */}
-        {!selectedId && (
-          <div className="relative flex flex-1 flex-col overflow-hidden">
+        {/* ── THREAD LIST + optional reading pane (Gmail split view on desktop) ── */}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div
+            className={cn(
+              "relative flex flex-col overflow-hidden bg-[#f6f8fc]",
+              selectedId
+                ? "hidden w-full md:flex md:w-[min(420px,42%)] md:max-w-[480px] md:shrink-0 md:border-r md:border-[#e8eaed]"
+                : "flex flex-1",
+            )}
+          >
 
             {/* Slim progress bar at top — visible only while loading more pages */}
             <div
@@ -2972,15 +3093,15 @@ export default function InboxPage() {
             />
 
             {/* Search bar + advanced filter popover trigger */}
-            <div ref={filterPanelRef} className="relative border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+            <div ref={filterPanelRef} className="relative border-b border-[#e8eaed] bg-[#f6f8fc] px-3 py-2">
               <div className="relative">
-                <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
+                <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5f6368]" />
                 <input
                   type="search"
                   value={mailSearchInput}
                   onChange={(e) => setMailSearchInput(e.target.value)}
-                  placeholder={titleCase("Search mail (same as Gmail)")}
-                  className="input-field h-[34px] w-full border-0 bg-[var(--color-surface-offset)] pl-9 pr-9 text-[13px]"
+                  placeholder={titleCase("Search mail")}
+                  className="h-[46px] w-full rounded-full border border-transparent bg-[#eaf1fb] pl-10 pr-10 text-[16px] text-[#202124] outline-none transition focus:border-[#0b57d0] focus:bg-white focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]"
                   autoComplete="off"
                 />
                 <button
@@ -3092,7 +3213,7 @@ export default function InboxPage() {
 
             {/* Bulk-action / select-all toolbar */}
             {threads.length > 0 && (
-              <div className="flex items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-[12px]">
+              <div className="flex h-12 items-center gap-2 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 text-[12px]">
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -3104,16 +3225,18 @@ export default function InboxPage() {
                 {selectedThreadIds.size > 0 ? (
                   <>
                     <span className="text-[var(--color-text-muted)]">{selectedThreadIds.size} selected</span>
-                    <div className="ml-2 flex items-center gap-1.5">
-                      {/* Bulk label picker */}
-                      <LabelPicker
-                        allLabels={allLabels.filter((l) => l.type === "user")}
-                        selected={bulkLabelSelected}
-                        onToggle={(id, checked) => void handleBulkLabelToggle(id, checked)}
-                        onCreate={handleBulkLabelCreate}
-                        busy={bulkLabelBusy}
-                        align="left"
-                      />
+                    <div className="ml-2 flex items-center gap-0.5">
+                      <BulkToolbarActions onAction={(a) => void performBulkAction(a)} />
+                      {folder !== "drafts" && (
+                        <LabelPicker
+                          allLabels={allLabels.filter((l) => l.type === "user")}
+                          selected={bulkLabelSelected}
+                          onToggle={(id, checked) => void handleBulkLabelToggle(id, checked)}
+                          onCreate={handleBulkLabelCreate}
+                          busy={bulkLabelBusy}
+                          align="left"
+                        />
+                      )}
                       {/* Single envelope toggle — closed = mark read, open = mark unread (Gmail pattern) */}
                       {(() => {
                         const allRead = Array.from(selectedThreadIds).every(
@@ -3196,7 +3319,11 @@ export default function InboxPage() {
                       ? <IconStar className="h-7 w-7 text-[var(--color-text-faint)]" />
                       : folder === "important"
                         ? <Bookmark className="h-7 w-7 text-[var(--color-text-faint)]" />
-                        : <IconInbox className="h-7 w-7 text-[var(--color-text-faint)]" />}
+                        : folder === "trash"
+                          ? <Trash2 className="h-7 w-7 text-[var(--color-text-faint)]" strokeWidth={1.25} />
+                          : folder === "spam"
+                            ? <AlertOctagon className="h-7 w-7 text-[var(--color-text-faint)]" strokeWidth={1.25} />
+                            : <IconInbox className="h-7 w-7 text-[var(--color-text-faint)]" />}
                 </div>
                 <p className="text-sm text-[var(--color-text-muted)]">
                   {titleCase(
@@ -3204,6 +3331,9 @@ export default function InboxPage() {
                     : folder === "drafts" ? "No drafts"
                     : folder === "starred" ? "No starred messages"
                     : folder === "important" ? "No important messages"
+                    : folder === "trash" ? "Trash is empty"
+                    : folder === "spam" ? "No spam here"
+                    : folder === "allmail" ? "No mail"
                     : `No threads in ${folder}`,
                   )}
                 </p>
@@ -3213,6 +3343,7 @@ export default function InboxPage() {
                 {threads.map((t) => {
                   const name = senderName(t.from);
                   const isSelected = selectedThreadIds.has(t.id);
+                  const isActiveThread = selectedId === t.id;
                   const isUnread = Boolean(t.unread);
                   const isStarred = Boolean(t.starred);
                   const isBusy = rowBusy.has(t.id);
@@ -3223,14 +3354,22 @@ export default function InboxPage() {
                   return (
                     <li
                       key={t.draftId ?? t.id}
+                      onClick={(e) => {
+                        const t0 = e.target as HTMLElement;
+                        if (t0.closest("button, input, label, a")) return;
+                        if (t.draftId) void openDraft(t.draftId);
+                        else void openThread(t.id);
+                      }}
                       className={cn(
-                        "group relative flex h-[57px] items-center overflow-hidden border-b border-[var(--color-border)] text-[13px] transition-colors",
-                        isSelected
-                          ? "bg-[var(--color-primary-light)]"
-                          : isUnread
-                            ? "bg-[var(--color-surface)] font-semibold"
-                            : "bg-[var(--color-surface-offset)] font-normal",
-                        "hover:bg-[var(--color-primary-light)] hover:shadow-sm",
+                        "group relative flex h-[40px] cursor-pointer items-center overflow-hidden border-b border-[#f1f3f4] text-[13px] transition-colors",
+                        isActiveThread
+                          ? "bg-[#c2e3ff] shadow-[inset_3px_0_0_0_#0b57d0]"
+                          : isSelected
+                            ? "bg-[#d3e3fd]"
+                            : isUnread
+                              ? "bg-white font-semibold"
+                              : "bg-white font-normal",
+                        !isActiveThread && "hover:bg-[#f2f6fc] hover:shadow-sm",
                       )}
                     >
                       {/* Checkbox — fixed 40px slot */}
@@ -3374,11 +3513,10 @@ export default function InboxPage() {
               </ul>
             )}
           </div>
-        )}
 
         {/* ── THREAD DETAIL view ── */}
         {selectedId && (
-          <div className="flex flex-1 flex-col overflow-hidden bg-[var(--color-bg)]">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
             {loadingThread ? (
               <div className="flex h-full flex-col">
                 {/* Header skeleton — mirrors the real subject row + sender meta */}
@@ -3447,21 +3585,19 @@ export default function InboxPage() {
               </div>
             ) : messages && messages.length ? (
               <>
-                {/* Thread header */}
-                <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 md:px-6">
-                  <div className="mb-3 flex items-center gap-3">
+                {/* Thread header — Gmail action bar + subject */}
+                <div className="border-b border-[#e8eaed] bg-white px-2 py-2 md:px-4">
+                  <div className="mb-2 flex items-center gap-1 border-b border-[#f1f3f4] pb-2">
                     <button
                       type="button"
                       onClick={closeThread}
-                      className="btn-ghost inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                      className="btn-ghost inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-0 text-[#444746] hover:bg-[#e8eaed] md:hidden"
                       aria-label={titleCase("Back")}
                       title={titleCase("Back")}
                     >
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
                     </button>
-                    <h2 className="min-w-0 flex-1 font-display text-lg font-bold text-[var(--color-text)] md:text-xl">
-                      {messages[0]?.subject || "(no subject)"}
-                    </h2>
+                    <BulkToolbarActions onAction={(a) => void performDetailAction(a)} />
                     <LabelPicker
                       allLabels={allLabels}
                       selected={new Set(threadLabelIds)}
@@ -3470,6 +3606,9 @@ export default function InboxPage() {
                       busy={labelBusy}
                     />
                   </div>
+                  <h2 className="px-2 text-xl font-normal text-[#202124] md:px-0">
+                    {messages[0]?.subject || "(no subject)"}
+                  </h2>
                   {threadLabelIds.length > 0 && (
                     <div className="mb-2 flex flex-wrap gap-1 pl-12">
                       {threadLabelIds
@@ -3745,6 +3884,7 @@ export default function InboxPage() {
             )}
           </div>
         )}
+        </div>{/* end list + reading pane split */}
       </div>{/* end right content */}
     </div>
 

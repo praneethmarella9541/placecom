@@ -5,6 +5,7 @@ import {
   Bold, Italic, Underline, Strikethrough,
   AlignLeft, AlignCenter, AlignRight,
   Plus, Trash2, Snowflake, RefreshCw, Loader2, Undo2, Redo2,
+  BarChart3, ExternalLink, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -125,6 +126,11 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
   const undoStackRef = useRef<HistoryEntry[]>([]);
   const redoStackRef = useRef<HistoryEntry[]>([]);
   const [historyTick, setHistoryTick] = useState(0); // forces toolbar re-render
+
+  // Charts on the active tab + the insert-chart type picker open state.
+  type ChartInfo = { chartId: number; title: string; type: string };
+  const [charts, setCharts] = useState<ChartInfo[]>([]);
+  const [chartMenuOpen, setChartMenuOpen] = useState(false);
 
   // Row virtualization: render only rows in/near the viewport.
   const [scrollTop, setScrollTop] = useState(0);
@@ -755,6 +761,88 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
     return () => window.removeEventListener("click", close);
   }, [tabMenu]);
 
+  // Close the chart-type menu when clicking outside it.
+  useEffect(() => {
+    if (!chartMenuOpen) return;
+    function onDown(e: PointerEvent) {
+      const t = e.target as HTMLElement;
+      if (!t.closest("[data-chart-menu]")) setChartMenuOpen(false);
+    }
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [chartMenuOpen]);
+
+  /* ── Charts ── */
+  const loadCharts = useCallback(async () => {
+    if (!activeSheet) return;
+    try {
+      const res = await fetch(
+        `/api/sheets/${encodeURIComponent(spreadsheetId)}/charts?sheet=${encodeURIComponent(activeSheet)}`,
+        { cache: "no-store" }
+      );
+      const j = (await res.json()) as { charts?: ChartInfo[] };
+      if (res.ok) setCharts(j.charts ?? []);
+    } catch { /* non-fatal */ }
+  }, [activeSheet, spreadsheetId]);
+
+  // Refresh the chart list whenever the active tab changes.
+  useEffect(() => {
+    void loadCharts();
+  }, [loadCharts]);
+
+  const insertChart = useCallback(
+    async (chartType: "COLUMN" | "BAR" | "LINE" | "PIE") => {
+      if (!activeTab) return;
+      setChartMenuOpen(false);
+      setSaving(true);
+      try {
+        const res = await fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/charts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sheetId: activeTab.sheetId,
+            startRow: selRect.r1,
+            endRow: selRect.r2,
+            startCol: selRect.c1,
+            endCol: selRect.c2,
+            chartType,
+            title: "Chart",
+          }),
+        });
+        const j = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(j.error || "Insert chart failed");
+        await loadCharts();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Insert chart failed");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [activeTab, spreadsheetId, selRect, loadCharts]
+  );
+
+  const removeChart = useCallback(
+    async (chartId: number) => {
+      setSaving(true);
+      try {
+        const res = await fetch(
+          `/api/sheets/${encodeURIComponent(spreadsheetId)}/charts?chartId=${chartId}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          const j = (await res.json()) as { error?: string };
+          throw new Error(j.error || "Delete chart failed");
+        }
+        await loadCharts();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Delete chart failed");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [spreadsheetId, loadCharts]
+  );
+
   const selCell = data ? cellAt(selected.row, selected.col) : null;
 
   // Windowed rows: render a buffer of rows around the viewport. Frozen rows
@@ -1010,6 +1098,33 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
           <Snowflake className="h-4 w-4" />
         </ToolBtn>
 
+        <Divider />
+
+        {/* Insert chart */}
+        <div className="relative" data-chart-menu>
+          <ToolBtn
+            title="Insert chart over selection"
+            active={chartMenuOpen}
+            onClick={() => setChartMenuOpen((v) => !v)}
+          >
+            <BarChart3 className="h-4 w-4" />
+          </ToolBtn>
+          {chartMenuOpen && (
+            <div className="absolute left-0 top-full z-30 mt-1 w-36 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+              {(["COLUMN", "BAR", "LINE", "PIE"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => void insertChart(t)}
+                  className="flex w-full items-center px-3 py-2 text-[13px] text-[var(--color-text)] hover:bg-[var(--color-surface-offset)]"
+                >
+                  {t.charAt(0) + t.slice(1).toLowerCase()} chart
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
           {saving && <Loader2 className="h-4 w-4 animate-spin text-[var(--color-text-muted)]" />}
           <ToolBtn title="Refresh" onClick={() => void loadSheet(activeSheet)}>
@@ -1026,6 +1141,39 @@ export function SheetEditor({ spreadsheetId }: { spreadsheetId: string }) {
         <span className="h-4 w-px bg-[var(--color-border)]" />
         <span className="truncate text-[13px] text-[var(--color-text)]">{selCell?.raw || ""}</span>
       </div>
+
+      {/* Charts strip — lists charts on this tab (view in Sheets / delete) */}
+      {charts.length > 0 && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-1.5">
+          <BarChart3 className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" />
+          {charts.map((ch) => (
+            <span
+              key={ch.chartId}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1 text-[12px] text-[var(--color-text)]"
+            >
+              <span className="font-medium">{ch.title}</span>
+              <span className="text-[10px] uppercase text-[var(--color-text-faint)]">{ch.type}</span>
+              <a
+                href={`https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/edit`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View in Google Sheets"
+                className="text-[var(--color-text-faint)] hover:text-[var(--color-primary)]"
+              >
+                <ExternalLink className="h-3 w-3" />
+              </a>
+              <button
+                type="button"
+                title="Delete chart"
+                onClick={() => void removeChart(ch.chartId)}
+                className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {error && (
         <div className="shrink-0 bg-red-50 px-3 py-1.5 text-[12px] text-red-700 dark:bg-red-950/40 dark:text-red-300">

@@ -915,3 +915,143 @@ export async function setRowHeight(
     }
   );
 }
+
+/* ── Charts ── */
+
+export type ChartInfo = {
+  chartId: number;
+  title: string;
+  /** Best-effort chart type label (e.g. "BAR", "LINE", "PIE"). */
+  type: string;
+};
+
+/** List charts that exist on a tab (id + title + type). */
+export async function listSheetCharts(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetTitle: string
+): Promise<ChartInfo[]> {
+  const range = encodeURIComponent(sheetTitle);
+  const fields =
+    "sheets(properties(title),charts(chartId,spec(title,basicChart(chartType),pieChart)))";
+  const url = `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}?ranges=${range}&fields=${fields}`;
+  const res = await sheetsFetch(accessToken, url);
+  const data = (await res.json()) as {
+    sheets?: {
+      charts?: {
+        chartId?: number;
+        spec?: {
+          title?: string;
+          basicChart?: { chartType?: string };
+          pieChart?: unknown;
+        };
+      }[];
+    }[];
+  };
+  const charts = data.sheets?.[0]?.charts ?? [];
+  return charts.map((c) => ({
+    chartId: c.chartId ?? 0,
+    title: c.spec?.title || "Untitled chart",
+    type: c.spec?.pieChart ? "PIE" : c.spec?.basicChart?.chartType || "CHART",
+  }));
+}
+
+export type BasicChartType = "COLUMN" | "BAR" | "LINE" | "PIE";
+
+/**
+ * Insert a chart over a data range. The first row of the range is treated as
+ * headers; the first column as domain (labels), remaining columns as series.
+ * PIE uses the first data column only. The chart is anchored a few columns to
+ * the right of the source range so it doesn't overlap the data.
+ */
+export async function addChart(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetId: number,
+  range: { startRow: number; endRow: number; startCol: number; endCol: number },
+  chartType: BasicChartType,
+  title: string
+): Promise<void> {
+  const sourceRange = {
+    sources: [
+      {
+        sheetId,
+        startRowIndex: range.startRow,
+        endRowIndex: range.endRow + 1,
+        startColumnIndex: range.startCol,
+        endColumnIndex: range.endCol + 1,
+      },
+    ],
+  };
+
+  const anchorCell = {
+    sheetId,
+    rowIndex: range.startRow,
+    columnIndex: range.endCol + 2,
+  };
+
+  let spec: Record<string, unknown>;
+  if (chartType === "PIE") {
+    spec = {
+      title,
+      pieChart: {
+        legendPosition: "RIGHT_LEGEND",
+        domain: { sourceRange },
+        series: { sourceRange },
+      },
+    };
+  } else {
+    spec = {
+      title,
+      basicChart: {
+        chartType,
+        legendPosition: "BOTTOM_LEGEND",
+        headerCount: 1,
+        domains: [{ domain: { sourceRange } }],
+        series: [{ series: { sourceRange } }],
+      },
+    };
+  }
+
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        requests: [
+          {
+            addChart: {
+              chart: {
+                spec,
+                position: {
+                  overlayPosition: {
+                    anchorCell,
+                    widthPixels: 480,
+                    heightPixels: 300,
+                  },
+                },
+              },
+            },
+          },
+        ],
+      }),
+    }
+  );
+}
+
+/** Delete a chart by id. */
+export async function deleteChart(
+  accessToken: string,
+  spreadsheetId: string,
+  chartId: number
+): Promise<void> {
+  await sheetsFetch(
+    accessToken,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({ requests: [{ deleteEmbeddedObject: { objectId: chartId } }] }),
+    }
+  );
+}

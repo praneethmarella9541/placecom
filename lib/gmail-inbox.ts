@@ -408,14 +408,15 @@ export async function listThreadsPage(
           )?.value || "";
           return /^multipart\/mixed/i.test(ct);
         });
+        const listSnippet = cleanMailSnippet(t.snippet || "");
         const hasCalendarInvite = isCalendarInviteThread({
           subject,
           from,
-          snippet: t.snippet || "",
+          snippet: listSnippet,
         });
         return {
           id: t.id,
-          snippet: cleanMailSnippet(t.snippet || ""),
+          snippet: listSnippet,
           subject,
           from,
           date,

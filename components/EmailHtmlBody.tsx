@@ -11,6 +11,23 @@ function sanitizeEmailHtml(html: string): string {
     .replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
 }
 
+/** Measure rendered email height without growing with the iframe viewport. */
+function measureEmailBodyHeight(doc: Document): number {
+  const root = doc.querySelector<HTMLElement>(".email_message_body");
+  if (!root) return 40;
+  const prev = root.style.height;
+  const prevMin = root.style.minHeight;
+  const prevOverflow = root.style.overflow;
+  root.style.height = "auto";
+  root.style.minHeight = "0";
+  root.style.overflow = "visible";
+  const h = Math.ceil(root.scrollHeight);
+  root.style.height = prev;
+  root.style.minHeight = prevMin;
+  root.style.overflow = prevOverflow;
+  return Math.max(40, h);
+}
+
 /**
  * Pull embedded <style> blocks and optional <body> inner HTML out of a
  * message fragment so designer CSS is preserved (Gmail keeps these).
@@ -68,7 +85,10 @@ export function EmailHtmlBody({ html, plain }: { html?: string; plain?: string }
     html, body {
       margin: 0; padding: 0;
       background: #ffffff !important;
-      overflow: visible;
+      height: auto !important;
+      min-height: 0 !important;
+      max-height: none !important;
+      overflow: hidden;
     }
     body {
       font-family: "Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -78,6 +98,11 @@ export function EmailHtmlBody({ html, plain }: { html?: string; plain?: string }
       word-wrap: break-word;
       overflow-wrap: break-word;
       -webkit-text-size-adjust: 100%;
+    }
+    .email_message_body {
+      display: block;
+      height: auto !important;
+      min-height: 0 !important;
     }
     .gmail_quote, blockquote {
       margin: 8px 0 8px 0.8ex;
@@ -121,47 +146,67 @@ export function EmailHtmlBody({ html, plain }: { html?: string; plain?: string }
     };
     doc.addEventListener("click", onLinkClick, true);
 
-    const resize = () => {
-      if (!doc.body) return;
-      const h = Math.max(
-        doc.body.scrollHeight,
-        doc.documentElement?.scrollHeight ?? 0,
-        doc.body.offsetHeight
-      );
-      setHeight(Math.max(40, h + 8));
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastMeasured = 0;
+    let resizePasses = 0;
+    const MAX_RESIZE_PASSES = 24;
+
+    const applyHeight = (measured: number) => {
+      const next = measured + 8;
+      setHeight((prev) => (prev === next ? prev : next));
     };
 
-    const observer = new MutationObserver(resize);
-    if (doc.body) {
-      observer.observe(doc.body, { childList: true, subtree: true, attributes: true });
+    const resize = () => {
+      if (!doc.body || resizePasses >= MAX_RESIZE_PASSES) return;
+      const measured = measureEmailBodyHeight(doc);
+      if (measured === lastMeasured) return;
+      lastMeasured = measured;
+      resizePasses += 1;
+      applyHeight(measured);
+    };
+
+    const scheduleResize = () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
+        resize();
+      }, 50);
+    };
+
+    const observer = new MutationObserver(scheduleResize);
+    const root = doc.querySelector(".email_message_body");
+    if (root) {
+      // Only watch DOM inserts (e.g. lazy images). Attribute mutations caused
+      // iframe height ↔ body min-height feedback loops (growing blank space).
+      observer.observe(root, { childList: true, subtree: true });
     }
-    iframe.addEventListener("load", resize);
+    iframe.addEventListener("load", scheduleResize);
 
     const attachImageListeners = () => {
-      const imgs = doc.body?.querySelectorAll<HTMLImageElement>("img") ?? [];
+      const imgs =
+        doc.querySelector(".email_message_body")?.querySelectorAll<HTMLImageElement>("img") ??
+        [];
       for (const img of Array.from(imgs)) {
         if (!img.complete) {
-          img.addEventListener("load", resize, { once: true });
-          img.addEventListener("error", resize, { once: true });
+          img.addEventListener("load", scheduleResize, { once: true });
+          img.addEventListener("error", scheduleResize, { once: true });
         }
       }
     };
     attachImageListeners();
-    const imgObserver = new MutationObserver(() => {
-      attachImageListeners();
-      resize();
-    });
-    if (doc.body) imgObserver.observe(doc.body, { childList: true, subtree: true });
 
-    resize();
-    setTimeout(resize, 100);
-    setTimeout(resize, 400);
-    setTimeout(resize, 1200);
+    scheduleResize();
+    const t1 = setTimeout(scheduleResize, 100);
+    const t2 = setTimeout(scheduleResize, 400);
+    const t3 = setTimeout(scheduleResize, 1200);
 
     return () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
       observer.disconnect();
-      imgObserver.disconnect();
-      iframe.removeEventListener("load", resize);
+      iframe.removeEventListener("load", scheduleResize);
       doc.removeEventListener("click", onLinkClick, true);
     };
   }, [prepared]);

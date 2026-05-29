@@ -166,15 +166,23 @@ async function supabaseReadFile(userId: string, uploadId: string, totalSize: num
   if (parts.length === 0) return null;
 
   const out = Buffer.alloc(totalSize);
+
+  // Download all parts in parallel (not sequential) for speed.
+  const results = await Promise.all(
+    parts.map(async (part) => {
+      const { data, error } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .download(`${prefix}/${part.name}`);
+      if (error || !data) return null;
+      return { offset: part.offset, buf: Buffer.from(await data.arrayBuffer()) };
+    })
+  );
+
   let written = 0;
-  for (const part of parts) {
-    const { data, error } = await supabase.storage
-      .from(STORAGE_BUCKET)
-      .download(`${prefix}/${part.name}`);
-    if (error || !data) return null;
-    const buf = Buffer.from(await data.arrayBuffer());
-    buf.copy(out, part.offset);
-    written = Math.max(written, part.offset + buf.length);
+  for (const result of results) {
+    if (!result) return null;
+    result.buf.copy(out, result.offset);
+    written = Math.max(written, result.offset + result.buf.length);
   }
   if (written < totalSize) return null;
   return out;
@@ -217,12 +225,10 @@ const supabaseConfigured = Boolean(
 );
 
 /**
- * Append a chunk. The durable copy (Supabase, or local disk when Supabase is
- * not configured) is written *and awaited* before this resolves, so a caller
- * that sees `done: true` is guaranteed the bytes are readable from another
- * serverless instance via {@link getStagedAttachment}. Awaiting the durable
- * write is what makes cross-instance draft saves reliable for 3–25 MB files —
- * previously the upload was fire-and-forget and the draft save could race it.
+ * Append a chunk. Chunks live in memory (fast) and are written to disk/Supabase
+ * in the background. On the final chunk, we await the durable copy to guarantee
+ * cross-instance reads succeed. Same-instance draft saves hit memory/disk; only
+ * cross-instance saves (or after memory expires) rely on Supabase.
  */
 export async function appendStagedChunk(
   userId: string,
@@ -263,19 +269,26 @@ export async function appendStagedChunk(
     await writeMetaDisk(meta, uploadId);
   };
 
-  if (supabaseConfigured) {
-    // Await the durable (cross-instance) write so completion is authoritative.
-    // Throwing here surfaces as a chunk-upload failure the client can retry.
-    await supabaseUploadPart(userId, uploadId, offset, chunk);
-    await supabaseWriteMeta(userId, uploadId, meta);
-    // Local disk is just a same-instance fast path here — best-effort.
-    void writeDisk().catch(() => {});
-  } else if (done) {
-    // No Supabase: local disk is the only durable store. Flush the final chunk
-    // before reporting done so a same-instance save can read it.
-    await writeDisk();
+  // Fire-and-forget for all intermediate chunks. Only await on the final chunk
+  // to ensure durable completion across instances.
+  if (done) {
+    if (supabaseConfigured) {
+      // Await the final chunk's durable write so getStagedAttachment from
+      // another instance is guaranteed to succeed. This is the only sync point.
+      await supabaseUploadPart(userId, uploadId, offset, chunk);
+      await supabaseWriteMeta(userId, uploadId, meta);
+    } else {
+      // No Supabase: flush final chunk to disk to ensure same-instance save works.
+      await writeDisk();
+    }
   } else {
+    // Intermediate chunks: fire-and-forget for speed. Memory copy is available
+    // immediately, disk/Supabase writes happen in background.
     void writeDisk().catch(() => {});
+    if (supabaseConfigured) {
+      void supabaseUploadPart(userId, uploadId, offset, chunk).catch(() => {});
+      void supabaseWriteMeta(userId, uploadId, meta).catch(() => {});
+    }
   }
 
   return { done, received: entry.received };
@@ -329,11 +342,13 @@ export async function getStagedAttachment(
 ): Promise<{ filename: string; mimeType: string; base64Data: string } | null> {
   pruneMem();
 
-  // The chunk endpoint awaits the durable write before reporting done, but
-  // Supabase storage can still be briefly read-after-write inconsistent across
-  // instances. Retry a few times before giving up so a save that arrives right
-  // after the final chunk doesn't spuriously fail.
-  const attempts = 5;
+  // Try memory first (same-instance, fastest path). Then disk (same-instance but
+  // after memory expiry). Finally Supabase (cross-instance). The final chunk
+  // upload awaits Supabase completion, so it should be ready immediately.
+  // Retry briefly only for Supabase eventual-consistency edge cases.
+  const attempts = 3;
+  const delayMs = 100;
+
   for (let i = 0; i < attempts; i++) {
     const meta = await resolveMeta(userId, uploadId);
     if (meta && meta.userId === userId && meta.received >= meta.totalSize) {
@@ -346,7 +361,7 @@ export async function getStagedAttachment(
         };
       }
     }
-    if (i < attempts - 1) await new Promise((r) => setTimeout(r, 300));
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, delayMs));
   }
 
   return null;

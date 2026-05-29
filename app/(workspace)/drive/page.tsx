@@ -165,6 +165,7 @@ export default function DrivePage() {
   const [driveSearch, setDriveSearch] = useState("");
 
   const [previewFile, setPreviewFile] = useState<DriveFileRow | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
   // Target file/folder for the share modal — null means modal closed.
   const [shareTarget, setShareTarget] = useState<DriveFileRow | null>(null);
   // Target file/folder for the move modal.
@@ -241,6 +242,16 @@ export default function DrivePage() {
     const t = setTimeout(() => setDriveSearch(driveSearchInput.trim()), 200);
     return () => clearTimeout(t);
   }, [driveSearchInput]);
+
+  useEffect(() => {
+    if (!previewFile) {
+      setPreviewLoading(false);
+      return;
+    }
+    setPreviewLoading(true);
+    const t = setTimeout(() => setPreviewLoading(false), 45_000);
+    return () => clearTimeout(t);
+  }, [previewFile?.id]);
 
   // Load the user's shared drives once on mount so the sidebar can list
   // them. Non-fatal on error (some accounts simply have none).
@@ -1068,7 +1079,7 @@ export default function DrivePage() {
   );
 
   return (
-    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100dvh-56px-24px)] min-h-0 overflow-hidden md:-mx-6 md:-mt-6 md:h-[calc(100dvh-48px)]">
       {mobileNavOpen && (
         <button
           type="button"
@@ -1089,7 +1100,7 @@ export default function DrivePage() {
 
       <div
         className={cn(
-          "relative flex min-w-0 flex-1 flex-col overflow-hidden bg-[var(--color-surface)]",
+          "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--color-surface)]",
           isDragOver && "ring-2 ring-inset ring-[var(--color-primary)]"
         )}
         onDragEnter={(e) => {
@@ -1123,6 +1134,7 @@ export default function DrivePage() {
         />
         {/* Breadcrumbs — hidden while a search is active because search is
             drive-wide, not folder-scoped (same UX as Google Drive). */}
+        <div className="flex shrink-0 flex-col">
         {!driveSearch && (
           <nav
             className="flex flex-wrap items-center gap-x-1 gap-y-1 border-b border-[var(--color-border)] px-3 py-2.5 text-[13px]"
@@ -1307,17 +1319,21 @@ export default function DrivePage() {
             <IconRefresh className="h-3.5 w-3.5" />
           </button>
         </div>
+        </div>
 
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {loadingDrive ? (
-          <div className="space-y-2 p-4">
+          <div className="scrollbar-thin flex-1 space-y-2 overflow-y-auto p-4">
             {[...Array(8)].map((_, i) => (
               <Skeleton key={i} className="h-12 w-full rounded-xl" />
             ))}
           </div>
         ) : driveListError ? (
-          <div className="p-6 text-sm text-red-600 dark:text-red-400">{driveListError}</div>
+          <div className="flex flex-1 items-start overflow-hidden p-6 text-sm text-red-600 dark:text-red-400">
+            {driveListError}
+          </div>
         ) : displayFiles.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10">
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden p-10">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
               <IconFolder className="h-7 w-7 text-zinc-400" />
             </div>
@@ -1333,10 +1349,10 @@ export default function DrivePage() {
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 overflow-hidden">
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            {/* Column headers — Google Drive-style sortable bar (list view only). */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            {/* Column headers — frozen above the scrolling file list (list view only). */}
             {viewMode === "list" && (
-            <div className="sticky top-0 z-[5] flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-muted)]">
+            <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-muted)]">
               <SortHeader
                 label="Name"
                 active={sortKey === "name"}
@@ -1365,7 +1381,7 @@ export default function DrivePage() {
             <ul
               ref={listScrollRef}
               className={cn(
-                "scrollbar-thin flex-1 overflow-y-auto",
+                "scrollbar-thin min-h-0 flex-1 overflow-y-auto",
                 viewMode === "list"
                   ? "divide-y divide-zinc-100 dark:divide-zinc-800/60"
                   : "grid grid-cols-2 content-start gap-3 p-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
@@ -1613,6 +1629,7 @@ export default function DrivePage() {
           ) : null}
           </div>
         )}
+        </div>
       </div>
 
       {contextMenu ? (
@@ -1710,23 +1727,37 @@ export default function DrivePage() {
               </button>
             </div>
 
-            <div className="min-h-0 flex-1 bg-zinc-100 dark:bg-zinc-900/50">
+            <div className="relative min-h-0 flex-1 bg-white dark:bg-zinc-950">
               {supportsInAppPreview(previewFile.mimeType) ? (
-                <iframe
-                  key={previewFile.id}
-                  title={titleCase("File preview")}
-                  /* Office/OpenDocument formats (.xlsx, .pptx, .docx, etc.) can't
-                     render as raw bytes in an iframe — use Google Drive's hosted
-                     viewer which handles them natively. Everything else streams
-                     through our same-origin proxy. */
-                  src={
-                    isOfficeMimeType(previewFile.mimeType)
-                      ? `https://drive.google.com/file/d/${encodeURIComponent(previewFile.id)}/preview`
-                      : `/api/drive/file/${encodeURIComponent(previewFile.id)}?mode=preview`
-                  }
-                  className="h-full min-h-[50vh] w-full border-0"
-                  allow="autoplay"
-                />
+                <>
+                  {previewLoading && (
+                    <div
+                      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white dark:bg-zinc-950"
+                      aria-live="polite"
+                    >
+                      <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+                      <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+                        {titleCase("Opening file")}
+                      </p>
+                    </div>
+                  )}
+                  <iframe
+                    key={previewFile.id}
+                    title={titleCase("File preview")}
+                    /* Office/OpenDocument formats (.xlsx, .pptx, .docx, etc.) can't
+                       render as raw bytes in an iframe — use Google Drive's hosted
+                       viewer which handles them natively. Everything else streams
+                       through our same-origin proxy. */
+                    src={
+                      isOfficeMimeType(previewFile.mimeType)
+                        ? `https://drive.google.com/file/d/${encodeURIComponent(previewFile.id)}/preview`
+                        : `/api/drive/file/${encodeURIComponent(previewFile.id)}?mode=preview`
+                    }
+                    className="h-full min-h-[50vh] w-full border-0 bg-white"
+                    allow="autoplay"
+                    onLoad={() => setPreviewLoading(false)}
+                  />
+                </>
               ) : (
                 <div className="flex h-full min-h-[40vh] flex-col items-center justify-center gap-2 p-6 text-center text-sm text-zinc-500">
                   <p>{titleCase("No in-app preview for this file type.")}</p>

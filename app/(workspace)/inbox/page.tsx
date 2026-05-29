@@ -62,6 +62,7 @@ type BulkAction =
   | "markRead"
   | "markUnread"
   | "star"
+  | "important"
   | "spam"
   | "notSpam"
   | "moveToInbox";
@@ -1846,6 +1847,23 @@ export default function InboxPage() {
             return { ...prev, STARRED: { ...cur, total: cur.total + newlyStarred } };
           });
         }
+      } else if (action === "important") {
+        mutateThreads((rows) =>
+          rows.map((r) =>
+            idSet.has(r.id)
+              ? { ...r, labelIds: Array.from(new Set([...(r.labelIds ?? []), "IMPORTANT"])) }
+              : r
+          )
+        );
+        const newlyImportant = ids.filter(
+          (id) => !(threads.find((t) => t.id === id)?.labelIds ?? []).includes("IMPORTANT")
+        ).length;
+        if (newlyImportant > 0) {
+          setLabelCounts((prev) => {
+            const cur = prev["IMPORTANT"] ?? { total: 0, unread: 0 };
+            return { ...prev, IMPORTANT: { ...cur, total: cur.total + newlyImportant } };
+          });
+        }
       }
 
       if (opts?.clearSelection !== false) setSelectedThreadIds(new Set());
@@ -1891,7 +1909,9 @@ export default function InboxPage() {
                   ? { add: [] as string[], remove: ["UNREAD"] }
                   : action === "markUnread"
                     ? { add: ["UNREAD"], remove: [] as string[] }
-                    : { add: ["STARRED"], remove: [] as string[] };
+                    : action === "important"
+                      ? { add: ["IMPORTANT"], remove: [] as string[] }
+                      : { add: ["STARRED"], remove: [] as string[] };
 
       fetch("/api/gmail/threads/batch-modify", {
         method: "POST",
@@ -3014,6 +3034,38 @@ export default function InboxPage() {
                                 <polyline points="22,6 12,13 2,6" />
                               </svg>
                             )}
+                          </RowAction>
+                        );
+                      })()}
+                      {/* Bulk star */}
+                      {(() => {
+                        const allStarred = Array.from(selectedThreadIds).every(
+                          (id) => threads.find((t) => t.id === id)?.starred
+                        );
+                        return (
+                          <RowAction
+                            title={allStarred ? "Remove star" : "Add star"}
+                            onClick={() => void performBulkAction("star")}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill={allStarred ? "#f6c026" : "none"} stroke={allStarred ? "#f6c026" : "currentColor"} strokeWidth="2">
+                              <polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26" />
+                            </svg>
+                          </RowAction>
+                        );
+                      })()}
+                      {/* Bulk important — Gmail uses a filled/outlined bookmark shape */}
+                      {(() => {
+                        const allImportant = Array.from(selectedThreadIds).every(
+                          (id) => (threads.find((t) => t.id === id)?.labelIds ?? []).includes("IMPORTANT")
+                        );
+                        return (
+                          <RowAction
+                            title={allImportant ? "Remove important" : "Mark as important"}
+                            onClick={() => void performBulkAction("important")}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill={allImportant ? "#f6c026" : "none"} stroke={allImportant ? "#f6c026" : "currentColor"} strokeWidth="2" strokeLinejoin="round">
+                              <path d="M19 3H5a1 1 0 0 0-1 1v16l8-4 8 4V4a1 1 0 0 0-1-1z" />
+                            </svg>
                           </RowAction>
                         );
                       })()}

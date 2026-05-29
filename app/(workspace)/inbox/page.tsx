@@ -2125,6 +2125,10 @@ export default function InboxPage() {
     });
   }, [threads]);
 
+  const clearSelection = useCallback(() => {
+    setSelectedThreadIds(new Set());
+  }, []);
+
   // Clear selection whenever the underlying list shifts (folder change, refresh,
   // label filter change) — selection ids would otherwise reference rows that
   // are no longer visible.
@@ -2963,7 +2967,18 @@ export default function InboxPage() {
                 />
                 {selectedThreadIds.size > 0 ? (
                   <>
-                    <span className="text-[var(--color-text-muted)]">{selectedThreadIds.size} selected</span>
+                    <button
+                      type="button"
+                      onClick={clearSelection}
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] transition-colors hover:bg-[#e8eaed] hover:text-[var(--color-text)]"
+                      aria-label={titleCase("Clear selection")}
+                      title={titleCase("Clear selection")}
+                    >
+                      <IconX className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                    <span className="text-[var(--color-text-muted)]">
+                      {selectedThreadIds.size} selected
+                    </span>
                     <div className="ml-2 flex items-center gap-0.5">
                       {folder !== "drafts" && (
                         <LabelPicker

@@ -41,6 +41,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
+import { buildExclusionTokens } from "@/lib/gmail-search-query";
 import { PencilLine, FilePen, SlidersHorizontal, Bookmark, Trash2, AlertOctagon, Mail, Tag } from "lucide-react";
 import {
   IconInbox,
@@ -330,8 +331,7 @@ export default function InboxPage() {
     if (filterSubject.trim()) parts.push(`subject:${quoteIfNeeded(filterSubject)}`);
     if (filterHasWords.trim()) parts.push(filterHasWords.trim());
     if (filterDoesntHave.trim()) {
-      // Prefix each term with - for Gmail's NOT operator.
-      filterDoesntHave.trim().split(/\s+/).forEach((tok) => parts.push(`-${tok}`));
+      parts.push(...buildExclusionTokens(filterDoesntHave));
     }
     if (filterHasAttachment) parts.push("has:attachment");
     if (filterDateWithin) parts.push(`newer_than:${filterDateWithin}`);
@@ -1109,7 +1109,9 @@ export default function InboxPage() {
 
         if (opts.append) {
           setThreads((prev) => {
-            const merged = [...prev, ...incoming];
+            const seen = new Set(prev.map((t) => t.id));
+            const uniqueIncoming = incoming.filter((t) => !seen.has(t.id));
+            const merged = [...prev, ...uniqueIncoming];
             // Keep the cache snapshot in sync with the merged list so coming
             // back to this view after infinite-scrolling still feels instant.
             listCacheRef.current.set(cacheKey, { threads: merged, nextPageToken: data.nextPageToken });
@@ -2863,10 +2865,33 @@ export default function InboxPage() {
                   type="search"
                   value={mailSearchInput}
                   onChange={(e) => setMailSearchInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      setMailSearch(mailSearchInput.trim());
+                    }
+                  }}
                   placeholder={titleCase("Search mail")}
-                  className="h-[46px] w-full rounded-full border border-transparent bg-[#eaf1fb] pl-10 pr-10 text-[16px] text-[#202124] outline-none transition focus:border-[#0b57d0] focus:bg-white focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]"
+                  className={cn(
+                    "h-[46px] w-full rounded-full border border-transparent bg-[#eaf1fb] pl-10 text-[16px] text-[#202124] outline-none transition focus:border-[#0b57d0] focus:bg-white focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]",
+                    mailSearchInput.trim() ? "pr-[4.5rem]" : "pr-10",
+                  )}
                   autoComplete="off"
                 />
+                {mailSearchInput.trim() ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMailSearchInput("");
+                      setMailSearch("");
+                    }}
+                    className="absolute right-10 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#dadce0]"
+                    aria-label={titleCase("Clear search")}
+                    title={titleCase("Clear search")}
+                  >
+                    <IconX className="h-4 w-4" strokeWidth={2} />
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => setFilterOpen((v) => !v)}
@@ -2877,6 +2902,11 @@ export default function InboxPage() {
                   <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
                 </button>
               </div>
+              {mailSearch ? (
+                <p className="mt-1.5 px-1 text-[11px] text-[#5f6368]">
+                  {titleCase("Searching all mail — same as Gmail. Use in:sent, in:inbox, or filters to narrow.")}
+                </p>
+              ) : null}
 
               {/* Advanced filter popover — opens beneath the search input */}
               {filterOpen && (

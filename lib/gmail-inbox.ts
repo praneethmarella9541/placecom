@@ -1,5 +1,6 @@
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
+import { expandPrefixSearch, extractSingleFromEmail } from "@/lib/gmail-search-query";
 import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
 
@@ -126,7 +127,7 @@ export async function listDraftsPage(
     maxResults: String(Math.min(Math.max(options.maxResults, 1), 100)),
   });
   if (options.pageToken) params.set("pageToken", options.pageToken);
-  const q = (options.searchQuery || "").trim();
+  const q = expandPrefixSearch((options.searchQuery || "").trim());
   if (q) params.set("q", q);
 
   const url = `${GMAIL_API}/drafts?${params.toString()}`;
@@ -221,27 +222,6 @@ export async function listThreadsPage(
   }
 ): Promise<ThreadListPage> {
   const rawUserQ = (options.searchQuery || "").trim();
-  // Gmail's web UI does automatic word-prefix matching ("bug" matches "bugs",
-  // "Bugzilla"). The Gmail API does NOT do this by default — it requires
-  // explicit `*` suffixes. We add the `*` ourselves to bareword tokens so
-  // searches feel the same as Gmail's UI.
-  // Skip: tokens with operators (from:, subject:, has:, is:, label:, etc.),
-  // already-wildcarded tokens, quoted phrases, boolean operators (AND/OR/NOT),
-  // and pure punctuation. Leave them as-is so user-typed operators still work.
-  const expandPrefixSearch = (input: string): string => {
-    if (!input) return "";
-    // Split on whitespace but keep quoted phrases intact.
-    const tokens = input.match(/"[^"]*"|\S+/g) ?? [];
-    return tokens.map((t) => {
-      if (t.startsWith('"') && t.endsWith('"')) return t;          // quoted phrase
-      if (t === "AND" || t === "OR" || t === "NOT") return t;       // boolean op
-      if (t.startsWith("-")) return t;                              // negation
-      if (t.includes(":")) return t;                                // operator (from:, subject:, etc.)
-      if (t.endsWith("*")) return t;                                // already wildcarded
-      if (!/[a-zA-Z0-9]/.test(t)) return t;                         // pure punctuation
-      return `${t}*`;
-    }).join(" ");
-  };
   const userQ = expandPrefixSearch(rawUserQ);
   const isSearch = userQ.length > 0;
 
@@ -261,19 +241,7 @@ export async function listThreadsPage(
   // (e.g. "shared a file with you", Drive activity) that are sent FROM
   // Google's system addresses but mention the person's email in the body/
   // subject — Gmail's own search surfaces these, we mirror that behaviour.
-  const extractFromEmail = (raw: string): string | null => {
-    // Match: from:email  or  from:(email)  — no other operators present
-    const stripped = raw.trim();
-    // Only apply when the entire query is a single from: clause
-    if (!/^from:/i.test(stripped)) return null;
-    if (stripped.split(/\s+/).length > 1) return null; // compound query
-    const m = stripped.match(/^from:\(?([^\s)]+)\)?$/i);
-    if (!m) return null;
-    const candidate = m[1];
-    // Must look like an email address
-    return /@/.test(candidate) ? candidate : null;
-  };
-  const fromEmail = isSearch ? extractFromEmail(rawUserQ) : null;
+  const fromEmail = isSearch ? extractSingleFromEmail(rawUserQ) : null;
 
   // Helper: fetch one page of messages.list and return unique threadIds.
   async function fetchMessageThreadIds(searchQ: string): Promise<string[]> {

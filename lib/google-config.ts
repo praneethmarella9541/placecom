@@ -30,7 +30,8 @@ export function getGoogleOAuthClientId(): string {
  *   this scope, users must sign out and sign in again so the granted-scope
  *   list refreshes.
  * - contacts.readonly + contacts.other.readonly: People API — saved contacts & “Other contacts” for compose suggestions
- * - forms.body: create Google Forms via Forms API (/forms workspace)
+ * - forms.body: create and edit Google Forms via Forms API (/forms workspace)
+ * - forms.responses.readonly: list and read form responses in Placecom
  * Enable **People API** in the same Google Cloud project (APIs & Services → Enable APIs).
  * Enable **Google Forms API** for programmatic form creation.
  * Google must allow these scopes for your OAuth client or tokens will lack Gmail access
@@ -53,6 +54,7 @@ export const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/contacts.readonly",
   "https://www.googleapis.com/auth/contacts.other.readonly",
   "https://www.googleapis.com/auth/forms.body",
+  "https://www.googleapis.com/auth/forms.responses.readonly",
 ].join(" ");
 
 /** Last few characters for UI diagnostics (not sensitive, but avoids full dump). */

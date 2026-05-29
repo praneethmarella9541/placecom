@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ClipboardList, Loader2, Plus } from "lucide-react";
+import { ClipboardList, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
@@ -25,6 +25,13 @@ export default function FormsPage() {
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState("");
+  const [searchDebounced, setSearchDebounced] = useState("");
+
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const load = useCallback(async (opts: { append: boolean; pageToken?: string }) => {
     if (!opts.append) {
@@ -33,6 +40,7 @@ export default function FormsPage() {
     }
     const params = new URLSearchParams({ pageSize: "30" });
     if (opts.pageToken) params.set("pageToken", opts.pageToken);
+    if (searchDebounced) params.set("search", searchDebounced);
     try {
       const res = await fetch(`/api/forms?${params.toString()}`);
       const data = (await res.json()) as {
@@ -49,7 +57,7 @@ export default function FormsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [searchDebounced]);
 
   useEffect(() => {
     void load({ append: false });
@@ -152,9 +160,22 @@ export default function FormsPage() {
       ) : null}
 
       <div>
-        <h2 className="mb-3 font-display text-[15px] font-bold text-[var(--color-text)]">
-          {titleCase("Your forms")}
-        </h2>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">
+            {titleCase("Your forms")}
+          </h2>
+          <div className="relative max-w-sm flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" strokeWidth={2} />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={titleCase("Search forms")}
+              className="input-field h-10 w-full pl-9 text-[13px]"
+              autoComplete="off"
+            />
+          </div>
+        </div>
         {loading ? (
           <div className="space-y-2">
             {[...Array(5)].map((_, i) => (
@@ -168,23 +189,35 @@ export default function FormsPage() {
         ) : (
           <ul className="divide-y divide-[var(--color-border)] rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)]">
             {forms.map((f) => (
-              <li key={f.id}>
-                <Link
-                  href={`/forms/${encodeURIComponent(f.id)}/edit`}
-                  className="flex items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-[var(--color-surface-offset)]"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-[var(--color-text)]">
-                      {f.formTitle?.trim() || f.name?.trim() || titleCase("Untitled")}
-                    </p>
-                    <p className="mt-0.5 text-[12px] text-[var(--color-text-faint)]">
-                      {titleCase("Modified")} {formatDate(f.modifiedTime)}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-[13px] font-semibold text-[var(--color-primary)]">
-                    {titleCase("Edit")}
-                  </span>
+              <li
+                key={f.id}
+                className="flex items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-[var(--color-surface-offset)]"
+              >
+                <Link href={`/forms/${encodeURIComponent(f.id)}/edit`} className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-[var(--color-text)]">
+                    {f.formTitle?.trim() || f.name?.trim() || titleCase("Untitled")}
+                  </p>
+                  <p className="mt-0.5 text-[12px] text-[var(--color-text-faint)]">
+                    {titleCase("Modified")} {formatDate(f.modifiedTime)}
+                  </p>
                 </Link>
+                <div className="flex shrink-0 items-center gap-3">
+                  <a
+                    href={`https://docs.google.com/forms/d/${encodeURIComponent(f.id)}/edit`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" strokeWidth={2} />
+                    {titleCase("Google")}
+                  </a>
+                  <Link
+                    href={`/forms/${encodeURIComponent(f.id)}/edit`}
+                    className="text-[13px] font-semibold text-[var(--color-primary)]"
+                  >
+                    {titleCase("Edit")}
+                  </Link>
+                </div>
               </li>
             ))}
           </ul>

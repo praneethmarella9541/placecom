@@ -64,11 +64,23 @@ export async function POST(
 
     const updated = await batchUpdateGoogleForm(auth.accessToken, id, payload);
 
-    // Ensure the form is published. If it was previously published, this is a no-op.
+    const prevPub = (prev.publishSettings || {}) as {
+      publishState?: { isAcceptingResponses?: boolean; isPublished?: boolean };
+    };
+    const prevAccepting = prevPub.publishState?.isAcceptingResponses !== false;
+    const wantAccepting = state.acceptingResponses !== false;
+
     try {
-      await publishGoogleForm(auth.accessToken, id);
+      await publishGoogleForm(auth.accessToken, id, {
+        isPublished: true,
+        isAcceptingResponses: wantAccepting,
+      });
     } catch (pubErr) {
-      console.warn("[forms] publish on save failed:", (pubErr as Error).message);
+      if (prevAccepting !== wantAccepting) {
+        console.warn("[forms] publish settings on save failed:", (pubErr as Error).message);
+      } else {
+        console.warn("[forms] publish on save failed:", (pubErr as Error).message);
+      }
     }
 
     // Re-fetch after publish so responderUri reflects the public /d/e/{publishedId}/viewform URL.

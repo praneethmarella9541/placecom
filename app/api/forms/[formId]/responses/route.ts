@@ -30,7 +30,11 @@ export async function GET(request: Request, { params }: Params) {
     const text = await res.text();
     if (res.status === 403) {
       return NextResponse.json(
-        { error: "FORMS_INSUFFICIENT_SCOPE", message: "Forms responses access not granted. Sign out and sign in again." },
+        {
+          error: "FORMS_INSUFFICIENT_SCOPE",
+          message:
+            "Forms responses access not granted. Enable scope https://www.googleapis.com/auth/forms.responses.readonly, then sign out and sign in again.",
+        },
         { status: 403 }
       );
     }

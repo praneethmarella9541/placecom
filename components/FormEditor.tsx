@@ -4,23 +4,38 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   Copy,
+  CopyPlus,
+  Download,
+  ExternalLink,
+  Eye,
   Inbox,
   Loader2,
   Plus,
-  Trash2,
+  Settings2,
 } from "lucide-react";
 import {
   type EditorBlock,
   type EditorState,
   defaultChoiceBlock,
   defaultQuestionBlock,
+  duplicateBlock,
   emptyEditorState,
   googleFormToEditorState,
   newSectionBlock,
   newTextBlock,
 } from "@/lib/google-forms-editor-model";
+import {
+  buildQuestionTitleMap,
+  downloadCsv,
+  formatAnswer,
+  type FormResponse,
+  responsesToCsv,
+  summarizeResponses,
+} from "@/lib/form-responses";
 import { titleCase } from "@/lib/title-case";
 
 const EMAIL_OPTIONS: { value: EditorState["emailCollection"]; label: string }[] = [
@@ -75,36 +90,53 @@ function blockLabel(block: EditorBlock): string {
   }
 }
 
-type FormAnswer = {
-  questionId: string;
-  textAnswers?: { answers: { value: string }[] };
-  fileUploadAnswers?: { answers: { fileId: string; fileName: string }[] };
-  scaleAnswer?: { value: number };
-  dateAnswer?: { year?: number; month?: number; day?: number };
-  timeAnswer?: { hours?: number; minutes?: number; seconds?: number };
-  rowAnswers?: { answers: { value: string }[] }[];
-};
+function SummaryBar({ label, count, max }: { label: string; count: number; max: number }) {
+  const pct = max > 0 ? Math.round((count / max) * 100) : 0;
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between gap-2 text-[12px]">
+        <span className="min-w-0 truncate text-[var(--color-text)]">{label}</span>
+        <span className="shrink-0 tabular-nums text-[var(--color-text-muted)]">
+          {count} ({pct}%)
+        </span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-[var(--color-surface-offset)]">
+        <div
+          className="h-full rounded-full bg-[var(--color-primary)] transition-all"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
-type FormResponse = {
-  responseId: string;
-  createTime?: string;
-  lastSubmittedTime?: string;
-  answers?: Record<string, FormAnswer>;
-};
-
-function ResponsesTab({ formId, editorBlocks }: { formId: string; editorBlocks: EditorBlock[] }) {
+function ResponsesTab({
+  formId,
+  editorBlocks,
+  linkedSheetId,
+  formTitle,
+  isQuiz,
+}: {
+  formId: string;
+  editorBlocks: EditorBlock[];
+  linkedSheetId: string | null;
+  formTitle: string;
+  isQuiz: boolean;
+}) {
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<"summary" | "individual">("summary");
 
   const load = useCallback(async (append = false, pageToken?: string) => {
-    setLoading(true);
+    if (append) setLoadingMore(true);
+    else setLoading(true);
     setError(null);
     try {
-      const qs = new URLSearchParams({ pageSize: "20" });
+      const qs = new URLSearchParams({ pageSize: "50" });
       if (pageToken) qs.set("pageToken", pageToken);
       const res = await fetch(`/api/forms/${encodeURIComponent(formId)}/responses?${qs}`);
       const data = (await res.json()) as {
@@ -114,66 +146,39 @@ function ResponsesTab({ formId, editorBlocks }: { formId: string; editorBlocks: 
         message?: string;
       };
       if (!res.ok) throw new Error(data.message || data.error || "Failed to load responses");
-      setResponses((prev) => append ? [...prev, ...(data.responses ?? [])] : (data.responses ?? []));
+      setResponses((prev) =>
+        append ? [...prev, ...(data.responses ?? [])] : (data.responses ?? []),
+      );
       setNextPageToken(data.nextPageToken ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load responses");
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }, [formId]);
 
-  useEffect(() => { void load(); }, [load]);
-
-  async function handleDelete(responseId: string) {
-    if (!confirm("Delete this response? This cannot be undone.")) return;
-    setDeleting((prev) => new Set(prev).add(responseId));
-    try {
-      const res = await fetch(
-        `/api/forms/${encodeURIComponent(formId)}/responses/${encodeURIComponent(responseId)}`,
-        { method: "DELETE" }
-      );
-      if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
-        throw new Error(data.error || "Delete failed");
-      }
-      setResponses((prev) => prev.filter((r) => r.responseId !== responseId));
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Delete failed");
-    } finally {
-      setDeleting((prev) => { const s = new Set(prev); s.delete(responseId); return s; });
-    }
-  }
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   function toggleExpand(id: string) {
     setExpanded((prev) => {
       const s = new Set(prev);
-      if (s.has(id)) s.delete(id); else s.add(id);
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
       return s;
     });
   }
 
-  const questionTitles = new Map<string, string>(
-    editorBlocks.map((b) => [b.questionId ?? "", b.title ?? ""])
-  );
+  const questionTitles = buildQuestionTitleMap(editorBlocks);
+  const summaries = summarizeResponses(responses, editorBlocks);
+  const maxBucket = (buckets: { count: number }[]) =>
+    Math.max(1, ...buckets.map((b) => b.count));
 
-  function renderAnswer(ans: FormAnswer): string {
-    if (ans.textAnswers?.answers?.length) {
-      return ans.textAnswers.answers.map((a) => a.value).join(", ");
-    }
-    if (ans.scaleAnswer != null) return String(ans.scaleAnswer.value);
-    if (ans.dateAnswer) {
-      const { year, month, day } = ans.dateAnswer;
-      return [year, month, day].filter(Boolean).join("-");
-    }
-    if (ans.timeAnswer) {
-      const { hours = 0, minutes = 0 } = ans.timeAnswer;
-      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
-    }
-    if (ans.fileUploadAnswers?.answers?.length) {
-      return ans.fileUploadAnswers.answers.map((a) => a.fileName).join(", ");
-    }
-    return "—";
+  function handleExportCsv() {
+    const safeName = (formTitle.trim() || "form").replace(/[^\w\-]+/g, "_").slice(0, 40);
+    downloadCsv(`${safeName}-responses.csv`, responsesToCsv(responses, editorBlocks));
   }
 
   if (loading && responses.length === 0) {
@@ -193,89 +198,192 @@ function ResponsesTab({ formId, editorBlocks }: { formId: string; editorBlocks: 
     );
   }
 
-  if (responses.length === 0) {
-    return (
-      <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-12 text-center text-[13px] text-[var(--color-text-muted)]">
-        {titleCase("No responses yet.")}
-      </p>
-    );
-  }
-
   return (
-    <div className="space-y-3">
-      <p className="text-[12px] text-[var(--color-text-muted)]">
-        {responses.length} {responses.length === 1 ? "response" : "responses"}
-      </p>
-      {responses.map((resp, idx) => {
-        const isExpanded = expanded.has(resp.responseId);
-        const isDeleting = deleting.has(resp.responseId);
-        const answerEntries = Object.entries(resp.answers ?? {});
-        return (
-          <div
-            key={resp.responseId}
-            className="surface-card rounded-[var(--radius-lg)] border border-[var(--color-border)] shadow-[var(--shadow-sm)]"
-          >
-            <div className="flex items-center justify-between gap-2 px-4 py-3">
-              <button
-                type="button"
-                onClick={() => toggleExpand(resp.responseId)}
-                className="flex min-w-0 flex-1 items-center gap-2 text-left"
-              >
-                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[11px] font-bold text-[var(--color-primary)]">
-                  {idx + 1}
-                </span>
-                <span className="min-w-0 flex-1 text-[13px] font-medium text-[var(--color-text)]">
-                  {resp.createTime
-                    ? new Date(resp.createTime).toLocaleString()
-                    : `Response ${idx + 1}`}
-                </span>
-                <span className="text-[11px] text-[var(--color-text-faint)]">
-                  {isExpanded ? "▲" : "▼"}
-                </span>
-              </button>
-              <button
-                type="button"
-                disabled={isDeleting}
-                onClick={() => void handleDelete(resp.responseId)}
-                className="inline-flex items-center gap-1 rounded-[var(--radius-md)] px-2 py-1 text-[12px] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-50"
-              >
-                {isDeleting ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-                )}
-                {titleCase("Delete")}
-              </button>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] p-0.5">
+          {(["summary", "individual"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => setView(v)}
+              className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                view === v
+                  ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+            >
+              {titleCase(v === "summary" ? "Summary" : "Individual")}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {linkedSheetId ? (
+            <a
+              href={`https://docs.google.com/spreadsheets/d/${linkedSheetId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-secondary inline-flex h-9 items-center gap-1.5 px-3 text-[12px]"
+            >
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={2} />
+              {titleCase("Open in Sheets")}
+            </a>
+          ) : null}
+          {responses.length > 0 ? (
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="btn-secondary inline-flex h-9 items-center gap-1.5 px-3 text-[12px]"
+            >
+              <Download className="h-3.5 w-3.5" strokeWidth={2} />
+              {titleCase("Download CSV")}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {responses.length === 0 ? (
+        <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-12 text-center text-[13px] text-[var(--color-text-muted)]">
+          {titleCase("No responses yet.")}
+        </p>
+      ) : (
+        <>
+          <p className="text-[12px] text-[var(--color-text-muted)]">
+            {responses.length} {responses.length === 1 ? "response" : "responses"}
+            {nextPageToken ? ` · ${titleCase("load more for full export")}` : ""}
+          </p>
+
+          {view === "summary" ? (
+            <div className="space-y-4">
+              {summaries.length === 0 ? (
+                <p className="text-[13px] text-[var(--color-text-muted)]">
+                  {titleCase("No question data to summarize.")}
+                </p>
+              ) : (
+                summaries.map((s) => (
+                  <div
+                    key={s.questionId}
+                    className="surface-card rounded-[var(--radius-lg)] border border-[var(--color-border)] p-4 shadow-[var(--shadow-sm)]"
+                  >
+                    <p className="mb-3 text-[14px] font-semibold text-[var(--color-text)]">
+                      {s.title}
+                    </p>
+                    {s.type === "choice" || s.type === "scale" ? (
+                      <div className="space-y-2">
+                        {s.type === "scale" && s.average != null ? (
+                          <p className="text-[12px] text-[var(--color-text-muted)]">
+                            {titleCase("Average")}: {s.average}
+                          </p>
+                        ) : null}
+                        {s.buckets.map((b) => (
+                          <SummaryBar
+                            key={b.label}
+                            label={b.label}
+                            count={b.count}
+                            max={maxBucket(s.buckets)}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <ul className="max-h-48 space-y-1 overflow-y-auto text-[13px] text-[var(--color-text)]">
+                        {s.samples.length === 0 ? (
+                          <li className="text-[var(--color-text-muted)]">{titleCase("No text answers")}</li>
+                        ) : (
+                          s.samples.slice(0, 50).map((sample, i) => (
+                            <li key={i} className="border-b border-[var(--color-border)]/50 py-1 last:border-0">
+                              {sample}
+                            </li>
+                          ))
+                        )}
+                        {s.samples.length > 50 ? (
+                          <li className="text-[11px] text-[var(--color-text-faint)]">
+                            +{s.samples.length - 50} {titleCase("more")}
+                          </li>
+                        ) : null}
+                      </ul>
+                    )}
+                    <p className="mt-2 text-[11px] text-[var(--color-text-faint)]">
+                      {s.total} {titleCase("responses")}
+                    </p>
+                  </div>
+                ))
+              )}
             </div>
-            {isExpanded && (
-              <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-3">
-                {answerEntries.length === 0 ? (
-                  <p className="text-[13px] text-[var(--color-text-muted)]">{titleCase("No answers recorded.")}</p>
-                ) : (
-                  answerEntries.map(([qId, ans]) => (
-                    <div key={qId}>
-                      <p className="text-[11px] font-semibold text-[var(--color-text-muted)] mb-0.5">
-                        {questionTitles.get(qId) || qId}
-                      </p>
-                      <p className="text-[13px] text-[var(--color-text)]">{renderAnswer(ans)}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {nextPageToken && (
-        <button
-          type="button"
-          disabled={loading}
-          onClick={() => void load(true, nextPageToken)}
-          className="btn-secondary mx-auto flex h-9 items-center gap-2 px-4 text-[13px]"
-        >
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {titleCase("Load more")}
-        </button>
+          ) : (
+            <div className="space-y-3">
+              {responses.map((resp, idx) => {
+                const isExpanded = expanded.has(resp.responseId);
+                const answerEntries = Object.entries(resp.answers ?? {});
+                return (
+                  <div
+                    key={resp.responseId}
+                    className="surface-card rounded-[var(--radius-lg)] border border-[var(--color-border)] shadow-[var(--shadow-sm)]"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleExpand(resp.responseId)}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left"
+                    >
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[11px] font-bold text-[var(--color-primary)]">
+                        {idx + 1}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] font-medium text-[var(--color-text)]">
+                          {resp.lastSubmittedTime || resp.createTime
+                            ? new Date(resp.lastSubmittedTime || resp.createTime!).toLocaleString()
+                            : `Response ${idx + 1}`}
+                        </span>
+                        {resp.respondentEmail ? (
+                          <span className="block truncate text-[11px] text-[var(--color-text-muted)]">
+                            {resp.respondentEmail}
+                          </span>
+                        ) : null}
+                        {isQuiz && resp.totalScore != null ? (
+                          <span className="block text-[11px] font-medium text-[var(--color-primary)]">
+                            {titleCase("Score")}: {resp.totalScore}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="text-[11px] text-[var(--color-text-faint)]">
+                        {isExpanded ? "▲" : "▼"}
+                      </span>
+                    </button>
+                    {isExpanded && (
+                      <div className="space-y-3 border-t border-[var(--color-border)] px-4 py-3">
+                        {answerEntries.length === 0 ? (
+                          <p className="text-[13px] text-[var(--color-text-muted)]">
+                            {titleCase("No answers recorded.")}
+                          </p>
+                        ) : (
+                          answerEntries.map(([qId, ans]) => (
+                            <div key={qId}>
+                              <p className="mb-0.5 text-[11px] font-semibold text-[var(--color-text-muted)]">
+                                {questionTitles.get(qId) || qId}
+                              </p>
+                              <p className="text-[13px] text-[var(--color-text)]">{formatAnswer(ans)}</p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {nextPageToken ? (
+            <button
+              type="button"
+              disabled={loadingMore}
+              onClick={() => void load(true, nextPageToken)}
+              className="btn-secondary mx-auto flex h-9 items-center gap-2 px-4 text-[13px]"
+            >
+              {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              {titleCase("Load more")}
+            </button>
+          ) : null}
+        </>
       )}
     </div>
   );
@@ -287,8 +395,9 @@ export function FormEditor({ formId }: { formId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState>(() => emptyEditorState());
   const [responderUri, setResponderUri] = useState<string | null>(null);
+  const [linkedSheetId, setLinkedSheetId] = useState<string | null>(null);
   const [copyDone, setCopyDone] = useState(false);
-  const [tab, setTab] = useState<"questions" | "responses">("questions");
+  const [tab, setTab] = useState<"questions" | "responses" | "settings" | "preview">("questions");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -306,6 +415,7 @@ export function FormEditor({ formId }: { formId: string }) {
       }
       setEditor(googleFormToEditorState(data));
       setResponderUri(typeof data.responderUri === "string" ? data.responderUri : null);
+      setLinkedSheetId(typeof data.linkedSheetId === "string" ? data.linkedSheetId : null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
       setEditor(emptyEditorState());
@@ -346,8 +456,9 @@ export function FormEditor({ formId }: { formId: string }) {
       } else if (data.form) {
         setEditor(googleFormToEditorState(data.form));
       }
-      if (data.form && typeof data.form.responderUri === "string") {
-        setResponderUri(data.form.responderUri);
+      if (data.form) {
+        if (typeof data.form.responderUri === "string") setResponderUri(data.form.responderUri);
+        if (typeof data.form.linkedSheetId === "string") setLinkedSheetId(data.form.linkedSheetId);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
@@ -366,11 +477,15 @@ export function FormEditor({ formId }: { formId: string }) {
     });
   }
 
-  function removeBlock(i: number) {
-    setEditor((prev) => ({
-      ...prev,
-      blocks: prev.blocks.filter((_, j) => j !== i),
-    }));
+  function moveBlock(i: number, dir: -1 | 1) {
+    const j = i + dir;
+    setEditor((prev) => {
+      if (j < 0 || j >= prev.blocks.length) return prev;
+      const blocks = [...prev.blocks];
+      const [item] = blocks.splice(i, 1);
+      blocks.splice(j, 0, item);
+      return { ...prev, blocks };
+    });
   }
 
   function addBlock(factory: () => EditorBlock) {
@@ -472,39 +587,6 @@ export function FormEditor({ formId }: { formId: string }) {
           />
         </div>
 
-        <div className="grid gap-4 border-t border-[var(--color-border)] pt-4 sm:grid-cols-2">
-          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[var(--color-text)]">
-            <input
-              type="checkbox"
-              checked={editor.isQuiz}
-              onChange={(e) => setEditor((s) => ({ ...s, isQuiz: e.target.checked }))}
-              className="h-4 w-4 rounded border-[var(--color-border)]"
-            />
-            {titleCase("Make this a quiz")}
-          </label>
-          <div>
-            <label className="mb-1 block text-[12px] font-semibold text-[var(--color-text)]">
-              {titleCase("Email collection")}
-            </label>
-            <select
-              className="input-field h-10 w-full text-[13px]"
-              value={editor.emailCollection}
-              onChange={(e) =>
-                setEditor((s) => ({
-                  ...s,
-                  emailCollection: e.target.value as EditorState["emailCollection"],
-                }))
-              }
-            >
-              {EMAIL_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {titleCase(o.label)}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
         {responderUri ? (
           <div className="border-t border-[var(--color-border)] pt-4">
             <p className="mb-2 text-[12px] font-semibold text-[var(--color-text)]">
@@ -529,31 +611,141 @@ export function FormEditor({ formId }: { formId: string }) {
         ) : null}
       </div>
 
-      {/* Tab bar */}
-      <div className="flex gap-1 border-b border-[var(--color-border)]">
-        {(["questions", "responses"] as const).map((t) => (
+      <div className="flex flex-wrap gap-1 border-b border-[var(--color-border)]">
+        {(
+          [
+            { id: "questions" as const, label: "Questions", icon: ClipboardList },
+            { id: "responses" as const, label: "Responses", icon: Inbox },
+            { id: "settings" as const, label: "Settings", icon: Settings2 },
+            { id: "preview" as const, label: "Preview", icon: Eye },
+          ] as const
+        ).map(({ id, label, icon: Icon }) => (
           <button
-            key={t}
+            key={id}
             type="button"
-            onClick={() => setTab(t)}
+            onClick={() => setTab(id)}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-medium transition-colors ${
-              tab === t
+              tab === id
                 ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}
           >
-            {t === "questions" ? (
-              <ClipboardList className="h-3.5 w-3.5" strokeWidth={2} />
-            ) : (
-              <Inbox className="h-3.5 w-3.5" strokeWidth={2} />
-            )}
-            {titleCase(t === "questions" ? "Questions" : "Responses")}
+            <Icon className="h-3.5 w-3.5" strokeWidth={2} />
+            {titleCase(label)}
           </button>
         ))}
       </div>
 
       {tab === "responses" ? (
-        <ResponsesTab formId={formId} editorBlocks={editor.blocks} />
+        <ResponsesTab
+          formId={formId}
+          editorBlocks={editor.blocks}
+          linkedSheetId={linkedSheetId}
+          formTitle={editor.title}
+          isQuiz={editor.isQuiz}
+        />
+      ) : tab === "settings" ? (
+        <div className="surface-card space-y-5 rounded-[var(--radius-xl)] border border-[var(--color-border)] p-5 shadow-[var(--shadow-sm)]">
+          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[var(--color-text)]">
+            <input
+              type="checkbox"
+              checked={editor.acceptingResponses}
+              onChange={(e) =>
+                setEditor((s) => ({ ...s, acceptingResponses: e.target.checked }))
+              }
+              className="h-4 w-4 rounded border-[var(--color-border)]"
+            />
+            {titleCase("Accepting responses")}
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 text-[13px] text-[var(--color-text)]">
+            <input
+              type="checkbox"
+              checked={editor.isQuiz}
+              onChange={(e) => setEditor((s) => ({ ...s, isQuiz: e.target.checked }))}
+              className="h-4 w-4 rounded border-[var(--color-border)]"
+            />
+            {titleCase("Make this a quiz")}
+          </label>
+          <p className="text-[12px] text-[var(--color-text-muted)]">
+            {titleCase(
+              "Quiz grading and answer keys are managed in Google Forms. Placecom syncs quiz mode on save.",
+            )}
+          </p>
+          <div>
+            <label className="mb-1 block text-[12px] font-semibold text-[var(--color-text)]">
+              {titleCase("Email collection")}
+            </label>
+            <select
+              className="input-field h-10 w-full text-[13px]"
+              value={editor.emailCollection}
+              onChange={(e) =>
+                setEditor((s) => ({
+                  ...s,
+                  emailCollection: e.target.value as EditorState["emailCollection"],
+                }))
+              }
+            >
+              {EMAIL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {titleCase(o.label)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="border-t border-[var(--color-border)] pt-4">
+            <a
+              href={`https://docs.google.com/forms/d/${encodeURIComponent(formId)}/edit`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--color-primary)] hover:underline"
+            >
+              <ExternalLink className="h-4 w-4" strokeWidth={2} />
+              {titleCase("Open in Google Forms")}
+            </a>
+            <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
+              {titleCase(
+                "Use Google Forms for themes, confirmation messages, response validation, grids, images, and quiz answer keys.",
+              )}
+            </p>
+          </div>
+        </div>
+      ) : tab === "preview" ? (
+        <div className="space-y-4">
+          {responderUri ? (
+            <>
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={responderUri}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-primary inline-flex h-10 items-center gap-2 px-4 text-[13px]"
+                >
+                  <ExternalLink className="h-4 w-4" strokeWidth={2} />
+                  {titleCase("Open live form")}
+                </a>
+                <button
+                  type="button"
+                  onClick={() => void copyResponderLink()}
+                  className="btn-secondary inline-flex h-10 items-center gap-2 px-4 text-[13px]"
+                >
+                  <Copy className="h-4 w-4" strokeWidth={2} />
+                  {copyDone ? titleCase("Copied") : titleCase("Copy link")}
+                </button>
+              </div>
+              <div className="overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-white shadow-[var(--shadow-sm)]">
+                <iframe
+                  title={titleCase("Form preview")}
+                  src={responderUri}
+                  className="h-[min(720px,70vh)] w-full"
+                />
+              </div>
+            </>
+          ) : (
+            <p className="text-[13px] text-[var(--color-text-muted)]">
+              {titleCase("Save the form to generate a responder link for preview.")}
+            </p>
+          )}
+        </div>
       ) : (
       <>
       <div className="space-y-3">
@@ -577,14 +769,40 @@ export function FormEditor({ formId }: { formId: string }) {
               <span className="rounded-full bg-[var(--color-primary-light)] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-primary)]">
                 {titleCase(blockLabel(block))}
               </span>
-              <button
-                type="button"
-                onClick={() => removeBlock(i)}
-                className="inline-flex h-8 items-center gap-1 rounded-[var(--radius-md)] px-2 text-[12px] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10"
-              >
-                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
-                {titleCase("Remove")}
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={i === 0}
+                  onClick={() => moveBlock(i, -1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] disabled:opacity-30"
+                  aria-label={titleCase("Move up")}
+                >
+                  <ChevronUp className="h-4 w-4" strokeWidth={2} />
+                </button>
+                <button
+                  type="button"
+                  disabled={i === editor.blocks.length - 1}
+                  onClick={() => moveBlock(i, 1)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] disabled:opacity-30"
+                  aria-label={titleCase("Move down")}
+                >
+                  <ChevronDown className="h-4 w-4" strokeWidth={2} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setEditor((prev) => {
+                      const blocks = [...prev.blocks];
+                      blocks.splice(i + 1, 0, duplicateBlock(block));
+                      return { ...prev, blocks };
+                    })
+                  }
+                  className="inline-flex h-8 items-center gap-1 rounded-[var(--radius-md)] px-2 text-[12px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+                >
+                  <CopyPlus className="h-3.5 w-3.5" strokeWidth={2} />
+                  {titleCase("Duplicate")}
+                </button>
+              </div>
             </div>
 
             {block.kind === "unsupported" ? (

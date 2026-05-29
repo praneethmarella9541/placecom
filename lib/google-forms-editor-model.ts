@@ -74,6 +74,8 @@ export type EditorState = {
   description: string;
   isQuiz: boolean;
   emailCollection: EmailCollectionUi;
+  /** When false, the published form stops accepting new responses (Google publish settings). */
+  acceptingResponses: boolean;
   blocks: EditorBlock[];
 };
 
@@ -92,8 +94,18 @@ export function emptyEditorState(title = ""): EditorState {
     description: "",
     isQuiz: false,
     emailCollection: "DO_NOT_COLLECT",
+    acceptingResponses: true,
     blocks: [],
   };
+}
+
+/** Copy a block for duplicate — new key, no server ids (creates a new item on save). */
+export function duplicateBlock(block: EditorBlock): EditorBlock {
+  const clone = JSON.parse(JSON.stringify(block)) as EditorBlock;
+  clone.key = newKey();
+  if ("itemId" in clone) delete (clone as { itemId?: string }).itemId;
+  if ("questionId" in clone) delete (clone as { questionId?: string }).questionId;
+  return clone;
 }
 
 export function googleFormToEditorState(form: Record<string, unknown>): EditorState {
@@ -120,11 +132,17 @@ export function googleFormToEditorState(form: Record<string, unknown>): EditorSt
     if (b) blocks.push(b);
   }
 
+  const publish = (form.publishSettings || {}) as {
+    publishState?: { isAcceptingResponses?: boolean };
+  };
+  const acceptingResponses = publish.publishState?.isAcceptingResponses !== false;
+
   return {
     title: String(info.title || ""),
     description: String(info.description || ""),
     isQuiz: Boolean(settings.quizSettings?.isQuiz),
     emailCollection,
+    acceptingResponses,
     blocks,
   };
 }
@@ -524,24 +542,32 @@ export function buildBatchUpdateRequests(
     if (typeof it.itemId === "string") prevById.set(it.itemId, it);
   }
 
-  const nextIds = new Set(
-    next.blocks.map((b) => b.itemId).filter((id): id is string => Boolean(id))
-  );
-
-  for (const it of prevItems) {
-    const id = typeof it.itemId === "string" ? it.itemId : "";
-    if (id && !nextIds.has(id)) {
-      requests.push({ deleteItem: { itemId: id } });
-    }
+  const prevIndexById = new Map<string, number>();
+  for (let i = 0; i < prevItems.length; i++) {
+    const rawId = prevItems[i]?.itemId;
+    const id = typeof rawId === "string" ? rawId : "";
+    if (id) prevIndexById.set(id, i);
   }
 
   let idx = 0;
   for (const block of next.blocks) {
     const built = blockToGoogleItem(block);
     if (block.itemId && prevById.has(block.itemId)) {
+      const prevIdx = prevIndexById.get(block.itemId);
+      const orderChanged = prevIdx !== undefined && prevIdx !== idx;
       const before = stripServerOnlyFields(prevById.get(block.itemId)!);
       const after = stripServerOnlyFields(withItemId(built, block.itemId));
-      if (!itemsShallowEqual(before, after)) {
+      const contentChanged = !itemsShallowEqual(before, after);
+
+      if (orderChanged) {
+        requests.push({
+          moveItem: {
+            itemId: block.itemId,
+            newLocation: { index: idx },
+          },
+        });
+      }
+      if (contentChanged) {
         const fullItem = withItemId(built, block.itemId);
         requests.push({
           updateItem: {

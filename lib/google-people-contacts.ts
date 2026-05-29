@@ -122,7 +122,7 @@ export async function searchContactsByQuery(
   const url = new URL(`${PEOPLE_API}/people:searchContacts`);
   url.searchParams.set("query", q);
   url.searchParams.set("readMask", "emailAddresses,names");
-  url.searchParams.set("pageSize", "8");
+  url.searchParams.set("pageSize", "15");
 
   let res: Response;
   try {

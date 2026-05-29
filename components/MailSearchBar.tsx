@@ -19,10 +19,16 @@ export type SearchSuggestThread = {
   id: string;
   subject: string;
   from: string;
-  snippet: string;
+  participants: string;
   date: string;
   hasAttachments?: boolean;
 };
+
+const QUICK_FILTERS = [
+  { label: "Has attachment", modifier: "has:attachment" },
+  { label: "Last 7 days", modifier: "newer_than:7d" },
+  { label: "From me", modifier: "from:me" },
+] as const;
 
 type Props = {
   inputValue: string;
@@ -42,19 +48,31 @@ function suggestDateLabel(iso: string): string {
     const d = new Date(iso);
     const now = new Date();
     if (d.toDateString() === now.toDateString()) {
-      return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(d);
+      return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(d);
     }
-    return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(d);
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(d);
   } catch {
     return "";
   }
 }
 
-function displayFrom(fromHeader: string): string {
-  const t = fromHeader.trim();
-  const m = t.match(/^([^<]+)</);
-  if (m) return m[1].trim().replace(/^"|"$/g, "") || extractEmailAddress(t);
-  return t.includes("@") ? extractEmailAddress(t) : t;
+function contactShowsName(c: SearchSuggestContact): boolean {
+  return Boolean(
+    c.displayName && c.displayName.trim().toLowerCase() !== c.email.trim().toLowerCase(),
+  );
+}
+
+function pickLocalCompletion(
+  contacts: SearchSuggestContact[],
+  query: string,
+): string | undefined {
+  const ql = query.trim().toLowerCase();
+  if (!ql) return undefined;
+  for (const c of contacts) {
+    const em = c.email.toLowerCase();
+    if (em.startsWith(ql) && em.length > ql.length) return c.email;
+  }
+  return undefined;
 }
 
 function HighlightMatch({ text, query }: { text: string; query: string }) {
@@ -123,13 +141,18 @@ export function MailSearchBar({
 
   const itemCount = mergedContacts.length + threads.length + 1;
 
+  const effectiveCompletion = useMemo(
+    () => completionEmail ?? pickLocalCompletion(mergedContacts, q),
+    [completionEmail, mergedContacts, q],
+  );
+
   const completionSuffix = useMemo(() => {
-    if (!completionEmail || !q) return "";
-    const lower = completionEmail.toLowerCase();
+    if (!effectiveCompletion || !q) return "";
+    const lower = effectiveCompletion.toLowerCase();
     const ql = q.toLowerCase();
     if (!lower.startsWith(ql) || lower === ql) return "";
-    return completionEmail.slice(q.length);
-  }, [completionEmail, q]);
+    return effectiveCompletion.slice(q.length);
+  }, [effectiveCompletion, q]);
 
   useEffect(() => {
     if (!showDropdown) {
@@ -188,11 +211,21 @@ export function MailSearchBar({
   );
 
   const acceptCompletion = useCallback(() => {
-    if (completionEmail) {
-      onInputChange(completionEmail);
+    if (effectiveCompletion) {
+      onInputChange(effectiveCompletion);
       inputRef.current?.focus();
     }
-  }, [completionEmail, onInputChange]);
+  }, [effectiveCompletion, onInputChange]);
+
+  const applyQuickFilter = useCallback(
+    (modifier: string) => {
+      const base = inputValue.trim();
+      const next = base ? `${base} ${modifier}` : modifier;
+      onInputChange(next);
+      submitSearch(next);
+    },
+    [inputValue, onInputChange, submitSearch],
+  );
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Tab" && completionSuffix && !e.shiftKey) {
@@ -298,23 +331,39 @@ export function MailSearchBar({
         </button>
       </div>
 
-      {activeQuery ? (
+      {activeQuery && !showDropdown ? (
         <p className="mt-1.5 px-1 text-[11px] text-[#5f6368]">
-          {titleCase("Results use the Gmail API with your exact query.")}{" "}
+          Results use the Gmail API with your exact query.{" "}
           <a
             href={gmailWebSearchUrl(activeQuery)}
             target="_blank"
             rel="noopener noreferrer"
             className="font-medium text-[var(--color-primary)] hover:underline"
           >
-            {titleCase("Compare in Gmail")}
+            Compare in Gmail
           </a>
         </p>
       ) : null}
 
       {showDropdown ? (
+        <div className="mt-2 flex flex-wrap gap-2 px-0.5">
+          {QUICK_FILTERS.map(({ label, modifier }) => (
+            <button
+              key={modifier}
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => applyQuickFilter(modifier)}
+              className="rounded-full border border-[#dadce0] bg-white px-3 py-1 text-[13px] text-[#3c4043] shadow-sm transition hover:bg-[#f1f3f4]"
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {showDropdown ? (
         <div
-          className="absolute left-0 right-0 top-[calc(100%+4px)] z-30 overflow-hidden rounded-lg border border-[#dadce0] bg-white shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+          className="absolute left-0 right-0 top-[calc(100%+44px)] z-30 overflow-hidden rounded-lg border border-[#dadce0] bg-white shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
           role="listbox"
         >
           {loading && mergedContacts.length === 0 && threads.length === 0 ? (
@@ -324,9 +373,10 @@ export function MailSearchBar({
             </div>
           ) : null}
 
-          {mergedContacts.map((c) => {
+          {mergedContacts.map((c, i) => {
             const idx = rowIndex++;
             const active = highlight === idx;
+            const named = contactShowsName(c);
             return (
               <button
                 key={c.email}
@@ -335,6 +385,7 @@ export function MailSearchBar({
                 aria-selected={active}
                 className={cn(
                   "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
+                  i > 0 && "border-t border-[#f1f3f4]",
                   active ? "bg-[#e8f0fe]" : "hover:bg-[#f1f3f4]",
                 )}
                 onMouseEnter={() => setHighlight(idx)}
@@ -345,21 +396,33 @@ export function MailSearchBar({
               >
                 <GmailAvatar seed={c.email} name={c.displayName || c.email} size={36} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-[14px] text-[#202124]">
-                    <HighlightMatch text={c.displayName || c.email} query={q} />
-                  </p>
-                  <p className="truncate text-[12px] text-[#5f6368]">
-                    <HighlightMatch text={c.email} query={q} />
-                  </p>
+                  {named ? (
+                    <>
+                      <p className="truncate text-[14px] font-medium text-[#202124]">
+                        <HighlightMatch text={c.displayName!} query={q} />
+                      </p>
+                      <p className="truncate text-[12px] text-[#5f6368]">
+                        <HighlightMatch text={c.email} query={q} />
+                      </p>
+                    </>
+                  ) : (
+                    <p className="truncate text-[14px] text-[#202124]">
+                      <HighlightMatch text={c.email} query={q} />
+                    </p>
+                  )}
                 </div>
               </button>
             );
           })}
 
+          {threads.length > 0 && mergedContacts.length > 0 ? (
+            <div className="border-t border-[#e8eaed]" aria-hidden />
+          ) : null}
+
           {threads.map((t) => {
             const idx = rowIndex++;
             const active = highlight === idx;
-            const who = displayFrom(t.from);
+            const people = t.participants || extractEmailAddress(t.from) || "";
             return (
               <button
                 key={t.id}
@@ -367,7 +430,7 @@ export function MailSearchBar({
                 role="option"
                 aria-selected={active}
                 className={cn(
-                  "flex w-full items-start gap-3 border-t border-[#f1f3f4] px-4 py-2.5 text-left transition-colors",
+                  "flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors",
                   active ? "bg-[#e8f0fe]" : "hover:bg-[#f1f3f4]",
                 )}
                 onMouseEnter={() => setHighlight(idx)}
@@ -382,23 +445,21 @@ export function MailSearchBar({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
                     <p className="min-w-0 flex-1 truncate text-[14px] font-medium text-[#202124]">
-                      <HighlightMatch text={t.subject || "(no subject)"} query={q} />
+                      {t.subject || "(no subject)"}
                     </p>
-                    <span className="shrink-0 text-[11px] text-[#5f6368]">{suggestDateLabel(t.date)}</span>
+                    <span className="flex shrink-0 items-center gap-1 text-[11px] text-[#5f6368]">
+                      {t.hasAttachments ? (
+                        <Paperclip className="h-3.5 w-3.5" strokeWidth={2} aria-label="Has attachment" />
+                      ) : null}
+                      {suggestDateLabel(t.date)}
+                    </span>
                   </div>
-                  <p className="truncate text-[12px] text-[#5f6368]">
-                    <HighlightMatch text={who} query={q} />
-                    {t.snippet ? (
-                      <>
-                        {" — "}
-                        <HighlightMatch text={t.snippet} query={q} />
-                      </>
-                    ) : null}
-                  </p>
+                  {people ? (
+                    <p className="truncate text-[12px] text-[#5f6368]">
+                      <HighlightMatch text={people} query={q} />
+                    </p>
+                  ) : null}
                 </div>
-                {t.hasAttachments ? (
-                  <Paperclip className="mt-1 h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={2} />
-                ) : null}
               </button>
             );
           })}
@@ -416,10 +477,10 @@ export function MailSearchBar({
           >
             <span className="flex items-center gap-2 text-[#202124]">
               <IconSearch className="h-4 w-4 text-[#5f6368]" />
-              {titleCase(`All search results for '${q}'`)}
+              {`All search results for "${q}"`}
             </span>
             <span className="text-[11px] font-medium uppercase tracking-wide text-[#5f6368]">
-              {titleCase("Press Enter")}
+              Press Enter
             </span>
           </button>
         </div>

@@ -10,7 +10,7 @@ import { GmailAttachmentPreviews } from "@/components/GmailAttachmentPreviews";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
-import { GmailInlineReply, type InlineReplyMode } from "@/components/GmailInlineReply";
+import { GmailInlineReply } from "@/components/GmailInlineReply";
 import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
 import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
 import { uploadLargeFileToDrive } from "@/lib/upload-large-file-to-drive";
@@ -452,27 +452,10 @@ export default function InboxPage() {
   const [showNewLabelForm, setShowNewLabelForm] = useState(false);
   const newLabelInputRef = useRef<HTMLInputElement>(null);
 
-  type ComposeKind = "new" | "forward";
+  type ComposeKind = "new" | "forward" | "reply" | "replyAll";
   const [composeKind, setComposeKind] = useState<ComposeKind>("new");
   const [composeThreadId, setComposeThreadId] = useState<string | null>(null);
   const [composeInReplyToId, setComposeInReplyToId] = useState<string | null>(null);
-
-  const [inlineReplyMode, setInlineReplyMode] = useState<InlineReplyMode>(null);
-  const [inlineReplyTo, setInlineReplyTo] = useState("");
-  const [inlineReplyCc, setInlineReplyCc] = useState("");
-  const [inlineReplyBody, setInlineReplyBody] = useState("");
-  const [inlineReplyFiles, setInlineReplyFiles] = useState<PendingFile[]>([]);
-  const [inlineReplySending, setInlineReplySending] = useState(false);
-  const inlineReplyFileRef = useRef<HTMLInputElement>(null);
-  const inlineReplyRef = useRef<HTMLDivElement>(null);
-
-  const resetInlineReply = useCallback(() => {
-    setInlineReplyMode(null);
-    setInlineReplyTo("");
-    setInlineReplyCc("");
-    setInlineReplyBody("");
-    setInlineReplyFiles([]);
-  }, []);
 
   // The current user's own Gmail address — used to exclude self from Reply All
   const [myEmail, setMyEmail] = useState("");
@@ -850,6 +833,9 @@ export default function InboxPage() {
       setComposeMinimized(false);
       setComposeFullscreen(false);
       setComposeDraftId(null);
+      setComposeKind("new");
+      setComposeThreadId(null);
+      setComposeInReplyToId(null);
       setComposeTo("");
       setComposeCc("");
       setComposeBcc("");
@@ -955,7 +941,7 @@ export default function InboxPage() {
     return results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
-  async function handleFileSelect(files: FileList | null, target: "compose" | "inline" = "compose") {
+  async function handleFileSelect(files: FileList | null) {
     if (!files) return;
     const newFiles: PendingFile[] = [];
     for (let i = 0; i < files.length; i++) {
@@ -1028,8 +1014,7 @@ export default function InboxPage() {
         }
       }
     }
-    if (target === "inline") setInlineReplyFiles((prev) => [...prev, ...newFiles]);
-    else setComposeFiles((prev) => [...prev, ...newFiles]);
+    setComposeFiles((prev) => [...prev, ...newFiles]);
   }
 
   useEffect(() => {
@@ -1664,7 +1649,9 @@ export default function InboxPage() {
     setThreadLabelIds([]);
     setMessages(null);
     setLoadingThread(true);
-    resetInlineReply();
+    if (composeOpen && (composeKind === "reply" || composeKind === "replyAll")) {
+      setComposeOpen(false);
+    }
 
     try {
       const data = await fetchThreadData(threadId);
@@ -1680,7 +1667,16 @@ export default function InboxPage() {
         setLoadingThread(false);
       }
     }
-  }, [loadTracking, threads, scheduleCountRefresh, mutateThreads, adjustInboxUnread, fetchThreadData, resetInlineReply]);
+  }, [
+    loadTracking,
+    threads,
+    scheduleCountRefresh,
+    mutateThreads,
+    adjustInboxUnread,
+    fetchThreadData,
+    composeOpen,
+    composeKind,
+  ]);
 
   // Add or remove a label on the currently-open thread. Optimistic — flips
   // local chips immediately and rolls back if the server rejects.
@@ -2239,80 +2235,30 @@ export default function InboxPage() {
     setComposeOpen(true);
   }
 
-  function startInlineReply(mode: "reply" | "replyAll") {
-    if (!messages?.length) return;
-    const last = messages[messages.length - 1];
-    setInlineReplyMode(mode);
-    setInlineReplyTo(extractEmailAddress(last.from));
-    setInlineReplyCc(mode === "replyAll" ? buildReplyAllCc(last) : "");
-    setInlineReplyBody("");
-    setInlineReplyFiles([]);
-    requestAnimationFrame(() => {
-      inlineReplyRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
+  function replySubject(subject: string): string {
+    const trimmed = subject.trim();
+    if (!trimmed) return "Re:";
+    return /^re:\s/i.test(trimmed) ? trimmed : `Re: ${trimmed}`;
   }
 
-  async function sendInlineReply() {
-    if (!selectedId || !messages?.length || !inlineReplyMode || richTextIsEmpty(inlineReplyBody)) return;
+  function openReply(mode: "reply" | "replyAll") {
+    if (!selectedId || !messages?.length) return;
     const last = messages[messages.length - 1];
-    const to = inlineReplyTo.trim() || extractEmailAddress(last.from);
-    const cc = inlineReplyCc.trim() || undefined;
-    const snapshot = {
-      mode: inlineReplyMode,
-      htmlBody: inlineReplyBody,
-      files: inlineReplyFiles,
-      threadId: selectedId,
-      lastId: last.id,
-      to,
-      cc,
-    };
-
-    resetInlineReply();
-    setInlineReplySending(true);
-    showSendSnack({ phase: "sending" });
-
-    try {
-      const attachments = await resolveAttachmentsForUpload(snapshot.files);
-      const finalHtmlBody = appendDriveLinksToHtml(snapshot.htmlBody, snapshot.files);
-      const res = await fetch("/api/gmail/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          to: snapshot.to,
-          cc: snapshot.cc,
-          subject: "",
-          textBody: "",
-          htmlBody: finalHtmlBody,
-          threadId: snapshot.threadId,
-          inReplyToMessageId: snapshot.lastId,
-          attachments: attachments.length ? attachments : undefined,
-        }),
-      });
-      const data = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(data.error || "Send failed");
-
-      threadDataCache.current.delete(snapshot.threadId);
-      void openThread(snapshot.threadId);
-      listCacheRef.current.delete("sent||");
-      void loadTracking();
-      showSendSnack({ phase: "sent" }, 3000);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Send failed";
-      showSendSnack({
-        phase: "error",
-        message: msg,
-        retry: () => {
-          setSendSnack(null);
-          setInlineReplyMode(snapshot.mode);
-          setInlineReplyTo(snapshot.to);
-          setInlineReplyCc(snapshot.cc ?? "");
-          setInlineReplyBody(snapshot.htmlBody);
-          setInlineReplyFiles(snapshot.files);
-        },
-      });
-    } finally {
-      setInlineReplySending(false);
-    }
+    const cc = mode === "replyAll" ? buildReplyAllCc(last) : "";
+    setComposeKind(mode);
+    setComposeThreadId(selectedId);
+    setComposeInReplyToId(last.id);
+    setComposeTo(extractEmailAddress(last.from));
+    setComposeCc(cc);
+    setComposeBcc("");
+    setComposeSubject(replySubject(last.subject || ""));
+    setComposeBody("");
+    setComposeFiles([]);
+    setComposeDraftId(null);
+    setComposeCcBccOpen(mode === "replyAll" && !!cc.trim());
+    setComposeMinimized(false);
+    setComposeFullscreen(false);
+    setComposeOpen(true);
   }
 
   /**
@@ -2404,32 +2350,36 @@ export default function InboxPage() {
     setComposeFiles([]);
     showSendSnack({ phase: "sending" });
 
+    const isReply = snapshot.kind === "reply" || snapshot.kind === "replyAll";
+
     // Inject an optimistic row into the Sent list so it appears immediately.
     // We use a stable temp id prefixed "__opt__" so reconciliation can
     // identify and replace it once the real server id comes back.
-    const optId = `__opt__${Date.now()}`;
-    const optimisticRow: ThreadRow = {
-      id: optId,
-      snippet: "",
-      subject: snapshot.subject || "(no subject)",
-      from: "me",
-      date: new Date().toISOString(),
-      unread: false,
-      starred: false,
-      important: false,
-    };
-    // Prepend to Sent list cache so the row appears even if the user is
-    // currently viewing another folder.
     const sentKey = `sent||`;
-    const sentCached = listCacheRef.current.get(sentKey);
-    if (sentCached) {
-      listCacheRef.current.set(sentKey, {
-        threads: [optimisticRow, ...sentCached.threads],
-        nextPageToken: sentCached.nextPageToken,
-      });
-    }
-    if (folder === "sent") {
-      mutateThreads((rows) => [optimisticRow, ...rows]);
+    const optId = `__opt__${Date.now()}`;
+    if (!isReply) {
+      const optimisticRow: ThreadRow = {
+        id: optId,
+        snippet: "",
+        subject: snapshot.subject || "(no subject)",
+        from: "me",
+        date: new Date().toISOString(),
+        unread: false,
+        starred: false,
+        important: false,
+      };
+      // Prepend to Sent list cache so the row appears even if the user is
+      // currently viewing another folder.
+      const sentCached = listCacheRef.current.get(sentKey);
+      if (sentCached) {
+        listCacheRef.current.set(sentKey, {
+          threads: [optimisticRow, ...sentCached.threads],
+          nextPageToken: sentCached.nextPageToken,
+        });
+      }
+      if (folder === "sent") {
+        mutateThreads((rows) => [optimisticRow, ...rows]);
+      }
     }
 
     // ── Background send ───────────────────────────────────────────────────
@@ -2448,6 +2398,8 @@ export default function InboxPage() {
           subject: snapshot.subject,
           textBody: "",
           htmlBody: finalHtmlBody,
+          threadId: isReply ? snapshot.threadId ?? undefined : undefined,
+          inReplyToMessageId: isReply ? snapshot.inReplyToMessageId ?? undefined : undefined,
           attachments: attachments.length ? attachments : undefined,
         }),
       });
@@ -2461,29 +2413,36 @@ export default function InboxPage() {
         }).catch(() => {});
       }
 
-      // Remove the optimistic row — the real refresh will add the true row.
-      mutateThreads((rows) => rows.filter((r) => r.id !== optId));
-      // Only invalidate the Sent cache — a compose send has no effect on
-      // Inbox or any other folder, so we must not clear or re-fetch those.
-      listCacheRef.current.delete(sentKey);
-      // If the user is currently viewing Sent, refresh it so the real row
-      // replaces the optimistic one. Any other active folder is left alone.
-      if (folder === "sent") {
-        void loadThreads({ append: false, forceRefresh: true });
+      if (isReply && snapshot.threadId) {
+        threadDataCache.current.delete(snapshot.threadId);
+        void openThread(snapshot.threadId);
+      } else {
+        // Remove the optimistic row — the real refresh will add the true row.
+        mutateThreads((rows) => rows.filter((r) => r.id !== optId));
+        // Only invalidate the Sent cache — a compose send has no effect on
+        // Inbox or any other folder, so we must not clear or re-fetch those.
+        listCacheRef.current.delete(sentKey);
+        // If the user is currently viewing Sent, refresh it so the real row
+        // replaces the optimistic one. Any other active folder is left alone.
+        if (folder === "sent") {
+          void loadThreads({ append: false, forceRefresh: true });
+        }
       }
       void loadTracking();
 
       showSendSnack({ phase: "sent" }, 3000);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Send failed";
-      // Remove the optimistic row on failure.
-      mutateThreads((rows) => rows.filter((r) => r.id !== optId));
-      const sentC = listCacheRef.current.get(sentKey);
-      if (sentC) {
-        listCacheRef.current.set(sentKey, {
-          threads: sentC.threads.filter((r) => r.id !== optId),
-          nextPageToken: sentC.nextPageToken,
-        });
+      if (!isReply) {
+        // Remove the optimistic row on failure.
+        mutateThreads((rows) => rows.filter((r) => r.id !== optId));
+        const sentC = listCacheRef.current.get(sentKey);
+        if (sentC) {
+          listCacheRef.current.set(sentKey, {
+            threads: sentC.threads.filter((r) => r.id !== optId),
+            nextPageToken: sentC.nextPageToken,
+          });
+        }
       }
       // Show error snackbar with Retry button — re-opens compose with the
       // original content so the user doesn't lose their message.
@@ -2502,6 +2461,7 @@ export default function InboxPage() {
           setComposeBody(snapshot.htmlBody);
           setComposeFiles(snapshot.files);
           setComposeDraftId(snapshot.draftId);
+          setComposeCcBccOpen(!!snapshot.cc.trim() || !!snapshot.bcc.trim());
           setComposeOpen(true);
           setComposeMinimized(false);
         },
@@ -2515,8 +2475,10 @@ export default function InboxPage() {
     setSelectedId(null);
     setMessages(null);
     setThreadError(null);
-    resetInlineReply();
-  }, [resetInlineReply]);
+    if (composeOpen && (composeKind === "reply" || composeKind === "replyAll")) {
+      setComposeOpen(false);
+    }
+  }, [composeOpen, composeKind]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -2529,6 +2491,8 @@ export default function InboxPage() {
 
   const composeWindowTitle = useMemo(() => {
     if (composeKind === "forward") return titleCase("Forward");
+    if (composeKind === "replyAll") return titleCase("Reply all");
+    if (composeKind === "reply") return titleCase("Reply");
     return composeDraftId ? titleCase("Edit Draft") : titleCase("New Message");
   }, [composeKind, composeDraftId]);
 
@@ -3486,8 +3450,8 @@ export default function InboxPage() {
                       {messages[0]?.subject || "(no subject)"}
                     </h2>
                     <ThreadActionsMenu
-                      onReply={() => startInlineReply("reply")}
-                      onReplyAll={() => startInlineReply("replyAll")}
+                      onReply={() => openReply("reply")}
+                      onReplyAll={() => openReply("replyAll")}
                       onForward={() => openForward()}
                     />
                   </div>
@@ -3593,42 +3557,12 @@ export default function InboxPage() {
                   );
                   })}
 
-                  <div ref={inlineReplyRef}>
                   <GmailInlineReply
-                    mode={inlineReplyMode}
-                    replyLabel={senderName(messages[messages.length - 1]?.from || "")}
-                    to={inlineReplyTo}
-                    onToChange={setInlineReplyTo}
-                    cc={inlineReplyCc}
-                    onCcChange={setInlineReplyCc}
-                    showCc={inlineReplyMode === "replyAll"}
-                    body={inlineReplyBody}
-                    onBodyChange={setInlineReplyBody}
-                    suggestions={composeRecipientSuggestions}
-                    onStartReply={() => startInlineReply("reply")}
-                    onStartReplyAll={() => startInlineReply("replyAll")}
+                    onStartReply={() => openReply("reply")}
+                    onStartReplyAll={() => openReply("replyAll")}
                     onForward={() => openForward()}
-                    onDiscard={resetInlineReply}
-                    onSend={() => void sendInlineReply()}
-                    onAttach={() => inlineReplyFileRef.current?.click()}
-                    sending={inlineReplySending}
-                    files={inlineReplyFiles}
-                    driveUploadProgress={driveUploadProgress}
-                    uploadProgressKind={uploadProgressKind}
-                    onRemoveFile={(i) => setInlineReplyFiles((prev) => prev.filter((_, j) => j !== i))}
                   />
-                  </div>
                 </div>
-                <input
-                  ref={inlineReplyFileRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    void handleFileSelect(e.target.files, "inline");
-                    e.target.value = "";
-                  }}
-                />
               </>
             ) : (
               <div className="flex flex-1 flex-col gap-4 p-6">

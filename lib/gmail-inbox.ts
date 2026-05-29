@@ -54,12 +54,16 @@ async function listSearchThreadStubs(
     throw err;
   }
 
+  type ThreadListPayload = {
+    threads?: { id: string; snippet?: string; historyId?: string }[];
+    nextPageToken?: string;
+  };
+
   const snippetById = new Map<string, { snippet?: string; historyId?: string }>();
+  let threadData: ThreadListPayload | null = null;
   if (threadRes.ok) {
-    const td = (await threadRes.json()) as {
-      threads?: { id: string; snippet?: string; historyId?: string }[];
-    };
-    for (const t of td.threads ?? []) {
+    threadData = (await threadRes.json()) as ThreadListPayload;
+    for (const t of threadData.threads ?? []) {
       snippetById.set(t.id, { snippet: t.snippet, historyId: t.historyId });
     }
   }
@@ -84,13 +88,9 @@ async function listSearchThreadStubs(
     }
   }
 
-  if (threadRes.ok) {
-    const td = (await threadRes.json()) as {
-      threads?: { id: string; snippet?: string; historyId?: string }[];
-      nextPageToken?: string;
-    };
-    if (!nextPageToken) nextPageToken = td.nextPageToken;
-    for (const t of td.threads ?? []) {
+  if (threadData) {
+    if (!nextPageToken) nextPageToken = threadData.nextPageToken;
+    for (const t of threadData.threads ?? []) {
       if (seen.has(t.id)) continue;
       seen.add(t.id);
       ordered.push(t);

@@ -1,11 +1,13 @@
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
+import { cleanMailSnippet } from "@/lib/utils";
 import { searchContactEmailsForQuery } from "@/lib/google-people-contacts";
 import {
   buildFromEmailsQuery,
-  buildSupplementalSearchQueries,
+  buildPrimarySearchQuery,
   expandPrefixSearch,
   extractSingleFromEmail,
+  isPlainTextSearch,
 } from "@/lib/gmail-search-query";
 import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
@@ -186,7 +188,7 @@ export async function listDraftsPage(
       const displayLine = toLine || meta.from.trim() || "Draft";
       return {
         id: d.id, // use draftId as the unique row id to avoid threadId collisions
-        snippet: snippet || meta.subject || "",
+        snippet: cleanMailSnippet(snippet || meta.subject || ""),
         subject: draftSubjectForDisplay(meta.subject),
         from: displayLine,
         date: meta.date,
@@ -228,7 +230,7 @@ export async function listThreadsPage(
   }
 ): Promise<ThreadListPage> {
   const rawUserQ = (options.searchQuery || "").trim();
-  const userQ = expandPrefixSearch(rawUserQ);
+  const userQ = buildPrimarySearchQuery(rawUserQ);
   const isSearch = userQ.length > 0;
 
   // When a search query is active, drop ALL folder/label restrictions so
@@ -287,12 +289,11 @@ export async function listThreadsPage(
   try {
     const supplementQs = new Set<string>();
     if (fromEmail) supplementQs.add(`"${fromEmail}"`);
-    if (isSearch && !options.pageToken) {
-      for (const sq of buildSupplementalSearchQueries(rawUserQ)) supplementQs.add(sq);
+    // Contact `from:` only — avoids quoted-phrase / literal queries that match marketing HTML.
+    if (isSearch && !options.pageToken && isPlainTextSearch(rawUserQ)) {
       const contactEmails = await searchContactEmailsForQuery(accessToken, rawUserQ);
       const fromQ = buildFromEmailsQuery(contactEmails);
       if (fromQ) supplementQs.add(fromQ);
-      for (const email of contactEmails) supplementQs.add(`"${email}"`);
     }
 
     const supplementalFetches = Array.from(supplementQs).map((sq) =>
@@ -414,7 +415,7 @@ export async function listThreadsPage(
         });
         return {
           id: t.id,
-          snippet: t.snippet || "",
+          snippet: cleanMailSnippet(t.snippet || ""),
           subject,
           from,
           date,
@@ -429,7 +430,7 @@ export async function listThreadsPage(
       } catch {
         return {
           id: t.id,
-          snippet: t.snippet || "",
+          snippet: cleanMailSnippet(t.snippet || ""),
           subject: "",
           from: "",
           date: "",

@@ -77,9 +77,12 @@ export function isPlainTextSearch(raw: string): boolean {
   );
 }
 
+/** Min length for a single glued token before we treat it as a full name (saibharath). */
+const GLUED_NAME_MIN_LEN = 8;
+
 /**
  * Guess a spaced name from a single concatenated token (e.g. saibharath → sai bharath).
- * Gmail UI often matches contact/display names this way; the API does not unless we OR it in.
+ * Uses the first plausible first-name length (3–5 chars).
  */
 export function guessSpacedName(raw: string): string | null {
   const t = raw.trim().toLowerCase();
@@ -92,26 +95,27 @@ export function guessSpacedName(raw: string): string | null {
 }
 
 /**
- * Extra Gmail `q` strings to merge with the primary search (plain-text queries only).
+ * Primary Gmail `q` for the search box.
+ * - Partial tokens (saibhar): prefix on what the user typed — matches Gmail while typing.
+ * - Full glued names (saibharath): search as spaced tokens (sai + bharath), not one token +
+ *   quoted/literal extras that pull LinkedIn/HTML noise.
  */
-export function buildSupplementalSearchQueries(raw: string): string[] {
-  if (!isPlainTextSearch(raw)) return [];
+export function buildPrimarySearchQuery(raw: string): string {
   const t = raw.trim();
-  const out = new Set<string>();
-
-  // Without prefix wildcards — matches token boundaries closer to Gmail for some names.
-  if (t !== expandPrefixSearch(t)) out.add(t);
-
-  if (!t.includes('"')) out.add(`"${t}"`);
+  if (!t) return "";
+  if (!isPlainTextSearch(t)) return expandPrefixSearch(t);
 
   const spaced = guessSpacedName(t);
-  if (spaced) {
-    out.add(spaced);
-    out.add(expandPrefixSearch(spaced));
-    if (!spaced.includes('"')) out.add(`"${spaced}"`);
+  if (
+    spaced &&
+    !t.includes(" ") &&
+    /^[a-zA-Z]+$/.test(t) &&
+    t.length >= GLUED_NAME_MIN_LEN
+  ) {
+    return expandPrefixSearch(spaced);
   }
 
-  return Array.from(out);
+  return expandPrefixSearch(t);
 }
 
 export function buildFromEmailsQuery(emails: string[]): string | null {

@@ -55,6 +55,18 @@ export function formatCalendarDateTime(iso: string | null | undefined): string {
   }
 }
 
+/** Gmail snippets sometimes include HTML markup from marketing mail — strip for list UI. */
+export function cleanMailSnippet(snippet: string): string {
+  return snippet
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "";
   try {

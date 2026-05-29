@@ -1097,22 +1097,29 @@ export default function DrivePage() {
     const pct = Math.min(100, Math.round((used / limit) * 100));
     const isHigh = pct >= 90;
     const isMedium = pct >= 75;
+    const barColor = isHigh ? "bg-red-500" : isMedium ? "bg-yellow-400" : "bg-[var(--color-primary)]";
     return (
-      <div className="mt-auto border-t border-[var(--color-border)] px-3 py-4">
-        <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
+      <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3">
+        <div className="mb-1.5 flex items-center justify-between gap-1">
+          <span className={cn("text-[12px] font-semibold", isHigh ? "text-red-500" : "text-[var(--color-text)]")}>
+            {fmtBytes(used)}
+            <span className="font-normal text-[var(--color-text-muted)]"> / {fmtBytes(limit)}</span>
+          </span>
+          <span className={cn(
+            "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+            isHigh ? "bg-red-100 text-red-600" : isMedium ? "bg-yellow-100 text-yellow-700" : "bg-[var(--color-primary-tint)] text-[var(--color-primary)]"
+          )}>
+            {pct}%
+          </span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
           <div
-            className={cn(
-              "h-full rounded-full transition-all",
-              isHigh ? "bg-red-500" : isMedium ? "bg-yellow-400" : "bg-[var(--color-primary)]"
-            )}
+            className={cn("h-full rounded-full transition-all duration-500", barColor)}
             style={{ width: `${pct}%` }}
           />
         </div>
-        <p className="text-[11px] text-[var(--color-text-muted)]">
-          {fmtBytes(used)} of {fmtBytes(limit)} used
-        </p>
         {isHigh && (
-          <p className="mt-0.5 text-[11px] font-medium text-red-500">Storage nearly full</p>
+          <p className="mt-1.5 text-[11px] font-medium text-red-500">Storage nearly full</p>
         )}
       </div>
     );
@@ -1179,12 +1186,12 @@ export default function DrivePage() {
       )}
       <aside
         className={cn(
-          "z-50 flex w-[208px] shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)]",
+          "z-50 flex w-[208px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg)]",
           "fixed inset-y-0 left-0 shadow-xl transition-transform sm:static sm:shadow-none",
           mobileNavOpen ? "translate-x-0" : "-translate-x-full sm:translate-x-0"
         )}
       >
-        <div className="flex flex-1 flex-col gap-1 p-2">
+        <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
           {sidebarNav}
         </div>
         {storageBar}

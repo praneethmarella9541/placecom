@@ -346,7 +346,7 @@ export function MailSearchBar({
 
       {activeQuery && !showDropdown ? (
         <p className="mt-1.5 px-1 text-[11px] text-[#5f6368]">
-          Results use the Gmail API with your exact query.{" "}
+          Sorted newest first (Gmail API). Ranking may differ slightly from Gmail web.{" "}
           <a
             href={gmailWebSearchUrl(activeQuery)}
             target="_blank"

@@ -3,12 +3,109 @@ import { describeUpstreamFetchError } from "@/lib/fetch-errors";
 import { cleanMailSnippet } from "@/lib/utils";
 import {
   extractSingleFromEmail,
+  isPlainTextSearch,
   normalizeGmailSearchQuery,
 } from "@/lib/gmail-search-query";
 import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
+
+function threadDateMs(date: string): number {
+  if (!date) return 0;
+  const ms = Date.parse(date);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+/**
+ * Plain-text search: messages.list returns internalDate desc (Gmail "Most recent").
+ * Operator queries keep threads.list relevance order, then sort by date as tie-breaker.
+ */
+async function listSearchThreadStubs(
+  accessToken: string,
+  userQ: string,
+  maxResults: number,
+  pageToken?: string,
+): Promise<{
+  threads: { id: string; snippet?: string; historyId?: string }[];
+  nextPageToken?: string;
+}> {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+  const msgParams = new URLSearchParams({
+    maxResults: String(Math.min(100, maxResults * 2)),
+    q: userQ,
+  });
+  if (pageToken) msgParams.set("pageToken", pageToken);
+
+  const threadParams = new URLSearchParams({
+    maxResults: String(maxResults),
+    q: userQ,
+  });
+  if (pageToken) threadParams.set("pageToken", pageToken);
+
+  const [msgRes, threadRes] = await Promise.all([
+    fetch(`${GMAIL_API}/messages?${msgParams}`, { headers }),
+    fetch(`${GMAIL_API}/threads?${threadParams}`, { headers }),
+  ]);
+
+  if (msgRes.status === 401 || threadRes.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+
+  const snippetById = new Map<string, { snippet?: string; historyId?: string }>();
+  if (threadRes.ok) {
+    const td = (await threadRes.json()) as {
+      threads?: { id: string; snippet?: string; historyId?: string }[];
+    };
+    for (const t of td.threads ?? []) {
+      snippetById.set(t.id, { snippet: t.snippet, historyId: t.historyId });
+    }
+  }
+
+  let nextPageToken: string | undefined;
+  const ordered: { id: string; snippet?: string; historyId?: string }[] = [];
+  const seen = new Set<string>();
+
+  if (msgRes.ok) {
+    const md = (await msgRes.json()) as {
+      messages?: { threadId?: string }[];
+      nextPageToken?: string;
+    };
+    nextPageToken = md.nextPageToken;
+    for (const m of md.messages ?? []) {
+      const tid = m.threadId;
+      if (!tid || seen.has(tid)) continue;
+      seen.add(tid);
+      const meta = snippetById.get(tid);
+      ordered.push({ id: tid, snippet: meta?.snippet, historyId: meta?.historyId });
+      if (ordered.length >= maxResults) break;
+    }
+  }
+
+  if (threadRes.ok) {
+    const td = (await threadRes.json()) as {
+      threads?: { id: string; snippet?: string; historyId?: string }[];
+      nextPageToken?: string;
+    };
+    if (!nextPageToken) nextPageToken = td.nextPageToken;
+    for (const t of td.threads ?? []) {
+      if (seen.has(t.id)) continue;
+      seen.add(t.id);
+      ordered.push(t);
+      if (ordered.length >= maxResults) break;
+    }
+  }
+
+  if (!msgRes.ok && !threadRes.ok) {
+    const text = await threadRes.text();
+    throwIfGmailInsufficientScope(threadRes.status, text);
+    throw new Error(`Gmail search ${threadRes.status}: ${text}`);
+  }
+
+  return { threads: ordered.slice(0, maxResults), nextPageToken };
+}
 
 export type MailFolder = "inbox" | "sent" | "drafts" | "trash" | "spam" | "allmail";
 
@@ -256,12 +353,21 @@ export async function listThreadsPage(
 
   const url = `${GMAIL_API}/threads?${params.toString()}`;
 
-  let res: Response;
+  let rawThreads: { id: string; snippet?: string; historyId?: string }[] = [];
+  let nextPageTokenFromApi: string | undefined;
   let supplementalIds: string[] = [];
+
   try {
-    // Lone `from:addr` — also find threads that mention the address in the body
-    // (Google notifications). Same idea as Gmail surfacing shared-file mail.
-    if (fromEmail && !options.pageToken) {
+    if (isSearch && isPlainTextSearch(userQ)) {
+      const searchPage = await listSearchThreadStubs(
+        accessToken,
+        userQ,
+        requestedMax,
+        options.pageToken,
+      );
+      rawThreads = searchPage.threads;
+      nextPageTokenFromApi = searchPage.nextPageToken;
+    } else if (fromEmail && !options.pageToken) {
       const mentionUrl = `${GMAIL_API}/threads?${new URLSearchParams({
         maxResults: String(requestedMax),
         q: `"${fromEmail}"`,
@@ -270,37 +376,49 @@ export async function listThreadsPage(
         fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
         fetch(mentionUrl, { headers: { Authorization: `Bearer ${accessToken}` } }),
       ]);
-      res = primaryRes;
+      if (primaryRes.status === 401) {
+        const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+        err.code = "UNAUTHORIZED";
+        throw err;
+      }
+      if (!primaryRes.ok) {
+        const text = await primaryRes.text();
+        throwIfGmailInsufficientScope(primaryRes.status, text);
+        throw new Error(`Gmail threads list ${primaryRes.status}: ${text}`);
+      }
+      const data = (await primaryRes.json()) as {
+        threads?: { id: string; snippet?: string; historyId?: string }[];
+        nextPageToken?: string;
+      };
+      rawThreads = data.threads || [];
+      nextPageTokenFromApi = data.nextPageToken;
       if (mentionRes.ok) {
         const mentionData = (await mentionRes.json()) as { threads?: { id: string }[] };
         supplementalIds = (mentionData.threads ?? []).map((t) => t.id).filter(Boolean);
       }
     } else {
-      res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (res.status === 401) {
+        const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+        err.code = "UNAUTHORIZED";
+        throw err;
+      }
+      if (!res.ok) {
+        const text = await res.text();
+        throwIfGmailInsufficientScope(res.status, text);
+        throw new Error(`Gmail threads list ${res.status}: ${text}`);
+      }
+      const data = (await res.json()) as {
+        threads?: { id: string; snippet?: string; historyId?: string }[];
+        nextPageToken?: string;
+      };
+      rawThreads = data.threads || [];
+      nextPageTokenFromApi = data.nextPageToken;
     }
   } catch (e) {
+    if ((e as Error & { code?: string }).code === "UNAUTHORIZED") throw e;
     throw new Error(describeUpstreamFetchError(e, "Gmail API (threads list)"));
   }
-
-  if (res.status === 401) {
-    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
-    err.code = "UNAUTHORIZED";
-    throw err;
-  }
-
-  if (!res.ok) {
-    const text = await res.text();
-    throwIfGmailInsufficientScope(res.status, text);
-    throw new Error(`Gmail threads list ${res.status}: ${text}`);
-  }
-
-  const data = (await res.json()) as {
-    threads?: { id: string; snippet?: string; historyId?: string }[];
-    nextPageToken?: string;
-  };
-
-  let rawThreads = data.threads || [];
-  const nextPageTokenFromApi = data.nextPageToken;
 
   if (isSearch && supplementalIds.length > 0) {
     const seen = new Set(rawThreads.map((t) => t.id));
@@ -411,6 +529,10 @@ export async function listThreadsPage(
       }
     })
   );
+
+  if (isSearch) {
+    threads.sort((a, b) => threadDateMs(b.date) - threadDateMs(a.date));
+  }
 
   return { threads, nextPageToken: nextPageTokenFromApi };
 }

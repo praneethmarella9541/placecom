@@ -42,6 +42,7 @@ import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import { buildExclusionTokens } from "@/lib/gmail-search-query";
+import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
 import { MailSearchBar } from "@/components/MailSearchBar";
 import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Tag } from "lucide-react";
 import {
@@ -259,6 +260,10 @@ export default function InboxPage() {
   const [mailSearch, setMailSearch] = useState("");
   /** Suggest dropdown open — defer debounced list search until Enter (Gmail-style). */
   const [mailSearchSuggesting, setMailSearchSuggesting] = useState(false);
+  const searchHighlight = useMemo(
+    () => (mailSearch.trim() ? searchHighlightTerms(mailSearch) : []),
+    [mailSearch],
+  );
 
   // Advanced search filter panel state — mirrors Gmail's "Show search options".
   // When the user clicks Search, we translate these fields to Gmail operator
@@ -1080,8 +1085,7 @@ export default function InboxPage() {
               : folder === "allmail"
                 ? "allmail"
                 : folder;
-      // Use 50 for search — after thread dedup we need extra headroom.
-      const params = new URLSearchParams({ folder: apiFolder, maxResults: mailSearch ? "100" : "25" });
+      const params = new URLSearchParams({ folder: apiFolder, maxResults: mailSearch ? "50" : "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
       // When a search query is active, drop the category/label filter so results
@@ -3267,7 +3271,11 @@ export default function InboxPage() {
                           isUnread ? "font-bold text-[var(--color-text)]" : "font-normal text-[var(--color-text)]"
                         )}
                       >
-                        {name}
+                        {searchHighlight.length > 0 ? (
+                          <SearchHighlight text={name} terms={searchHighlight} />
+                        ) : (
+                          name
+                        )}
                       </button>
 
                       {/* Subject + snippet — fills remaining space, single line, truncated before date */}
@@ -3286,10 +3294,21 @@ export default function InboxPage() {
                         )}
                         <span className="min-w-0 flex-1 truncate">
                           <span className={cn(isUnread ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]")}>
-                            {t.subject || "(no subject)"}
+                            {searchHighlight.length > 0 ? (
+                              <SearchHighlight text={t.subject || "(no subject)"} terms={searchHighlight} />
+                            ) : (
+                              t.subject || "(no subject)"
+                            )}
                           </span>
                           {t.snippet ? (
-                            <span className="font-normal text-[var(--color-text-faint)]"> — {t.snippet}</span>
+                            <span className="font-normal text-[var(--color-text-faint)]">
+                              {" — "}
+                              {searchHighlight.length > 0 ? (
+                                <SearchHighlight text={t.snippet} terms={searchHighlight} />
+                              ) : (
+                                t.snippet
+                              )}
+                            </span>
                           ) : null}
                         </span>
                       </button>

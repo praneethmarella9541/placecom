@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HardDrive } from "lucide-react";
 import { IconChevronRight, IconFolder, IconX } from "@/components/Icons";
 import { cn } from "@/lib/utils";
@@ -42,6 +42,9 @@ export function DriveMoveModal({ fileId, fileName, currentParentId, onMove, onCl
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
+  const folderCacheRef = useRef<Map<string, FolderRow[]>>(new Map());
+  const folderInflightRef = useRef<Map<string, Promise<FolderRow[]>>>(new Map());
+  const activeFolderLoadRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,28 +61,56 @@ export function DriveMoveModal({ fileId, fileName, currentParentId, onMove, onCl
 
   const load = useCallback(
     async (parent: string) => {
-      setLoading(true);
+      const loadId = `${destination}\0${activeSharedDrive?.id ?? ""}\0${parent}`;
+      activeFolderLoadRef.current = loadId;
       setError(null);
-      try {
-        const params = new URLSearchParams({
-          parent,
-          pageSize: "100",
-          mimeType: "application/vnd.google-apps.folder",
-        });
-        const res = await fetch(`/api/drive/files?${params.toString()}`);
-        const j = (await res.json()) as {
-          files?: FolderRow[];
-          error?: string;
-        };
-        if (!res.ok) throw new Error(j.error || "Failed to load folders");
-        setFolders((j.files ?? []).filter((f) => f.id !== fileId));
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load folders");
-      } finally {
+      const cached = folderCacheRef.current.get(loadId);
+      if (cached) {
+        setFolders(cached);
         setLoading(false);
+      } else {
+        setFolders([]);
+        setLoading(true);
+      }
+      let inflight = folderInflightRef.current.get(loadId);
+      if (!inflight) {
+        inflight = (async () => {
+          const params = new URLSearchParams({
+            parent,
+            pageSize: "100",
+            mimeType: "application/vnd.google-apps.folder",
+          });
+          if (destination === "shared-drive" && activeSharedDrive) {
+            params.set("sharedDriveId", activeSharedDrive.id);
+          }
+          const res = await fetch(`/api/drive/files?${params.toString()}`);
+          const j = (await res.json()) as {
+            files?: FolderRow[];
+            error?: string;
+          };
+          if (!res.ok) throw new Error(j.error || "Failed to load folders");
+          return (j.files ?? []).filter((f) => f.id !== fileId);
+        })();
+        folderInflightRef.current.set(loadId, inflight);
+        inflight.finally(() => {
+          setTimeout(() => folderInflightRef.current.delete(loadId), 60_000);
+        });
+        inflight.catch(() => folderInflightRef.current.delete(loadId));
+      }
+      try {
+        const rows = await inflight;
+        folderCacheRef.current.set(loadId, rows);
+        if (activeFolderLoadRef.current !== loadId) return;
+        setFolders(rows);
+      } catch (e) {
+        if (activeFolderLoadRef.current !== loadId) return;
+        setError(e instanceof Error ? e.message : "Failed to load folders");
+        setFolders([]);
+      } finally {
+        if (activeFolderLoadRef.current === loadId) setLoading(false);
       }
     },
-    [fileId]
+    [fileId, destination, activeSharedDrive]
   );
 
   useEffect(() => {

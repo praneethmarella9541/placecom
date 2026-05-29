@@ -75,12 +75,209 @@ function blockLabel(block: EditorBlock): string {
   }
 }
 
-function ResponsesTab(_props: { formId: string; editorBlocks: EditorBlock[] }) {
-  void _props;
+type FormAnswer = {
+  questionId: string;
+  textAnswers?: { answers: { value: string }[] };
+  fileUploadAnswers?: { answers: { fileId: string; fileName: string }[] };
+  scaleAnswer?: { value: number };
+  dateAnswer?: { year?: number; month?: number; day?: number };
+  timeAnswer?: { hours?: number; minutes?: number; seconds?: number };
+  rowAnswers?: { answers: { value: string }[] }[];
+};
+
+type FormResponse = {
+  responseId: string;
+  createTime?: string;
+  lastSubmittedTime?: string;
+  answers?: Record<string, FormAnswer>;
+};
+
+function ResponsesTab({ formId, editorBlocks }: { formId: string; editorBlocks: EditorBlock[] }) {
+  const [responses, setResponses] = useState<FormResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [nextPageToken, setNextPageToken] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const load = useCallback(async (append = false, pageToken?: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = new URLSearchParams({ pageSize: "20" });
+      if (pageToken) qs.set("pageToken", pageToken);
+      const res = await fetch(`/api/forms/${encodeURIComponent(formId)}/responses?${qs}`);
+      const data = (await res.json()) as {
+        responses?: FormResponse[];
+        nextPageToken?: string;
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok) throw new Error(data.message || data.error || "Failed to load responses");
+      setResponses((prev) => append ? [...prev, ...(data.responses ?? [])] : (data.responses ?? []));
+      setNextPageToken(data.nextPageToken ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load responses");
+    } finally {
+      setLoading(false);
+    }
+  }, [formId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function handleDelete(responseId: string) {
+    if (!confirm("Delete this response? This cannot be undone.")) return;
+    setDeleting((prev) => new Set(prev).add(responseId));
+    try {
+      const res = await fetch(
+        `/api/forms/${encodeURIComponent(formId)}/responses/${encodeURIComponent(responseId)}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        throw new Error(data.error || "Delete failed");
+      }
+      setResponses((prev) => prev.filter((r) => r.responseId !== responseId));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeleting((prev) => { const s = new Set(prev); s.delete(responseId); return s; });
+    }
+  }
+
+  function toggleExpand(id: string) {
+    setExpanded((prev) => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id); else s.add(id);
+      return s;
+    });
+  }
+
+  const questionTitles = new Map<string, string>(
+    editorBlocks.map((b) => [b.questionId ?? "", b.title ?? ""])
+  );
+
+  function renderAnswer(ans: FormAnswer): string {
+    if (ans.textAnswers?.answers?.length) {
+      return ans.textAnswers.answers.map((a) => a.value).join(", ");
+    }
+    if (ans.scaleAnswer != null) return String(ans.scaleAnswer.value);
+    if (ans.dateAnswer) {
+      const { year, month, day } = ans.dateAnswer;
+      return [year, month, day].filter(Boolean).join("-");
+    }
+    if (ans.timeAnswer) {
+      const { hours = 0, minutes = 0 } = ans.timeAnswer;
+      return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+    }
+    if (ans.fileUploadAnswers?.answers?.length) {
+      return ans.fileUploadAnswers.answers.map((a) => a.fileName).join(", ");
+    }
+    return "—";
+  }
+
+  if (loading && responses.length === 0) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center gap-2 text-[var(--color-text-muted)]">
+        <Loader2 className="h-5 w-5 animate-spin text-[var(--color-primary)]" />
+        <span className="text-[13px]">{titleCase("Loading responses…")}</span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-[var(--radius-md)] border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3 text-[13px] text-[var(--color-danger)]">
+        {error}
+      </div>
+    );
+  }
+
+  if (responses.length === 0) {
+    return (
+      <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-12 text-center text-[13px] text-[var(--color-text-muted)]">
+        {titleCase("No responses yet.")}
+      </p>
+    );
+  }
+
   return (
-    <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-12 text-center text-[13px] text-[var(--color-text-muted)]">
-      {titleCase("Responses are available in Google Forms. Use the share link above to collect submissions.")}
-    </p>
+    <div className="space-y-3">
+      <p className="text-[12px] text-[var(--color-text-muted)]">
+        {responses.length} {responses.length === 1 ? "response" : "responses"}
+      </p>
+      {responses.map((resp, idx) => {
+        const isExpanded = expanded.has(resp.responseId);
+        const isDeleting = deleting.has(resp.responseId);
+        const answerEntries = Object.entries(resp.answers ?? {});
+        return (
+          <div
+            key={resp.responseId}
+            className="surface-card rounded-[var(--radius-lg)] border border-[var(--color-border)] shadow-[var(--shadow-sm)]"
+          >
+            <div className="flex items-center justify-between gap-2 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => toggleExpand(resp.responseId)}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              >
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[11px] font-bold text-[var(--color-primary)]">
+                  {idx + 1}
+                </span>
+                <span className="min-w-0 flex-1 text-[13px] font-medium text-[var(--color-text)]">
+                  {resp.createTime
+                    ? new Date(resp.createTime).toLocaleString()
+                    : `Response ${idx + 1}`}
+                </span>
+                <span className="text-[11px] text-[var(--color-text-faint)]">
+                  {isExpanded ? "▲" : "▼"}
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => void handleDelete(resp.responseId)}
+                className="inline-flex items-center gap-1 rounded-[var(--radius-md)] px-2 py-1 text-[12px] text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-50"
+              >
+                {isDeleting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                )}
+                {titleCase("Delete")}
+              </button>
+            </div>
+            {isExpanded && (
+              <div className="border-t border-[var(--color-border)] px-4 py-3 space-y-3">
+                {answerEntries.length === 0 ? (
+                  <p className="text-[13px] text-[var(--color-text-muted)]">{titleCase("No answers recorded.")}</p>
+                ) : (
+                  answerEntries.map(([qId, ans]) => (
+                    <div key={qId}>
+                      <p className="text-[11px] font-semibold text-[var(--color-text-muted)] mb-0.5">
+                        {questionTitles.get(qId) || qId}
+                      </p>
+                      <p className="text-[13px] text-[var(--color-text)]">{renderAnswer(ans)}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {nextPageToken && (
+        <button
+          type="button"
+          disabled={loading}
+          onClick={() => void load(true, nextPageToken)}
+          className="btn-secondary mx-auto flex h-9 items-center gap-2 px-4 text-[13px]"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {titleCase("Load more")}
+        </button>
+      )}
+    </div>
   );
 }
 

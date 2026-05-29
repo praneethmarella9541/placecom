@@ -103,6 +103,8 @@ export async function listDriveFilesPage(
      * a full-page result client-side.
      */
     mimeTypeFilter?: string;
+    /** When listing inside a shared drive, pass its id so Drive uses corpora=drive. */
+    sharedDriveId?: string;
   }
 ): Promise<DriveListPage> {
   const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
@@ -124,13 +126,28 @@ export async function listDriveFilesPage(
     pageSize: String(pageSize),
     fields: `nextPageToken, files(${LIST_FILE_FIELDS})`,
     q,
-    includeItemsFromAllDrives: "true",
-    supportsAllDrives: "true",
-    // "allDrives" covers My Drive + shared drives in a single index sweep.
-    // "user" implicitly excludes shared drive content even when
-    // includeItemsFromAllDrives is true, causing extra round-trips.
-    corpora: "allDrives",
   });
+  const sharedDriveId = (options.sharedDriveId || "").trim();
+  // Pick the narrowest Drive corpus that still answers the query. `allDrives`
+  // scans every drive the user can access and is noticeably slower than
+  // `user` (My Drive + items shared with me) or `drive` (one shared drive).
+  if (sharedDriveId && !hasSearch) {
+    params.set("corpora", "drive");
+    params.set("driveId", sharedDriveId);
+    params.set("includeItemsFromAllDrives", "true");
+    params.set("supportsAllDrives", "true");
+  } else if (
+    hasSearch ||
+    (atViewRoot && view === "recent") ||
+    (atViewRoot && view === "shared-with-me")
+  ) {
+    params.set("corpora", "allDrives");
+    params.set("includeItemsFromAllDrives", "true");
+    params.set("supportsAllDrives", "true");
+  } else {
+    params.set("corpora", "user");
+    params.set("supportsAllDrives", "true");
+  }
   // Drive API rejects orderBy when the query uses `fullText contains` —
   // results come back in descending relevance order automatically. So we
   // only set orderBy in browse mode (no search).

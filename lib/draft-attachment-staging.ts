@@ -212,12 +212,24 @@ export function createStagedUpload(
   return id;
 }
 
-export function appendStagedChunk(
+const supabaseConfigured = Boolean(
+  process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+/**
+ * Append a chunk. The durable copy (Supabase, or local disk when Supabase is
+ * not configured) is written *and awaited* before this resolves, so a caller
+ * that sees `done: true` is guaranteed the bytes are readable from another
+ * serverless instance via {@link getStagedAttachment}. Awaiting the durable
+ * write is what makes cross-instance draft saves reliable for 3–25 MB files —
+ * previously the upload was fire-and-forget and the draft save could race it.
+ */
+export async function appendStagedChunk(
   userId: string,
   uploadId: string,
   offset: number,
   chunk: Buffer
-): { done: boolean; received: number } {
+): Promise<{ done: boolean; received: number }> {
   pruneMem();
   const entry = memStore.get(uploadId);
   if (!entry || entry.userId !== userId) {
@@ -229,40 +241,43 @@ export function appendStagedChunk(
   entry.chunks.push(chunk);
   entry.received += chunk.length;
 
-  const dir = dirFor(userId, uploadId);
-  void (async () => {
-    await fs.mkdir(dir, { recursive: true });
-    const filePath = dataFilePath(userId, uploadId);
-    const handle = await fs.open(filePath, offset === 0 ? "w" : "r+");
-    try {
-      await handle.write(chunk, 0, chunk.length, offset);
-    } finally {
-      await handle.close();
-    }
-    await writeMetaDisk(
-      {
-        userId: entry.userId,
-        filename: entry.filename,
-        mimeType: entry.mimeType,
-        totalSize: entry.totalSize,
-        received: entry.received,
-        createdAt: entry.createdAt,
-      },
-      uploadId
-    );
-  })().catch(() => {});
-
-  void supabaseUploadPart(userId, uploadId, offset, chunk).catch(() => {});
-  void supabaseWriteMeta(userId, uploadId, {
+  const meta: StagedMeta = {
     userId: entry.userId,
     filename: entry.filename,
     mimeType: entry.mimeType,
     totalSize: entry.totalSize,
     received: entry.received,
     createdAt: entry.createdAt,
-  }).catch(() => {});
-
+  };
   const done = entry.received >= entry.totalSize;
+
+  const dir = dirFor(userId, uploadId);
+  const writeDisk = async () => {
+    await fs.mkdir(dir, { recursive: true });
+    const handle = await fs.open(dataFilePath(userId, uploadId), offset === 0 ? "w" : "r+");
+    try {
+      await handle.write(chunk, 0, chunk.length, offset);
+    } finally {
+      await handle.close();
+    }
+    await writeMetaDisk(meta, uploadId);
+  };
+
+  if (supabaseConfigured) {
+    // Await the durable (cross-instance) write so completion is authoritative.
+    // Throwing here surfaces as a chunk-upload failure the client can retry.
+    await supabaseUploadPart(userId, uploadId, offset, chunk);
+    await supabaseWriteMeta(userId, uploadId, meta);
+    // Local disk is just a same-instance fast path here — best-effort.
+    void writeDisk().catch(() => {});
+  } else if (done) {
+    // No Supabase: local disk is the only durable store. Flush the final chunk
+    // before reporting done so a same-instance save can read it.
+    await writeDisk();
+  } else {
+    void writeDisk().catch(() => {});
+  }
+
   return { done, received: entry.received };
 }
 
@@ -313,18 +328,28 @@ export async function getStagedAttachment(
   uploadId: string
 ): Promise<{ filename: string; mimeType: string; base64Data: string } | null> {
   pruneMem();
-  const meta = await resolveMeta(userId, uploadId);
-  if (!meta || meta.userId !== userId) return null;
-  if (meta.received < meta.totalSize) return null;
 
-  const buf = await loadCompleteBuffer(userId, uploadId, meta);
-  if (!buf || buf.length < meta.totalSize) return null;
+  // The chunk endpoint awaits the durable write before reporting done, but
+  // Supabase storage can still be briefly read-after-write inconsistent across
+  // instances. Retry a few times before giving up so a save that arrives right
+  // after the final chunk doesn't spuriously fail.
+  const attempts = 5;
+  for (let i = 0; i < attempts; i++) {
+    const meta = await resolveMeta(userId, uploadId);
+    if (meta && meta.userId === userId && meta.received >= meta.totalSize) {
+      const buf = await loadCompleteBuffer(userId, uploadId, meta);
+      if (buf && buf.length >= meta.totalSize) {
+        return {
+          filename: meta.filename,
+          mimeType: meta.mimeType,
+          base64Data: buf.toString("base64"),
+        };
+      }
+    }
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, 300));
+  }
 
-  return {
-    filename: meta.filename,
-    mimeType: meta.mimeType,
-    base64Data: buf.toString("base64"),
-  };
+  return null;
 }
 
 /** Remove staging data after Gmail draft save succeeds. */

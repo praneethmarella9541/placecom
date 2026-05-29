@@ -24,10 +24,11 @@ export async function GET(request: Request) {
   // requests from the Move modal) — the filtered set is much smaller so
   // a larger page is still fast. Default cap is 50 for mixed listings.
   const mimeTypeFilter = searchParams.get("mimeType")?.trim() || undefined;
-  const maxPageSize = mimeTypeFilter ? 100 : 50;
+  const sharedDriveId = searchParams.get("sharedDriveId")?.trim() || undefined;
+  const maxPageSize = 100;
   const pageSize = Math.min(
     maxPageSize,
-    Math.max(5, parseInt(searchParams.get("pageSize") || "50", 10) || 50)
+    Math.max(5, parseInt(searchParams.get("pageSize") || "100", 10) || 100)
   );
 
   try {
@@ -38,6 +39,7 @@ export async function GET(request: Request) {
       parentId,
       view,
       mimeTypeFilter,
+      sharedDriveId,
     });
     return NextResponse.json(
       { files: page.files, nextPageToken: page.nextPageToken },

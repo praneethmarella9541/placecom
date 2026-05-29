@@ -108,6 +108,26 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+type DriveListCacheEntry = { files: DriveFileRow[]; nextPageToken?: string };
+
+function driveListCacheKey(parts: {
+  parent: string;
+  view: string;
+  search: string;
+  mimeFilter: MimeFilter;
+  pathDepth: number;
+  sharedDriveId: string | null;
+}): string {
+  return [
+    parts.parent,
+    parts.view,
+    parts.search,
+    parts.mimeFilter,
+    String(parts.pathDepth),
+    parts.sharedDriveId ?? "",
+  ].join("\0");
+}
+
 export default function DrivePage() {
   /** Top-level sidebar selection. "shared-drive" is internal — the actual
    *  drive id is held separately in currentSharedDrive. */
@@ -137,6 +157,9 @@ export default function DrivePage() {
   const loadingMoreRef = useRef(false); // stable for the IntersectionObserver
   const listScrollRef = useRef<HTMLUListElement>(null);
   const loadMoreSentinelRef = useRef<HTMLLIElement>(null);
+  const driveListCacheRef = useRef<Map<string, DriveListCacheEntry>>(new Map());
+  const driveListInflightRef = useRef<Map<string, Promise<DriveListCacheEntry>>>(new Map());
+  const activeDriveListLoadRef = useRef<string | null>(null);
   const [driveListError, setDriveListError] = useState<string | null>(null);
   const [driveSearchInput, setDriveSearchInput] = useState("");
   const [driveSearch, setDriveSearch] = useState("");
@@ -266,27 +289,40 @@ export default function DrivePage() {
     setDriveNextPageToken(undefined);
   }
 
-  const loadDriveFiles = useCallback(
-    async (opts: { append: boolean; pageToken?: string; bust?: boolean }) => {
-      if (!opts.append) {
-        setLoadingDrive(true);
-        setDriveListError(null);
-      } else {
-        setLoadingMore(true);
-        loadingMoreRef.current = true;
-      }
-      const params = new URLSearchParams({
-        pageSize: "50",
+  const sharedDriveIdForApi =
+    view === "shared-drive" && currentSharedDrive ? currentSharedDrive.id : null;
+
+  const driveListContextKey = useMemo(
+    () =>
+      driveListCacheKey({
         parent: currentParentId,
+        view,
+        search: driveSearch,
+        mimeFilter,
+        pathDepth: pathStack.length,
+        sharedDriveId: sharedDriveIdForApi,
+      }),
+    [
+      currentParentId,
+      view,
+      driveSearch,
+      mimeFilter,
+      pathStack.length,
+      sharedDriveIdForApi,
+    ]
+  );
+
+  const buildFilesListParams = useCallback(
+    (parent: string, pathDepth: number, pageToken?: string) => {
+      const params = new URLSearchParams({
+        pageSize: "100",
+        parent,
       });
-      if (opts.pageToken) params.set("pageToken", opts.pageToken);
+      if (pageToken) params.set("pageToken", pageToken);
       if (driveSearch) params.set("search", driveSearch);
-      // Only forward "view" when we're at the root of a special view and
-      // not searching. After descending into a folder OR when searching,
-      // the API uses parentId / global-search semantics regardless.
       if (
         !driveSearch &&
-        pathStack.length === 0 &&
+        pathDepth === 0 &&
         (view === "shared-with-me" || view === "starred" || view === "recent")
       ) {
         params.set("view", view);
@@ -294,23 +330,47 @@ export default function DrivePage() {
       if (mimeFilter === "folders") {
         params.set("mimeType", "application/vnd.google-apps.folder");
       }
-      try {
-        // bust=true: skip the browser's HTTP cache so newly uploaded/shared
-        // items are visible immediately. Without this, the browser serves the
-        // cached response (max-age=60, swr=300) and the fresh item is invisible
-        // until the cache expires — requiring multiple manual refreshes.
-        const res = await fetch(`/api/drive/files?${params.toString()}`,
-          opts.bust ? { cache: "no-store" } : undefined
-        );
-        // Parse defensively: a 5xx may return an HTML error page (not JSON),
-        // and the raw "Unexpected token '<'" exception is useless to the user.
-        // Read text first, then attempt JSON, so we always have a fallback.
+      if (view === "shared-drive" && currentSharedDrive) {
+        params.set("sharedDriveId", currentSharedDrive.id);
+      }
+      return params;
+    },
+    [driveSearch, view, mimeFilter, currentSharedDrive]
+  );
+
+  const fetchDriveListPage = useCallback(
+    async (
+      parent: string,
+      pathDepth: number,
+      pageToken?: string,
+      bust?: boolean
+    ): Promise<DriveListCacheEntry> => {
+      const cacheKey = driveListCacheKey({
+        parent,
+        view,
+        search: driveSearch,
+        mimeFilter,
+        pathDepth,
+        sharedDriveId: sharedDriveIdForApi,
+      });
+      const inflightKey = `${cacheKey}\0${pageToken ?? ""}`;
+      if (!bust) {
+        const cached = driveListCacheRef.current.get(cacheKey);
+        if (cached && !pageToken) return cached;
+        const inflight = driveListInflightRef.current.get(inflightKey);
+        if (inflight) return inflight;
+      }
+
+      const params = buildFilesListParams(parent, pathDepth, pageToken);
+      const promise = fetch(
+        `/api/drive/files?${params.toString()}`,
+        bust ? { cache: "no-store" } : undefined
+      ).then(async (res) => {
         const raw = await res.text();
         let data: { error?: string; files?: DriveFileRow[]; nextPageToken?: string } = {};
         try {
           data = raw ? JSON.parse(raw) : {};
         } catch {
-          // Non-JSON response (HTML error page, auth redirect, etc.)
           throw new Error(
             res.status === 401 || res.status === 403
               ? "Sign-in needed for Drive. Please refresh or sign in again."
@@ -318,18 +378,95 @@ export default function DrivePage() {
           );
         }
         if (!res.ok) throw new Error(data.error || `Failed to load Drive (${res.status})`);
-        setDriveFiles((prev) => (opts.append ? [...prev, ...(data.files || [])] : data.files || []));
+        const entry: DriveListCacheEntry = {
+          files: data.files || [],
+          nextPageToken: data.nextPageToken,
+        };
+        if (!pageToken) driveListCacheRef.current.set(cacheKey, entry);
+        return entry;
+      });
+
+      driveListInflightRef.current.set(inflightKey, promise);
+      promise.catch(() => driveListInflightRef.current.delete(inflightKey));
+      promise.finally(() => {
+        setTimeout(() => driveListInflightRef.current.delete(inflightKey), 60_000);
+      });
+      return promise;
+    },
+    [
+      view,
+      driveSearch,
+      mimeFilter,
+      sharedDriveIdForApi,
+      buildFilesListParams,
+    ]
+  );
+
+  const prefetchDriveFolder = useCallback(
+    (folderId: string) => {
+      const pathDepth = pathStack.length + 1;
+      const cacheKey = driveListCacheKey({
+        parent: folderId,
+        view,
+        search: "",
+        mimeFilter,
+        pathDepth,
+        sharedDriveId: sharedDriveIdForApi,
+      });
+      if (driveListCacheRef.current.has(cacheKey)) return;
+      void fetchDriveListPage(folderId, pathDepth);
+    },
+    [view, mimeFilter, pathStack.length, sharedDriveIdForApi, fetchDriveListPage]
+  );
+
+  const loadDriveFiles = useCallback(
+    async (opts: { append: boolean; pageToken?: string; bust?: boolean }) => {
+      const loadId = `${driveListContextKey}\0${opts.pageToken ?? ""}\0${opts.append ? "a" : "f"}`;
+      if (!opts.append) {
+        activeDriveListLoadRef.current = loadId;
+        setDriveListError(null);
+        if (opts.bust) driveListCacheRef.current.delete(driveListContextKey);
+        const cached = !opts.bust ? driveListCacheRef.current.get(driveListContextKey) : undefined;
+        if (cached) {
+          setDriveFiles(cached.files);
+          setDriveNextPageToken(cached.nextPageToken);
+          setLoadingDrive(false);
+        } else {
+          setDriveFiles([]);
+          setLoadingDrive(true);
+        }
+      } else {
+        setLoadingMore(true);
+        loadingMoreRef.current = true;
+      }
+      try {
+        const data = await fetchDriveListPage(
+          currentParentId,
+          pathStack.length,
+          opts.pageToken,
+          opts.bust
+        );
+        if (!opts.append && activeDriveListLoadRef.current !== loadId) return;
+        setDriveFiles((prev) => (opts.append ? [...prev, ...data.files] : data.files));
         setDriveNextPageToken(data.nextPageToken);
       } catch (e) {
+        if (!opts.append && activeDriveListLoadRef.current !== loadId) return;
         setDriveListError(e instanceof Error ? e.message : "Failed to load");
         if (!opts.append) setDriveFiles([]);
       } finally {
-        setLoadingDrive(false);
+        if (!opts.append && activeDriveListLoadRef.current === loadId) {
+          setLoadingDrive(false);
+        }
         setLoadingMore(false);
         loadingMoreRef.current = false;
       }
     },
-    [driveSearch, currentParentId, view, pathStack.length, mimeFilter]
+    [
+      driveListContextKey,
+      currentParentId,
+      pathStack.length,
+      fetchDriveListPage,
+    ]
   );
 
   /** Sorted view of the loaded files. Folders always come before files
@@ -1361,6 +1498,7 @@ export default function DrivePage() {
                       key={file.id}
                       className="group relative flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-colors hover:border-[var(--color-primary)] hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                       onContextMenu={(e) => openRowContextMenu(e, file)}
+                      onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                     >
                       {/* Kebab — top-right corner */}
                       <div className="absolute right-1.5 top-1.5 z-10">{RowMenu}</div>
@@ -1396,6 +1534,7 @@ export default function DrivePage() {
                     key={file.id}
                     className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                     onContextMenu={(e) => openRowContextMenu(e, file)}
+                    onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                   >
                     {/* Name column — icon + clickable label */}
                     <button

@@ -485,6 +485,8 @@ export default function InboxPage() {
   // Prefetch cache: hover over a row starts the fetch so the click is instant.
   type ThreadCacheData = { messages: MsgView[]; labelIds: string[] };
   const threadDataCache = useRef<Map<string, Promise<ThreadCacheData>>>(new Map());
+  // Ignores in-flight thread fetches when the user opens another thread first.
+  const activeThreadLoadRef = useRef<string | null>(null);
   // Same prefetch cache for draft rows — mirrors prefetchCache but keyed by draftId.
   const draftPrefetchCache = useRef<Map<string, Promise<Response>>>(new Map());
 
@@ -1593,29 +1595,29 @@ export default function InboxPage() {
         if (wasUnread) adjustInboxUnread(1);
       });
 
+    activeThreadLoadRef.current = threadId;
     setSelectedId(threadId);
     setThreadError(null);
     setThreadLabelIds([]);
-
-    const cached = threadDataCache.current.get(threadId);
-    if (cached) {
-      setLoadingThread(false);
-    } else {
-      setMessages(null);
-      setLoadingThread(true);
-    }
+    setMessages(null);
+    setLoadingThread(true);
+    resetInlineReply();
 
     try {
       const data = await fetchThreadData(threadId);
+      if (activeThreadLoadRef.current !== threadId) return;
       setMessages(data.messages);
       setThreadLabelIds(data.labelIds);
       void loadTracking();
     } catch (e) {
+      if (activeThreadLoadRef.current !== threadId) return;
       setThreadError(e instanceof Error ? e.message : "Error");
     } finally {
-      setLoadingThread(false);
+      if (activeThreadLoadRef.current === threadId) {
+        setLoadingThread(false);
+      }
     }
-  }, [loadTracking, threads, scheduleCountRefresh, mutateThreads, adjustInboxUnread, fetchThreadData]);
+  }, [loadTracking, threads, scheduleCountRefresh, mutateThreads, adjustInboxUnread, fetchThreadData, resetInlineReply]);
 
   // Add or remove a label on the currently-open thread. Optimistic — flips
   // local chips immediately and rolls back if the server rejects.
@@ -2336,6 +2338,7 @@ export default function InboxPage() {
 
   // Shared back-to-list action used by thread detail
   const closeThread = useCallback(() => {
+    activeThreadLoadRef.current = null;
     setSelectedId(null);
     setMessages(null);
     setThreadError(null);

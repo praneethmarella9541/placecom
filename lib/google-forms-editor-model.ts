@@ -26,6 +26,7 @@ export type EditorBlock =
   | {
       key: string;
       itemId?: string;
+      questionId?: string;
       kind: Exclude<EditorBlockKind, "section" | "text_block" | "unsupported">;
       title: string;
       description: string;
@@ -43,6 +44,7 @@ export type EditorBlock =
   | {
       key: string;
       itemId?: string;
+      questionId?: string;
       kind: "section";
       title: string;
       description: string;
@@ -50,6 +52,7 @@ export type EditorBlock =
   | {
       key: string;
       itemId?: string;
+      questionId?: string;
       kind: "text_block";
       title: string;
       description: string;
@@ -57,6 +60,7 @@ export type EditorBlock =
   | {
       key: string;
       itemId?: string;
+      questionId?: string;
       kind: "unsupported";
       title: string;
       description: string;
@@ -164,6 +168,7 @@ function itemToBlock(item: LooseItem): EditorBlock | null {
   }
 
   const required = Boolean(q.required);
+  const questionId = typeof q.questionId === "string" ? q.questionId : undefined;
 
   const tq = q.textQuestion as { paragraph?: boolean } | undefined;
   if (tq) {
@@ -171,6 +176,7 @@ function itemToBlock(item: LooseItem): EditorBlock | null {
       kind: tq.paragraph ? "paragraph" : "short_text",
       key,
       itemId,
+      questionId,
       title,
       description,
       required,
@@ -191,6 +197,7 @@ function itemToBlock(item: LooseItem): EditorBlock | null {
         kind: "multiple_choice",
         key,
         itemId,
+        questionId,
         title,
         description,
         required,
@@ -203,6 +210,7 @@ function itemToBlock(item: LooseItem): EditorBlock | null {
         kind: "checkboxes",
         key,
         itemId,
+        questionId,
         title,
         description,
         required,
@@ -215,6 +223,7 @@ function itemToBlock(item: LooseItem): EditorBlock | null {
         kind: "dropdown",
         key,
         itemId,
+        questionId,
         title,
         description,
         required,
@@ -244,6 +253,7 @@ function itemToBlock(item: LooseItem): EditorBlock | null {
       kind: "linear_scale",
       key,
       itemId,
+      questionId,
       title,
       description,
       required,
@@ -260,6 +270,7 @@ function itemToBlock(item: LooseItem): EditorBlock | null {
       kind: "date",
       key,
       itemId,
+      questionId,
       title,
       description,
       required,
@@ -274,6 +285,7 @@ function itemToBlock(item: LooseItem): EditorBlock | null {
       kind: "time",
       key,
       itemId,
+      questionId,
       title,
       description,
       required,

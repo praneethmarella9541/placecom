@@ -68,7 +68,7 @@ export async function POST(request: Request) {
       uploadId = createStagedUpload(auth.userId, filename, mimeType, totalSize);
     }
 
-    const { done, received } = appendStagedChunk(auth.userId, uploadId, offset, buf);
+    const { done, received } = await appendStagedChunk(auth.userId, uploadId, offset, buf);
     return NextResponse.json({ uploadId, done, received });
   } catch (e) {
     const err = e as Error;

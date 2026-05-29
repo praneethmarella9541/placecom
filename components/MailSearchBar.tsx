@@ -40,6 +40,8 @@ type Props = {
   onFilterOpenChange: (open: boolean) => void;
   localContacts: RecipientSuggestion[];
   onOpenThread: (threadId: string) => void;
+  /** True while the suggest dropdown is open — parent can defer live list search until Enter. */
+  onSuggestingChange?: (suggesting: boolean) => void;
 };
 
 function suggestDateLabel(iso: string): string {
@@ -100,19 +102,29 @@ export function MailSearchBar({
   onFilterOpenChange,
   localContacts,
   onOpenThread,
+  onSuggestingChange,
 }: Props) {
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
   const [contacts, setContacts] = useState<SearchSuggestContact[]>([]);
   const [threads, setThreads] = useState<SearchSuggestThread[]>([]);
   const [completionEmail, setCompletionEmail] = useState<string | undefined>();
-  const [highlight, setHighlight] = useState(0);
+  /** -1 = nothing highlighted; Enter runs full search for typed text (Gmail default). */
+  const [highlight, setHighlight] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fetchRef = useRef(0);
 
   const q = inputValue.trim();
   const showDropdown = focused && q.length >= 1 && !filterOpen;
+
+  useEffect(() => {
+    onSuggestingChange?.(showDropdown);
+  }, [showDropdown, onSuggestingChange]);
+
+  useEffect(() => {
+    setHighlight(-1);
+  }, [q, showDropdown]);
 
   const localHits = useMemo(() => {
     if (q.length < 1) return [];
@@ -155,10 +167,7 @@ export function MailSearchBar({
   }, [effectiveCompletion, q]);
 
   useEffect(() => {
-    if (!showDropdown) {
-      setHighlight(0);
-      return;
-    }
+    if (!showDropdown) return;
     const id = ++fetchRef.current;
     setLoading(true);
     const t = setTimeout(() => {
@@ -247,16 +256,20 @@ export function MailSearchBar({
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setHighlight((h) => Math.min(h + 1, itemCount - 1));
+      setHighlight((h) => (h < 0 ? 0 : Math.min(h + 1, itemCount - 1)));
       return;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
+      setHighlight((h) => (h <= 0 ? -1 : h - 1));
       return;
     }
     if (e.key === "Enter") {
       e.preventDefault();
+      if (highlight < 0) {
+        submitSearch(inputValue);
+        return;
+      }
       if (highlight < mergedContacts.length) {
         const c = mergedContacts[highlight];
         if (c) {
@@ -382,7 +395,7 @@ export function MailSearchBar({
                 key={c.email}
                 type="button"
                 role="option"
-                aria-selected={active}
+                aria-selected={active && highlight >= 0}
                 className={cn(
                   "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
                   i > 0 && "border-t border-[#f1f3f4]",
@@ -428,7 +441,7 @@ export function MailSearchBar({
                 key={t.id}
                 type="button"
                 role="option"
-                aria-selected={active}
+                aria-selected={active && highlight >= 0}
                 className={cn(
                   "flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors",
                   active ? "bg-[#e8f0fe]" : "hover:bg-[#f1f3f4]",

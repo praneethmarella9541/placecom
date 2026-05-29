@@ -257,6 +257,8 @@ export default function InboxPage() {
   const [listError, setListError] = useState<string | null>(null);
   const [mailSearchInput, setMailSearchInput] = useState("");
   const [mailSearch, setMailSearch] = useState("");
+  /** Suggest dropdown open — defer debounced list search until Enter (Gmail-style). */
+  const [mailSearchSuggesting, setMailSearchSuggesting] = useState(false);
 
   // Advanced search filter panel state — mirrors Gmail's "Show search options".
   // When the user clicks Search, we translate these fields to Gmail operator
@@ -1024,9 +1026,15 @@ export default function InboxPage() {
   }
 
   useEffect(() => {
-    const t = setTimeout(() => setMailSearch(mailSearchInput.trim()), 400);
+    const trimmed = mailSearchInput.trim();
+    if (!trimmed) {
+      setMailSearch("");
+      return;
+    }
+    if (mailSearchSuggesting) return;
+    const t = setTimeout(() => setMailSearch(trimmed), 400);
     return () => clearTimeout(t);
-  }, [mailSearchInput]);
+  }, [mailSearchInput, mailSearchSuggesting]);
 
   const loadTracking = useCallback(async () => {
     try {
@@ -2889,6 +2897,7 @@ export default function InboxPage() {
                 onFilterOpenChange={setFilterOpen}
                 localContacts={composeRecipientSuggestions}
                 onOpenThread={(threadId) => void openThread(threadId)}
+                onSuggestingChange={setMailSearchSuggesting}
               />
 
               {/* Advanced filter popover — opens beneath the search input */}

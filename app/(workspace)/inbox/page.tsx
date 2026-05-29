@@ -111,6 +111,18 @@ function insertLabelSorted(list: GmailLabel[], next: GmailLabel): GmailLabel[] {
   return out;
 }
 
+/** Client-only id until Gmail returns the real label id. */
+function makePendingLabel(name: string): GmailLabel {
+  return {
+    id: `pending:${crypto.randomUUID()}`,
+    name,
+    type: "user",
+    surfaced: true,
+    isSystem: false,
+    isCategory: false,
+  };
+}
+
 /**
  * Two-column row used inside the advanced search filter popover —
  * left label + right input field. Keeps spacing consistent across rows.
@@ -401,7 +413,6 @@ export default function InboxPage() {
   const [labelBusy, setLabelBusy] = useState(false);
   // Left-rail "Create label" inline form state
   const [newLabelInput, setNewLabelInput] = useState("");
-  const [newLabelCreating, setNewLabelCreating] = useState(false);
   const [showNewLabelForm, setShowNewLabelForm] = useState(false);
   const newLabelInputRef = useRef<HTMLInputElement>(null);
 
@@ -1641,6 +1652,7 @@ export default function InboxPage() {
             : r
         )
       );
+      if (labelId.startsWith("pending:")) return;
       setLabelBusy(true);
       try {
         const res = await fetch(
@@ -1902,6 +1914,122 @@ export default function InboxPage() {
     setBulkLabelSelected(union);
   }, [selectedThreadIds, threads]);
 
+  const replaceLabelId = useCallback(
+    (tempId: string, real: GmailLabel) => {
+      setAllLabels((prev) => insertLabelSorted(prev.filter((l) => l.id !== tempId), real));
+      setThreadLabelIds((cur) => cur.map((id) => (id === tempId ? real.id : id)));
+      mutateThreads((rows) =>
+        rows.map((r) => ({
+          ...r,
+          labelIds: r.labelIds?.map((id) => (id === tempId ? real.id : id)),
+        }))
+      );
+      setBulkLabelSelected((prev) => {
+        if (!prev.has(tempId)) return prev;
+        const next = new Set(prev);
+        next.delete(tempId);
+        next.add(real.id);
+        return next;
+      });
+    },
+    [mutateThreads]
+  );
+
+  const removePendingLabel = useCallback(
+    (tempId: string) => {
+      setAllLabels((prev) => prev.filter((l) => l.id !== tempId));
+      setThreadLabelIds((cur) => cur.filter((id) => id !== tempId));
+      mutateThreads((rows) =>
+        rows.map((r) => ({
+          ...r,
+          labelIds: r.labelIds?.filter((id) => id !== tempId),
+        }))
+      );
+      setBulkLabelSelected((prev) => {
+        if (!prev.has(tempId)) return prev;
+        const next = new Set(prev);
+        next.delete(tempId);
+        return next;
+      });
+    },
+    [mutateThreads]
+  );
+
+  const applyLabelOptimistic = useCallback(
+    (threadId: string, labelId: string) => {
+      if (selectedId === threadId) {
+        setThreadLabelIds((cur) => Array.from(new Set([...cur, labelId])));
+      }
+      mutateThreads((rows) =>
+        rows.map((r) =>
+          r.id === threadId
+            ? {
+                ...r,
+                labelIds: Array.from(new Set([...(r.labelIds ?? []), labelId])),
+              }
+            : r
+        )
+      );
+    },
+    [selectedId, mutateThreads]
+  );
+
+  /** Create on Gmail in the background after optimistic UI is already shown. */
+  const finalizeLabelCreation = useCallback(
+    async (
+      tempId: string,
+      name: string,
+      apply?: { threadId?: string; threadIds?: string[] }
+    ) => {
+      try {
+        const res = await fetch("/api/gmail/labels", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        const j = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          label?: GmailLabel;
+        };
+        if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
+        replaceLabelId(tempId, j.label);
+
+        if (apply?.threadId) {
+          const mod = await fetch(
+            `/api/gmail/threads/${encodeURIComponent(apply.threadId)}/labels`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ add: [j.label.id] }),
+            }
+          );
+          if (!mod.ok) {
+            throw new Error(
+              ((await mod.json().catch(() => ({}))) as { error?: string })?.error ||
+                "Failed to apply label"
+            );
+          }
+          scheduleCountRefresh();
+        } else if (apply?.threadIds?.length) {
+          const mod = await fetch("/api/gmail/threads/batch-modify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              threadIds: apply.threadIds,
+              add: [j.label.id],
+            }),
+          });
+          if (!mod.ok) throw new Error("Failed to apply label to selected threads");
+          scheduleCountRefresh();
+        }
+      } catch (e) {
+        removePendingLabel(tempId);
+        alert(e instanceof Error ? e.message : "Could not create label");
+      }
+    },
+    [replaceLabelId, removePendingLabel, scheduleCountRefresh]
+  );
+
   /** Called when user toggles a checkbox inside the bulk LabelPicker. */
   const handleBulkLabelToggle = useCallback(
     async (labelId: string, nextChecked: boolean) => {
@@ -1922,6 +2050,8 @@ export default function InboxPage() {
           return { ...r, labelIds: Array.from(cur) };
         })
       );
+
+      if (labelId.startsWith("pending:")) return;
 
       setBulkLabelBusy(true);
       try {
@@ -1945,21 +2075,25 @@ export default function InboxPage() {
 
   /** Create a new label then immediately apply it to all selected threads. */
   const handleBulkLabelCreate = useCallback(
-    async (name: string) => {
-      const res = await fetch("/api/gmail/labels", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const j = (await res.json().catch(() => ({}))) as { error?: string; label?: GmailLabel };
-      if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
-      // Insert in alphabetical position (matching the server's sort order)
-      // so the new label appears where the user expects to see it, and it
-      // doesn't fall off the visible .slice(0, 15) window in the left rail.
-      setAllLabels((prev) => insertLabelSorted(prev, j.label!));
-      await handleBulkLabelToggle(j.label.id, true);
+    (name: string) => {
+      const trimmed = name.trim();
+      const ids = Array.from(selectedThreadIds);
+      if (!trimmed || ids.length === 0) return;
+      const pending = makePendingLabel(trimmed);
+      setAllLabels((prev) => insertLabelSorted(prev, pending));
+      setBulkLabelSelected((prev) => new Set(prev).add(pending.id));
+      mutateThreads((rows) =>
+        rows.map((r) => {
+          if (!selectedThreadIds.has(r.id)) return r;
+          return {
+            ...r,
+            labelIds: Array.from(new Set([...(r.labelIds ?? []), pending.id])),
+          };
+        })
+      );
+      void finalizeLabelCreation(pending.id, trimmed, { threadIds: ids });
     },
-    [handleBulkLabelToggle]
+    [selectedThreadIds, mutateThreads, finalizeLabelCreation]
   );
 
   const toggleRowSelection = useCallback((threadId: string) => {
@@ -1986,54 +2120,31 @@ export default function InboxPage() {
   }, [folder, mailSearch, effectiveLabelId]);
 
   const createAndApplyLabel = useCallback(
-    async (name: string) => {
-      try {
-        const res = await fetch("/api/gmail/labels", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name }),
-        });
-        const j = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          label?: GmailLabel;
-        };
-        if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
-        // Insert in alphabetical position (matching the server's sort order)
-      // so the new label appears where the user expects to see it, and it
-      // doesn't fall off the visible .slice(0, 15) window in the left rail.
-      setAllLabels((prev) => insertLabelSorted(prev, j.label!));
-        if (selectedId) await toggleThreadLabel(j.label.id, true);
-      } catch (e) {
-        alert(e instanceof Error ? e.message : "Could not create label");
-      }
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const pending = makePendingLabel(trimmed);
+      setAllLabels((prev) => insertLabelSorted(prev, pending));
+      const threadId = selectedId;
+      if (threadId) applyLabelOptimistic(threadId, pending.id);
+      void finalizeLabelCreation(
+        pending.id,
+        trimmed,
+        threadId ? { threadId } : undefined
+      );
     },
-    [selectedId, toggleThreadLabel]
+    [selectedId, applyLabelOptimistic, finalizeLabelCreation]
   );
 
   /** Create a new label from the left-rail form (no thread to apply it to). */
-  async function createLabelFromRail() {
+  function createLabelFromRail() {
     const name = newLabelInput.trim();
-    if (!name || newLabelCreating) return;
-    setNewLabelCreating(true);
-    try {
-      const res = await fetch("/api/gmail/labels", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const j = (await res.json().catch(() => ({}))) as { error?: string; label?: GmailLabel };
-      if (!res.ok || !j.label) throw new Error(j.error || "Could not create label");
-      // Insert in alphabetical position (matching the server's sort order)
-      // so the new label appears where the user expects to see it, and it
-      // doesn't fall off the visible .slice(0, 15) window in the left rail.
-      setAllLabels((prev) => insertLabelSorted(prev, j.label!));
-      setNewLabelInput("");
-      setShowNewLabelForm(false);
-    } catch (e) {
-      alert(e instanceof Error ? e.message : "Could not create label");
-    } finally {
-      setNewLabelCreating(false);
-    }
+    if (!name) return;
+    const pending = makePendingLabel(name);
+    setAllLabels((prev) => insertLabelSorted(prev, pending));
+    setNewLabelInput("");
+    setShowNewLabelForm(false);
+    void finalizeLabelCreation(pending.id, name);
   }
 
   function openNewCompose() {
@@ -2509,10 +2620,10 @@ export default function InboxPage() {
               />
               <button
                 type="submit"
-                disabled={!newLabelInput.trim() || newLabelCreating}
+                disabled={!newLabelInput.trim()}
                 className="shrink-0 text-[11px] font-semibold text-[var(--color-primary)] disabled:opacity-40"
               >
-                {newLabelCreating ? "…" : "Create"}
+                Create
               </button>
             </form>
           )}

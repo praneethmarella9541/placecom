@@ -98,10 +98,10 @@ export function LabelPicker({
   async function handleCreate() {
     const name = query.trim();
     if (!name || creating) return;
+    setQuery("");
     setCreating(true);
     try {
       await onCreate(name);
-      setQuery("");
     } finally {
       setCreating(false);
     }

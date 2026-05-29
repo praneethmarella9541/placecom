@@ -497,6 +497,7 @@ export type ThreadMessageView = {
   from: string;
   to: string;
   cc: string;
+  bcc: string;
   date: string;
   body: string;
   bodyHtml: string;
@@ -600,6 +601,7 @@ export async function getThreadMessages(
     const from = getHeader(headers, "From");
     const to = getHeader(headers, "To");
     const cc = getHeader(headers, "Cc");
+    const bcc = getHeader(headers, "Bcc");
     const dateHeader = getHeader(headers, "Date");
     const messageIdHeader = getHeader(headers, "Message-ID");
     let date = dateHeader;
@@ -617,6 +619,7 @@ export async function getThreadMessages(
       from,
       to,
       cc,
+      bcc,
       date: date || new Date().toISOString(),
       body,
       bodyHtml,

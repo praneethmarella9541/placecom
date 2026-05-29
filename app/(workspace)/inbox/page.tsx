@@ -43,6 +43,7 @@ import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import { buildExclusionTokens } from "@/lib/gmail-search-query";
 import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
+import { formatMessageRecipientsLine } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
 import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Tag } from "lucide-react";
 import {
@@ -162,6 +163,7 @@ type MsgView = {
   from: string;
   to: string;
   cc: string;
+  bcc: string;
   date: string;
   body: string;
   bodyHtml?: string;
@@ -2353,7 +2355,7 @@ export default function InboxPage() {
 
     // Build a plain-text quoted block for the forward body.
     const dateStr = last.date ? new Date(last.date).toLocaleString() : "";
-    const quotedHtml = `<br><br>---------- Forwarded message ----------<br>From: ${last.from}<br>Date: ${dateStr}<br>Subject: ${last.subject}<br>To: ${last.to}<br><br>${last.bodyHtml || last.body.replace(/\n/g, "<br>")}`;
+    const quotedHtml = `<br><br>---------- Forwarded message ----------<br>From: ${last.from}<br>Date: ${dateStr}<br>Subject: ${last.subject}<br>To: ${last.to}${last.cc ? `<br>Cc: ${last.cc}` : ""}${last.bcc ? `<br>Bcc: ${last.bcc}` : ""}<br><br>${last.bodyHtml || last.body.replace(/\n/g, "<br>")}`;
 
     setComposeKind("forward");
     setComposeThreadId(null);
@@ -3531,9 +3533,24 @@ export default function InboxPage() {
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                             <p className="truncate text-[14px] font-medium text-[#202124]">{fromName}</p>
-                            <p className="truncate text-[12px] text-[#5f6368]">
-                              {titleCase("to")} {m.to || "—"}
-                              {m.cc ? <span className="ml-1">· {titleCase("cc")} {m.cc}</span> : null}
+                            <p className="text-[12px] leading-snug text-[#5f6368]">
+                              {(() => {
+                                const parts = formatMessageRecipientsLine(m);
+                                if (parts.length === 0) {
+                                  return (
+                                    <>
+                                      {titleCase("to")} —
+                                    </>
+                                  );
+                                }
+                                return parts.map((part, i) => (
+                                  <span key={part.label} className={i > 0 ? "ml-1" : undefined}>
+                                    {i > 0 ? "· " : null}
+                                    <span className="text-[#80868b]">{part.label}</span>{" "}
+                                    <span className="text-[#5f6368]">{part.value}</span>
+                                  </span>
+                                ));
+                              })()}
                             </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">

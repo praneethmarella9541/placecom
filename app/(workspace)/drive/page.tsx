@@ -223,6 +223,17 @@ export default function DrivePage() {
   // and bottom toast so the user knows the request is in flight.
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(new Set());
   const [uploadBusy, setUploadBusy] = useState(false);
+
+  type StorageQuota = { limit?: string; usage?: string; usageInDrive?: string; usageInDriveTrash?: string };
+  const [storageQuota, setStorageQuota] = useState<StorageQuota | null>(null);
+
+  useEffect(() => {
+    fetch("/api/drive/about", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((q: StorageQuota | null) => { if (q) setStorageQuota(q); })
+      .catch(() => {});
+  }, []);
+
   // Per-item upload queue, mirroring Google Drive's bottom-right status card.
   // Each file/folder gets a row with a live status; the old single-line
   // progress banner is replaced by the DriveUploadQueue popup.
@@ -1029,6 +1040,43 @@ export default function DrivePage() {
             ? "Recent"
             : currentSharedDrive?.name || "Shared drive";
 
+  function fmtBytes(bytes: number): string {
+    if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`;
+    if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+    if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+    if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`;
+    return `${bytes} B`;
+  }
+
+  const storageBar = (() => {
+    if (!storageQuota) return null;
+    const used = parseInt(storageQuota.usage ?? "0", 10);
+    const limit = parseInt(storageQuota.limit ?? "0", 10);
+    if (!limit) return null;
+    const pct = Math.min(100, Math.round((used / limit) * 100));
+    const isHigh = pct >= 90;
+    const isMedium = pct >= 75;
+    return (
+      <div className="mt-auto border-t border-[var(--color-border)] px-3 py-4">
+        <div className="mb-2 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all",
+              isHigh ? "bg-red-500" : isMedium ? "bg-yellow-400" : "bg-[var(--color-primary)]"
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+        <p className="text-[11px] text-[var(--color-text-muted)]">
+          {fmtBytes(used)} of {fmtBytes(limit)} used
+        </p>
+        {isHigh && (
+          <p className="mt-0.5 text-[11px] font-medium text-red-500">Storage nearly full</p>
+        )}
+      </div>
+    );
+  })();
+
   const sidebarNav = (
     <>
         <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
@@ -1090,12 +1138,15 @@ export default function DrivePage() {
       )}
       <aside
         className={cn(
-          "z-50 flex w-[208px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] p-2",
+          "z-50 flex w-[208px] shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)]",
           "fixed inset-y-0 left-0 shadow-xl transition-transform sm:static sm:shadow-none",
           mobileNavOpen ? "translate-x-0" : "-translate-x-full sm:translate-x-0"
         )}
       >
-        {sidebarNav}
+        <div className="flex flex-1 flex-col gap-1 p-2">
+          {sidebarNav}
+        </div>
+        {storageBar}
       </aside>
 
       <div

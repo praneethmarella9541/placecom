@@ -41,7 +41,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { buildExclusionTokens } from "@/lib/gmail-search-query";
+import { buildExclusionTokens, gmailWebSearchUrl } from "@/lib/gmail-search-query";
 import { PencilLine, FilePen, SlidersHorizontal, Bookmark, Trash2, AlertOctagon, Mail, Tag } from "lucide-react";
 import {
   IconInbox,
@@ -2905,7 +2905,17 @@ export default function InboxPage() {
               </div>
               {mailSearch ? (
                 <p className="mt-1.5 px-1 text-[11px] text-[#5f6368]">
-                  {titleCase("Searching all mail — same as Gmail. Use in:sent, in:inbox, or filters to narrow.")}
+                  {titleCase("Results use the Gmail API with your exact query (same operators as Gmail).")}{" "}
+                  <a
+                    href={gmailWebSearchUrl(mailSearch)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-[var(--color-primary)] hover:underline"
+                  >
+                    {titleCase("Compare in Gmail")}
+                  </a>
+                  {" · "}
+                  {titleCase("Narrow with in:inbox, from:, or the filter button.")}
                 </p>
               ) : null}
 

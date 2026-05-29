@@ -1,18 +1,48 @@
 /**
- * Normalizes user-typed Gmail search text for the Gmail API `q` parameter.
+ * Gmail search query handling for Placecom.
  *
- * Gmail's web UI does prefix matching on words; the API is stricter unless you
- * add `*` suffixes. We add those for bare words only — never for operators,
- * quoted phrases, OR groups, or email addresses.
+ * ## How Gmail search actually works (official sources)
+ *
+ * 1. **Gmail web & API share one query language**
+ *    - `users.messages.list` and `users.threads.list` accept `q` with the same
+ *      operator syntax as the Gmail search box.
+ *    - Docs: https://developers.google.com/workspace/gmail/api/guides/filtering
+ *    - Operators: https://support.google.com/mail/answer/7190
+ *
+ * 2. **Documented differences (UI vs API) — only these two:**
+ *    - **Alias expansion**: Workspace aliases match in UI, not always in API.
+ *    - **Thread-wide semantics**: UI can surface whole threads differently;
+ *      API matches per-message then returns threads (we use `threads.list`).
+ *
+ * 3. **What Gmail UI adds that the API does NOT expose:**
+ *    - Contact / history based **suggestions** while typing (not a different `q`).
+ *    - **Highlighting** and relevance ranking in the list.
+ *    - **Chips** (Mail, From, Has attachment) that map to extra operators.
+ *
+ * 4. **What we should NOT invent:**
+ *    - Guessing spaced names (saibharath → sai bharath), length thresholds, or
+ *      automatic `*` wildcards — these are not in Gmail help and cause drift.
+ *    - Merging multiple parallel `q` queries (quoted phrase, literal, contacts)
+ *      unless the user typed those operators.
+ *
+ * ## Placecom strategy
+ *
+ * - Pass the user's search string to `q` **unchanged** (trim only).
+ * - While searching: no folder/category `labelIds` (global search, like Gmail).
+ * - Use `threads.list?q=…` for thread-level results.
+ * - Advanced filter panel builds valid operator syntax only.
+ * - Optional: `from:email` + `"email"` second query (body mentions) when the
+ *   user typed a lone `from:` address — documented Gmail pattern for notifications.
  */
 
-const OPERATOR_TOKEN = /^[+\-]?(?:is|in|label|category|from|to|cc|bcc|subject|has|filename|after|before|newer_than|older_than|size|larger|smaller|rfc822msgid|deliveredto|list):/i;
+const OPERATOR_TOKEN =
+  /^[+\-]?(?:is|in|label|category|from|to|cc|bcc|subject|has|filename|after|before|older_than|newer_than|older|newer|size|larger|smaller|rfc822msgid|deliveredto|list):/i;
 
-const BOOLEAN_OP = /^(AND|OR|NOT)$/i;
-
-/** Rough check for a bare email address token. */
-function looksLikeEmail(token: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(token);
+/**
+ * Trim and normalize whitespace; do not rewrite operators or tokens.
+ */
+export function normalizeGmailSearchQuery(raw: string): string {
+  return raw.trim().replace(/\s+/g, " ");
 }
 
 /**
@@ -22,52 +52,9 @@ export function tokenizeGmailQuery(input: string): string[] {
   return input.match(/"[^"]*"|\{[^}]*\}|\S+/g) ?? [];
 }
 
-/**
- * Expand bare words with `*` for API prefix matching (Gmail UI parity).
- * Pass `raw: true` to skip expansion (e.g. when re-parsing an already-built query).
- */
-export function expandPrefixSearch(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) return "";
-
-  return tokenizeGmailQuery(trimmed)
-    .map((t) => {
-      if (t.startsWith('"') && t.endsWith('"')) return t;
-      if (t.startsWith("{") && t.endsWith("}")) return t;
-      if (BOOLEAN_OP.test(t)) return t;
-      if (t.startsWith("-")) {
-        const rest = t.slice(1);
-        if (rest.startsWith('"') || OPERATOR_TOKEN.test(rest) || looksLikeEmail(rest)) {
-          return t;
-        }
-        if (rest.endsWith("*") || !/[a-zA-Z0-9]/.test(rest)) return t;
-        return `-${rest}*`;
-      }
-      if (OPERATOR_TOKEN.test(t)) return t;
-      if (t.endsWith("*")) return t;
-      if (!/[a-zA-Z0-9]/.test(t)) return t;
-      if (looksLikeEmail(t)) return `"${t}"`;
-      return `${t}*`;
-    })
-    .join(" ");
-}
-
-/**
- * Extract a single `from:email@…` when the query is only that clause (for supplemental search).
- */
-export function extractSingleFromEmail(raw: string): string | null {
-  const stripped = raw.trim();
-  if (!/^from:/i.test(stripped)) return null;
-  if (stripped.split(/\s+/).length > 1) return null;
-  const m = stripped.match(/^from:\(?([^\s)]+)\)?$/i);
-  if (!m) return null;
-  const candidate = m[1];
-  return looksLikeEmail(candidate) ? candidate : null;
-}
-
-/** True when the query is free text without Gmail operators. */
+/** True when the string is only free text (no operators the user typed). */
 export function isPlainTextSearch(raw: string): boolean {
-  const t = raw.trim();
+  const t = normalizeGmailSearchQuery(raw);
   if (!t) return false;
   return !tokenizeGmailQuery(t).some(
     (tok) =>
@@ -77,39 +64,17 @@ export function isPlainTextSearch(raw: string): boolean {
   );
 }
 
-/** Only apply glued-name split for long single tokens (saibharath), not praneeth. */
-const SPACED_NAME_SUPPLEMENT_MIN_LEN = 10;
-
 /**
- * Guess a spaced name from a single concatenated token (e.g. saibharath → sai bharath).
- * Uses a short first-name chunk (3 chars) when the remainder is long enough to be a surname.
+ * Extract a single `from:email@…` when the query is only that clause.
  */
-export function guessSpacedName(raw: string): string | null {
-  const t = raw.trim().toLowerCase();
-  if (!/^[a-z]+$/.test(t) || t.length < SPACED_NAME_SUPPLEMENT_MIN_LEN) return null;
-  const firstLen = 3;
-  if (firstLen >= t.length - 2) return null;
-  const first = t.slice(0, firstLen);
-  const rest = t.slice(firstLen);
-  if (rest.length < 4) return null;
-  return `${first} ${rest}`;
-}
-
-/**
- * Primary Gmail `q` for the search box.
- * - Short tokens (praneeth, saibhar): prefix-expand what the user typed.
- * - Long glued names (saibharath, 10+ chars): search as spaced tokens (sai + bharath)
- *   so results stay focused on the person, not every HTML mention of one long token.
- */
-export function buildPrimarySearchQuery(raw: string): string {
-  const t = raw.trim();
-  if (!t) return "";
-  if (!isPlainTextSearch(t)) return expandPrefixSearch(t);
-
-  const spaced = guessSpacedName(t);
-  if (spaced) return expandPrefixSearch(spaced);
-
-  return expandPrefixSearch(t);
+export function extractSingleFromEmail(raw: string): string | null {
+  const stripped = normalizeGmailSearchQuery(raw);
+  if (!/^from:/i.test(stripped)) return null;
+  if (stripped.split(/\s+/).length > 1) return null;
+  const m = stripped.match(/^from:\(?([^\s)]+)\)?$/i);
+  if (!m) return null;
+  const candidate = m[1];
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : null;
 }
 
 export function buildFromEmailsQuery(emails: string[]): string | null {
@@ -125,7 +90,6 @@ export function buildFromEmailsQuery(emails: string[]): string | null {
 export function buildExclusionTokens(raw: string): string[] {
   const trimmed = raw.trim();
   if (!trimmed) return [];
-  // If user typed a quoted phrase, exclude it as one unit.
   if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
     return [`-${trimmed}`];
   }
@@ -134,4 +98,11 @@ export function buildExclusionTokens(raw: string): string[] {
     if (tok.includes(" ")) return `-"${tok}"`;
     return `-${tok}`;
   });
+}
+
+/** URL to open the same search in Gmail web (for parity checks). */
+export function gmailWebSearchUrl(query: string): string {
+  const q = normalizeGmailSearchQuery(query);
+  if (!q) return "https://mail.google.com/mail/u/0/";
+  return `https://mail.google.com/mail/u/0/#search/${encodeURIComponent(q)}`;
 }

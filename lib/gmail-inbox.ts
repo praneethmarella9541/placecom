@@ -1,13 +1,9 @@
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
 import { cleanMailSnippet } from "@/lib/utils";
-import { searchContactEmailsForQuery } from "@/lib/google-people-contacts";
 import {
-  buildFromEmailsQuery,
-  buildPrimarySearchQuery,
-  expandPrefixSearch,
   extractSingleFromEmail,
-  isPlainTextSearch,
+  normalizeGmailSearchQuery,
 } from "@/lib/gmail-search-query";
 import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
@@ -135,7 +131,7 @@ export async function listDraftsPage(
     maxResults: String(Math.min(Math.max(options.maxResults, 1), 100)),
   });
   if (options.pageToken) params.set("pageToken", options.pageToken);
-  const q = expandPrefixSearch((options.searchQuery || "").trim());
+  const q = normalizeGmailSearchQuery(options.searchQuery || "");
   if (q) params.set("q", q);
 
   const url = `${GMAIL_API}/drafts?${params.toString()}`;
@@ -229,8 +225,8 @@ export async function listThreadsPage(
     labelId?: string;
   }
 ): Promise<ThreadListPage> {
-  const rawUserQ = (options.searchQuery || "").trim();
-  const userQ = buildPrimarySearchQuery(rawUserQ);
+  const rawUserQ = normalizeGmailSearchQuery(options.searchQuery || "");
+  const userQ = rawUserQ;
   const isSearch = userQ.length > 0;
 
   // When a search query is active, drop ALL folder/label restrictions so
@@ -251,30 +247,6 @@ export async function listThreadsPage(
   // subject — Gmail's own search surfaces these, we mirror that behaviour.
   const fromEmail = isSearch ? extractSingleFromEmail(rawUserQ) : null;
 
-  // threads.list with q — same ranking model as Gmail thread results (not per-message dedup).
-  async function fetchThreadIdsForQuery(searchQ: string, pageToken?: string): Promise<{
-    ids: string[];
-    nextPageToken?: string;
-  }> {
-    const p = new URLSearchParams({
-      maxResults: String(Math.min(500, Math.max(options.maxResults, 50))),
-      q: searchQ,
-    });
-    if (pageToken) p.set("pageToken", pageToken);
-    const r = await fetch(`${GMAIL_API}/threads?${p.toString()}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    if (!r.ok) return { ids: [] };
-    const d = (await r.json()) as {
-      threads?: { id: string }[];
-      nextPageToken?: string;
-    };
-    return {
-      ids: (d.threads ?? []).map((t) => t.id).filter(Boolean),
-      nextPageToken: d.nextPageToken,
-    };
-  }
-
   const requestedMax = Math.min(Math.max(options.maxResults, 1), 100);
   const fetchSize = requestedMax;
   const params = new URLSearchParams({ maxResults: String(fetchSize) });
@@ -287,26 +259,25 @@ export async function listThreadsPage(
   let res: Response;
   let supplementalIds: string[] = [];
   try {
-    const supplementQs = new Set<string>();
-    if (fromEmail) supplementQs.add(`"${fromEmail}"`);
-    // Contact `from:` only — avoids quoted-phrase / literal queries that match marketing HTML.
-    if (isSearch && !options.pageToken && isPlainTextSearch(rawUserQ)) {
-      const contactEmails = await searchContactEmailsForQuery(accessToken, rawUserQ);
-      const fromQ = buildFromEmailsQuery(contactEmails);
-      if (fromQ) supplementQs.add(fromQ);
+    // Lone `from:addr` — also find threads that mention the address in the body
+    // (Google notifications). Same idea as Gmail surfacing shared-file mail.
+    if (fromEmail && !options.pageToken) {
+      const mentionUrl = `${GMAIL_API}/threads?${new URLSearchParams({
+        maxResults: String(requestedMax),
+        q: `"${fromEmail}"`,
+      }).toString()}`;
+      const [primaryRes, mentionRes] = await Promise.all([
+        fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
+        fetch(mentionUrl, { headers: { Authorization: `Bearer ${accessToken}` } }),
+      ]);
+      res = primaryRes;
+      if (mentionRes.ok) {
+        const mentionData = (await mentionRes.json()) as { threads?: { id: string }[] };
+        supplementalIds = (mentionData.threads ?? []).map((t) => t.id).filter(Boolean);
+      }
+    } else {
+      res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     }
-
-    const supplementalFetches = Array.from(supplementQs).map((sq) =>
-      fetchThreadIdsForQuery(sq).then((r) => r.ids),
-    );
-
-    const fetches: [Promise<Response>, ...Promise<string[]>[]] = [
-      fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
-      ...supplementalFetches,
-    ];
-    const results = await Promise.all(fetches);
-    res = results[0] as Response;
-    supplementalIds = results.slice(1).flat() as string[];
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (threads list)"));
   }

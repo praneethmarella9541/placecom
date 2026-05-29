@@ -1,5 +1,4 @@
 import "server-only";
-import { guessSpacedName } from "@/lib/gmail-search-query";
 
 type PersonLike = {
   names?: { displayName?: string }[];
@@ -108,50 +107,6 @@ export type GoogleComposeContactsResult = {
   contacts: Array<{ email: string; displayName?: string }>;
   hint?: string;
 };
-
-/**
- * People API prefix search on names/emails — mirrors Gmail contact-aware search.
- * https://developers.google.com/people/api/rest/v1/people/searchContacts
- */
-export async function searchContactEmailsForQuery(
-  accessToken: string,
-  query: string,
-): Promise<string[]> {
-  const q = query.trim();
-  if (q.length < 2) return [];
-
-  const emails = new Set<string>();
-  const queries = [q];
-  const spaced = guessSpacedName(q);
-  if (spaced) queries.push(spaced);
-
-  for (const term of queries) {
-    const url = new URL(`${PEOPLE_API}/people:searchContacts`);
-    url.searchParams.set("query", term);
-    url.searchParams.set("readMask", "emailAddresses,names");
-    url.searchParams.set("pageSize", "30");
-
-    let res: Response;
-    try {
-      res = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-    } catch {
-      continue;
-    }
-    if (!res.ok) continue;
-
-    const data = (await res.json()) as { results?: { person?: PersonLike }[] };
-    for (const row of data.results ?? []) {
-      for (const ea of row.person?.emailAddresses ?? []) {
-        const raw = ea.value?.trim().toLowerCase();
-        if (raw?.includes("@")) emails.add(raw);
-      }
-    }
-  }
-
-  return Array.from(emails);
-}
 
 export async function fetchGoogleContactsForCompose(accessToken: string): Promise<GoogleComposeContactsResult> {
   const map = new Map<string, string>();

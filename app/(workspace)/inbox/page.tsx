@@ -347,8 +347,8 @@ export default function InboxPage() {
     setFilterOpen(false);
   }
 
-  /** Clear all filter fields (does not affect the live search). */
-  function clearFilter() {
+  /** Clear advanced-search form fields only. */
+  const clearFilter = useCallback(() => {
     setFilterFrom("");
     setFilterTo("");
     setFilterSubject("");
@@ -356,7 +356,29 @@ export default function InboxPage() {
     setFilterDoesntHave("");
     setFilterHasAttachment(false);
     setFilterDateWithin("");
-  }
+  }, []);
+
+  /** Exit search mode: clear bar, results query, and advanced-filter form. */
+  const resetMailSearch = useCallback(() => {
+    setMailSearchInput("");
+    setMailSearch("");
+    clearFilter();
+    setFilterOpen(false);
+  }, [clearFilter]);
+
+  // Opening advanced search with no active query — do not show a stale form.
+  useEffect(() => {
+    if (filterOpen && !mailSearch.trim() && !mailSearchInput.trim()) {
+      clearFilter();
+    }
+  }, [filterOpen, mailSearch, mailSearchInput, clearFilter]);
+
+  // Search bar cleared (✕ or deleted text) — reset the advanced form too.
+  useEffect(() => {
+    if (!mailSearch.trim() && !mailSearchInput.trim()) {
+      clearFilter();
+    }
+  }, [mailSearch, mailSearchInput, clearFilter]);
 
   // Labels — loaded once, kept in a map by id for O(1) lookup from rows.
   const [allLabels, setAllLabels] = useState<GmailLabel[]>([]);
@@ -2579,8 +2601,7 @@ export default function InboxPage() {
                   setFilterLabelId(null);
                   setSelectedId(null);
                   setMessages(null);
-                  setMailSearchInput("");
-                  setMailSearch("");
+                  resetMailSearch();
                 }}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-3 pr-3 text-[14px] transition-colors",
@@ -2758,8 +2779,7 @@ export default function InboxPage() {
                     setFilterLabelId(null);
                     setSelectedId(null);
                     setMessages(null);
-                    setMailSearchInput("");
-                    setMailSearch("");
+                    resetMailSearch();
                   }}
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-3 text-[13px] font-medium transition-colors",
@@ -2882,10 +2902,7 @@ export default function InboxPage() {
                 {mailSearchInput.trim() ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      setMailSearchInput("");
-                      setMailSearch("");
-                    }}
+                    onClick={resetMailSearch}
                     className="absolute right-10 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#dadce0]"
                     aria-label={titleCase("Clear search")}
                     title={titleCase("Clear search")}

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { labelDisplayName, type LabelLike } from "@/components/LabelChip";
+import { labelDisplayName, buildLabelColorMap, type LabelLike } from "@/components/LabelChip";
 
 type Label = LabelLike & {
   id: string;
@@ -45,6 +45,8 @@ export function LabelPicker({
     () => allLabels.filter((l) => l.type === "user"),
     [allLabels]
   );
+
+  const labelColorMap = useMemo(() => buildLabelColorMap(userLabels), [userLabels]);
 
   useEffect(() => {
     if (!open) return;
@@ -129,6 +131,7 @@ export function LabelPicker({
           )}
           {filtered.map((l) => {
             const checked = selected.has(l.id);
+            const accent = labelColorMap.get(l.id);
             return (
               <label
                 key={l.id}
@@ -141,6 +144,16 @@ export function LabelPicker({
                   onChange={(e) => onToggle(l.id, e.target.checked)}
                   className="accent-[#0b57d0]"
                 />
+                {accent ? (
+                  <span
+                    className="h-3 w-3 shrink-0 rounded-full border"
+                    style={{
+                      backgroundColor: accent.bg,
+                      borderColor: accent.border,
+                    }}
+                    aria-hidden
+                  />
+                ) : null}
                 <span className="min-w-0 flex-1 truncate text-[#202124]">{labelDisplayName(l)}</span>
               </label>
             );

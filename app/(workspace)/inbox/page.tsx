@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { LabelChip, labelAccentStyle } from "@/components/LabelChip";
+import { LabelChip, labelAccentStyle, buildLabelColorMap } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
@@ -364,6 +364,10 @@ export default function InboxPage() {
     for (const l of allLabels) m.set(l.id, l);
     return m;
   }, [allLabels]);
+  const labelColorMap = useMemo(
+    () => buildLabelColorMap(allLabels.filter((l) => l.type === "user")),
+    [allLabels]
+  );
   // Optional filter — restricts the thread list to a single user label
   // (intersected with the folder).
   const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
@@ -2636,7 +2640,7 @@ export default function InboxPage() {
               .map((l) => {
                 const unread = labelCounts[l.id]?.unread ?? 0;
                 const active = filterLabelId === l.id;
-                const accent = labelAccentStyle(l);
+                const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
                 return (
                   <button
                     key={l.id}
@@ -2661,9 +2665,10 @@ export default function InboxPage() {
                   >
                     <span
                       className={cn(
-                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors",
-                        active ? "bg-white/70" : "bg-[#f1f3f4] group-hover:bg-white"
+                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
+                        active ? "border-white/60" : "border-transparent"
                       )}
+                      style={{ backgroundColor: accent.bg }}
                     >
                       <Tag
                         className="h-3.5 w-3.5"
@@ -3185,7 +3190,9 @@ export default function InboxPage() {
                       >
                         {chips.length > 0 && (
                           <span className="flex shrink-0 items-center gap-1">
-                            {chips.map((l) => <LabelChip key={l.id} label={l} />)}
+                            {chips.map((l) => (
+                              <LabelChip key={l.id} label={l} accent={labelColorMap.get(l.id)} />
+                            ))}
                           </span>
                         )}
                         <span className="min-w-0 flex-1 truncate">
@@ -3388,6 +3395,7 @@ export default function InboxPage() {
                           <LabelChip
                             key={l.id}
                             label={l}
+                            accent={labelColorMap.get(l.id)}
                             onRemove={labelBusy ? undefined : () => void toggleThreadLabel(l.id, false)}
                           />
                         ))}

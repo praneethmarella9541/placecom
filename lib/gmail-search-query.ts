@@ -77,45 +77,45 @@ export function isPlainTextSearch(raw: string): boolean {
   );
 }
 
-/** Min length for a single glued token before we treat it as a full name (saibharath). */
-const GLUED_NAME_MIN_LEN = 8;
+/** Only apply glued-name split for long single tokens (saibharath), not praneeth. */
+const SPACED_NAME_SUPPLEMENT_MIN_LEN = 10;
 
 /**
  * Guess a spaced name from a single concatenated token (e.g. saibharath → sai bharath).
- * Uses the first plausible first-name length (3–5 chars).
+ * Uses a short first-name chunk (3 chars) when the remainder is long enough to be a surname.
  */
 export function guessSpacedName(raw: string): string | null {
   const t = raw.trim().toLowerCase();
-  if (!/^[a-z]+$/.test(t) || t.length < 6) return null;
-  for (const i of [3, 4, 5]) {
-    if (i >= t.length - 2) continue;
-    return `${t.slice(0, i)} ${t.slice(i)}`;
-  }
-  return null;
+  if (!/^[a-z]+$/.test(t) || t.length < SPACED_NAME_SUPPLEMENT_MIN_LEN) return null;
+  const firstLen = 3;
+  if (firstLen >= t.length - 2) return null;
+  const first = t.slice(0, firstLen);
+  const rest = t.slice(firstLen);
+  if (rest.length < 4) return null;
+  return `${first} ${rest}`;
 }
 
 /**
- * Primary Gmail `q` for the search box.
- * - Partial tokens (saibhar): prefix on what the user typed — matches Gmail while typing.
- * - Full glued names (saibharath): search as spaced tokens (sai + bharath), not one token +
- *   quoted/literal extras that pull LinkedIn/HTML noise.
+ * Primary Gmail `q` — always prefix-expand what the user typed (matches Gmail for praneeth, etc.).
  */
 export function buildPrimarySearchQuery(raw: string): string {
   const t = raw.trim();
   if (!t) return "";
-  if (!isPlainTextSearch(t)) return expandPrefixSearch(t);
-
-  const spaced = guessSpacedName(t);
-  if (
-    spaced &&
-    !t.includes(" ") &&
-    /^[a-zA-Z]+$/.test(t) &&
-    t.length >= GLUED_NAME_MIN_LEN
-  ) {
-    return expandPrefixSearch(spaced);
-  }
-
   return expandPrefixSearch(t);
+}
+
+/**
+ * Optional second query for long glued names (saibharath → sai bharath), merged after primary.
+ * Never replaces the primary query — avoids breaking single-token names like praneeth.
+ */
+export function buildSpacedNameSupplementalQuery(raw: string): string | null {
+  const t = raw.trim();
+  if (!isPlainTextSearch(t) || t.includes(" ") || !/^[a-zA-Z]+$/.test(t)) return null;
+  const spaced = guessSpacedName(t);
+  if (!spaced) return null;
+  const expanded = expandPrefixSearch(spaced);
+  const primary = expandPrefixSearch(t);
+  return expanded === primary ? null : expanded;
 }
 
 export function buildFromEmailsQuery(emails: string[]): string | null {

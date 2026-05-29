@@ -340,7 +340,17 @@ export async function listDriveFilesPage(
   };
 
   const files: DriveFileRow[] = (data.files || []).map(
-    ({ parents: _p, driveId: _d, sharedWithMeTime: _s, ...row }) => row
+    ({ id, name, mimeType, modifiedTime, size, webViewLink, starred, thumbnailLink, iconLink }) => ({
+      id,
+      name,
+      mimeType,
+      modifiedTime,
+      size,
+      webViewLink,
+      starred,
+      thumbnailLink,
+      iconLink,
+    })
   );
 
   if (includeRecentLocation && files.length > 0) {

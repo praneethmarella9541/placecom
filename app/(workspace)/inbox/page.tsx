@@ -429,6 +429,15 @@ export default function InboxPage() {
   const [inlineReplySending, setInlineReplySending] = useState(false);
   const inlineReplyFileRef = useRef<HTMLInputElement>(null);
   const inlineReplyRef = useRef<HTMLDivElement>(null);
+
+  const resetInlineReply = useCallback(() => {
+    setInlineReplyMode(null);
+    setInlineReplyTo("");
+    setInlineReplyCc("");
+    setInlineReplyBody("");
+    setInlineReplyFiles([]);
+  }, []);
+
   // The current user's own Gmail address — used to exclude self from Reply All
   const [myEmail, setMyEmail] = useState("");
 
@@ -2162,14 +2171,6 @@ export default function InboxPage() {
     setComposeMinimized(false);
     setComposeFullscreen(false);
     setComposeOpen(true);
-  }
-
-  function resetInlineReply() {
-    setInlineReplyMode(null);
-    setInlineReplyTo("");
-    setInlineReplyCc("");
-    setInlineReplyBody("");
-    setInlineReplyFiles([]);
   }
 
   function startInlineReply(mode: "reply" | "replyAll") {

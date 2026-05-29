@@ -261,15 +261,17 @@ export default function DrivePage() {
     return () => clearTimeout(t);
   }, [driveSearchInput]);
 
+  const previewFileId = previewFile?.id ?? null;
+
   useEffect(() => {
-    if (!previewFile) {
+    if (!previewFileId) {
       setPreviewLoading(false);
       return;
     }
     setPreviewLoading(true);
     const t = setTimeout(() => setPreviewLoading(false), 45_000);
     return () => clearTimeout(t);
-  }, [previewFile?.id]);
+  }, [previewFileId]);
 
   // Load the user's shared drives once on mount so the sidebar can list
   // them. Non-fatal on error (some accounts simply have none).

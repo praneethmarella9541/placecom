@@ -1051,7 +1051,7 @@ export default function InboxPage() {
                 ? "allmail"
                 : folder;
       // Use 50 for search — after thread dedup we need extra headroom.
-      const params = new URLSearchParams({ folder: apiFolder, maxResults: mailSearch ? "50" : "25" });
+      const params = new URLSearchParams({ folder: apiFolder, maxResults: mailSearch ? "100" : "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
       // When a search query is active, drop the category/label filter so results
@@ -2862,7 +2862,8 @@ export default function InboxPage() {
               <div className="relative">
                 <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5f6368]" />
                 <input
-                  type="search"
+                  type="text"
+                  role="searchbox"
                   value={mailSearchInput}
                   onChange={(e) => setMailSearchInput(e.target.value)}
                   onKeyDown={(e) => {

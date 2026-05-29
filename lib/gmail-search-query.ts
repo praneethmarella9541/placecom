@@ -65,6 +65,62 @@ export function extractSingleFromEmail(raw: string): string | null {
   return looksLikeEmail(candidate) ? candidate : null;
 }
 
+/** True when the query is free text without Gmail operators. */
+export function isPlainTextSearch(raw: string): boolean {
+  const t = raw.trim();
+  if (!t) return false;
+  return !tokenizeGmailQuery(t).some(
+    (tok) =>
+      OPERATOR_TOKEN.test(tok) ||
+      (tok.startsWith("{") && tok.endsWith("}")) ||
+      (tok.startsWith('"') && tok.endsWith('"')),
+  );
+}
+
+/**
+ * Guess a spaced name from a single concatenated token (e.g. saibharath → sai bharath).
+ * Gmail UI often matches contact/display names this way; the API does not unless we OR it in.
+ */
+export function guessSpacedName(raw: string): string | null {
+  const t = raw.trim().toLowerCase();
+  if (!/^[a-z]+$/.test(t) || t.length < 6) return null;
+  for (const i of [3, 4, 5]) {
+    if (i >= t.length - 2) continue;
+    return `${t.slice(0, i)} ${t.slice(i)}`;
+  }
+  return null;
+}
+
+/**
+ * Extra Gmail `q` strings to merge with the primary search (plain-text queries only).
+ */
+export function buildSupplementalSearchQueries(raw: string): string[] {
+  if (!isPlainTextSearch(raw)) return [];
+  const t = raw.trim();
+  const out = new Set<string>();
+
+  // Without prefix wildcards — matches token boundaries closer to Gmail for some names.
+  if (t !== expandPrefixSearch(t)) out.add(t);
+
+  if (!t.includes('"')) out.add(`"${t}"`);
+
+  const spaced = guessSpacedName(t);
+  if (spaced) {
+    out.add(spaced);
+    out.add(expandPrefixSearch(spaced));
+    if (!spaced.includes('"')) out.add(`"${spaced}"`);
+  }
+
+  return Array.from(out);
+}
+
+export function buildFromEmailsQuery(emails: string[]): string | null {
+  const list = emails.map((e) => e.trim().toLowerCase()).filter((e) => e.includes("@"));
+  if (!list.length) return null;
+  if (list.length === 1) return `from:${list[0]}`;
+  return `from:{${list.join(" ")}}`;
+}
+
 /**
  * Build negated terms for advanced "doesn't have" (multi-word → quoted exclusion).
  */

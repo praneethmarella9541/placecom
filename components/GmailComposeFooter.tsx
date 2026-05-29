@@ -1,6 +1,6 @@
 "use client";
 
-import { Paperclip, ChevronDown } from "lucide-react";
+import { Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type GmailComposeFooterProps = {
@@ -27,25 +27,16 @@ export function GmailComposeFooter({
   return (
     <div className="shrink-0 border-t border-[#e8eaed] bg-[#f8f9fa]">
       <div className="flex items-center gap-1 px-3 py-2">
-        <div className={cn("flex shrink-0 items-center rounded-full bg-[#0b57d0]", (sendDisabled || sending) && "opacity-50 cursor-not-allowed")}>
-          <button
-            type="button"
-            disabled={sendDisabled || sending}
-            onClick={onSend}
-            className="rounded-l-full px-5 py-[7px] text-[14px] font-medium text-white leading-none hover:bg-[#1765cc] disabled:pointer-events-none"
-          >
-            {label}
-          </button>
-          <button
-            type="button"
-            disabled={sendDisabled || sending}
-            className="flex h-[34px] w-8 items-center justify-center rounded-r-full border-l border-white/25 hover:bg-[#1765cc] disabled:pointer-events-none"
-            title="More send options"
-            aria-label="More send options"
-          >
-            <ChevronDown className="h-3.5 w-3.5 text-white" strokeWidth={2.5} />
-          </button>
-        </div>
+        <button
+          type="button"
+          disabled={sendDisabled || sending}
+          onClick={onSend}
+          className={cn(
+            "shrink-0 rounded-full bg-[#0b57d0] px-6 py-[7px] text-[14px] font-medium leading-none text-white hover:bg-[#1765cc] disabled:pointer-events-none disabled:opacity-50",
+          )}
+        >
+          {label}
+        </button>
 
         <FooterBtn title="Attach files" onClick={onAttach}>
           <Paperclip className="h-[18px] w-[18px]" strokeWidth={2} />

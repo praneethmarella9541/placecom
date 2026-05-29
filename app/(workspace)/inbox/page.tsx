@@ -2378,11 +2378,6 @@ export default function InboxPage() {
       alert("Please add at least one recipient before sending.");
       return;
     }
-    if (richTextIsEmpty(composeBody)) {
-      alert("Please write a message before sending.");
-      return;
-    }
-
     const snapshot = {
       kind: composeKind,
       to: composeTo.trim(),
@@ -2573,13 +2568,13 @@ export default function InboxPage() {
         style={{ width: sidebarWidth }}
       >
         {/* Compose + Refresh — Gmail pill compose button */}
-        <div className="flex items-center gap-2 px-3 py-3">
+        <div className="flex items-center gap-2 px-3 py-2">
           <button
             type="button"
             onClick={() => openNewCompose()}
-            className="inline-flex h-[56px] flex-1 items-center gap-3 rounded-2xl bg-[#c2e7ff] px-5 text-[14px] font-medium text-[#001d35] shadow-sm transition hover:shadow-md"
+            className="inline-flex h-12 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-[#c2e7ff] px-4 text-[14px] font-medium text-[#001d35] shadow-sm transition hover:bg-[#b6daf8] hover:shadow-md"
           >
-            <PencilLine className="h-5 w-5" strokeWidth={2} />
+            <PencilLine className="h-[18px] w-[18px] shrink-0" strokeWidth={2} />
             {titleCase("Compose")}
           </button>
           <button
@@ -2908,7 +2903,7 @@ export default function InboxPage() {
 
               {/* Advanced filter popover — opens beneath the search input */}
               {filterOpen && (
-                <div className="absolute left-3 right-3 top-[calc(100%-4px)] z-20 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
+                <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
                   <div className="grid gap-3 p-4">
                     {/* From / To use the same RecipientField as Compose so the
                         typeahead behaviour is identical — narrows the dropdown

@@ -336,7 +336,14 @@ export function MailSearchBar({
         ) : null}
         <button
           type="button"
-          onClick={() => onFilterOpenChange(!filterOpen)}
+          onClick={() => {
+            const next = !filterOpen;
+            if (next) {
+              setFocused(false);
+              inputRef.current?.blur();
+            }
+            onFilterOpenChange(next);
+          }}
           className="absolute right-2 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
           aria-label={titleCase("Show search options")}
         >
@@ -344,7 +351,7 @@ export function MailSearchBar({
         </button>
       </div>
 
-      {activeQuery && !showDropdown ? (
+      {activeQuery && !showDropdown && !filterOpen ? (
         <p className="mt-1.5 px-1 text-[11px] text-[#5f6368]">
           Results use the Gmail API with your exact query (same order as Gmail search).{" "}
           <a

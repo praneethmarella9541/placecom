@@ -41,8 +41,9 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { buildExclusionTokens, gmailWebSearchUrl } from "@/lib/gmail-search-query";
-import { PencilLine, FilePen, SlidersHorizontal, Bookmark, Trash2, AlertOctagon, Mail, Tag } from "lucide-react";
+import { buildExclusionTokens } from "@/lib/gmail-search-query";
+import { MailSearchBar } from "@/components/MailSearchBar";
+import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Tag } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -51,7 +52,6 @@ import {
   IconX,
   IconEye,
   IconCheck,
-  IconSearch,
   IconCalendar,
 } from "@/components/Icons";
 
@@ -2879,62 +2879,17 @@ export default function InboxPage() {
 
             {/* Search bar + advanced filter popover trigger — fixed; only the list scrolls */}
             <div ref={filterPanelRef} className="relative shrink-0 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 py-2">
-              <div className="relative">
-                <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#5f6368]" />
-                <input
-                  type="text"
-                  role="searchbox"
-                  value={mailSearchInput}
-                  onChange={(e) => setMailSearchInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      setMailSearch(mailSearchInput.trim());
-                    }
-                  }}
-                  placeholder={titleCase("Search mail")}
-                  className={cn(
-                    "h-[46px] w-full rounded-full border border-transparent bg-[#eaf1fb] pl-10 text-[16px] text-[#202124] outline-none transition focus:border-[#0b57d0] focus:bg-white focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]",
-                    mailSearchInput.trim() ? "pr-[4.5rem]" : "pr-10",
-                  )}
-                  autoComplete="off"
-                />
-                {mailSearchInput.trim() ? (
-                  <button
-                    type="button"
-                    onClick={resetMailSearch}
-                    className="absolute right-10 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#dadce0]"
-                    aria-label={titleCase("Clear search")}
-                    title={titleCase("Clear search")}
-                  >
-                    <IconX className="h-4 w-4" strokeWidth={2} />
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={() => setFilterOpen((v) => !v)}
-                  className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
-                  aria-label="Show search options"
-                  title="Show search options"
-                >
-                  <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
-                </button>
-              </div>
-              {mailSearch ? (
-                <p className="mt-1.5 px-1 text-[11px] text-[#5f6368]">
-                  {titleCase("Results use the Gmail API with your exact query (same operators as Gmail).")}{" "}
-                  <a
-                    href={gmailWebSearchUrl(mailSearch)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-medium text-[var(--color-primary)] hover:underline"
-                  >
-                    {titleCase("Compare in Gmail")}
-                  </a>
-                  {" · "}
-                  {titleCase("Narrow with in:inbox, from:, or the filter button.")}
-                </p>
-              ) : null}
+              <MailSearchBar
+                inputValue={mailSearchInput}
+                onInputChange={setMailSearchInput}
+                activeQuery={mailSearch}
+                onSearch={(query) => setMailSearch(query.trim())}
+                onReset={resetMailSearch}
+                filterOpen={filterOpen}
+                onFilterOpenChange={setFilterOpen}
+                localContacts={composeRecipientSuggestions}
+                onOpenThread={(threadId) => void openThread(threadId)}
+              />
 
               {/* Advanced filter popover — opens beneath the search input */}
               {filterOpen && (

@@ -108,6 +108,51 @@ export type GoogleComposeContactsResult = {
   hint?: string;
 };
 
+/**
+ * People API prefix search — same backend Gmail uses for contact suggestions.
+ * https://developers.google.com/people/api/rest/v1/people/searchContacts
+ */
+export async function searchContactsByQuery(
+  accessToken: string,
+  query: string,
+): Promise<Array<{ email: string; displayName?: string }>> {
+  const q = query.trim();
+  if (q.length < 1) return [];
+
+  const url = new URL(`${PEOPLE_API}/people:searchContacts`);
+  url.searchParams.set("query", q);
+  url.searchParams.set("readMask", "emailAddresses,names");
+  url.searchParams.set("pageSize", "8");
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    return [];
+  }
+  if (!res.ok) return [];
+
+  const data = (await res.json()) as { results?: { person?: PersonLike }[] };
+  const out: Array<{ email: string; displayName?: string }> = [];
+  const seen = new Set<string>();
+
+  for (const row of data.results ?? []) {
+    const name = row.person?.names?.[0]?.displayName?.trim();
+    for (const ea of row.person?.emailAddresses ?? []) {
+      const email = ea.value?.trim().toLowerCase();
+      if (!email?.includes("@") || seen.has(email)) continue;
+      seen.add(email);
+      out.push({
+        email,
+        displayName: name && name.toLowerCase() !== email ? name : undefined,
+      });
+    }
+  }
+  return out;
+}
+
 export async function fetchGoogleContactsForCompose(accessToken: string): Promise<GoogleComposeContactsResult> {
   const map = new Map<string, string>();
   const warnings: string[] = [];
@@ -120,17 +165,8 @@ export async function fetchGoogleContactsForCompose(accessToken: string): Promis
     displayName: label !== email ? label : undefined,
   }));
 
-  contacts.sort((a, b) => {
-    const da = (a.displayName || a.email).toLowerCase();
-    const db = (b.displayName || b.email).toLowerCase();
-    return da.localeCompare(db);
-  });
-
-  const capped = contacts.slice(0, 2500);
-
-  let hint: string | undefined;
-  if (warnings.length === 1) hint = warnings[0];
-  else if (warnings.length > 1) hint = warnings.join(" ");
-
-  return { contacts: capped, hint };
+  return {
+    contacts,
+    hint: warnings.length ? warnings.join(" ") : undefined,
+  };
 }

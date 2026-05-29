@@ -334,6 +334,22 @@ export default function DrivePage() {
     ]
   );
 
+  /** Keep session cache in sync with optimistic list mutations (upload/move/etc.). */
+  const syncDriveListCache = useCallback(
+    (updater: (files: DriveFileRow[]) => DriveFileRow[]) => {
+      setDriveFiles((prev) => {
+        const next = updater(prev);
+        const token = driveListCacheRef.current.get(driveListContextKey)?.nextPageToken;
+        driveListCacheRef.current.set(driveListContextKey, {
+          files: next,
+          nextPageToken: token,
+        });
+        return next;
+      });
+    },
+    [driveListContextKey]
+  );
+
   const buildFilesListParams = useCallback(
     (parent: string, pathDepth: number, pageToken?: string) => {
       const params = new URLSearchParams({
@@ -469,7 +485,20 @@ export default function DrivePage() {
           opts.bust
         );
         if (!opts.append && activeDriveListLoadRef.current !== loadId) return;
-        setDriveFiles((prev) => (opts.append ? [...prev, ...data.files] : data.files));
+        setDriveFiles((prev) => {
+          const next = opts.append
+            ? [...prev, ...data.files]
+            : (() => {
+                const serverIds = new Set(data.files.map((f) => f.id));
+                const localOnly = prev.filter((f) => !serverIds.has(f.id));
+                return [...localOnly, ...data.files];
+              })();
+          driveListCacheRef.current.set(driveListContextKey, {
+            files: next,
+            nextPageToken: data.nextPageToken,
+          });
+          return next;
+        });
         setDriveNextPageToken(data.nextPageToken);
       } catch (e) {
         if (!opts.append && activeDriveListLoadRef.current !== loadId) return;
@@ -657,9 +686,10 @@ export default function DrivePage() {
             updateQueueItem(item.id, { percent: pct });
           });
           updateQueueItem(item.id, { status: "done", percent: 100 });
-          // Optimistically prepend the new file — no full reload, no flash.
-          // Only add it if we're currently viewing the folder it was uploaded to.
-          setDriveFiles((prev) => [uploaded, ...prev]);
+          syncDriveListCache((prev) => {
+            if (prev.some((r) => r.id === uploaded.id)) return prev;
+            return [uploaded, ...prev];
+          });
         } catch (e) {
           updateQueueItem(item.id, {
             status: "error",
@@ -787,7 +817,10 @@ export default function DrivePage() {
 
       // Prepend top-level folder(s) so they appear without reloading the whole list.
       if (topLevelFolderRows.length > 0) {
-        setDriveFiles((prev) => [...topLevelFolderRows, ...prev]);
+        syncDriveListCache((prev) => {
+          const ids = new Set(topLevelFolderRows.map((f) => f.id));
+          return [...topLevelFolderRows, ...prev.filter((f) => !ids.has(f.id))];
+        });
       }
     } finally {
       setUploadBusy(false);
@@ -819,8 +852,7 @@ export default function DrivePage() {
       });
       const j = (await res.json()) as { file?: DriveFileRow; error?: string };
       if (!res.ok) throw new Error(j.error || "Rename failed");
-      // Update the row in-place so the user sees the new name without a refetch
-      setDriveFiles((rows) =>
+      syncDriveListCache((rows) =>
         rows.map((r) => (r.id === file.id ? { ...r, name: next } : r))
       );
     } catch (e) {
@@ -842,7 +874,7 @@ export default function DrivePage() {
       });
       const j = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(j.error || "Could not update star");
-      setDriveFiles((rows) => {
+      syncDriveListCache((rows) => {
         if (view === "starred" && !next) {
           return rows.filter((r) => r.id !== file.id);
         }
@@ -864,7 +896,12 @@ export default function DrivePage() {
       });
       const j = (await res.json()) as { file?: DriveFileRow; error?: string };
       if (!res.ok) throw new Error(j.error || "Copy failed");
-      if (j.file) setDriveFiles((prev) => [j.file!, ...prev]);
+      if (j.file) {
+        syncDriveListCache((prev) => {
+          if (prev.some((r) => r.id === j.file!.id)) return prev;
+          return [j.file!, ...prev];
+        });
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : "Copy failed");
     }
@@ -903,8 +940,7 @@ export default function DrivePage() {
     });
     const j = (await res.json()) as { error?: string };
     if (!res.ok) throw new Error(j.error || "Move failed");
-    // Removed from the current folder view — drop it from the list.
-    setDriveFiles((rows) => rows.filter((r) => r.id !== file.id));
+    syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
   }
 
   /** Download a file or folder, showing a spinner while the server streams
@@ -963,7 +999,12 @@ export default function DrivePage() {
       if (!res.ok) throw new Error(j.error || "Failed to create folder");
       setNewFolderOpen(false);
       setNewFolderName("");
-      await loadDriveFiles({ append: false, bust: true });
+      if (j.file) {
+        syncDriveListCache((prev) => {
+          if (prev.some((r) => r.id === j.file!.id)) return prev;
+          return [j.file!, ...prev];
+        });
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to create folder");
     } finally {

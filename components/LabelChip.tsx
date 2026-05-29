@@ -36,6 +36,25 @@ export function labelDisplayName(label: LabelLike): string {
   return SYSTEM_DISPLAY_NAME[label.id] ?? label.name;
 }
 
+/** Gmail-style accent colors for sidebar rows and chips without a stored color. */
+export function labelAccentStyle(label: LabelLike): {
+  accent: string;
+  bg: string;
+  fg: string;
+} {
+  const bg = label.color?.backgroundColor;
+  const fg = label.color?.textColor;
+  if (bg) {
+    return { accent: bg, bg, fg: fg ?? "#fff" };
+  }
+  const hue = hueFor(label.id);
+  return {
+    accent: `hsl(${hue} 55% 42%)`,
+    bg: `hsl(${hue} 82% 93%)`,
+    fg: `hsl(${hue} 45% 28%)`,
+  };
+}
+
 export function LabelChip({
   label,
   onRemove,
@@ -47,13 +66,13 @@ export function LabelChip({
 }) {
   const bg = label.color?.backgroundColor;
   const fg = label.color?.textColor;
-  const fallbackHue = hueFor(label.id);
+  const fallback = labelAccentStyle(label);
   const style: React.CSSProperties = bg
     ? { backgroundColor: bg, color: fg ?? "#fff", borderColor: bg }
     : {
-        backgroundColor: `hsl(${fallbackHue} 80% 92%)`,
-        color: `hsl(${fallbackHue} 50% 25%)`,
-        borderColor: `hsl(${fallbackHue} 60% 80%)`,
+        backgroundColor: fallback.bg,
+        color: fallback.fg,
+        borderColor: `hsl(${hueFor(label.id)} 60% 80%)`,
       };
   const pad = size === "md" ? "px-2.5 py-1 text-[12px]" : "px-1.5 py-[1px] text-[10px]";
   return (

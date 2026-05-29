@@ -61,11 +61,19 @@ async function fetchMessageMeta(
   accessToken: string,
   messageId: string,
   opts?: { includeTo?: boolean }
-): Promise<{ subject: string; from: string; date: string; to?: string; labelIds?: string[] }> {
+): Promise<{
+  subject: string;
+  from: string;
+  date: string;
+  to?: string;
+  labelIds?: string[];
+  hasAttachments?: boolean;
+}> {
   const params = new URLSearchParams({ format: "metadata" });
   params.append("metadataHeaders", "Subject");
   params.append("metadataHeaders", "From");
   params.append("metadataHeaders", "Date");
+  params.append("metadataHeaders", "Content-Type");
   if (opts?.includeTo) params.append("metadataHeaders", "To");
   const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?${params.toString()}`;
   try {
@@ -90,11 +98,14 @@ async function fetchMessageMeta(
       if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
     }
     const to = opts?.includeTo ? get("To") : undefined;
+    const contentType = get("Content-Type");
+    const hasAttachments = /^multipart\/mixed/i.test(contentType);
     return {
       subject: get("Subject"),
       from: get("From"),
       date,
       labelIds: data.labelIds ?? [],
+      hasAttachments,
       ...(to !== undefined ? { to } : {}),
     };
   } catch {
@@ -173,6 +184,7 @@ export async function listDraftsPage(
         from: displayLine,
         date: meta.date,
         draftId: d.id,
+        hasAttachments: meta.hasAttachments,
       };
     })
   );

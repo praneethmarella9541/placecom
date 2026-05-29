@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { LabelChip } from "@/components/LabelChip";
+import { LabelChip, labelAccentStyle } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
@@ -41,7 +41,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { PencilLine, FilePen, SlidersHorizontal, Bookmark, Trash2, AlertOctagon, Mail } from "lucide-react";
+import { PencilLine, FilePen, SlidersHorizontal, Bookmark, Trash2, AlertOctagon, Mail, Tag } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -2524,6 +2524,7 @@ export default function InboxPage() {
               .map((l) => {
                 const unread = labelCounts[l.id]?.unread ?? 0;
                 const active = filterLabelId === l.id;
+                const accent = labelAccentStyle(l);
                 return (
                   <button
                     key={l.id}
@@ -2535,24 +2536,47 @@ export default function InboxPage() {
                       setMessages(null);
                     }}
                     className={cn(
-                      "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-4 pr-3 text-[13px] font-medium transition-colors",
+                      "group flex w-full items-center gap-2.5 rounded-r-full py-[7px] pl-2 pr-3 text-[13px] transition-colors",
                       active
-                        ? "bg-[#d3e3fd] font-semibold text-[#001d35]"
-                        : "text-[#444746] hover:bg-[#e8eaed]",
+                        ? "bg-[#d3e3fd] font-semibold text-[#001d35] shadow-[inset_3px_0_0_0_var(--label-accent)]"
+                        : "font-medium text-[#444746] hover:bg-[#e8eaed]",
                     )}
+                    style={
+                      active
+                        ? ({ "--label-accent": accent.accent } as React.CSSProperties)
+                        : undefined
+                    }
                   >
-                    {/* Colour dot from label if set */}
                     <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{
-                        backgroundColor:
-                          (l as GmailLabel & { color?: { backgroundColor?: string } }).color?.backgroundColor
-                          ?? "var(--color-primary)",
-                      }}
-                    />
-                    <span className="flex-1 truncate text-left">{l.name}</span>
+                      className={cn(
+                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors",
+                        active ? "bg-white/70" : "bg-[#f1f3f4] group-hover:bg-white"
+                      )}
+                    >
+                      <Tag
+                        className="h-3.5 w-3.5"
+                        style={{ color: accent.accent }}
+                        strokeWidth={2.25}
+                        aria-hidden
+                      />
+                    </span>
+                    <span
+                      className={cn(
+                        "min-w-0 flex-1 truncate text-left",
+                        !active && "group-hover:text-[#202124]"
+                      )}
+                    >
+                      {l.name}
+                    </span>
                     {unread > 0 && (
-                      <span className="text-[11px] font-bold tabular-nums text-[var(--color-text-muted)]">
+                      <span
+                        className={cn(
+                          "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+                          active
+                            ? "bg-white/80 text-[#001d35]"
+                            : "bg-[#e8eaed] text-[var(--color-text-muted)] group-hover:bg-white"
+                        )}
+                      >
                         {unread > 999 ? "999+" : unread}
                       </span>
                     )}

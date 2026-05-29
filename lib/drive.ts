@@ -2,6 +2,17 @@ import { describeUpstreamFetchError } from "@/lib/fetch-errors";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
 
+export type DriveFileLocation = {
+  /** Folder to open — `"root"` for My Drive top level. */
+  folderId: string;
+  /** Label shown in the Recent list (immediate parent or view root). */
+  label: string;
+  view: "my-drive" | "shared-drive" | "shared-with-me";
+  sharedDriveId?: string;
+  /** Breadcrumb folders from the view root down to `folderId` (inclusive). */
+  path: Array<{ id: string; name: string }>;
+};
+
 export type DriveFileRow = {
   id: string;
   name: string;
@@ -12,6 +23,8 @@ export type DriveFileRow = {
   starred?: boolean;
   thumbnailLink?: string;
   iconLink?: string;
+  /** Populated for Recent-tab rows — parent folder navigation target. */
+  location?: DriveFileLocation;
 };
 
 export type DriveFileDetails = DriveFileRow & {
@@ -86,6 +99,126 @@ function buildFilesListQ(
 const LIST_FILE_FIELDS =
   "id, name, mimeType, modifiedTime, size, webViewLink, starred, thumbnailLink, iconLink";
 
+const LIST_FILE_FIELDS_RECENT =
+  `${LIST_FILE_FIELDS}, parents, driveId, sharedWithMeTime`;
+
+type FolderMeta = {
+  id: string;
+  name: string;
+  parents?: string[];
+  driveId?: string;
+};
+
+async function getMyDriveRootId(accessToken: string): Promise<string> {
+  const res = await fetch(`${DRIVE_API}/files/root?fields=id`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return "root";
+  const data = (await res.json()) as { id?: string };
+  return data.id?.trim() || "root";
+}
+
+async function fetchFolderMetaCached(
+  accessToken: string,
+  id: string,
+  cache: Map<string, FolderMeta>
+): Promise<FolderMeta | null> {
+  const cached = cache.get(id);
+  if (cached) return cached;
+  const params = new URLSearchParams({
+    fields: "id,name,parents,driveId",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(`${DRIVE_API}/files/${encodeURIComponent(id)}?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+  const meta = (await res.json()) as FolderMeta;
+  cache.set(id, meta);
+  return meta;
+}
+
+/** Resolve parent folder + view for Drive Recent rows (matches Google Drive Location column). */
+async function enrichRecentFileLocations(
+  accessToken: string,
+  files: DriveFileRow[],
+  raw: Array<{ id: string; parents?: string[]; driveId?: string; sharedWithMeTime?: string }>
+): Promise<void> {
+  const rawById = new Map(raw.map((f) => [f.id, f]));
+  const [myDriveRootId, sharedDriveList] = await Promise.all([
+    getMyDriveRootId(accessToken),
+    listSharedDrives(accessToken).catch(() => [] as SharedDrive[]),
+  ]);
+  const sharedDriveNames = new Map(sharedDriveList.map((d) => [d.id, d.name]));
+  const metaCache = new Map<string, FolderMeta>();
+
+  await Promise.all(
+    files.map(async (file) => {
+      const src = rawById.get(file.id);
+      const parentId = src?.parents?.[0]?.trim();
+      if (!parentId) return;
+
+      const driveId = src?.driveId?.trim();
+      const inSharedDrive = !!(driveId && sharedDriveNames.has(driveId));
+      const sharedWithMe = !!src?.sharedWithMeTime && !inSharedDrive;
+
+      let view: DriveFileLocation["view"] = "my-drive";
+      let sharedDriveId: string | undefined;
+      if (inSharedDrive && driveId) {
+        view = "shared-drive";
+        sharedDriveId = driveId;
+      } else if (sharedWithMe) {
+        view = "shared-with-me";
+      }
+
+      const stopIds = new Set<string>([myDriveRootId]);
+      if (sharedDriveId) stopIds.add(sharedDriveId);
+
+      const path: Array<{ id: string; name: string }> = [];
+      let currentId = parentId;
+      for (let depth = 0; depth < 25 && currentId && !stopIds.has(currentId); depth++) {
+        const meta = await fetchFolderMetaCached(accessToken, currentId, metaCache);
+        if (!meta) break;
+        path.unshift({ id: meta.id, name: meta.name });
+        const nextParent = meta.parents?.[0]?.trim();
+        if (!nextParent || nextParent === currentId) break;
+        currentId = nextParent;
+      }
+
+      let label: string;
+      let folderId = parentId;
+
+      if (parentId === myDriveRootId) {
+        label = "My Drive";
+        folderId = "root";
+        path.length = 0;
+      } else if (sharedDriveId && parentId === sharedDriveId) {
+        label = sharedDriveNames.get(sharedDriveId) ?? "Shared drive";
+        path.length = 0;
+      } else if (sharedWithMe && path.length === 0 && parentId === myDriveRootId) {
+        label = "Shared with me";
+        folderId = "root";
+      } else {
+        const parentMeta = await fetchFolderMetaCached(accessToken, parentId, metaCache);
+        label = parentMeta?.name?.trim() || "Folder";
+      }
+
+      file.location = {
+        folderId,
+        label,
+        view,
+        ...(sharedDriveId ? { sharedDriveId } : {}),
+        path,
+      };
+    })
+  );
+}
+
 export async function listDriveFilesPage(
   accessToken: string,
   options: {
@@ -122,9 +255,11 @@ export async function listDriveFilesPage(
   if (options.mimeTypeFilter) {
     q = `${q} and mimeType = '${escapeDriveQFragment(options.mimeTypeFilter)}'`;
   }
+  const includeRecentLocation = !hasSearch && atViewRoot && view === "recent";
+  const listFields = includeRecentLocation ? LIST_FILE_FIELDS_RECENT : LIST_FILE_FIELDS;
   const params = new URLSearchParams({
     pageSize: String(pageSize),
-    fields: `nextPageToken, files(${LIST_FILE_FIELDS})`,
+    fields: `nextPageToken, files(${listFields})`,
     q,
   });
   const sharedDriveId = (options.sharedDriveId || "").trim();
@@ -194,12 +329,26 @@ export async function listDriveFilesPage(
   }
 
   const data = (await res.json()) as {
-    files?: DriveFileRow[];
+    files?: Array<
+      DriveFileRow & {
+        parents?: string[];
+        driveId?: string;
+        sharedWithMeTime?: string;
+      }
+    >;
     nextPageToken?: string;
   };
 
+  const files: DriveFileRow[] = (data.files || []).map(
+    ({ parents: _p, driveId: _d, sharedWithMeTime: _s, ...row }) => row
+  );
+
+  if (includeRecentLocation && files.length > 0) {
+    await enrichRecentFileLocations(accessToken, files, data.files || []);
+  }
+
   return {
-    files: data.files || [],
+    files,
     nextPageToken: data.nextPageToken,
   };
 }

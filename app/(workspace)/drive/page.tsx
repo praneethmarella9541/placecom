@@ -70,6 +70,13 @@ type DriveFileRow = {
   starred?: boolean;
   thumbnailLink?: string;
   iconLink?: string;
+  location?: {
+    folderId: string;
+    label: string;
+    view: "my-drive" | "shared-drive" | "shared-with-me";
+    sharedDriveId?: string;
+    path: Array<{ id: string; name: string }>;
+  };
 };
 
 type RowContextMenu = { x: number; y: number; file: DriveFileRow };
@@ -310,6 +317,35 @@ export default function DrivePage() {
     setDriveSearch("");
     setDriveNextPageToken(undefined);
   }
+
+  /** Open the folder that contains a Recent item (Google Drive Location column). */
+  function openFileLocation(loc: NonNullable<DriveFileRow["location"]>) {
+    setDriveSearchInput("");
+    setDriveSearch("");
+    setDriveNextPageToken(undefined);
+    setPreviewFile(null);
+    if (loc.view === "shared-drive" && loc.sharedDriveId) {
+      const drive =
+        sharedDrives.find((d) => d.id === loc.sharedDriveId) ??
+        ({ id: loc.sharedDriveId, name: loc.label } satisfies SharedDrive);
+      setView("shared-drive");
+      setCurrentSharedDrive(drive);
+      setPathStack(loc.path);
+      return;
+    }
+    if (loc.view === "shared-with-me") {
+      setView("shared-with-me");
+      setCurrentSharedDrive(null);
+      setPathStack(loc.path);
+      return;
+    }
+    setView("my-drive");
+    setCurrentSharedDrive(null);
+    setPathStack(loc.path);
+  }
+
+  const showLocationColumn =
+    view === "recent" && pathStack.length === 0 && !driveSearch;
 
   const sharedDriveIdForApi =
     view === "shared-drive" && currentSharedDrive ? currentSharedDrive.id : null;
@@ -1459,6 +1495,11 @@ export default function DrivePage() {
                 onClick={() => toggleSort("name")}
                 className="min-w-0 flex-1"
               />
+              {showLocationColumn && (
+                <span className="hidden w-[160px] shrink-0 md:block">
+                  {titleCase("File location")}
+                </span>
+              )}
               <SortHeader
                 label="Date modified"
                 active={sortKey === "modifiedTime"}
@@ -1637,6 +1678,19 @@ export default function DrivePage() {
                           {isRenaming ? NameOrEditor : file.name}
                         </span>
                       </button>
+                      {showLocationColumn && file.location && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openFileLocation(file.location!);
+                          }}
+                          className="max-w-full truncate px-1 text-center text-[11px] text-indigo-700 hover:underline dark:text-indigo-400"
+                          title={titleCase("Open folder")}
+                        >
+                          {file.location.label}
+                        </button>
+                      )}
                       <span className="mt-auto truncate text-center text-[11px] text-zinc-400">
                         {isFolder ? dateLabel : `${sizeLabel} · ${dateLabel}`}
                       </span>
@@ -1670,6 +1724,26 @@ export default function DrivePage() {
                         )}
                       </span>
                     </button>
+
+                    {showLocationColumn && (
+                      <span className="hidden w-[160px] shrink-0 md:block">
+                        {file.location ? (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openFileLocation(file.location!);
+                            }}
+                            className="max-w-full truncate text-left text-[13px] text-indigo-700 hover:underline dark:text-indigo-400"
+                            title={titleCase("Open folder")}
+                          >
+                            {file.location.label}
+                          </button>
+                        ) : (
+                          <span className="text-[13px] text-zinc-400">—</span>
+                        )}
+                      </span>
+                    )}
 
                     {/* Date modified */}
                     <span className="hidden w-[140px] shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400 sm:block">

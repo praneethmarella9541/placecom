@@ -42,10 +42,13 @@ import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import {
+  buildDateSearchClauses,
   buildExclusionTokens,
   parseGmailQueryToFilterFields,
   type GmailFilterFields,
 } from "@/lib/gmail-search-query";
+import { isSelfSentEmail } from "@/lib/email-self-sent";
+import { GmailDatePicker } from "@/components/GmailDatePicker";
 import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
 import { formatMessageRecipientsLine } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
@@ -286,6 +289,7 @@ export default function InboxPage() {
   // Date-within: one of Gmail's preset spans (matches Gmail UI).
   type DateWithin = "" | "1d" | "3d" | "7d" | "14d" | "30d" | "60d" | "180d" | "365d";
   const [filterDateWithin, setFilterDateWithin] = useState<DateWithin>("");
+  const [filterDateAnchor, setFilterDateAnchor] = useState("");
   const DATE_WITHIN_OPTIONS: { value: DateWithin; label: string }[] = [
     { value: "", label: "Any time" },
     { value: "1d", label: "1 day" },
@@ -347,7 +351,7 @@ export default function InboxPage() {
       parts.push(...buildExclusionTokens(filterDoesntHave));
     }
     if (filterHasAttachment) parts.push("has:attachment");
-    if (filterDateWithin) parts.push(`newer_than:${filterDateWithin}`);
+    parts.push(...buildDateSearchClauses(filterDateWithin, filterDateAnchor));
     return parts.join(" ");
   }
 
@@ -369,6 +373,7 @@ export default function InboxPage() {
     setFilterDoesntHave("");
     setFilterHasAttachment(false);
     setFilterDateWithin("");
+    setFilterDateAnchor("");
   }, []);
 
   const applyFilterFields = useCallback((fields: GmailFilterFields) => {
@@ -379,6 +384,7 @@ export default function InboxPage() {
     setFilterDoesntHave(fields.doesntHave);
     setFilterHasAttachment(fields.hasAttachment);
     setFilterDateWithin(fields.dateWithin);
+    setFilterDateAnchor(fields.dateAnchor);
   }, []);
 
   /** Mirror the active search bar query into advanced-search fields (Gmail UI). */
@@ -2966,15 +2972,22 @@ export default function InboxPage() {
                       />
                     </FilterRow>
                     <FilterRow label="Date within">
-                      <select
-                        value={filterDateWithin}
-                        onChange={(e) => setFilterDateWithin(e.target.value as DateWithin)}
-                        className="input-field h-9 w-full text-[13px]"
-                      >
-                        {DATE_WITHIN_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
+                      <div className="flex min-w-0 gap-2">
+                        <select
+                          value={filterDateWithin}
+                          onChange={(e) => setFilterDateWithin(e.target.value as DateWithin)}
+                          className="input-field h-9 min-w-0 flex-1 text-[13px]"
+                        >
+                          {DATE_WITHIN_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
+                        </select>
+                        <GmailDatePicker
+                          value={filterDateAnchor}
+                          onChange={setFilterDateAnchor}
+                          className="min-w-0 flex-1"
+                        />
+                      </div>
                     </FilterRow>
                     <label className="flex cursor-pointer items-center gap-2 pl-2 pt-1 text-[13px] text-[var(--color-text)]">
                       <input
@@ -3567,7 +3580,9 @@ export default function InboxPage() {
                         <div className="flex shrink-0 items-center gap-2">
                           {(() => {
                             const tr = trackingMap[m.id];
-                            if (!tr) return null;
+                            if (!tr || isSelfSentEmail(m.from, m.to, m.cc, myEmail)) {
+                              return null;
+                            }
                             if (tr.opened) {
                               return (
                                 <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]" title={`Opened ${tr.open_count}x`}>

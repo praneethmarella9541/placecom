@@ -100,6 +100,8 @@ export function buildExclusionTokens(raw: string): string[] {
   });
 }
 
+export type DateWithinPreset = "" | "1d" | "3d" | "7d" | "14d" | "30d" | "60d" | "180d" | "365d";
+
 /** Advanced-search panel fields (Gmail “Show search options”). */
 export type GmailFilterFields = {
   from: string;
@@ -108,11 +110,12 @@ export type GmailFilterFields = {
   hasWords: string;
   doesntHave: string;
   hasAttachment: boolean;
-  /** Matches inbox `DateWithin` — `newer_than:` presets only. */
-  dateWithin: "" | "1d" | "3d" | "7d" | "14d" | "30d" | "60d" | "180d" | "365d";
+  dateWithin: DateWithinPreset;
+  /** Anchor day for “Date within” — `YYYY-MM-DD` (local). */
+  dateAnchor: string;
 };
 
-const NEWER_THAN_DATE: Record<string, GmailFilterFields["dateWithin"]> = {
+const NEWER_THAN_DATE: Record<string, DateWithinPreset> = {
   "1d": "1d",
   "3d": "3d",
   "7d": "7d",
@@ -122,6 +125,93 @@ const NEWER_THAN_DATE: Record<string, GmailFilterFields["dateWithin"]> = {
   "180d": "180d",
   "365d": "365d",
 };
+
+const DATE_WITHIN_DAY_COUNT: Record<Exclude<DateWithinPreset, "">, number> = {
+  "1d": 1,
+  "3d": 3,
+  "7d": 7,
+  "14d": 14,
+  "30d": 30,
+  "60d": 60,
+  "180d": 180,
+  "365d": 365,
+};
+
+const DATE_WITHIN_BY_DAYS: { days: number; preset: Exclude<DateWithinPreset, ""> }[] = [
+  { days: 365, preset: "365d" },
+  { days: 180, preset: "180d" },
+  { days: 60, preset: "60d" },
+  { days: 30, preset: "30d" },
+  { days: 14, preset: "14d" },
+  { days: 7, preset: "7d" },
+  { days: 3, preset: "3d" },
+  { days: 1, preset: "1d" },
+];
+
+/** Gmail `after:` / `before:` date token — `YYYY/M/D`. */
+export function formatGmailSlashDate(d: Date): string {
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+export function parseGmailSlashDate(raw: string): Date | null {
+  const m = raw.trim().match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export function isoDateLocal(d: Date): string {
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${day}`;
+}
+
+export function parseIsoDateLocal(iso: string): Date | null {
+  const m = iso.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export function formatGmailDisplayDate(iso: string): string {
+  const d = parseIsoDateLocal(iso);
+  if (!d) return "";
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}/${mo}/${day}`;
+}
+
+function closestDateWithinPreset(daySpan: number): DateWithinPreset {
+  if (daySpan <= 0) return "1d";
+  for (const { days, preset } of DATE_WITHIN_BY_DAYS) {
+    if (daySpan <= days) return preset;
+  }
+  return "365d";
+}
+
+/**
+ * Build Gmail date clauses for advanced search.
+ * With an anchor: `after:` / `before:` window ending on that day.
+ * Without anchor: relative `newer_than:` only.
+ */
+export function buildDateSearchClauses(
+  dateWithin: DateWithinPreset,
+  dateAnchor: string,
+): string[] {
+  const anchor = parseIsoDateLocal(dateAnchor);
+  if (anchor) {
+    const days = dateWithin ? DATE_WITHIN_DAY_COUNT[dateWithin] : 1;
+    const after = new Date(anchor);
+    after.setDate(after.getDate() - (days - 1));
+    const before = new Date(anchor);
+    before.setDate(before.getDate() + 1);
+    return [`after:${formatGmailSlashDate(after)}`, `before:${formatGmailSlashDate(before)}`];
+  }
+  if (dateWithin) return [`newer_than:${dateWithin}`];
+  return [];
+}
 
 function stripQuotes(value: string): string {
   const t = value.trim();
@@ -153,6 +243,7 @@ export function parseGmailQueryToFilterFields(raw: string): GmailFilterFields {
     doesntHave: "",
     hasAttachment: false,
     dateWithin: "",
+    dateAnchor: "",
   };
   const q = normalizeGmailSearchQuery(raw);
   if (!q) return empty;
@@ -167,7 +258,10 @@ export function parseGmailQueryToFilterFields(raw: string): GmailFilterFields {
   let to = "";
   let subject = "";
   let hasAttachment = false;
-  let dateWithin: GmailFilterFields["dateWithin"] = "";
+  let dateWithin: DateWithinPreset = "";
+  let dateAnchor = "";
+  let afterRaw = "";
+  let beforeRaw = "";
 
   for (const tok of tokenizeGmailQuery(q)) {
     if (tok.startsWith("-") && tok.length > 1 && !OPERATOR_TOKEN.test(tok.slice(1))) {
@@ -181,9 +275,7 @@ export function parseGmailQueryToFilterFields(raw: string): GmailFilterFields {
       continue;
     }
 
-    const op = tok.match(
-      /^(from|to|subject|newer_than):(.+)$/i,
-    );
+    const op = tok.match(/^(from|to|subject|newer_than|after|before):(.+)$/i);
     if (op) {
       const key = op[1].toLowerCase();
       const val = stripQuotes(unwrapBraceGroup(op[2]));
@@ -192,11 +284,28 @@ export function parseGmailQueryToFilterFields(raw: string): GmailFilterFields {
       else if (key === "subject") subject = val;
       else if (key === "newer_than") {
         dateWithin = NEWER_THAN_DATE[val.toLowerCase()] ?? "";
+      } else if (key === "after") {
+        afterRaw = val;
+      } else if (key === "before") {
+        beforeRaw = val;
       }
       continue;
     }
 
     freeText.push(tok);
+  }
+
+  const afterDate = afterRaw ? parseGmailSlashDate(afterRaw) : null;
+  const beforeDate = beforeRaw ? parseGmailSlashDate(beforeRaw) : null;
+  if (afterDate && beforeDate) {
+    const anchor = new Date(beforeDate);
+    anchor.setDate(anchor.getDate() - 1);
+    dateAnchor = isoDateLocal(anchor);
+    const spanDays = Math.max(
+      1,
+      Math.round((beforeDate.getTime() - afterDate.getTime()) / 86_400_000),
+    );
+    dateWithin = closestDateWithinPreset(spanDays);
   }
 
   return {
@@ -207,6 +316,7 @@ export function parseGmailQueryToFilterFields(raw: string): GmailFilterFields {
     doesntHave: exclusions.join(" "),
     hasAttachment,
     dateWithin,
+    dateAnchor,
   };
 }
 

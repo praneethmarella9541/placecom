@@ -96,26 +96,20 @@ export function guessSpacedName(raw: string): string | null {
 }
 
 /**
- * Primary Gmail `q` — always prefix-expand what the user typed (matches Gmail for praneeth, etc.).
+ * Primary Gmail `q` for the search box.
+ * - Short tokens (praneeth, saibhar): prefix-expand what the user typed.
+ * - Long glued names (saibharath, 10+ chars): search as spaced tokens (sai + bharath)
+ *   so results stay focused on the person, not every HTML mention of one long token.
  */
 export function buildPrimarySearchQuery(raw: string): string {
   const t = raw.trim();
   if (!t) return "";
-  return expandPrefixSearch(t);
-}
+  if (!isPlainTextSearch(t)) return expandPrefixSearch(t);
 
-/**
- * Optional second query for long glued names (saibharath → sai bharath), merged after primary.
- * Never replaces the primary query — avoids breaking single-token names like praneeth.
- */
-export function buildSpacedNameSupplementalQuery(raw: string): string | null {
-  const t = raw.trim();
-  if (!isPlainTextSearch(t) || t.includes(" ") || !/^[a-zA-Z]+$/.test(t)) return null;
   const spaced = guessSpacedName(t);
-  if (!spaced) return null;
-  const expanded = expandPrefixSearch(spaced);
-  const primary = expandPrefixSearch(t);
-  return expanded === primary ? null : expanded;
+  if (spaced) return expandPrefixSearch(spaced);
+
+  return expandPrefixSearch(t);
 }
 
 export function buildFromEmailsQuery(emails: string[]): string | null {

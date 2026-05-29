@@ -5,7 +5,6 @@ import { searchContactEmailsForQuery } from "@/lib/google-people-contacts";
 import {
   buildFromEmailsQuery,
   buildPrimarySearchQuery,
-  buildSpacedNameSupplementalQuery,
   expandPrefixSearch,
   extractSingleFromEmail,
   isPlainTextSearch,
@@ -292,8 +291,6 @@ export async function listThreadsPage(
     if (fromEmail) supplementQs.add(`"${fromEmail}"`);
     // Contact `from:` only — avoids quoted-phrase / literal queries that match marketing HTML.
     if (isSearch && !options.pageToken && isPlainTextSearch(rawUserQ)) {
-      const spacedQ = buildSpacedNameSupplementalQuery(rawUserQ);
-      if (spacedQ) supplementQs.add(spacedQ);
       const contactEmails = await searchContactEmailsForQuery(accessToken, rawUserQ);
       const fromQ = buildFromEmailsQuery(contactEmails);
       if (fromQ) supplementQs.add(fromQ);

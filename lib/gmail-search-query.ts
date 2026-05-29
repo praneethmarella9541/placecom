@@ -100,6 +100,116 @@ export function buildExclusionTokens(raw: string): string[] {
   });
 }
 
+/** Advanced-search panel fields (Gmail “Show search options”). */
+export type GmailFilterFields = {
+  from: string;
+  to: string;
+  subject: string;
+  hasWords: string;
+  doesntHave: string;
+  hasAttachment: boolean;
+  /** Matches inbox `DateWithin` — `newer_than:` presets only. */
+  dateWithin: "" | "1d" | "3d" | "7d" | "14d" | "30d" | "60d" | "180d" | "365d";
+};
+
+const NEWER_THAN_DATE: Record<string, GmailFilterFields["dateWithin"]> = {
+  "1d": "1d",
+  "3d": "3d",
+  "7d": "7d",
+  "14d": "14d",
+  "30d": "30d",
+  "60d": "60d",
+  "180d": "180d",
+  "365d": "365d",
+};
+
+function stripQuotes(value: string): string {
+  const t = value.trim();
+  if (t.startsWith('"') && t.endsWith('"') && t.length >= 2) {
+    return t.slice(1, -1);
+  }
+  return t;
+}
+
+function unwrapBraceGroup(value: string): string {
+  const t = value.trim();
+  if (t.startsWith("{") && t.endsWith("}")) {
+    return t.slice(1, -1).trim();
+  }
+  return t;
+}
+
+/**
+ * Map a Gmail `q` string into advanced-search fields (Gmail shows plain text in
+ * “Has the words” after Enter). Used for display only — list search still uses
+ * the exact `q` string passed to the API.
+ */
+export function parseGmailQueryToFilterFields(raw: string): GmailFilterFields {
+  const empty: GmailFilterFields = {
+    from: "",
+    to: "",
+    subject: "",
+    hasWords: "",
+    doesntHave: "",
+    hasAttachment: false,
+    dateWithin: "",
+  };
+  const q = normalizeGmailSearchQuery(raw);
+  if (!q) return empty;
+
+  if (isPlainTextSearch(q)) {
+    return { ...empty, hasWords: q };
+  }
+
+  const freeText: string[] = [];
+  const exclusions: string[] = [];
+  let from = "";
+  let to = "";
+  let subject = "";
+  let hasAttachment = false;
+  let dateWithin: GmailFilterFields["dateWithin"] = "";
+
+  for (const tok of tokenizeGmailQuery(q)) {
+    if (tok.startsWith("-") && tok.length > 1 && !OPERATOR_TOKEN.test(tok.slice(1))) {
+      exclusions.push(stripQuotes(tok.slice(1)));
+      continue;
+    }
+
+    const lower = tok.toLowerCase();
+    if (lower === "has:attachment") {
+      hasAttachment = true;
+      continue;
+    }
+
+    const op = tok.match(
+      /^(from|to|subject|newer_than):(.+)$/i,
+    );
+    if (op) {
+      const key = op[1].toLowerCase();
+      const val = stripQuotes(unwrapBraceGroup(op[2]));
+      if (key === "from") from = val;
+      else if (key === "to") to = val;
+      else if (key === "subject") subject = val;
+      else if (key === "newer_than") {
+        dateWithin = NEWER_THAN_DATE[val.toLowerCase()] ?? "";
+      }
+      continue;
+    }
+
+    freeText.push(tok);
+  }
+
+  return {
+    from,
+    to,
+    subject,
+    hasWords: freeText.join(" "),
+    doesntHave: exclusions.join(" "),
+    hasAttachment,
+    dateWithin,
+  };
+}
+
 /** URL to open the same search in Gmail web (for parity checks). */
 export function gmailWebSearchUrl(query: string): string {
   const q = normalizeGmailSearchQuery(query);

@@ -319,7 +319,10 @@ export function MailSearchBar({
           onKeyDown={onKeyDown}
           placeholder={titleCase("Search mail")}
           className={cn(
-            "relative z-[11] h-[46px] w-full rounded-full border border-transparent bg-[#eaf1fb] pl-10 text-[16px] text-[#202124] outline-none transition focus:border-[#0b57d0] focus:bg-white focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]",
+            "relative z-[11] h-[46px] w-full border border-transparent bg-[#eaf1fb] pl-10 text-[16px] text-[#202124] outline-none transition focus:border-[#0b57d0] focus:bg-white focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]",
+            filterOpen
+              ? "rounded-t-full rounded-b-none border-b-[#dadce0]"
+              : "rounded-full",
             inputValue.trim() ? "pr-[4.5rem]" : "pr-10",
           )}
           autoComplete="off"

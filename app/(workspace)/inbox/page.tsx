@@ -41,7 +41,11 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { buildExclusionTokens } from "@/lib/gmail-search-query";
+import {
+  buildExclusionTokens,
+  parseGmailQueryToFilterFields,
+  type GmailFilterFields,
+} from "@/lib/gmail-search-query";
 import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
 import { formatMessageRecipientsLine } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
@@ -366,6 +370,48 @@ export default function InboxPage() {
     setFilterHasAttachment(false);
     setFilterDateWithin("");
   }, []);
+
+  const applyFilterFields = useCallback((fields: GmailFilterFields) => {
+    setFilterFrom(fields.from);
+    setFilterTo(fields.to);
+    setFilterSubject(fields.subject);
+    setFilterHasWords(fields.hasWords);
+    setFilterDoesntHave(fields.doesntHave);
+    setFilterHasAttachment(fields.hasAttachment);
+    setFilterDateWithin(fields.dateWithin);
+  }, []);
+
+  /** Mirror the active search bar query into advanced-search fields (Gmail UI). */
+  const syncFilterFromQuery = useCallback(
+    (query: string) => {
+      const q = query.trim();
+      if (!q) {
+        clearFilter();
+        return;
+      }
+      applyFilterFields(parseGmailQueryToFilterFields(q));
+    },
+    [applyFilterFields, clearFilter],
+  );
+
+  const handleFilterOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        syncFilterFromQuery(mailSearchInput.trim() || mailSearch.trim());
+      }
+      setFilterOpen(open);
+    },
+    [mailSearchInput, mailSearch, syncFilterFromQuery],
+  );
+
+  const handleMailSearch = useCallback(
+    (query: string) => {
+      const q = query.trim();
+      setMailSearch(q);
+      syncFilterFromQuery(q);
+    },
+    [syncFilterFromQuery],
+  );
 
   /** Exit search mode: clear bar, results query, and advanced-filter form. */
   const resetMailSearch = useCallback(() => {
@@ -2851,15 +2897,21 @@ export default function InboxPage() {
             />
 
             {/* Search bar + advanced filter popover trigger — fixed; only the list scrolls */}
-            <div ref={filterPanelRef} className="relative shrink-0 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 py-2">
+            <div
+              ref={filterPanelRef}
+              className={cn(
+                "relative shrink-0 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 pt-2",
+                filterOpen ? "pb-0" : "pb-2",
+              )}
+            >
               <MailSearchBar
                 inputValue={mailSearchInput}
                 onInputChange={setMailSearchInput}
                 activeQuery={mailSearch}
-                onSearch={(query) => setMailSearch(query.trim())}
+                onSearch={handleMailSearch}
                 onReset={resetMailSearch}
                 filterOpen={filterOpen}
-                onFilterOpenChange={setFilterOpen}
+                onFilterOpenChange={handleFilterOpenChange}
                 localContacts={composeRecipientSuggestions}
                 onOpenThread={(threadId) => void openThread(threadId)}
                 onSuggestingChange={setMailSearchSuggesting}
@@ -2867,7 +2919,7 @@ export default function InboxPage() {
 
               {/* Advanced filter popover — opens beneath the search input */}
               {filterOpen && (
-                <div className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
+                <div className="rounded-b-lg border border-t-0 border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
                   <div className="grid gap-3 p-4">
                     {/* From / To use the same RecipientField as Compose so the
                         typeahead behaviour is identical — narrows the dropdown

@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   buildDriveContentFetch,
+  isCsvMimeType,
   suggestedDownloadName,
 } from "@/lib/drive-file-proxy";
+import { csvToPreviewHtml, parseCsvText } from "@/lib/parse-csv";
 import {
   getDriveFileDetails,
   getDriveFileParent,
@@ -138,13 +140,33 @@ export async function GET(
     return NextResponse.json({ error: text || `Upstream ${upstream.status}` }, { status: upstream.status });
   }
 
-  const disposition =
-    mode === "download" ? "attachment" : "inline";
+  const disposition = mode === "download" ? "attachment" : "inline";
   const filename = suggestedDownloadName(name, built.resultMime);
   const cd = `${disposition}; filename*=UTF-8''${encodeURIComponent(filename)}`;
 
   const contentType =
     upstream.headers.get("Content-Type")?.split(";")[0]?.trim() || built.resultMime;
+
+  // Raw CSV in an iframe triggers a download in Chrome/Safari — serve HTML table instead.
+  if (mode === "preview" && isCsvMimeType(mimeType, name)) {
+    const text = await upstream.text();
+    const rows = parseCsvText(text);
+    if (!rows.length) {
+      return new NextResponse(previewErrorHtml("This CSV file is empty."), {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8", ...FRAMING_HEADERS },
+      });
+    }
+    return new NextResponse(csvToPreviewHtml(rows), {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Disposition": "inline",
+        "Cache-Control": "private, no-store",
+        ...FRAMING_HEADERS,
+      },
+    });
+  }
 
   if (!upstream.body) {
     const buf = Buffer.from(await upstream.arrayBuffer());

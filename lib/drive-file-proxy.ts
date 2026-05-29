@@ -24,9 +24,17 @@ export function isOfficeMimeType(mimeType: string): boolean {
   return OFFICE_MIME_TYPES.has(mimeType);
 }
 
+/** CSV uploads — browsers download raw text/csv in iframes; we render as HTML instead. */
+export function isCsvMimeType(mimeType: string, filename?: string): boolean {
+  if (mimeType === "text/csv" || mimeType === "application/csv") return true;
+  if (filename?.toLowerCase().endsWith(".csv")) return true;
+  return false;
+}
+
 /** Types we can reasonably show inside an iframe. */
-export function supportsInAppPreview(mimeType: string): boolean {
+export function supportsInAppPreview(mimeType: string, filename?: string): boolean {
   if (!mimeType || mimeType === "application/vnd.google-apps.folder") return false;
+  if (isCsvMimeType(mimeType, filename)) return true;
   if (mimeType.startsWith("image/")) return true;
   if (mimeType === "application/pdf") return true;
   if (mimeType.startsWith("text/")) return true;

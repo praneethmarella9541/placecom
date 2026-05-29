@@ -1903,7 +1903,7 @@ export default function DrivePage() {
             </div>
 
             <div className="relative min-h-0 flex-1 bg-white dark:bg-zinc-950">
-              {supportsInAppPreview(previewFile.mimeType) ? (
+              {supportsInAppPreview(previewFile.mimeType, previewFile.name) ? (
                 <>
                   {previewLoading && (
                     <div

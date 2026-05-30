@@ -1041,21 +1041,35 @@ export default function CalendarPage() {
         .gc-surface .fc-timegrid-axis-cushion { font-size: 9px !important; text-transform: uppercase; }
         .gc-surface .fc-timegrid-all-day .fc-daygrid-event { margin: 2px !important; }
 
-        /* ── Current time indicator (Google Calendar red line + dot) ── */
-        .gc-surface .fc-timegrid-now-indicator-line {
-          border-width: 2px !important;
-          border-color: #ea4335 !important;
-          z-index: 4 !important;
+        /* ── Current time indicator (Google Calendar: dot + horizontal line) ── */
+        .gc-surface .fc-timegrid-axis-chunk,
+        .gc-surface .fc-timegrid-cols,
+        .gc-surface .fc-timegrid-col-frame,
+        .gc-surface .fc-timegrid-now-indicator-container {
+          overflow: visible !important;
         }
         .gc-surface .fc-timegrid-now-indicator-arrow {
-          border-width: 0 !important;
-          width: 12px !important;
-          height: 12px !important;
-          margin-top: -6px !important;
-          margin-left: -1px !important;
-          border-radius: 50% !important;
-          background: #ea4335 !important;
-          box-shadow: 0 0 0 1px var(--color-surface);
+          display: none !important;
+        }
+        .gc-surface .fc-timegrid-now-indicator-line {
+          border: none !important;
+          border-top: 2px solid #ea4335 !important;
+          left: 0 !important;
+          right: 0 !important;
+          width: auto !important;
+          z-index: 4 !important;
+          pointer-events: none;
+        }
+        .gc-surface .fc-timegrid-now-indicator-line::before {
+          content: "";
+          position: absolute;
+          left: -6px;
+          top: -6px;
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: #ea4335;
+          box-shadow: 0 0 0 2px var(--color-surface);
         }
 
         /* ── Today column — color via --fc-today-bg-color ── */

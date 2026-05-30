@@ -1332,14 +1332,22 @@ export default function InboxPage() {
   }, [threads]);
 
   const sidebarLabelUnread = useCallback(
-    (labelId: string) =>
-      Math.max(labelCounts[labelId]?.unread ?? 0, derivedUserLabelUnread[labelId] ?? 0),
+    (labelId: string) => {
+      const stored = labelCounts[labelId]?.unread ?? 0;
+      const derived = derivedUserLabelUnread[labelId] ?? 0;
+      const inCooldown =
+        Date.now() - lastMutationAtRef.current < MUTATION_COOLDOWN_MS;
+      // During cooldown, loaded rows are ahead of stale count API — cap badge down.
+      if (inCooldown && derived < stored) return derived;
+      return Math.max(stored, derived);
+    },
     [labelCounts, derivedUserLabelUnread]
   );
 
   /** Instant Inbox unread badge — persisted for the tab session so folder switches don't reset. */
   const adjustInboxUnread = useCallback((delta: number) => {
     if (delta === 0) return;
+    lastMutationAtRef.current = Date.now();
     setLabelCounts((prev) => {
       const cur = prev.INBOX?.unread ?? readSessionInboxUnread() ?? 0;
       const next = Math.max(0, cur + delta);
@@ -1365,6 +1373,7 @@ export default function InboxPage() {
   /** Optimistic unread badge on user-label chips in the left rail. */
   const adjustUserLabelUnread = useCallback((labelIds: Iterable<string>, delta: number) => {
     if (delta === 0) return;
+    lastMutationAtRef.current = Date.now();
     setLabelCounts((prev) => {
       let changed = false;
       const next = { ...prev };
@@ -1383,6 +1392,7 @@ export default function InboxPage() {
 
   const setUserLabelCount = useCallback(
     (labelId: string, patch: { total?: number; unread?: number }) => {
+      lastMutationAtRef.current = Date.now();
       setLabelCounts((prev) => {
         const cur = prev[labelId] ?? { total: 0, unread: 0 };
         return {
@@ -1426,25 +1436,37 @@ export default function InboxPage() {
       "CATEGORY_FORUMS",
       ...allLabels.filter((l) => l.type === "user").map((l) => l.id),
     ];
+    const fetchStartedAt = Date.now();
     try {
       const res = await fetch(
         `/api/gmail/folder-counts?ids=${encodeURIComponent(ids.join(","))}`,
         { cache: "no-store" }
       );
       if (!res.ok) return;
+      // Drop responses from before recent read/label mutations finished.
+      if (lastMutationAtRef.current > fetchStartedAt) return;
       const j = (await res.json()) as { counts?: Record<string, { total: number; unread: number }> };
       const incoming = j.counts ?? {};
       setLabelCounts((prev) => {
+        const inCooldown =
+          Date.now() - lastMutationAtRef.current < MUTATION_COOLDOWN_MS;
         const merged: Record<string, { total: number; unread: number }> = { ...incoming };
         for (const l of allLabels) {
           if (l.type !== "user") continue;
           const inc = incoming[l.id];
           const previous = prev[l.id];
-          if (!inc && !previous) continue;
-          merged[l.id] = {
-            total: Math.max(inc?.total ?? 0, previous?.total ?? 0),
-            unread: Math.max(inc?.unread ?? 0, previous?.unread ?? 0),
-          };
+          const serverUnread = inc?.unread ?? previous?.unread ?? 0;
+          if (inCooldown && previous) {
+            // Optimistic reads win over stale high counts from in-flight API calls.
+            merged[l.id] = {
+              total: Math.max(inc?.total ?? 0, previous.total),
+              unread: Math.min(serverUnread, previous.unread),
+            };
+          } else if (inc) {
+            merged[l.id] = { total: inc.total, unread: inc.unread };
+          } else if (previous) {
+            merged[l.id] = previous;
+          }
         }
         if (!incoming.INBOX) return merged;
         const serverUnread = incoming.INBOX.unread ?? 0;

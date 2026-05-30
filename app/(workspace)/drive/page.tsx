@@ -1541,8 +1541,8 @@ export default function DrivePage() {
                 className="min-w-0 flex-1"
               />
               {showLocationColumn && (
-                <span className="hidden w-[160px] shrink-0 md:block">
-                  {titleCase("File location")}
+                <span className="w-[160px] shrink-0 text-[12px] font-medium text-[var(--color-text-muted)]">
+                  {titleCase("Location")}
                 </span>
               )}
               <SortHeader
@@ -1773,7 +1773,7 @@ export default function DrivePage() {
                     </button>
 
                     {showLocationColumn && (
-                      <span className="hidden w-[160px] shrink-0 md:block">
+                      <span className="w-[160px] shrink-0">
                         {file.location ? (
                           <button
                             type="button"
@@ -1781,10 +1781,11 @@ export default function DrivePage() {
                               e.stopPropagation();
                               openFileLocation(file.location!);
                             }}
-                            className="max-w-full truncate text-left text-[13px] text-indigo-700 hover:underline dark:text-indigo-400"
-                            title={titleCase("Open folder")}
+                            className="flex max-w-full items-center gap-1 truncate text-left text-[13px] text-[#1a73e8] hover:underline"
+                            title={`Open folder: ${file.location.label}`}
                           >
-                            {file.location.label}
+                            <IconFolder className="h-3.5 w-3.5 shrink-0 text-[#f6b000]" />
+                            <span className="truncate">{file.location.label}</span>
                           </button>
                         ) : (
                           <span className="text-[13px] text-zinc-400">—</span>

@@ -501,7 +501,6 @@ export default function InboxPage() {
   // Bulk label selection — tracks the union of label IDs on selected threads
   // so the LabelPicker checkboxes show the right initial state.
   const [bulkLabelSelected, setBulkLabelSelected] = useState<Set<string>>(new Set());
-  const [bulkLabelBusy, setBulkLabelBusy] = useState(false);
 
   // bulkBusy removed — actions are fire-and-forget with instant optimistic UI
 
@@ -1760,13 +1759,12 @@ export default function InboxPage() {
   // Add or remove a label on the currently-open thread. Optimistic — flips
   // local chips immediately and rolls back if the server rejects.
   const toggleThreadLabel = useCallback(
-    async (labelId: string, nextChecked: boolean) => {
+    (labelId: string, nextChecked: boolean) => {
       if (!selectedId) return;
       const prev = threadLabelIds;
       setThreadLabelIds((cur) =>
         nextChecked ? Array.from(new Set([...cur, labelId])) : cur.filter((id) => id !== labelId)
       );
-      // Mirror on the row in the list too (and in every cached view).
       mutateThreads((rows) =>
         rows.map((r) =>
           r.id === selectedId
@@ -1781,26 +1779,29 @@ export default function InboxPage() {
       );
       invalidateThreadCache(selectedId);
       if (labelId.startsWith("pending:")) return;
-      try {
-        const res = await fetch(
-          `/api/gmail/threads/${encodeURIComponent(selectedId)}/labels`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(
-              nextChecked ? { add: [labelId] } : { remove: [labelId] }
-            ),
-          }
-        );
-        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
-        scheduleCountRefresh();
-      } catch (e) {
-        setThreadLabelIds(prev);
-        mutateThreads((rows) =>
-          rows.map((r) => (r.id === selectedId ? { ...r, labelIds: prev } : r))
-        );
-        alert(e instanceof Error ? e.message : "Could not update labels");
-      }
+
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/gmail/threads/${encodeURIComponent(selectedId)}/labels`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(
+                nextChecked ? { add: [labelId] } : { remove: [labelId] }
+              ),
+            }
+          );
+          if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
+          scheduleCountRefresh();
+        } catch (e) {
+          setThreadLabelIds(prev);
+          mutateThreads((rows) =>
+            rows.map((r) => (r.id === selectedId ? { ...r, labelIds: prev } : r))
+          );
+          alert(e instanceof Error ? e.message : "Could not update labels");
+        }
+      })();
     },
     [selectedId, threadLabelIds, scheduleCountRefresh, mutateThreads, invalidateThreadCache]
   );
@@ -2176,11 +2177,10 @@ export default function InboxPage() {
 
   /** Called when user toggles a checkbox inside the bulk LabelPicker. */
   const handleBulkLabelToggle = useCallback(
-    async (labelId: string, nextChecked: boolean) => {
+    (labelId: string, nextChecked: boolean) => {
       const ids = Array.from(selectedThreadIds);
-      if (ids.length === 0 || bulkLabelBusy) return;
+      if (ids.length === 0) return;
 
-      // Optimistic: update the local union and thread rows immediately.
       setBulkLabelSelected((prev) => {
         const next = new Set(prev);
         if (nextChecked) next.add(labelId); else next.delete(labelId);
@@ -2201,30 +2201,27 @@ export default function InboxPage() {
           return Array.from(next);
         });
       }
-      if (!labelId.startsWith("pending:")) {
-        for (const id of ids) invalidateThreadCache(id);
-      }
-
       if (labelId.startsWith("pending:")) return;
 
-      setBulkLabelBusy(true);
-      try {
-        await fetch("/api/gmail/threads/batch-modify", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            threadIds: ids,
-            ...(nextChecked ? { add: [labelId] } : { remove: [labelId] }),
-          }),
-        });
-        scheduleCountRefresh();
-      } catch {
-        // Non-fatal — list stays optimistic; user can refresh if needed.
-      } finally {
-        setBulkLabelBusy(false);
-      }
+      for (const id of ids) invalidateThreadCache(id);
+
+      void (async () => {
+        try {
+          await fetch("/api/gmail/threads/batch-modify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              threadIds: ids,
+              ...(nextChecked ? { add: [labelId] } : { remove: [labelId] }),
+            }),
+          });
+          scheduleCountRefresh();
+        } catch {
+          // Non-fatal — list stays optimistic; user can refresh if needed.
+        }
+      })();
     },
-    [selectedThreadIds, selectedId, bulkLabelBusy, scheduleCountRefresh, mutateThreads, invalidateThreadCache]
+    [selectedThreadIds, selectedId, scheduleCountRefresh, mutateThreads, invalidateThreadCache]
   );
 
   /** Create a new label then immediately apply it to all selected threads. */
@@ -3091,9 +3088,8 @@ export default function InboxPage() {
                         <LabelPicker
                           allLabels={allLabels.filter((l) => l.type === "user")}
                           selected={bulkLabelSelected}
-                          onToggle={(id, checked) => void handleBulkLabelToggle(id, checked)}
+                          onToggle={handleBulkLabelToggle}
                           onCreate={handleBulkLabelCreate}
-                          busy={bulkLabelBusy}
                           align="left"
                         />
                       )}
@@ -3465,7 +3461,13 @@ export default function InboxPage() {
                 <div className="border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] px-2 py-2 md:px-4">
                   <div className="mb-3 flex items-center gap-1 border-b border-[var(--gmail-border-row)] pb-2">
                     <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
-                    <Skeleton className="skeleton-shimmer h-8 w-20 shrink-0 rounded-md" />
+                    <LabelPicker
+                      allLabels={allLabels}
+                      selected={openThreadLabelSelected}
+                      onToggle={toggleThreadLabel}
+                      onCreate={createAndApplyLabel}
+                      align="left"
+                    />
                     <ThreadPaneNavButton variant="close" onClick={closeThread} className="ml-auto hidden md:inline-flex" />
                   </div>
                   <div className="mb-3 flex items-center gap-3 px-2 md:px-0">
@@ -3534,7 +3536,7 @@ export default function InboxPage() {
                     <LabelPicker
                       allLabels={allLabels}
                       selected={openThreadLabelSelected}
-                      onToggle={(id, checked) => void toggleThreadLabel(id, checked)}
+                      onToggle={toggleThreadLabel}
                       onCreate={createAndApplyLabel}
                       align="left"
                     />

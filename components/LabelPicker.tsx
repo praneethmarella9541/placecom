@@ -24,22 +24,51 @@ export function LabelPicker({
   selected,
   onToggle,
   onCreate,
-  busy = false,
   align = "right",
 }: {
   allLabels: Label[];
   selected: Set<string>;
   onToggle: (labelId: string, nextChecked: boolean) => void;
   onCreate: (name: string) => Promise<void> | void;
-  busy?: boolean;
   align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
   const [menuStyle, setMenuStyle] = useState<{ top: number; left: number } | null>(null);
+  /** Local overrides so checkboxes flip on click before parent state catches up. */
+  const [pendingChecks, setPendingChecks] = useState<Map<string, boolean>>(new Map());
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const effectiveSelected = useMemo(() => {
+    const next = new Set(selected);
+    pendingChecks.forEach((checked, id) => {
+      if (checked) next.add(id);
+      else next.delete(id);
+    });
+    return next;
+  }, [selected, pendingChecks]);
+
+  useEffect(() => {
+    setPendingChecks((prev) => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Map(prev);
+      prev.forEach((checked, id) => {
+        if (selected.has(id) === checked) {
+          next.delete(id);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [selected]);
+
+  function handleToggle(labelId: string, checked: boolean) {
+    setPendingChecks((prev) => new Map(prev).set(labelId, checked));
+    onToggle(labelId, checked);
+  }
 
   const userLabels = useMemo(
     () => allLabels.filter((l) => l.type === "user"),
@@ -130,7 +159,7 @@ export function LabelPicker({
             <p className="px-3 py-2 text-[12px] text-[#5f6368]">No matching labels.</p>
           )}
           {filtered.map((l) => {
-            const checked = selected.has(l.id);
+            const checked = effectiveSelected.has(l.id);
             const accent = labelColorMap.get(l.id);
             return (
               <label
@@ -140,8 +169,7 @@ export function LabelPicker({
                 <input
                   type="checkbox"
                   checked={checked}
-                  disabled={busy}
-                  onChange={(e) => onToggle(l.id, e.target.checked)}
+                  onChange={(e) => handleToggle(l.id, e.target.checked)}
                   className="accent-[#0b57d0]"
                 />
                 {accent ? (
@@ -180,8 +208,7 @@ export function LabelPicker({
         ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-md border border-[#dadce0] bg-white px-2.5 py-1.5 text-[12px] font-medium text-[#444746] transition-colors hover:bg-[#f1f3f4] disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 rounded-md border border-[#dadce0] bg-white px-2.5 py-1.5 text-[12px] font-medium text-[#444746] transition-colors hover:bg-[#f1f3f4]"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
           <path d="M20.59 13.41 13.41 20.6a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />

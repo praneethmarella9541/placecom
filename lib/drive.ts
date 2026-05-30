@@ -56,8 +56,8 @@ export type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
  * Modes — matches Google Drive's UX:
  *
  * - **Search:** ignore folder/view context, search the ENTIRE Drive
- *   (Drive's own search bar behaviour). OR-joins `name contains` with
- *   `fullText contains` for filename + content matches.
+ *   by filename (`name contains`). fullText is intentionally omitted —
+ *   the Drive API rejects fullText queries with corpora=allDrives.
  * - **View-rooted browse** ("shared-with-me", "starred"): use Drive's
  *   sharedWithMe / starred flags. Folder navigation INSIDE these views
  *   uses parentId (after clicking a folder, we descend normally).
@@ -72,8 +72,9 @@ function buildFilesListQ(
   const t = (search || "").trim();
   if (t) {
     const esc = escapeDriveQFragment(t);
-    // Match filename and body text (Drive search bar behaviour).
-    return `(name contains '${esc}' or fullText contains '${esc}') and trashed = false`;
+    // Name-based search only — Drive API does not support fullText contains
+    // with corpora=allDrives (returns 400). Name search works across all corpora.
+    return `name contains '${esc}' and trashed = false`;
   }
   // At the root of a special view, use Drive's flag; otherwise descend by parent.
   if (atViewRoot && view === "shared-with-me") {

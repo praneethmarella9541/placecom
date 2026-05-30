@@ -146,6 +146,14 @@ function applyDurationFromStart(startStr: string, minutes: number): string {
   return toInputValue(new Date(start.getTime() + minutes * 60_000));
 }
 
+/** Scroll the time grid to ~30 min before now (Google Calendar behaviour). */
+function scrollTimeNearNow(): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - 30, 0, 0);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+}
+
 function isAllDayEvent(ev: EventRow): boolean {
   return !ev.start?.dateTime && !!ev.start?.date;
 }
@@ -1033,9 +1041,21 @@ export default function CalendarPage() {
         .gc-surface .fc-timegrid-axis-cushion { font-size: 9px !important; text-transform: uppercase; }
         .gc-surface .fc-timegrid-all-day .fc-daygrid-event { margin: 2px !important; }
 
-        /* ── Current time indicator — color via --fc-now-indicator-color ── */
+        /* ── Current time indicator (Google Calendar red line + dot) ── */
         .gc-surface .fc-timegrid-now-indicator-line {
           border-width: 2px !important;
+          border-color: #ea4335 !important;
+          z-index: 4 !important;
+        }
+        .gc-surface .fc-timegrid-now-indicator-arrow {
+          border-width: 0 !important;
+          width: 12px !important;
+          height: 12px !important;
+          margin-top: -6px !important;
+          margin-left: -1px !important;
+          border-radius: 50% !important;
+          background: #ea4335 !important;
+          box-shadow: 0 0 0 1px var(--color-surface);
         }
 
         /* ── Today column — color via --fc-today-bg-color ── */
@@ -1212,8 +1232,18 @@ export default function CalendarPage() {
               events={calendarEvents}
               height="100%"
               allDayText="All day"
-              slotMinTime="06:00:00"
-              scrollTime="08:00:00"
+              slotMinTime="00:00:00"
+              slotMaxTime="24:00:00"
+              scrollTime={scrollTimeNearNow()}
+              scrollTimeReset={false}
+              slotDuration="01:00:00"
+              slotLabelInterval="01:00:00"
+              slotLabelFormat={{
+                hour: "numeric",
+                minute: "2-digit",
+                omitZeroMinute: true,
+                meridiem: "short",
+              }}
               dayMaxEvents={5}
               moreLinkClick="popover"
               datesSet={(arg) => {

@@ -55,9 +55,9 @@ export type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
  *
  * Modes — matches Google Drive's UX:
  *
- * - **Search:** ignore folder/view context, search the ENTIRE Drive
- *   by filename (`name contains`). fullText is intentionally omitted —
- *   the Drive API rejects fullText queries with corpora=allDrives.
+ * - **Search:** ignore folder/view context, search My Drive + shared items
+ *   using `name contains OR fullText contains` with corpora=user.
+ *   (fullText + allDrives is rejected by the API with a 400.)
  * - **View-rooted browse** ("shared-with-me", "starred"): use Drive's
  *   sharedWithMe / starred flags. Folder navigation INSIDE these views
  *   uses parentId (after clicking a folder, we descend normally).
@@ -72,9 +72,10 @@ function buildFilesListQ(
   const t = (search || "").trim();
   if (t) {
     const esc = escapeDriveQFragment(t);
-    // Name-based search only — Drive API does not support fullText contains
-    // with corpora=allDrives (returns 400). Name search works across all corpora.
-    return `name contains '${esc}' and trashed = false`;
+    // OR-join name + fullText so content matches (PDFs, docs, etc.) surface
+    // just like Google Drive's own search. fullText only works with
+    // corpora=user — we switch corpora below when hasSearch is true.
+    return `(name contains '${esc}' or fullText contains '${esc}') and trashed = false`;
   }
   // At the root of a special view, use Drive's flag; otherwise descend by parent.
   if (atViewRoot && view === "shared-with-me") {
@@ -277,8 +278,14 @@ export async function listDriveFilesPage(
     params.set("driveId", sharedDriveId);
     params.set("includeItemsFromAllDrives", "true");
     params.set("supportsAllDrives", "true");
+  } else if (hasSearch) {
+    // fullText contains only works with corpora=user (My Drive + shared-with-me).
+    // allDrives rejects fullText queries with a 400. corpora=user still covers
+    // the vast majority of a user's files — same as Google Drive's search.
+    params.set("corpora", "user");
+    params.set("includeItemsFromAllDrives", "true");
+    params.set("supportsAllDrives", "true");
   } else if (
-    hasSearch ||
     (atViewRoot && view === "recent") ||
     (atViewRoot && view === "shared-with-me")
   ) {

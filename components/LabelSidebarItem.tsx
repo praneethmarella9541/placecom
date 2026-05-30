@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Tag } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { MoreVertical, Tag } from "lucide-react";
 import { labelAccentStyle, type LabelLike } from "@/components/LabelChip";
 import { cn } from "@/lib/utils";
 
@@ -26,11 +26,24 @@ export function LabelSidebarItem({
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(label.name);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const accent = accentProp ?? labelAccentStyle(label);
 
   useEffect(() => {
     if (!editing) setEditName(label.name);
   }, [label.name, editing]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
 
   function saveEdit() {
     const trimmed = editName.trim();
@@ -43,8 +56,8 @@ export function LabelSidebarItem({
     onEdit(label.id, trimmed);
   }
 
-  function confirmDelete(e: React.MouseEvent) {
-    e.stopPropagation();
+  function confirmDelete() {
+    setMenuOpen(false);
     const ok = window.confirm(
       `Delete label "${label.name}"?\n\nMessages will not be deleted — only this label will be removed from them.`
     );
@@ -73,91 +86,94 @@ export function LabelSidebarItem({
   }
 
   return (
-    <button
-      type="button"
-      onClick={onSelect}
+    <div
       className={cn(
-        "group flex w-full items-center gap-2.5 rounded-r-full py-[7px] pl-2 pr-1 text-[13px] transition-colors",
+        "group relative flex w-full items-center rounded-r-full py-[7px] pl-2 pr-1 text-[13px] transition-colors",
         active
           ? "bg-[var(--color-primary-light)] font-semibold text-[var(--gmail-nav-active-text)] shadow-[inset_3px_0_0_0_var(--label-accent)]"
           : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
       )}
       style={active ? ({ "--label-accent": accent.accent } as React.CSSProperties) : undefined}
     >
-      <span
-        className={cn(
-          "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
-          active ? "border-white/60" : "border-transparent"
-        )}
-        style={{ backgroundColor: accent.bg }}
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex min-w-0 flex-1 items-center gap-2.5 pr-1 text-left"
       >
-        <Tag className="h-3.5 w-3.5" style={{ color: accent.accent }} strokeWidth={2.25} aria-hidden />
-      </span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-left",
-          !active && "group-hover:text-[var(--color-text)]"
-        )}
-      >
-        {label.name}
-      </span>
-      {unread > 0 ? (
         <span
           className={cn(
-            "mr-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
-            active
-              ? "bg-[var(--color-surface)]/80 text-[var(--gmail-nav-active-text)]"
-              : "bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] group-hover:bg-[var(--color-surface)]"
+            "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
+            active ? "border-white/60" : "border-transparent"
+          )}
+          style={{ backgroundColor: accent.bg }}
+        >
+          <Tag className="h-3.5 w-3.5" style={{ color: accent.accent }} strokeWidth={2.25} aria-hidden />
+        </span>
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            !active && "group-hover:text-[var(--color-text)]"
           )}
         >
-          {unread > 999 ? "999+" : unread}
+          {label.name}
         </span>
-      ) : null}
-      <span className="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100">
-        <span
-          role="button"
-          tabIndex={0}
-          title="Rename label"
+        {unread > 0 ? (
+          <span
+            className={cn(
+              "shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+              active
+                ? "text-[var(--gmail-nav-active-text)]"
+                : "text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]"
+            )}
+          >
+            {unread > 999 ? "999+" : unread}
+          </span>
+        ) : null}
+      </button>
+
+      <div ref={menuRef} className="relative shrink-0">
+        <button
+          type="button"
+          aria-label="Label options"
+          aria-expanded={menuOpen}
           onClick={(e) => {
             e.stopPropagation();
-            setEditName(label.name);
-            setEditing(true);
+            setMenuOpen((v) => !v);
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              e.stopPropagation();
-              setEditName(label.name);
-              setEditing(true);
-            }
-          }}
-          className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+          className={cn(
+            "flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-faint)] transition-opacity hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]",
+            menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          )}
         >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-          </svg>
-        </span>
-        <span
-          role="button"
-          tabIndex={0}
-          title="Delete label"
-          onClick={confirmDelete}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              e.stopPropagation();
-              confirmDelete(e as unknown as React.MouseEvent);
-            }
-          }}
-          className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-faint)] hover:bg-[#fce8e6] hover:text-[#c5221f]"
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          </svg>
-        </span>
-      </span>
-    </button>
+          <MoreVertical className="h-4 w-4" strokeWidth={2} />
+        </button>
+        {menuOpen ? (
+          <div className="absolute right-0 top-full z-50 mt-0.5 min-w-[140px] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg">
+            <button
+              type="button"
+              className="flex w-full px-3 py-2 text-left text-[13px] text-[var(--color-text)] hover:bg-[var(--color-surface-offset)]"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                setEditName(label.name);
+                setEditing(true);
+              }}
+            >
+              Rename
+            </button>
+            <button
+              type="button"
+              className="flex w-full px-3 py-2 text-left text-[13px] text-[#c5221f] hover:bg-[#fce8e6]"
+              onClick={(e) => {
+                e.stopPropagation();
+                confirmDelete();
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }

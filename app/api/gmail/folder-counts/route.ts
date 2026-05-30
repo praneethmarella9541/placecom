@@ -99,10 +99,11 @@ export async function GET(request: Request) {
         const j = (await res.json()) as {
           threadsTotal?: number;
           threadsUnread?: number;
+          messagesUnread?: number;
         };
         counts[id] = {
           total: j.threadsTotal ?? 0,
-          unread: j.threadsUnread ?? 0,
+          unread: j.threadsUnread ?? j.messagesUnread ?? 0,
         };
       } catch {
         // Network blips — keep going for the rest.

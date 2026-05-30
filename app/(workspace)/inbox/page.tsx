@@ -1314,6 +1314,29 @@ export default function InboxPage() {
   // stay correct across navigations without any client-side cache logic.
   const [labelCounts, setLabelCounts] = useState<Record<string, { total: number; unread: number }>>({});
 
+  /** Unread per user label from loaded thread rows (fills gaps when Gmail counts lag). */
+  const derivedUserLabelUnread = useMemo(() => {
+    const byLabel = new Map<string, Set<string>>();
+    for (const t of threads) {
+      if (!t.unread) continue;
+      for (const id of t.labelIds ?? []) {
+        if (!byLabel.has(id)) byLabel.set(id, new Set());
+        byLabel.get(id)!.add(t.id);
+      }
+    }
+    const out: Record<string, number> = {};
+    byLabel.forEach((ids, id) => {
+      out[id] = ids.size;
+    });
+    return out;
+  }, [threads]);
+
+  const sidebarLabelUnread = useCallback(
+    (labelId: string) =>
+      Math.max(labelCounts[labelId]?.unread ?? 0, derivedUserLabelUnread[labelId] ?? 0),
+    [labelCounts, derivedUserLabelUnread]
+  );
+
   /** Instant Inbox unread badge — persisted for the tab session so folder switches don't reset. */
   const adjustInboxUnread = useCallback((delta: number) => {
     if (delta === 0) return;
@@ -1412,7 +1435,18 @@ export default function InboxPage() {
       const j = (await res.json()) as { counts?: Record<string, { total: number; unread: number }> };
       const incoming = j.counts ?? {};
       setLabelCounts((prev) => {
-        if (!incoming.INBOX) return incoming;
+        const merged: Record<string, { total: number; unread: number }> = { ...incoming };
+        for (const l of allLabels) {
+          if (l.type !== "user") continue;
+          const inc = incoming[l.id];
+          const previous = prev[l.id];
+          if (!inc && !previous) continue;
+          merged[l.id] = {
+            total: Math.max(inc?.total ?? 0, previous?.total ?? 0),
+            unread: Math.max(inc?.unread ?? 0, previous?.unread ?? 0),
+          };
+        }
+        if (!incoming.INBOX) return merged;
         const serverUnread = incoming.INBOX.unread ?? 0;
         const sessionUnread = readSessionInboxUnread();
         const mergedUnread = mergeInboxUnread(serverUnread, sessionUnread);
@@ -1423,9 +1457,9 @@ export default function InboxPage() {
         ) {
           const unread = Math.min(prev.INBOX.unread, mergedUnread);
           writeSessionInboxUnread(unread);
-          return { ...incoming, INBOX: { ...incoming.INBOX, unread } };
+          return { ...merged, INBOX: { ...incoming.INBOX, unread } };
         }
-        return { ...incoming, INBOX: { ...incoming.INBOX, unread: mergedUnread } };
+        return { ...merged, INBOX: { ...incoming.INBOX, unread: mergedUnread } };
       });
     } catch { /* ignore */ }
   }, [allLabels]);
@@ -3169,7 +3203,7 @@ export default function InboxPage() {
               .filter((l) => l.type === "user")
               .slice(0, 15)
               .map((l) => {
-                const unread = labelCounts[l.id]?.unread ?? 0;
+                const unread = sidebarLabelUnread(l.id);
                 const active = filterLabelId === l.id;
                 const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
                 return (

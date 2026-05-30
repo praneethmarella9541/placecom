@@ -6,7 +6,8 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
-import type { DateSelectArg, EventClickArg } from "@fullcalendar/core";
+import type { DateSelectArg, EventClickArg, EventDropArg } from "@fullcalendar/core";
+import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatCalendarDateTime } from "@/lib/utils";
 import {
@@ -14,6 +15,7 @@ import {
   IconChevronRight,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconX,
 } from "@/components/Icons";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
@@ -113,6 +115,43 @@ function buildMiniGrid(year: number, month: number): (null | { d: number; month:
 
 function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+const USER_TZ =
+  typeof Intl !== "undefined"
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    : "Asia/Kolkata";
+
+function defaultMeetingTimes(): { start: string; end: string } {
+  const start = new Date();
+  start.setMinutes(Math.ceil(start.getMinutes() / 15) * 15, 0, 0);
+  const end = new Date(start.getTime() + 30 * 60_000);
+  return { start: toInputValue(start), end: toInputValue(end) };
+}
+
+function applyDurationFromStart(startStr: string, minutes: number): string {
+  const start = new Date(startStr);
+  if (Number.isNaN(start.getTime())) return "";
+  return toInputValue(new Date(start.getTime() + minutes * 60_000));
+}
+
+function isAllDayEvent(ev: EventRow): boolean {
+  return !ev.start?.dateTime && !!ev.start?.date;
+}
+
+function eventMatchesSearch(ev: EventRow, q: string): boolean {
+  const needle = q.trim().toLowerCase();
+  if (!needle) return true;
+  const hay = [
+    ev.summary,
+    ev.description,
+    ev.location,
+    ...(ev.attendees ?? []).flatMap((a) => [a.email, a.displayName]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return hay.includes(needle);
 }
 
 /* ─── Sub-components ────────────────────────────────────────── */
@@ -215,15 +254,19 @@ function MiniMonthPicker({
 
 /** Mini agenda — next N upcoming events in the left rail. */
 function MiniAgenda({ events, onSelect }: { events: EventRow[]; onSelect: (e: EventRow) => void }) {
-  const now = Date.now();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
   const upcoming = useMemo(
     () =>
       events
         .filter((e) => isUpcoming(e, now))
         .sort((a, b) => (eventStartMs(a) ?? 0) - (eventStartMs(b) ?? 0))
         .slice(0, 8),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [events]
+    [events, now]
   );
 
   if (upcoming.length === 0) return null;
@@ -283,6 +326,7 @@ export default function CalendarPage() {
   const [googleContacts, setGoogleContacts] = useState<RecipientSuggestion[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [calendarSearch, setCalendarSearch] = useState("");
   const [syncing, setSyncing] = useState(false);
 
   // View state
@@ -302,8 +346,10 @@ export default function CalendarPage() {
   const [recruiterEmail, setRecruiterEmail] = useState("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
+  const [location, setLocation] = useState("");
   const [startDateTime, setStartDateTime] = useState("");
   const [endDateTime, setEndDateTime] = useState("");
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [addMeet, setAddMeet] = useState(true);
 
   // Edit form fields
@@ -311,8 +357,11 @@ export default function CalendarPage() {
   const [editError, setEditError] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editNotes, setEditNotes] = useState("");
+  const [editLocation, setEditLocation] = useState("");
   const [editStart, setEditStart] = useState("");
   const [editEnd, setEditEnd] = useState("");
+  const [editAllDay, setEditAllDay] = useState(false);
+  const [editAddMeet, setEditAddMeet] = useState(false);
   const [editAttendees, setEditAttendees] = useState(""); // comma-sep emails
   const [editNotify, setEditNotify] = useState<SendUpdates>("all");
   // Success state — shown after meeting created
@@ -326,8 +375,8 @@ export default function CalendarPage() {
       const json = (await res.json()) as { recruiters?: RecruiterRow[]; error?: string };
       if (!res.ok) throw new Error(json.error || "Failed to load recruiters");
       setRecruiters(json.recruiters || []);
-    } catch (e) {
-      setError(clientFetchFailedMessage(e));
+    } catch {
+      // Non-fatal — contacts still power suggestions.
     } finally {
       setLoadingRecruiters(false);
     }
@@ -417,10 +466,19 @@ export default function CalendarPage() {
     }
   }
 
-  function onDateSelect(arg: DateSelectArg) {
-    setStartDateTime(toInputValue(arg.start));
-    setEndDateTime(toInputValue(arg.end));
+  function openScheduleModal(prefill?: { start?: string; end?: string }) {
+    const defaults = defaultMeetingTimes();
+    setStartDateTime(prefill?.start ?? defaults.start);
+    setEndDateTime(prefill?.end ?? defaults.end);
+    setScheduleError(null);
     setScheduleOpen(true);
+  }
+
+  function onDateSelect(arg: DateSelectArg) {
+    openScheduleModal({
+      start: toInputValue(arg.start),
+      end: toInputValue(arg.end),
+    });
   }
 
   function onEventClick(arg: EventClickArg) {
@@ -429,30 +487,41 @@ export default function CalendarPage() {
     if (match) setSelectedEvent(match);
   }
 
+  const filteredEvents = useMemo(
+    () => events.filter((e) => eventMatchesSearch(e, calendarSearch)),
+    [events, calendarSearch]
+  );
+
   /* ── FullCalendar events ─────────────────────────────── */
   const calendarEvents = useMemo(
     () =>
-      events.map((e) => ({
+      filteredEvents.map((e) => ({
         id: e.id,
         title: e.summary || "(untitled)",
         start: e.start?.dateTime || e.start?.date,
         end: e.end?.dateTime || e.end?.date,
-        url: "", // block default navigation
+        url: "",
         allDay: !e.start?.dateTime,
+        editable: !isAllDayEvent(e),
       })),
-    [events]
+    [filteredEvents]
   );
 
   /* ── Schedule meeting (create) ───────────────────────── */
   async function scheduleMeeting() {
-    // The recipient field may now hold multiple chips ("Foo" <foo@x.com>, …) —
-    // pick the first email as the primary recruiterEmail and pass any
-    // additional ones as extraAttendeeEmails so the server invites them all.
     const allEmails = extractAllEmailsFromText(recruiterEmail);
     const primary = allEmails[0];
     const extras = allEmails.slice(1);
-    if (!primary || !title || !startDateTime || !endDateTime) return;
+    if (!primary || !title || !startDateTime || !endDateTime) {
+      setScheduleError("Fill in title, guests, and start/end times.");
+      return;
+    }
+    if (new Date(endDateTime) <= new Date(startDateTime)) {
+      setScheduleError("End time must be after start time.");
+      return;
+    }
     setBusy(true);
+    setScheduleError(null);
     setError(null);
     try {
       const res = await fetch("/api/calendar/schedule", {
@@ -462,10 +531,12 @@ export default function CalendarPage() {
           recruiterEmail: primary,
           title,
           notes,
+          location: location.trim() || undefined,
+          timeZone: USER_TZ,
           startDateTime: new Date(startDateTime).toISOString(),
           endDateTime: new Date(endDateTime).toISOString(),
           addMeet,
-          sendUpdates: "all", // always email guests on create
+          sendUpdates: "all",
           extraAttendeeEmails: extras.length ? extras : undefined,
         }),
       });
@@ -478,11 +549,14 @@ export default function CalendarPage() {
       const meetLink = body.event?.hangoutLink ?? null;
       setCreatedMeetLink(meetLink);
       setScheduleOpen(false);
-      setRecruiterEmail(""); setTitle(""); setNotes("");
+      setRecruiterEmail("");
+      setTitle("");
+      setNotes("");
+      setLocation("");
       await loadRecruiters();
       await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     } catch (e) {
-      setError(clientFetchFailedMessage(e));
+      setScheduleError(clientFetchFailedMessage(e));
     } finally {
       setBusy(false);
     }
@@ -493,12 +567,28 @@ export default function CalendarPage() {
     setEditEvent(ev);
     setEditTitle(ev.summary || "");
     setEditNotes(ev.description || "");
-    setEditStart(ev.start?.dateTime ? toInputValue(new Date(ev.start.dateTime)) : "");
-    setEditEnd(ev.end?.dateTime ? toInputValue(new Date(ev.end.dateTime)) : "");
+    setEditLocation(ev.location || "");
+    const allDay = isAllDayEvent(ev);
+    setEditAllDay(allDay);
+    setEditStart(
+      allDay
+        ? ev.start?.date || ""
+        : ev.start?.dateTime
+          ? toInputValue(new Date(ev.start.dateTime))
+          : ""
+    );
+    setEditEnd(
+      allDay
+        ? ev.end?.date || ""
+        : ev.end?.dateTime
+          ? toInputValue(new Date(ev.end.dateTime))
+          : ""
+    );
     setEditAttendees((ev.attendees ?? []).map((a) => a.email).filter(Boolean).join(", "));
+    setEditAddMeet(!ev.hangoutLink);
     setEditNotify("all");
     setEditError(null);
-    setSelectedEvent(null); // close detail view
+    setSelectedEvent(null);
   }
 
   /* ── Cancel / delete a scheduled event ──────────────────
@@ -591,12 +681,24 @@ export default function CalendarPage() {
   /* ── Save edits ──────────────────────────────────────── */
   async function saveEdit() {
     if (!editEvent || !editTitle || !editStart || !editEnd) return;
+    if (!editAllDay && new Date(editEnd) <= new Date(editStart)) {
+      setEditError("End time must be after start time.");
+      return;
+    }
     setEditBusy(true);
     setEditError(null);
     try {
-      // Parse attendees from the recipient field — handles both plain emails
-      // and Gmail-style "Name" <email> chip serialization.
       const attendees = extractAllEmailsFromText(editAttendees).map((email) => ({ email }));
+      const start = editAllDay
+        ? editEvent.start?.date
+          ? { date: editEvent.start.date }
+          : undefined
+        : { dateTime: new Date(editStart).toISOString(), timeZone: USER_TZ };
+      const end = editAllDay
+        ? editEvent.end?.date
+          ? { date: editEvent.end.date }
+          : undefined
+        : { dateTime: new Date(editEnd).toISOString(), timeZone: USER_TZ };
 
       const res = await fetch(`/api/calendar/events/${encodeURIComponent(editEvent.id)}`, {
         method: "PATCH",
@@ -604,9 +706,11 @@ export default function CalendarPage() {
         body: JSON.stringify({
           summary: editTitle,
           description: editNotes || undefined,
-          start: { dateTime: new Date(editStart).toISOString() },
-          end: { dateTime: new Date(editEnd).toISOString() },
+          location: editLocation.trim() || undefined,
+          ...(start ? { start } : {}),
+          ...(end ? { end } : {}),
           attendees: attendees.length ? attendees : undefined,
+          addMeet: editAddMeet && !editEvent.hangoutLink ? true : undefined,
           sendUpdates: editNotify,
         }),
       });
@@ -627,6 +731,54 @@ export default function CalendarPage() {
     setSyncing(false);
   }
 
+  /** Drag or resize on the grid — PATCH new times (Google Calendar behaviour). */
+  async function rescheduleEvent(
+    eventId: string,
+    start: Date,
+    end: Date,
+    revert: () => void
+  ) {
+    try {
+      const res = await fetch(`/api/calendar/events/${encodeURIComponent(eventId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          start: { dateTime: start.toISOString(), timeZone: USER_TZ },
+          end: { dateTime: end.toISOString(), timeZone: USER_TZ },
+          sendUpdates: "all",
+        }),
+      });
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(body.error || "Failed to reschedule");
+      await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
+    } catch (e) {
+      revert();
+      alert(clientFetchFailedMessage(e));
+    }
+  }
+
+  function onEventDrop(arg: EventDropArg) {
+    if (!arg.event.start || !arg.event.end) {
+      arg.revert();
+      return;
+    }
+    void rescheduleEvent(arg.event.id, arg.event.start, arg.event.end, arg.revert);
+  }
+
+  function onEventResize(arg: EventResizeDoneArg) {
+    if (!arg.event.start || !arg.event.end) {
+      arg.revert();
+      return;
+    }
+    void rescheduleEvent(arg.event.id, arg.event.start, arg.event.end, arg.revert);
+  }
+
+  useEffect(() => {
+    if (!createdMeetLink) return;
+    const t = setTimeout(() => setCreatedMeetLink(null), 12_000);
+    return () => clearTimeout(t);
+  }, [createdMeetLink]);
+
   /* ── Deep-link from inbox invite buttons ─────────────────
    *
    * The inbox view routes here with ?eventId=...&action=edit|delete after
@@ -638,24 +790,41 @@ export default function CalendarPage() {
   const handledDeepLinkRef = useRef(false);
   useEffect(() => {
     if (handledDeepLinkRef.current) return;
-    if (loadingEvents) return; // wait for events to load
     const eventId = searchParams.get("eventId");
     const action = searchParams.get("action");
     if (!eventId || (action !== "edit" && action !== "delete")) return;
-    const match = events.find((e) => e.id === eventId);
-    if (!match) {
-      // Event not present in the current loaded window — clear the URL
-      // and surface a soft hint rather than getting stuck retrying.
+
+    async function resolveDeepLink() {
+      let match = events.find((e) => e.id === eventId);
+      if (!match && !loadingEvents) {
+        try {
+          const res = await fetch(`/api/calendar/events/${encodeURIComponent(eventId!)}`);
+          const body = (await res.json()) as { event?: EventRow; error?: string };
+          if (res.ok && body.event) {
+            match = body.event;
+            setEvents((prev) =>
+              prev.some((e) => e.id === match!.id) ? prev : [...prev, match!]
+            );
+          }
+        } catch {
+          /* fall through */
+        }
+      }
+      if (loadingEvents && !match) return;
+
+      if (!match) {
+        handledDeepLinkRef.current = true;
+        router.replace("/calendar");
+        alert("Could not find that meeting. It may have been deleted.");
+        return;
+      }
       handledDeepLinkRef.current = true;
+      if (action === "edit") openEdit(match);
+      else openDeleteConfirm(match);
       router.replace("/calendar");
-      alert("That meeting isn't in the currently loaded date range. Browse the calendar to find it.");
-      return;
     }
-    handledDeepLinkRef.current = true;
-    if (action === "edit") openEdit(match);
-    else openDeleteConfirm(match);
-    // Strip the query params so a page refresh doesn't re-open the modal.
-    router.replace("/calendar");
+
+    void resolveDeepLink();
   }, [events, loadingEvents, searchParams, router]);
 
   /* ── Render ──────────────────────────────────────────── */
@@ -819,7 +988,7 @@ export default function CalendarPage() {
           {/* "+ Create" button */}
           <div className="px-3 pt-4 pb-2">
             <button
-              onClick={() => setScheduleOpen(true)}
+              onClick={() => openScheduleModal()}
               className="flex w-full items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-text)] shadow-sm hover:shadow-md transition-shadow"
             >
               <IconPlus className="h-5 w-5 text-[var(--color-primary)]" />
@@ -841,7 +1010,7 @@ export default function CalendarPage() {
           <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4">
             {/* Mobile: "Create" button */}
             <button
-              onClick={() => setScheduleOpen(true)}
+              onClick={() => openScheduleModal()}
               className="md:hidden flex items-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-3 py-1.5 text-xs font-semibold text-white"
             >
               <IconPlus className="h-3.5 w-3.5" /> Create
@@ -870,7 +1039,23 @@ export default function CalendarPage() {
             </div>
 
             {/* Title */}
-            <h1 className="flex-1 text-lg font-normal text-[var(--color-text)] truncate">
+            <h1 className="hidden sm:block flex-1 text-lg font-normal text-[var(--color-text)] truncate">
+              {viewTitle}
+            </h1>
+
+            {/* Search — filter visible events like Google Calendar quick find */}
+            <div className="relative flex-1 sm:max-w-[220px]">
+              <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+              <input
+                type="search"
+                value={calendarSearch}
+                onChange={(e) => setCalendarSearch(e.target.value)}
+                placeholder="Search events"
+                className="input-field h-8 w-full pl-8 text-xs"
+              />
+            </div>
+
+            <h1 className="sm:hidden flex-1 text-base font-normal text-[var(--color-text)] truncate">
               {viewTitle}
             </h1>
 
@@ -925,6 +1110,9 @@ export default function CalendarPage() {
               headerToolbar={false}
               selectable
               selectMirror
+              editable
+              eventDrop={onEventDrop}
+              eventResize={onEventResize}
               nowIndicator
               slotEventOverlap={true}
               eventOverlap={true}
@@ -933,9 +1121,10 @@ export default function CalendarPage() {
               events={calendarEvents}
               height="100%"
               allDayText="All day"
-              slotMinTime="07:00:00"
+              slotMinTime="06:00:00"
               scrollTime="08:00:00"
-              dayMaxEvents={3}
+              dayMaxEvents={5}
+              moreLinkClick="popover"
               datesSet={(arg) => {
                 setViewDate(arg.view.currentStart);
                 setViewTitle(arg.view.title);
@@ -1042,19 +1231,52 @@ export default function CalendarPage() {
                 )}
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <input
-                  type="datetime-local"
-                  value={startDateTime}
-                  onChange={(e) => setStartDateTime(e.target.value)}
-                  className="input-field"
-                />
-                <input
-                  type="datetime-local"
-                  value={endDateTime}
-                  onChange={(e) => setEndDateTime(e.target.value)}
-                  className="input-field"
-                />
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Start</label>
+                  <input
+                    type="datetime-local"
+                    value={startDateTime}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setStartDateTime(next);
+                      if (endDateTime && new Date(endDateTime) <= new Date(next)) {
+                        setEndDateTime(applyDurationFromStart(next, 30));
+                      }
+                    }}
+                    className="input-field"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">End</label>
+                  <input
+                    type="datetime-local"
+                    value={endDateTime}
+                    onChange={(e) => setEndDateTime(e.target.value)}
+                    className="input-field"
+                  />
+                </div>
               </div>
+              <div className="flex flex-wrap gap-2">
+                {([30, 60, 90] as const).map((mins) => (
+                  <button
+                    key={mins}
+                    type="button"
+                    onClick={() => startDateTime && setEndDateTime(applyDurationFromStart(startDateTime, mins))}
+                    disabled={!startDateTime}
+                    className="rounded-full border border-[var(--color-border)] px-3 py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] disabled:opacity-40"
+                  >
+                    {mins === 60 ? "1 hr" : `${mins} min`}
+                  </button>
+                ))}
+                <span className="self-center text-[10px] text-[var(--color-text-faint)]">{USER_TZ}</span>
+              </div>
+              <input
+                type="text"
+                placeholder="Location or video call link (optional)"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                className="input-field"
+              />
               <textarea
                 rows={3}
                 placeholder="Notes (optional)"
@@ -1101,6 +1323,11 @@ export default function CalendarPage() {
                 </span>
               </button>
 
+              {scheduleError && (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
+                  {scheduleError}
+                </p>
+              )}
               {error && (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
                   {error}
@@ -1154,7 +1381,20 @@ export default function CalendarPage() {
                 {selectedEvent.location ? (
                   <>
                     <dt className="text-[var(--color-text-faint)] font-medium">Where</dt>
-                    <dd className="text-[var(--color-text)]">{selectedEvent.location}</dd>
+                    <dd className="text-[var(--color-text)]">
+                      {selectedEvent.location.startsWith("http") ? (
+                        <a
+                          href={selectedEvent.location}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[var(--color-primary)] hover:underline break-all"
+                        >
+                          {selectedEvent.location}
+                        </a>
+                      ) : (
+                        selectedEvent.location
+                      )}
+                    </dd>
                   </>
                 ) : null}
 
@@ -1236,8 +1476,8 @@ export default function CalendarPage() {
               </dl>
             </div>
 
-            <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] px-5 py-3">
-              <div className="flex gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] px-5 py-3">
+              <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={() => setSelectedEvent(null)} className="btn-ghost">
                   Close
                 </button>
@@ -1257,17 +1497,36 @@ export default function CalendarPage() {
                 >
                   {deleteBusy ? "Deleting…" : "Delete"}
                 </button>
-              </div>
-              <div className="flex gap-2">
-                {selectedEvent.hangoutLink ? (
+                {selectedEvent.htmlLink ? (
                   <a
-                    href={selectedEvent.hangoutLink}
+                    href={selectedEvent.htmlLink}
                     target="_blank"
                     rel="noreferrer"
-                    className="btn-primary"
+                    className="btn-ghost text-xs"
                   >
-                    Join meeting
+                    Open in Google Calendar
                   </a>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {selectedEvent.hangoutLink ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void navigator.clipboard.writeText(selectedEvent.hangoutLink!)}
+                      className="btn-secondary text-xs"
+                    >
+                      Copy Meet link
+                    </button>
+                    <a
+                      href={selectedEvent.hangoutLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-primary"
+                    >
+                      Join meeting
+                    </a>
+                  </>
                 ) : null}
               </div>
             </div>
@@ -1299,20 +1558,58 @@ export default function CalendarPage() {
               />
 
               {/* Times */}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <input
-                  type="datetime-local"
-                  value={editStart}
-                  onChange={(e) => setEditStart(e.target.value)}
-                  className="input-field"
-                />
-                <input
-                  type="datetime-local"
-                  value={editEnd}
-                  onChange={(e) => setEditEnd(e.target.value)}
-                  className="input-field"
-                />
-              </div>
+              {editAllDay ? (
+                <p className="rounded-lg bg-[var(--color-surface-offset)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+                  All-day events can be edited in Google Calendar. Timed reschedule is not supported here.
+                </p>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <input
+                    type="datetime-local"
+                    value={editStart}
+                    onChange={(e) => setEditStart(e.target.value)}
+                    className="input-field"
+                  />
+                  <input
+                    type="datetime-local"
+                    value={editEnd}
+                    onChange={(e) => setEditEnd(e.target.value)}
+                    className="input-field"
+                  />
+                </div>
+              )}
+
+              <input
+                type="text"
+                placeholder="Location (optional)"
+                value={editLocation}
+                onChange={(e) => setEditLocation(e.target.value)}
+                className="input-field"
+              />
+
+              {!editAllDay && !editEvent.hangoutLink ? (
+                <button
+                  type="button"
+                  onClick={() => setEditAddMeet((v) => !v)}
+                  className={[
+                    "flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
+                    editAddMeet
+                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                      : "border-[var(--color-border)] hover:bg-[var(--color-surface-offset)]",
+                  ].join(" ")}
+                >
+                  <span className="text-sm font-medium text-[var(--color-text)]">Add Google Meet</span>
+                  <span className={[
+                    "ml-auto relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors",
+                    editAddMeet ? "bg-[var(--color-primary)]" : "bg-[var(--color-border-strong)]",
+                  ].join(" ")}>
+                    <span className={[
+                      "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5",
+                      editAddMeet ? "translate-x-4" : "translate-x-0.5",
+                    ].join(" ")} />
+                  </span>
+                </button>
+              ) : null}
 
               {/* Attendees */}
               <div>
@@ -1400,7 +1697,7 @@ export default function CalendarPage() {
               </button>
               <button
                 type="button"
-                disabled={editBusy || !editTitle || !editStart || !editEnd}
+                disabled={editBusy || !editTitle || (!editAllDay && (!editStart || !editEnd))}
                 onClick={() => void saveEdit()}
                 className="btn-primary"
               >

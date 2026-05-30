@@ -38,26 +38,35 @@ async function parseGoogleErrorBody(res: Response): Promise<string> {
   }
 }
 
+export type CalendarEventsPage = {
+  events: CalendarEventItem[];
+  nextPageToken?: string;
+};
+
 /**
  * List events from any Google Calendar (e.g. the Meet-organizer calendar).
  * For the signed-in user's primary calendar, prefer listPrimaryCalendarEvents.
  */
-export async function listCalendarEvents(
+export async function listCalendarEventsPage(
   accessToken: string,
   calendarId: string,
-  opts: { timeMin?: string; timeMax?: string; maxResults?: number; iCalUID?: string } = {}
-): Promise<CalendarEventItem[]> {
+  opts: {
+    timeMin?: string;
+    timeMax?: string;
+    maxResults?: number;
+    iCalUID?: string;
+    pageToken?: string;
+  } = {}
+): Promise<CalendarEventsPage> {
   const cal = encodeURIComponent(calendarId.trim() || "primary");
   const u = new URL(`${CALENDAR_API}/calendars/${cal}/events`);
   u.searchParams.set("singleEvents", "true");
   u.searchParams.set("orderBy", "startTime");
-  u.searchParams.set("maxResults", String(opts.maxResults ?? 100));
+  u.searchParams.set("maxResults", String(Math.min(250, opts.maxResults ?? 250)));
   if (opts.timeMin) u.searchParams.set("timeMin", opts.timeMin);
   if (opts.timeMax) u.searchParams.set("timeMax", opts.timeMax);
-  // iCalUID lookup — invite emails carry the event's iCalUID in their ICS
-  // attachment, so the inbox can pass it here to resolve the event without
-  // knowing the calendar event id.
   if (opts.iCalUID) u.searchParams.set("iCalUID", opts.iCalUID);
+  if (opts.pageToken) u.searchParams.set("pageToken", opts.pageToken);
 
   let res: Response;
   try {
@@ -80,15 +89,70 @@ export async function listCalendarEvents(
     throw err;
   }
 
-  const body = (await res.json()) as { items?: CalendarEventItem[] };
-  return body.items || [];
+  const body = (await res.json()) as {
+    items?: CalendarEventItem[];
+    nextPageToken?: string;
+  };
+  return { events: body.items || [], nextPageToken: body.nextPageToken };
+}
+
+/** @deprecated Use listCalendarEventsPage — kept for callers expecting a flat array. */
+export async function listCalendarEvents(
+  accessToken: string,
+  calendarId: string,
+  opts: { timeMin?: string; timeMax?: string; maxResults?: number; iCalUID?: string } = {}
+): Promise<CalendarEventItem[]> {
+  const page = await listCalendarEventsPage(accessToken, calendarId, opts);
+  return page.events;
 }
 
 export async function listPrimaryCalendarEvents(
   accessToken: string,
   opts: { timeMin?: string; timeMax?: string; maxResults?: number; iCalUID?: string } = {}
 ): Promise<CalendarEventItem[]> {
-  return listCalendarEvents(accessToken, "primary", opts);
+  const cap = Math.min(2500, Math.max(1, opts.maxResults ?? 500));
+  const out: CalendarEventItem[] = [];
+  let pageToken: string | undefined;
+  while (out.length < cap) {
+    const page = await listCalendarEventsPage(accessToken, "primary", {
+      timeMin: opts.timeMin,
+      timeMax: opts.timeMax,
+      iCalUID: opts.iCalUID,
+      maxResults: Math.min(250, cap - out.length),
+      pageToken,
+    });
+    out.push(...page.events);
+    pageToken = page.nextPageToken;
+    if (!pageToken || page.events.length === 0) break;
+  }
+  return out;
+}
+
+export async function getCalendarEvent(
+  accessToken: string,
+  eventId: string
+): Promise<CalendarEventItem> {
+  const url = `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(e, "Google Calendar API (get event)")
+    );
+  }
+  if (!res.ok) {
+    const msg = await parseGoogleErrorBody(res);
+    const err = new Error(`Google Calendar event failed: ${msg}`) as Error & {
+      code?: string;
+    };
+    err.code = toErrorCode(res.status);
+    throw err;
+  }
+  return (await res.json()) as CalendarEventItem;
 }
 
 /**
@@ -260,6 +324,7 @@ export async function createPlacementMeetingEvent(
     /** Meeting title — required. */
     title: string;
     notes?: string;
+    location?: string;
     startDateTime: string;
     endDateTime: string;
     timeZone?: string;
@@ -290,6 +355,7 @@ export async function createPlacementMeetingEvent(
   const payload: Record<string, unknown> = {
     summary: input.title.trim(),
     description: input.notes?.trim() || undefined,
+    location: input.location?.trim() || undefined,
     start: {
       dateTime: input.startDateTime,
       timeZone: input.timeZone || "Asia/Kolkata",

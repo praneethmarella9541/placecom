@@ -23,8 +23,8 @@ export async function GET(request: Request) {
   const timeMax = searchParams.get("timeMax") || undefined;
   const iCalUID = searchParams.get("iCalUID")?.trim() || undefined;
   const maxResults = Math.min(
-    250,
-    Math.max(1, parseInt(searchParams.get("maxResults") || "100", 10) || 100)
+    2500,
+    Math.max(1, parseInt(searchParams.get("maxResults") || "500", 10) || 500)
   );
 
   try {

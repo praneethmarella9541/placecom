@@ -3,6 +3,7 @@ import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   CALENDAR_INSUFFICIENT_SCOPE,
   deleteCalendarEvent,
+  getCalendarEvent,
   patchCalendarEvent,
 } from "@/lib/google-calendar";
 
@@ -39,6 +40,26 @@ function handleError(e: unknown) {
     { error: err.message || "Calendar request failed" },
     { status: 500 }
   );
+}
+
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireGmailAccessToken(_request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.message }, { status: auth.status });
+  }
+  const { id } = await context.params;
+  if (!id) {
+    return NextResponse.json({ error: "Missing event id" }, { status: 400 });
+  }
+  try {
+    const event = await getCalendarEvent(auth.accessToken, id);
+    return NextResponse.json({ event });
+  } catch (e) {
+    return handleError(e);
+  }
 }
 
 export async function PATCH(

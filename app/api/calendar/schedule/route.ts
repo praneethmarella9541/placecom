@@ -40,6 +40,8 @@ export async function POST(request: Request) {
         startDateTime?: string;
         endDateTime?: string;
         notes?: string;
+        location?: string;
+        timeZone?: string;
         addMeet?: boolean;
         sendUpdates?: SendUpdates;
         extraAttendeeEmails?: string[];
@@ -103,6 +105,8 @@ export async function POST(request: Request) {
         startDateTime,
         endDateTime,
         notes: body?.notes,
+        location: body?.location,
+        timeZone: body?.timeZone,
         extraAttendeeEmails,
         addMeet: body?.addMeet !== false,           // default true
         sendUpdates: body?.sendUpdates ?? "all",     // default: send invite emails

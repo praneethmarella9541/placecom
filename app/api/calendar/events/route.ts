@@ -4,6 +4,7 @@ import {
   CALENDAR_INSUFFICIENT_SCOPE,
   createCalendarEvent,
   listPrimaryCalendarEvents,
+  searchPrimaryCalendarEvents,
 } from "@/lib/google-calendar";
 
 export const runtime = "nodejs";
@@ -22,18 +23,23 @@ export async function GET(request: Request) {
   const timeMin = searchParams.get("timeMin") || undefined;
   const timeMax = searchParams.get("timeMax") || undefined;
   const iCalUID = searchParams.get("iCalUID")?.trim() || undefined;
+  const q = searchParams.get("q")?.trim() || undefined;
   const maxResults = Math.min(
     2500,
     Math.max(1, parseInt(searchParams.get("maxResults") || "500", 10) || 500)
   );
 
   try {
-    const events = await listPrimaryCalendarEvents(auth.accessToken, {
-      timeMin,
-      timeMax,
-      maxResults,
-      iCalUID,
-    });
+    const events = q
+      ? await searchPrimaryCalendarEvents(auth.accessToken, q, {
+          maxResults: Math.min(250, maxResults),
+        })
+      : await listPrimaryCalendarEvents(auth.accessToken, {
+          timeMin,
+          timeMax,
+          maxResults,
+          iCalUID,
+        });
     return NextResponse.json({ events });
   } catch (e) {
     const err = e as Error & { code?: string };

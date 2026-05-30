@@ -158,19 +158,18 @@ function isAllDayEvent(ev: EventRow): boolean {
   return !ev.start?.dateTime && !!ev.start?.date;
 }
 
-function eventMatchesSearch(ev: EventRow, q: string): boolean {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  const hay = [
-    ev.summary,
-    ev.description,
-    ev.location,
-    ...(ev.attendees ?? []).flatMap((a) => [a.email, a.displayName]),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  return hay.includes(needle);
+function formatEventWhen(ev: EventRow): string {
+  const startRaw = ev.start?.dateTime || ev.start?.date;
+  const endRaw = ev.end?.dateTime || ev.end?.date;
+  if (!startRaw) return "";
+  if (isAllDayEvent(ev)) {
+    const start = formatCalendarDateTime(startRaw);
+    const end = endRaw && endRaw !== startRaw ? formatCalendarDateTime(endRaw) : null;
+    return end ? `${start} – ${end}` : start;
+  }
+  const start = formatCalendarDateTime(startRaw);
+  const end = endRaw ? formatCalendarDateTime(endRaw) : "";
+  return end ? `${start} – ${end}` : start;
 }
 
 /* ─── Sub-components ────────────────────────────────────────── */
@@ -345,7 +344,11 @@ export default function CalendarPage() {
   const [googleContacts, setGoogleContacts] = useState<RecipientSuggestion[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [calendarSearch, setCalendarSearch] = useState("");
+  const [calendarSearchInput, setCalendarSearchInput] = useState("");
+  const [calendarSearchQuery, setCalendarSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<EventRow[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   // View state
@@ -426,6 +429,45 @@ export default function CalendarPage() {
       setLoadingEvents(false);
     }
   }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => setCalendarSearchQuery(calendarSearchInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [calendarSearchInput]);
+
+  useEffect(() => {
+    if (!calendarSearchQuery) {
+      setSearchResults([]);
+      setSearchError(null);
+      setSearchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchLoading(true);
+    setSearchError(null);
+    fetch(
+      `/api/calendar/events?q=${encodeURIComponent(calendarSearchQuery)}&maxResults=100`,
+      { cache: "no-store" }
+    )
+      .then(async (res) => {
+        const body = (await res.json()) as { events?: EventRow[]; error?: string };
+        if (!res.ok) throw new Error(body.error || "Search failed");
+        if (cancelled) return;
+        setSearchResults(body.events ?? []);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setSearchResults([]);
+          setSearchError(e instanceof Error ? e.message : "Search failed");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSearchLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [calendarSearchQuery]);
 
   useEffect(() => { void loadRecruiters(); }, [loadRecruiters]);
 
@@ -558,15 +600,29 @@ export default function CalendarPage() {
     if (match) setSelectedEvent(match);
   }
 
-  const filteredEvents = useMemo(
-    () => events.filter((e) => eventMatchesSearch(e, calendarSearch)),
-    [events, calendarSearch]
-  );
+  function clearCalendarSearch() {
+    setCalendarSearchInput("");
+    setCalendarSearchQuery("");
+    setSearchResults([]);
+    setSearchError(null);
+  }
+
+  function openSearchResult(ev: EventRow) {
+    const startMs = eventStartMs(ev);
+    if (startMs) {
+      const d = new Date(startMs);
+      getApi()?.gotoDate(d);
+      setViewDate(d);
+    }
+    setEvents((prev) => (prev.some((e) => e.id === ev.id) ? prev : [...prev, ev]));
+    clearCalendarSearch();
+    setSelectedEvent(ev);
+  }
 
   /* ── FullCalendar events ─────────────────────────────── */
   const calendarEvents = useMemo(
     () =>
-      filteredEvents.map((e) => ({
+      events.map((e) => ({
         id: e.id,
         title: `${e.recurrence?.length || e.recurringEventId ? "↻ " : ""}${e.summary || "(untitled)"}`,
         start: e.start?.dateTime || e.start?.date,
@@ -575,7 +631,7 @@ export default function CalendarPage() {
         allDay: !e.start?.dateTime,
         editable: !isAllDayEvent(e),
       })),
-    [filteredEvents]
+    [events]
   );
 
   /* ── Schedule meeting (create) ───────────────────────── */
@@ -1168,16 +1224,26 @@ export default function CalendarPage() {
               {viewTitle}
             </h1>
 
-            {/* Search — filter visible events like Google Calendar quick find */}
-            <div className="relative flex-1 sm:max-w-[220px]">
+            {/* Search — Google Calendar full-text via API */}
+            <div className="relative flex-1 sm:max-w-[260px]">
               <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
               <input
                 type="search"
-                value={calendarSearch}
-                onChange={(e) => setCalendarSearch(e.target.value)}
+                value={calendarSearchInput}
+                onChange={(e) => setCalendarSearchInput(e.target.value)}
                 placeholder="Search events"
-                className="input-field h-8 w-full pl-8 text-xs"
+                className="input-field h-8 w-full pl-8 pr-8 text-xs"
               />
+              {calendarSearchInput ? (
+                <button
+                  type="button"
+                  onClick={clearCalendarSearch}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)]"
+                  aria-label="Clear search"
+                >
+                  <IconX className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
             </div>
 
             <h1 className="sm:hidden flex-1 text-base font-normal text-[var(--color-text)] truncate">
@@ -1226,7 +1292,62 @@ export default function CalendarPage() {
             </div>
           </header>
 
-          {/* ── FullCalendar ──────────────────────────── */}
+          {/* ── Search results (Google Calendar) or grid ── */}
+          {calendarSearchQuery ? (
+            <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+              <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-2.5">
+                <p className="text-sm text-[var(--color-text)]">
+                  {searchLoading ? (
+                    "Searching…"
+                  ) : (
+                    <>
+                      {searchResults.length} result{searchResults.length === 1 ? "" : "s"} for{" "}
+                      <span className="font-medium">&ldquo;{calendarSearchQuery}&rdquo;</span>
+                    </>
+                  )}
+                </p>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {searchError ? (
+                  <p className="px-4 py-8 text-center text-sm text-red-600 dark:text-red-400">
+                    {searchError}
+                  </p>
+                ) : searchLoading ? (
+                  <p className="px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
+                    Searching your calendar…
+                  </p>
+                ) : searchResults.length === 0 ? (
+                  <p className="px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
+                    No events found. Try a different keyword, guest name, or location.
+                  </p>
+                ) : (
+                  <ul className="divide-y divide-[var(--color-border)]">
+                    {searchResults.map((ev) => (
+                      <li key={ev.id}>
+                        <button
+                          type="button"
+                          onClick={() => openSearchResult(ev)}
+                          className="flex w-full flex-col gap-0.5 px-4 py-3 text-left hover:bg-[var(--color-surface-offset)] transition-colors"
+                        >
+                          <span className="text-sm font-medium text-[var(--color-text)]">
+                            {ev.summary || "(untitled)"}
+                          </span>
+                          <span className="text-xs text-[var(--color-text-muted)]">
+                            {formatEventWhen(ev)}
+                          </span>
+                          {ev.location ? (
+                            <span className="truncate text-xs text-[var(--color-text-faint)]">
+                              {ev.location}
+                            </span>
+                          ) : null}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          ) : (
           <div className="flex-1 overflow-hidden gc-surface">
             <FullCalendar
               ref={calendarRef}
@@ -1289,6 +1410,7 @@ export default function CalendarPage() {
               }}
             />
           </div>
+          )}
         </div>
       </div>
 

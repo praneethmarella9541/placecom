@@ -73,13 +73,20 @@ export async function listCalendarEventsPage(
     maxResults?: number;
     iCalUID?: string;
     pageToken?: string;
+    /** Free-text search — cannot combine with orderBy=startTime. */
+    q?: string;
   } = {}
 ): Promise<CalendarEventsPage> {
   const cal = encodeURIComponent(calendarId.trim() || "primary");
   const u = new URL(`${CALENDAR_API}/calendars/${cal}/events`);
   u.searchParams.set("singleEvents", "true");
-  u.searchParams.set("orderBy", "startTime");
   u.searchParams.set("maxResults", String(Math.min(250, opts.maxResults ?? 250)));
+  const q = opts.q?.trim();
+  if (q) {
+    u.searchParams.set("q", q);
+  } else {
+    u.searchParams.set("orderBy", "startTime");
+  }
   if (opts.timeMin) u.searchParams.set("timeMin", opts.timeMin);
   if (opts.timeMax) u.searchParams.set("timeMax", opts.timeMax);
   if (opts.iCalUID) u.searchParams.set("iCalUID", opts.iCalUID);
@@ -143,6 +150,40 @@ export async function listPrimaryCalendarEvents(
     if (!pageToken || page.events.length === 0) break;
   }
   return out;
+}
+
+/** Full-text search across primary calendar (Google Calendar `q` param). */
+export async function searchPrimaryCalendarEvents(
+  accessToken: string,
+  query: string,
+  opts: { maxResults?: number } = {}
+): Promise<CalendarEventItem[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const cap = Math.min(250, Math.max(1, opts.maxResults ?? 100));
+  const now = Date.now();
+  const timeMin = new Date(now - 730 * 86400000).toISOString();
+  const timeMax = new Date(now + 730 * 86400000).toISOString();
+  const out: CalendarEventItem[] = [];
+  let pageToken: string | undefined;
+  while (out.length < cap) {
+    const page = await listCalendarEventsPage(accessToken, "primary", {
+      q,
+      timeMin,
+      timeMax,
+      maxResults: Math.min(250, cap - out.length),
+      pageToken,
+    });
+    out.push(...page.events);
+    pageToken = page.nextPageToken;
+    if (!pageToken || page.events.length === 0) break;
+  }
+  out.sort((a, b) => {
+    const ta = Date.parse(a.start.dateTime || a.start.date || "");
+    const tb = Date.parse(b.start.dateTime || b.start.date || "");
+    return (Number.isNaN(ta) ? 0 : ta) - (Number.isNaN(tb) ? 0 : tb);
+  });
+  return out.slice(0, cap);
 }
 
 export async function getCalendarEvent(

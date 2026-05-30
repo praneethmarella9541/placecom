@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LabelChip, labelAccentStyle, buildLabelColorMap } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
+import { LabelSidebarItem } from "@/components/LabelSidebarItem";
 import {
   findInvalidRecipient,
   formatRecipientError,
@@ -56,7 +57,7 @@ import { GmailDatePicker } from "@/components/GmailDatePicker";
 import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
 import { formatMessageRecipientsLine } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
-import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Tag } from "lucide-react";
+import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -1338,6 +1339,41 @@ export default function InboxPage() {
     }));
   }, []);
 
+  /** Optimistic unread badge on user-label chips in the left rail. */
+  const adjustUserLabelUnread = useCallback((labelIds: Iterable<string>, delta: number) => {
+    if (delta === 0) return;
+    setLabelCounts((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of Array.from(labelIds)) {
+        if (!id) continue;
+        const cur = next[id] ?? { total: 0, unread: 0 };
+        const unread = Math.max(0, cur.unread + delta);
+        if (unread !== cur.unread) {
+          next[id] = { ...cur, unread };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const setUserLabelCount = useCallback(
+    (labelId: string, patch: { total?: number; unread?: number }) => {
+      setLabelCounts((prev) => {
+        const cur = prev[labelId] ?? { total: 0, unread: 0 };
+        return {
+          ...prev,
+          [labelId]: {
+            total: patch.total ?? cur.total,
+            unread: patch.unread ?? cur.unread,
+          },
+        };
+      });
+    },
+    []
+  );
+
   const { width: sidebarWidth, onResizeStart: onSidebarResizeStart } = useResizablePane(
     STORAGE_SIDEBAR_W,
     256,
@@ -1851,6 +1887,8 @@ export default function InboxPage() {
     const wasUnread = threads.find((r) => r.id === threadId)?.unread;
     if (wasUnread) {
       adjustInboxUnread(-1);
+      const rowLabels = threads.find((r) => r.id === threadId)?.labelIds;
+      if (rowLabels?.length) adjustUserLabelUnread(rowLabels, -1);
       lastMutationAtRef.current = Date.now();
     }
     fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}/labels`, {
@@ -1894,6 +1932,7 @@ export default function InboxPage() {
     scheduleCountRefresh,
     mutateThreads,
     adjustInboxUnread,
+    adjustUserLabelUnread,
     fetchThreadData,
     composeOpen,
     composeKind,
@@ -1906,6 +1945,7 @@ export default function InboxPage() {
       if (!selectedId) return;
       const prev = threadLabelIds;
       const prevRow = threads.find((r) => r.id === selectedId);
+      const rowWasUnread = !!prevRow?.unread;
       setThreadLabelIds((cur) =>
         nextChecked ? Array.from(new Set([...cur, labelId])) : cur.filter((id) => id !== labelId)
       );
@@ -1923,6 +1963,10 @@ export default function InboxPage() {
           ),
         { labelId, added: nextChecked, threadIds: [selectedId] }
       );
+      if (!labelId.startsWith("pending:")) {
+        if (nextChecked && rowWasUnread) adjustUserLabelUnread([labelId], 1);
+        if (!nextChecked && rowWasUnread) adjustUserLabelUnread([labelId], -1);
+      }
       invalidateThreadCache(selectedId);
       if (labelId.startsWith("pending:")) return;
 
@@ -1968,6 +2012,7 @@ export default function InboxPage() {
       scheduleCountRefresh,
       applyLabelListUpdate,
       invalidateThreadCache,
+      adjustUserLabelUnread,
     ]
   );
 
@@ -2090,13 +2135,31 @@ export default function InboxPage() {
 
       if (action === "markRead" && unreadInSelection > 0) {
         adjustInboxUnread(-unreadInSelection);
+        for (const id of ids) {
+          const row = threads.find((t) => t.id === id);
+          if (row?.unread && row.labelIds?.length) {
+            adjustUserLabelUnread(row.labelIds, -1);
+          }
+        }
       } else if (action === "markUnread" && folder === "inbox") {
         adjustInboxUnread(ids.length);
+        for (const id of ids) {
+          const row = threads.find((t) => t.id === id);
+          if (row && !row.unread && row.labelIds?.length) {
+            adjustUserLabelUnread(row.labelIds, 1);
+          }
+        }
       } else if (
         (action === "archive" || action === "trash" || action === "spam") &&
         unreadInSelection > 0
       ) {
         adjustInboxUnread(-unreadInSelection);
+        for (const id of ids) {
+          const row = threads.find((t) => t.id === id);
+          if (row?.unread && row.labelIds?.length) {
+            adjustUserLabelUnread(row.labelIds, -1);
+          }
+        }
       }
 
       const removeFromList =
@@ -2208,7 +2271,7 @@ export default function InboxPage() {
         })
         .catch(rollback);
     },
-    [threads, selectedId, folder, scheduleCountRefresh, mutateThreads, loadThreads, adjustInboxUnread]
+    [threads, selectedId, folder, scheduleCountRefresh, mutateThreads, loadThreads, adjustInboxUnread, adjustUserLabelUnread]
   );
 
   const performBulkAction = useCallback(
@@ -2265,6 +2328,14 @@ export default function InboxPage() {
       for (const [key, entry] of migrated) {
         listCacheRef.current.set(key, entry);
       }
+      setLabelCounts((prev) => {
+        if (!(tempId in prev)) return prev;
+        const next = { ...prev };
+        const counts = next[tempId];
+        delete next[tempId];
+        next[real.id] = counts ?? { total: 0, unread: 0 };
+        return next;
+      });
     },
     [mutateThreads]
   );
@@ -2394,6 +2465,14 @@ export default function InboxPage() {
           }),
         { labelId, added: nextChecked, threadIds: ids }
       );
+      if (!labelId.startsWith("pending:")) {
+        let unreadDelta = 0;
+        for (const id of ids) {
+          const row = threads.find((t) => t.id === id);
+          if (row?.unread) unreadDelta += nextChecked ? 1 : -1;
+        }
+        if (unreadDelta !== 0) adjustUserLabelUnread([labelId], unreadDelta);
+      }
       if (selectedId && selectedThreadIds.has(selectedId)) {
         setThreadLabelIds((cur) => {
           const next = new Set(cur);
@@ -2424,9 +2503,11 @@ export default function InboxPage() {
     [
       selectedThreadIds,
       selectedId,
+      threads,
       scheduleCountRefresh,
       applyLabelListUpdate,
       invalidateThreadCache,
+      adjustUserLabelUnread,
     ]
   );
 
@@ -2439,6 +2520,8 @@ export default function InboxPage() {
       const pending = makePendingLabel(trimmed);
       setAllLabels((prev) => insertLabelSorted(prev, pending));
       setBulkLabelSelected((prev) => new Set(prev).add(pending.id));
+      const unreadCount = ids.filter((id) => threads.find((t) => t.id === id)?.unread).length;
+      setUserLabelCount(pending.id, { total: ids.length, unread: unreadCount });
       applyLabelListUpdate(
         (rows) =>
           rows.map((r) => {
@@ -2452,7 +2535,7 @@ export default function InboxPage() {
       );
       void finalizeLabelCreation(pending.id, trimmed, { threadIds: ids });
     },
-    [selectedThreadIds, applyLabelListUpdate, finalizeLabelCreation]
+    [selectedThreadIds, threads, applyLabelListUpdate, finalizeLabelCreation, setUserLabelCount]
   );
 
   const toggleRowSelection = useCallback((threadId: string) => {
@@ -2488,15 +2571,24 @@ export default function InboxPage() {
       if (!trimmed) return;
       const pending = makePendingLabel(trimmed);
       setAllLabels((prev) => insertLabelSorted(prev, pending));
+      setUserLabelCount(pending.id, { total: 0, unread: 0 });
       const threadId = selectedId;
-      if (threadId) applyLabelOptimistic(threadId, pending.id);
+      if (threadId) {
+        applyLabelOptimistic(threadId, pending.id);
+        const row = threads.find((t) => t.id === threadId);
+        if (row?.unread) {
+          setUserLabelCount(pending.id, { total: 1, unread: 1 });
+        } else if (row) {
+          setUserLabelCount(pending.id, { total: 1, unread: 0 });
+        }
+      }
       void finalizeLabelCreation(
         pending.id,
         trimmed,
         threadId ? { threadId } : undefined
       );
     },
-    [selectedId, applyLabelOptimistic, finalizeLabelCreation]
+    [selectedId, threads, applyLabelOptimistic, finalizeLabelCreation, setUserLabelCount]
   );
 
   /** Create a new label from the left-rail form (no thread to apply it to). */
@@ -2505,15 +2597,26 @@ export default function InboxPage() {
     if (!name) return;
     const pending = makePendingLabel(name);
     setAllLabels((prev) => insertLabelSorted(prev, pending));
+    setUserLabelCount(pending.id, { total: 0, unread: 0 });
     setNewLabelInput("");
     setShowNewLabelForm(false);
     void finalizeLabelCreation(pending.id, name);
   }
 
-  const handleLabelEdit = useCallback(
-    async (labelId: string, newName: string) => {
-      const trimmed = newName.trim();
-      if (!trimmed) return;
+  const handleLabelEdit = useCallback((labelId: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    let previousName = "";
+    setAllLabels((prev) => {
+      const existing = prev.find((l) => l.id === labelId);
+      if (!existing) return prev;
+      previousName = existing.name;
+      return insertLabelSorted(prev.filter((l) => l.id !== labelId), {
+        ...existing,
+        name: trimmed,
+      });
+    });
+    void (async () => {
       try {
         const res = await fetch(`/api/gmail/labels/${encodeURIComponent(labelId)}`, {
           method: "PATCH",
@@ -2533,63 +2636,89 @@ export default function InboxPage() {
             ...j.label,
           });
         });
-        scheduleCountRefresh();
+        void loadCounts();
       } catch (e) {
+        setAllLabels((prev) => {
+          const existing = prev.find((l) => l.id === labelId);
+          if (!existing) return prev;
+          return insertLabelSorted(prev.filter((l) => l.id !== labelId), {
+            ...existing,
+            name: previousName,
+          });
+        });
         alert(e instanceof Error ? e.message : "Could not rename label");
       }
-    },
-    [scheduleCountRefresh]
-  );
+    })();
+  }, [loadCounts]);
 
   const handleLabelDelete = useCallback(
-    async (labelId: string) => {
-      try {
-        const res = await fetch(`/api/gmail/labels/${encodeURIComponent(labelId)}`, {
-          method: "DELETE",
-        });
-        if (!res.ok) {
-          const j = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(j.error || "Could not delete label");
+    (labelId: string) => {
+      const snapshotLabels = allLabels;
+      const snapshotCounts = labelCounts;
+      const stripLabel = (rows: ThreadRow[]) =>
+        rows.map((r) => ({
+          ...r,
+          labelIds: r.labelIds?.filter((id) => id !== labelId),
+        }));
+
+      setAllLabels((prev) => prev.filter((l) => l.id !== labelId));
+      setThreads((prev) => {
+        const updated = stripLabel(prev);
+        const visible = filterRowsForActiveLabelView(updated);
+        closeThreadIfMissingFromList(visible);
+        return visible;
+      });
+      patchAllThreadCaches(stripLabel);
+      listCacheRef.current.forEach((entry, key) => {
+        if (listCacheLabelId(key) === labelId) {
+          listCacheRef.current.delete(key);
+        } else {
+          listCacheRef.current.set(key, { ...entry, threads: stripLabel(entry.threads) });
         }
-        setAllLabels((prev) => prev.filter((l) => l.id !== labelId));
-        const stripLabel = (rows: ThreadRow[]) =>
-          rows.map((r) => ({
-            ...r,
-            labelIds: r.labelIds?.filter((id) => id !== labelId),
-          }));
-        setThreads((prev) => {
-          const updated = stripLabel(prev);
-          const visible = filterRowsForActiveLabelView(updated);
-          closeThreadIfMissingFromList(visible);
-          return visible;
-        });
-        patchAllThreadCaches(stripLabel);
-        listCacheRef.current.forEach((entry, key) => {
-          if (listCacheLabelId(key) === labelId) {
-            listCacheRef.current.delete(key);
-          } else {
-            listCacheRef.current.set(key, { ...entry, threads: stripLabel(entry.threads) });
+      });
+      setThreadLabelIds((cur) => cur.filter((id) => id !== labelId));
+      setBulkLabelSelected((prev) => {
+        if (!prev.has(labelId)) return prev;
+        const next = new Set(prev);
+        next.delete(labelId);
+        return next;
+      });
+      if (filterLabelId === labelId) setFilterLabelId(null);
+      setLabelCounts((prev) => {
+        if (!(labelId in prev)) return prev;
+        const next = { ...prev };
+        delete next[labelId];
+        return next;
+      });
+
+      void (async () => {
+        try {
+          const res = await fetch(`/api/gmail/labels/${encodeURIComponent(labelId)}`, {
+            method: "DELETE",
+          });
+          if (!res.ok) {
+            const j = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(j.error || "Could not delete label");
           }
-        });
-        setThreadLabelIds((cur) => cur.filter((id) => id !== labelId));
-        setBulkLabelSelected((prev) => {
-          if (!prev.has(labelId)) return prev;
-          const next = new Set(prev);
-          next.delete(labelId);
-          return next;
-        });
-        if (filterLabelId === labelId) setFilterLabelId(null);
-        scheduleCountRefresh();
-      } catch (e) {
-        alert(e instanceof Error ? e.message : "Could not delete label");
-      }
+          void loadCounts();
+        } catch (e) {
+          setAllLabels(snapshotLabels);
+          setLabelCounts(snapshotCounts);
+          listCacheRef.current.clear();
+          void loadThreads({ append: false, forceRefresh: true });
+          alert(e instanceof Error ? e.message : "Could not delete label");
+        }
+      })();
     },
     [
+      allLabels,
+      labelCounts,
       filterRowsForActiveLabelView,
       closeThreadIfMissingFromList,
       patchAllThreadCaches,
       filterLabelId,
-      scheduleCountRefresh,
+      loadCounts,
+      loadThreads,
     ]
   );
 
@@ -3044,62 +3173,21 @@ export default function InboxPage() {
                 const active = filterLabelId === l.id;
                 const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
                 return (
-                  <button
+                  <LabelSidebarItem
                     key={l.id}
-                    type="button"
-                    onClick={() => {
+                    label={l}
+                    active={active}
+                    unread={unread}
+                    accent={accent}
+                    onSelect={() => {
                       setFilterLabelId(active ? null : l.id);
                       setFolder("inbox");
                       setSelectedId(null);
                       setMessages(null);
                     }}
-                    className={cn(
-                      "group flex w-full items-center gap-2.5 rounded-r-full py-[7px] pl-2 pr-3 text-[13px] transition-colors",
-                      active
-                        ? "bg-[var(--color-primary-light)] font-semibold text-[var(--gmail-nav-active-text)] shadow-[inset_3px_0_0_0_var(--label-accent)]"
-                        : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
-                    )}
-                    style={
-                      active
-                        ? ({ "--label-accent": accent.accent } as React.CSSProperties)
-                        : undefined
-                    }
-                  >
-                    <span
-                      className={cn(
-                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border transition-colors",
-                        active ? "border-white/60" : "border-transparent"
-                      )}
-                      style={{ backgroundColor: accent.bg }}
-                    >
-                      <Tag
-                        className="h-3.5 w-3.5"
-                        style={{ color: accent.accent }}
-                        strokeWidth={2.25}
-                        aria-hidden
-                      />
-                    </span>
-                    <span
-                      className={cn(
-                        "min-w-0 flex-1 truncate text-left",
-                        !active && "group-hover:text-[var(--color-text)]"
-                      )}
-                    >
-                      {l.name}
-                    </span>
-                    {unread > 0 && (
-                      <span
-                        className={cn(
-                          "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
-                          active
-                            ? "bg-[var(--color-surface)]/80 text-[var(--gmail-nav-active-text)]"
-                            : "bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] group-hover:bg-[var(--color-surface)]"
-                        )}
-                      >
-                        {unread > 999 ? "999+" : unread}
-                      </span>
-                    )}
-                  </button>
+                    onEdit={handleLabelEdit}
+                    onDelete={handleLabelDelete}
+                  />
                 );
               })}
             {allLabels.filter((l) => l.type === "user").length === 0 && !showNewLabelForm && (

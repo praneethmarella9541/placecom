@@ -36,7 +36,6 @@ export function LabelPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [creating, setCreating] = useState(false);
   const [createMode, setCreateMode] = useState(false);
   const [newLabelName, setNewLabelName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -143,34 +142,29 @@ export function LabelPicker({
       (l) => l.name.toLowerCase() === query.trim().toLowerCase()
     );
 
-  async function submitCreate(name: string) {
+  function submitCreate(name: string) {
     const trimmed = name.trim();
-    if (!trimmed || creating) return;
-    setCreating(true);
-    try {
-      await onCreate(trimmed);
-      setQuery("");
-      setNewLabelName("");
-      setCreateMode(false);
-    } finally {
-      setCreating(false);
-    }
+    if (!trimmed) return;
+    setQuery("");
+    setNewLabelName("");
+    setCreateMode(false);
+    void Promise.resolve(onCreate(trimmed));
   }
 
-  async function submitEdit(labelId: string) {
+  function submitEdit(labelId: string) {
     const trimmed = editName.trim();
     if (!trimmed || !onEdit) return;
     setEditingId(null);
-    await onEdit(labelId, trimmed);
+    onEdit(labelId, trimmed);
   }
 
-  async function submitDelete(labelId: string, displayName: string) {
+  function submitDelete(labelId: string, displayName: string) {
     if (!onDelete) return;
     const ok = window.confirm(
       `Delete label "${displayName}"?\n\nMessages will not be deleted — only this label will be removed from them.`
     );
     if (!ok) return;
-    await onDelete(labelId);
+    onDelete(labelId);
   }
 
   const menu =
@@ -286,10 +280,9 @@ export function LabelPicker({
             <button
               type="button"
               onClick={() => void submitCreate(query.trim())}
-              disabled={creating}
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-[#0b57d0] hover:bg-[#f1f3f4] disabled:opacity-50"
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-[#0b57d0] hover:bg-[#f1f3f4]"
             >
-              {creating ? "Creating…" : `Create "${query.trim()}"`}
+              {`Create "${query.trim()}"`}
             </button>
           </div>
         )}
@@ -312,11 +305,11 @@ export function LabelPicker({
               />
               <button
                 type="button"
-                disabled={creating || !newLabelName.trim()}
+                disabled={!newLabelName.trim()}
                 onClick={() => void submitCreate(newLabelName)}
                 className="shrink-0 text-[12px] font-medium text-[#0b57d0] disabled:opacity-40"
               >
-                {creating ? "…" : "Add"}
+                Add
               </button>
             </div>
           ) : (

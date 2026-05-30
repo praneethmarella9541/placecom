@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LabelChip, labelAccentStyle, buildLabelColorMap } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
+import {
+  findInvalidRecipient,
+  formatRecipientError,
+} from "@/lib/validate-mail-recipients";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
 import { ThreadActionsMenu } from "@/components/ThreadActionsMenu";
@@ -558,6 +562,7 @@ export default function InboxPage() {
     | { phase: "error"; message: string; retry: () => void };
   const [sendSnack, setSendSnack] = useState<SendSnackState | null>(null);
   const sendSnackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [composeFieldError, setComposeFieldError] = useState<string | null>(null);
 
   /** Show the snackbar and auto-dismiss it after `ms` milliseconds. */
   function showSendSnack(state: SendSnackState, autoDismissMs?: number) {
@@ -2505,6 +2510,89 @@ export default function InboxPage() {
     void finalizeLabelCreation(pending.id, name);
   }
 
+  const handleLabelEdit = useCallback(
+    async (labelId: string, newName: string) => {
+      const trimmed = newName.trim();
+      if (!trimmed) return;
+      try {
+        const res = await fetch(`/api/gmail/labels/${encodeURIComponent(labelId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmed }),
+        });
+        const j = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          label?: GmailLabel;
+        };
+        if (!res.ok || !j.label) throw new Error(j.error || "Could not rename label");
+        setAllLabels((prev) => {
+          const existing = prev.find((l) => l.id === labelId);
+          if (!existing) return prev;
+          return insertLabelSorted(prev.filter((l) => l.id !== labelId), {
+            ...existing,
+            ...j.label,
+          });
+        });
+        scheduleCountRefresh();
+      } catch (e) {
+        alert(e instanceof Error ? e.message : "Could not rename label");
+      }
+    },
+    [scheduleCountRefresh]
+  );
+
+  const handleLabelDelete = useCallback(
+    async (labelId: string) => {
+      try {
+        const res = await fetch(`/api/gmail/labels/${encodeURIComponent(labelId)}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(j.error || "Could not delete label");
+        }
+        setAllLabels((prev) => prev.filter((l) => l.id !== labelId));
+        const stripLabel = (rows: ThreadRow[]) =>
+          rows.map((r) => ({
+            ...r,
+            labelIds: r.labelIds?.filter((id) => id !== labelId),
+          }));
+        setThreads((prev) => {
+          const updated = stripLabel(prev);
+          const visible = filterRowsForActiveLabelView(updated);
+          closeThreadIfMissingFromList(visible);
+          return visible;
+        });
+        patchAllThreadCaches(stripLabel);
+        listCacheRef.current.forEach((entry, key) => {
+          if (listCacheLabelId(key) === labelId) {
+            listCacheRef.current.delete(key);
+          } else {
+            listCacheRef.current.set(key, { ...entry, threads: stripLabel(entry.threads) });
+          }
+        });
+        setThreadLabelIds((cur) => cur.filter((id) => id !== labelId));
+        setBulkLabelSelected((prev) => {
+          if (!prev.has(labelId)) return prev;
+          const next = new Set(prev);
+          next.delete(labelId);
+          return next;
+        });
+        if (filterLabelId === labelId) setFilterLabelId(null);
+        scheduleCountRefresh();
+      } catch (e) {
+        alert(e instanceof Error ? e.message : "Could not delete label");
+      }
+    },
+    [
+      filterRowsForActiveLabelView,
+      closeThreadIfMissingFromList,
+      patchAllThreadCaches,
+      filterLabelId,
+      scheduleCountRefresh,
+    ]
+  );
+
   function openNewCompose() {
     setComposeKind("new");
     setComposeThreadId(null);
@@ -2607,10 +2695,17 @@ export default function InboxPage() {
   }
 
   async function sendCompose() {
-    if (!composeTo.trim()) {
-      alert("Please add at least one recipient before sending.");
+    const invalid = findInvalidRecipient({
+      to: composeTo,
+      cc: composeCc,
+      bcc: composeBcc,
+    });
+    if (invalid) {
+      setComposeFieldError(formatRecipientError(invalid));
       return;
     }
+    setComposeFieldError(null);
+
     const snapshot = {
       kind: composeKind,
       to: composeTo.trim(),
@@ -3293,6 +3388,8 @@ export default function InboxPage() {
                           selected={bulkLabelSelected}
                           onToggle={handleBulkLabelToggle}
                           onCreate={handleBulkLabelCreate}
+                          onEdit={handleLabelEdit}
+                          onDelete={handleLabelDelete}
                           align="left"
                         />
                       )}
@@ -3669,6 +3766,8 @@ export default function InboxPage() {
                       selected={openThreadLabelSelected}
                       onToggle={toggleThreadLabel}
                       onCreate={createAndApplyLabel}
+                      onEdit={handleLabelEdit}
+                      onDelete={handleLabelDelete}
                       align="left"
                     />
                     <ThreadPaneNavButton variant="close" onClick={closeThread} className="ml-auto hidden md:inline-flex" />
@@ -3741,6 +3840,8 @@ export default function InboxPage() {
                       selected={openThreadLabelSelected}
                       onToggle={toggleThreadLabel}
                       onCreate={createAndApplyLabel}
+                      onEdit={handleLabelEdit}
+                      onDelete={handleLabelDelete}
                       align="left"
                     />
                     <ThreadPaneNavButton
@@ -3971,6 +4072,8 @@ export default function InboxPage() {
         suggestions={composeRecipientSuggestions}
         contactsHint={contactsHint}
         sendDisabled={!composeTo.trim()}
+        composeError={composeFieldError}
+        onDismissComposeError={() => setComposeFieldError(null)}
         onMinimize={() => setComposeMinimized((m) => !m)}
         onToggleFullscreen={() => setComposeFullscreen((v) => !v)}
         onClose={closeComposeAndSaveDraft}

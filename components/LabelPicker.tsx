@@ -12,34 +12,41 @@ type Label = LabelLike & {
 };
 
 const MENU_WIDTH = 280;
-const MENU_MAX_HEIGHT = 320;
+const MENU_MAX_HEIGHT = 360;
 
 /**
- * Gmail-style "Labels" dropdown: search + user-label checklist + create.
- * Menu is portaled to document.body with viewport-aware positioning so it
- * is never clipped by overflow:hidden ancestors (thread toolbar, etc.).
+ * Gmail-style "Labels" dropdown: search + user-label checklist + create / edit / delete.
  */
 export function LabelPicker({
   allLabels,
   selected,
   onToggle,
   onCreate,
+  onEdit,
+  onDelete,
   align = "right",
 }: {
   allLabels: Label[];
   selected: Set<string>;
   onToggle: (labelId: string, nextChecked: boolean) => void;
   onCreate: (name: string) => Promise<void> | void;
+  onEdit?: (labelId: string, newName: string) => Promise<void> | void;
+  onDelete?: (labelId: string) => Promise<void> | void;
   align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [creating, setCreating] = useState(false);
+  const [createMode, setCreateMode] = useState(false);
+  const [newLabelName, setNewLabelName] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
   const [menuStyle, setMenuStyle] = useState<{ top: number; left: number } | null>(null);
-  /** Local overrides so checkboxes flip on click before parent state catches up. */
   const [pendingChecks, setPendingChecks] = useState<Map<string, boolean>>(new Map());
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const createInputRef = useRef<HTMLInputElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   const effectiveSelected = useMemo(() => {
     const next = new Set(selected);
@@ -71,7 +78,7 @@ export function LabelPicker({
   }
 
   const userLabels = useMemo(
-    () => allLabels.filter((l) => l.type === "user"),
+    () => allLabels.filter((l) => l.type === "user" && !l.id.startsWith("pending:")),
     [allLabels]
   );
 
@@ -83,6 +90,8 @@ export function LabelPicker({
       const t = e.target as Node;
       if (buttonRef.current?.contains(t) || menuRef.current?.contains(t)) return;
       setOpen(false);
+      setCreateMode(false);
+      setEditingId(null);
     }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -112,7 +121,15 @@ export function LabelPicker({
       window.removeEventListener("resize", positionMenu);
       window.removeEventListener("scroll", positionMenu, true);
     };
-  }, [open, align, query, userLabels.length]);
+  }, [open, align, query, userLabels.length, createMode, editingId]);
+
+  useEffect(() => {
+    if (createMode) createInputRef.current?.focus();
+  }, [createMode]);
+
+  useEffect(() => {
+    if (editingId) editInputRef.current?.focus();
+  }, [editingId]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -120,22 +137,40 @@ export function LabelPicker({
     return userLabels.filter((l) => labelDisplayName(l).toLowerCase().includes(q));
   }, [userLabels, query]);
 
-  const showCreate =
+  const showCreateFromSearch =
     query.trim().length > 0 &&
     !userLabels.some(
       (l) => l.name.toLowerCase() === query.trim().toLowerCase()
     );
 
-  async function handleCreate() {
-    const name = query.trim();
-    if (!name || creating) return;
-    setQuery("");
+  async function submitCreate(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed || creating) return;
     setCreating(true);
     try {
-      await onCreate(name);
+      await onCreate(trimmed);
+      setQuery("");
+      setNewLabelName("");
+      setCreateMode(false);
     } finally {
       setCreating(false);
     }
+  }
+
+  async function submitEdit(labelId: string) {
+    const trimmed = editName.trim();
+    if (!trimmed || !onEdit) return;
+    setEditingId(null);
+    await onEdit(labelId, trimmed);
+  }
+
+  async function submitDelete(labelId: string, displayName: string) {
+    if (!onDelete) return;
+    const ok = window.confirm(
+      `Delete label "${displayName}"?\n\nMessages will not be deleted — only this label will be removed from them.`
+    );
+    if (!ok) return;
+    await onDelete(labelId);
   }
 
   const menu =
@@ -154,44 +189,103 @@ export function LabelPicker({
             className="w-full rounded-md border border-[#dadce0] bg-white px-2 py-1.5 text-[13px] text-[#202124] outline-none focus:border-[#0b57d0] focus:ring-1 focus:ring-[#0b57d0]"
           />
         </div>
-        <div className="max-h-[280px] overflow-y-auto py-1">
-          {filtered.length === 0 && (
+        <div className="max-h-[240px] overflow-y-auto py-1">
+          {filtered.length === 0 && !showCreateFromSearch && (
             <p className="px-3 py-2 text-[12px] text-[#5f6368]">No matching labels.</p>
           )}
           {filtered.map((l) => {
             const checked = effectiveSelected.has(l.id);
             const accent = labelColorMap.get(l.id);
-            return (
-              <label
-                key={l.id}
-                className="flex cursor-pointer items-center gap-2 px-3 py-2 text-[13px] hover:bg-[#f1f3f4]"
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={(e) => handleToggle(l.id, e.target.checked)}
-                  className="accent-[#0b57d0]"
-                />
-                {accent ? (
-                  <span
-                    className="h-3 w-3 shrink-0 rounded-full border"
-                    style={{
-                      backgroundColor: accent.bg,
-                      borderColor: accent.border,
+            const isEditing = editingId === l.id;
+
+            if (isEditing) {
+              return (
+                <div key={l.id} className="flex items-center gap-1 px-2 py-1.5">
+                  <input
+                    ref={editInputRef}
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void submitEdit(l.id);
+                      if (e.key === "Escape") setEditingId(null);
                     }}
-                    aria-hidden
+                    className="min-w-0 flex-1 rounded border border-[#dadce0] px-2 py-1 text-[13px] outline-none focus:border-[#0b57d0]"
                   />
+                  <button
+                    type="button"
+                    onClick={() => void submitEdit(l.id)}
+                    className="shrink-0 text-[12px] font-medium text-[#0b57d0]"
+                  >
+                    Save
+                  </button>
+                </div>
+              );
+            }
+
+            return (
+              <div
+                key={l.id}
+                className="group flex items-center gap-1 px-2 py-0.5 hover:bg-[#f1f3f4]"
+              >
+                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 py-1.5 pl-1 text-[13px]">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => handleToggle(l.id, e.target.checked)}
+                    className="accent-[#0b57d0]"
+                  />
+                  {accent ? (
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-full border"
+                      style={{
+                        backgroundColor: accent.bg,
+                        borderColor: accent.border,
+                      }}
+                      aria-hidden
+                    />
+                  ) : null}
+                  <span className="min-w-0 flex-1 truncate text-[#202124]">
+                    {labelDisplayName(l)}
+                  </span>
+                </label>
+                {onEdit ? (
+                  <button
+                    type="button"
+                    title="Rename label"
+                    onClick={() => {
+                      setEditingId(l.id);
+                      setEditName(l.name);
+                    }}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#5f6368] opacity-0 transition-opacity hover:bg-[#e8eaed] group-hover:opacity-100"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                  </button>
                 ) : null}
-                <span className="min-w-0 flex-1 truncate text-[#202124]">{labelDisplayName(l)}</span>
-              </label>
+                {onDelete ? (
+                  <button
+                    type="button"
+                    title="Delete label"
+                    onClick={() => void submitDelete(l.id, labelDisplayName(l))}
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#5f6368] opacity-0 transition-opacity hover:bg-[#fce8e6] hover:text-[#c5221f] group-hover:opacity-100"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                  </button>
+                ) : null}
+              </div>
             );
           })}
         </div>
-        {showCreate && (
+        {showCreateFromSearch && (
           <div className="border-t border-[#e8eaed]">
             <button
               type="button"
-              onClick={() => void handleCreate()}
+              onClick={() => void submitCreate(query.trim())}
               disabled={creating}
               className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-[#0b57d0] hover:bg-[#f1f3f4] disabled:opacity-50"
             >
@@ -199,6 +293,49 @@ export function LabelPicker({
             </button>
           </div>
         )}
+        <div className="border-t border-[#e8eaed]">
+          {createMode ? (
+            <div className="flex items-center gap-1 p-2">
+              <input
+                ref={createInputRef}
+                value={newLabelName}
+                onChange={(e) => setNewLabelName(e.target.value)}
+                placeholder="New label name"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void submitCreate(newLabelName);
+                  if (e.key === "Escape") {
+                    setCreateMode(false);
+                    setNewLabelName("");
+                  }
+                }}
+                className="min-w-0 flex-1 rounded border border-[#dadce0] px-2 py-1.5 text-[13px] outline-none focus:border-[#0b57d0]"
+              />
+              <button
+                type="button"
+                disabled={creating || !newLabelName.trim()}
+                onClick={() => void submitCreate(newLabelName)}
+                className="shrink-0 text-[12px] font-medium text-[#0b57d0] disabled:opacity-40"
+              >
+                {creating ? "…" : "Add"}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setCreateMode(true);
+                setNewLabelName(query.trim());
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[13px] text-[#0b57d0] hover:bg-[#f1f3f4]"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              Create new label
+            </button>
+          )}
+        </div>
       </div>
     ) : null;
 

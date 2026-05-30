@@ -148,6 +148,78 @@ export async function createLabel(
   };
 }
 
+export async function updateLabel(
+  accessToken: string,
+  labelId: string,
+  input: { name: string }
+): Promise<GmailLabel> {
+  const name = input.name.trim();
+  if (!name) throw new Error("Label name is required");
+
+  let res: Response;
+  try {
+    res = await fetch(`${GMAIL_API}/labels/${encodeURIComponent(labelId)}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name }),
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Gmail API (update label)"));
+  }
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail update label ${res.status}: ${text}`);
+  }
+  const updated = (await res.json()) as {
+    id: string;
+    name: string;
+    type?: "system" | "user";
+    color?: { textColor?: string; backgroundColor?: string };
+  };
+  const type: "system" | "user" = updated.type === "user" ? "user" : "system";
+  return {
+    id: updated.id,
+    name: updated.name,
+    type,
+    surfaced: type === "user" || SURFACED_SYSTEM_LABELS.has(updated.id),
+    isSystem: type === "system",
+    isCategory: updated.id.startsWith("CATEGORY_"),
+    color: updated.color,
+  };
+}
+
+/** Deletes a user label from Gmail; messages keep their other labels. */
+export async function deleteLabel(accessToken: string, labelId: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${GMAIL_API}/labels/${encodeURIComponent(labelId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Gmail API (delete label)"));
+  }
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail delete label ${res.status}: ${text}`);
+  }
+}
+
 /** Union of label ids across all messages in a thread (folder labels excluded). */
 const FOLDER_LABELS = new Set([
   "INBOX",

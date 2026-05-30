@@ -7,6 +7,7 @@ import { RecipientField, type RecipientSuggestion } from "@/components/Recipient
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
+import { GmailComposeErrorDialog } from "@/components/GmailComposeErrorDialog";
 import { IconX } from "@/components/Icons";
 import { GMAIL_COMPOSE_DIALOG_BORDER, GMAIL_COMPOSE_HEADER } from "@/lib/gmail-theme";
 import type { ComposeDraftSaveStatus } from "@/lib/gmail-draft-autosave";
@@ -44,6 +45,9 @@ export type GmailComposeDialogProps = {
   onFileChange: (files: FileList | null) => void;
   attachmentChips?: React.ReactNode;
   draftSaveStatus?: ComposeDraftSaveStatus;
+  /** Gmail-style recipient validation error — blocks send until dismissed. */
+  composeError?: string | null;
+  onDismissComposeError?: () => void;
 };
 
 /**
@@ -81,6 +85,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     onFileChange,
     attachmentChips,
     draftSaveStatus = "idle",
+    composeError,
+    onDismissComposeError,
   } = props;
 
   const editorRef = useRef<RichTextEditorHandle>(null);
@@ -287,13 +293,13 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                 <div className="flex items-center border-b border-[#f1f3f4] px-3">
                   <span className="w-7 shrink-0 text-[13px] text-[#444746]">Cc</span>
                   <div className={cn("min-w-0 flex-1 py-0.5", fieldGroupClass)}>
-                    <RecipientField placeholder="Cc" value={cc} onChange={onCcChange} suggestions={suggestions} />
+                    <RecipientField placeholder="" value={cc} onChange={onCcChange} suggestions={suggestions} />
                   </div>
                 </div>
                 <div className="flex items-center border-b border-[#f1f3f4] px-3">
                   <span className="w-7 shrink-0 text-[13px] text-[#444746]">Bcc</span>
                   <div className={cn("min-w-0 flex-1 py-0.5", fieldGroupClass)}>
-                    <RecipientField placeholder="Bcc" value={bcc} onChange={onBccChange} suggestions={suggestions} />
+                    <RecipientField placeholder="" value={bcc} onChange={onBccChange} suggestions={suggestions} />
                   </div>
                 </div>
               </>
@@ -352,6 +358,9 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           />
         </div>
       )}
+      {composeError && onDismissComposeError ? (
+        <GmailComposeErrorDialog message={composeError} onDismiss={onDismissComposeError} />
+      ) : null}
     </>,
     document.body
   );

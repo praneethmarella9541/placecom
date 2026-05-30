@@ -121,6 +121,15 @@ function listCacheLabelId(cacheKey: string): string {
   return cacheKey.slice(first + 1, second);
 }
 
+/** Merge rows by id, sort newest-first (Gmail list order). */
+function mergeThreadsByDate(existing: ThreadRow[], incoming: ThreadRow[]): ThreadRow[] {
+  const byId = new Map(existing.map((t) => [t.id, t]));
+  for (const t of incoming) byId.set(t.id, t);
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime()
+  );
+}
+
 type GmailLabel = {
   id: string;
   name: string;
@@ -639,6 +648,17 @@ export default function InboxPage() {
   const mutateThreads = useCallback(
     (transform: (rows: ThreadRow[]) => ThreadRow[]) => {
       setThreads(transform);
+      listCacheRef.current.forEach((entry, key) => {
+        listCacheRef.current.set(key, { ...entry, threads: transform(entry.threads) });
+      });
+      lastMutationAtRef.current = Date.now();
+    },
+    []
+  );
+
+  /** Patch every cached list view without touching the rendered list (label bucket sync). */
+  const patchAllThreadCaches = useCallback(
+    (transform: (rows: ThreadRow[]) => ThreadRow[]) => {
       listCacheRef.current.forEach((entry, key) => {
         listCacheRef.current.set(key, { ...entry, threads: transform(entry.threads) });
       });
@@ -1193,6 +1213,7 @@ export default function InboxPage() {
       }
 
       try {
+        const fetchStartedAt = Date.now();
         const res = await fetch(`/api/gmail/threads?${params.toString()}`, { cache: "no-store" });
         const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
         if (!res.ok) throw new Error(data.error || "Failed to load inbox");
@@ -1219,6 +1240,11 @@ export default function InboxPage() {
             return merged;
           });
         } else {
+          // Don't clobber optimistic label/star/read state if the user mutated
+          // while this fetch was in-flight (unless this is an explicit refresh).
+          if (!opts.forceRefresh && lastMutationAtRef.current > fetchStartedAt) {
+            return;
+          }
           // Background SWR / forceRefresh: the user already sees the list and
           // may have scrolled. Snapshot scrollTop BEFORE React re-renders with
           // fresh data, then restore it immediately after so the view doesn't jump.
@@ -1489,7 +1515,9 @@ export default function InboxPage() {
         if (data.latestHistoryId) latestHistoryIdRef.current = data.latestHistoryId;
         if (data.hasChanges) {
           void pollRef.current.loadCounts();
-          void pollRef.current.loadThreads({ append: false, forceRefresh: true });
+          if (Date.now() - lastMutationAtRef.current >= MUTATION_COOLDOWN_MS) {
+            void pollRef.current.loadThreads({ append: false, forceRefresh: true });
+          }
         }
       } catch {
         // Network blip — skip tick silently.
@@ -1691,12 +1719,19 @@ export default function InboxPage() {
   }, []);
 
   /** Drop rows that no longer match the active label bucket (sidebar / Starred / Important). */
+  const shouldFilterCurrentList = useCallback(() => {
+    if (mailSearch.trim()) return false;
+    if (folder === "starred" || folder === "important") return true;
+    if (filterLabelId) return true;
+    return false;
+  }, [mailSearch, folder, filterLabelId]);
+
   const filterRowsForActiveLabelView = useCallback(
     (rows: ThreadRow[]) => {
-      if (mailSearch.trim() || !effectiveLabelId) return rows;
+      if (!shouldFilterCurrentList() || !effectiveLabelId) return rows;
       return rows.filter((r) => threadMatchesLabelView(r, effectiveLabelId));
     },
-    [mailSearch, effectiveLabelId]
+    [shouldFilterCurrentList, effectiveLabelId]
   );
 
   /** Keep cached label-bucket snapshots in sync when labels are added or removed. */
@@ -1723,7 +1758,7 @@ export default function InboxPage() {
           if (toAdd.length > 0) {
             listCacheRef.current.set(cacheKey, {
               ...entry,
-              threads: [...toAdd, ...entry.threads],
+              threads: mergeThreadsByDate(entry.threads, toAdd),
             });
           }
         }
@@ -1749,12 +1784,16 @@ export default function InboxPage() {
       opts: { labelId: string; added: boolean; threadIds: string[] }
     ) => {
       let updatedRows: ThreadRow[] = [];
-      mutateThreads((rows) => {
-        updatedRows = transform(rows);
-        const filtered = filterRowsForActiveLabelView(updatedRows);
-        closeThreadIfMissingFromList(filtered);
-        return filtered;
+      setThreads((prev) => {
+        const updated = transform(prev);
+        updatedRows = updated;
+        const visible = filterRowsForActiveLabelView(updated);
+        closeThreadIfMissingFromList(visible);
+        return visible;
       });
+      // Patch every cached view in-place (preserve order); never apply the
+      // active-view filter to other buckets — that was causing list jumps.
+      patchAllThreadCaches(transform);
       const rowsById = new Map(updatedRows.map((r) => [r.id, r]));
       syncLabelBucketCache(
         opts.labelId,
@@ -1763,7 +1802,12 @@ export default function InboxPage() {
         opts.added ? "add" : "remove"
       );
     },
-    [mutateThreads, filterRowsForActiveLabelView, closeThreadIfMissingFromList, syncLabelBucketCache]
+    [
+      filterRowsForActiveLabelView,
+      closeThreadIfMissingFromList,
+      patchAllThreadCaches,
+      syncLabelBucketCache,
+    ]
   );
 
   /** LabelPicker checkboxes — thread state + list row (optimistic) stay in sync. */

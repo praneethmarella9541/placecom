@@ -103,6 +103,24 @@ function mergeThreadLabelIds(...sources: (string[] | undefined)[]): string[] {
   return Array.from(merged);
 }
 
+/** Whether a row still belongs in a label-filtered list (user label, Starred, Important). */
+function threadMatchesLabelView(row: ThreadRow, labelId: string): boolean {
+  if (labelId === "STARRED") return !!row.starred;
+  if (labelId === "IMPORTANT") {
+    return !!row.important || (row.labelIds ?? []).includes("IMPORTANT");
+  }
+  return (row.labelIds ?? []).includes(labelId);
+}
+
+/** Middle segment of list cache keys: `${apiFolder}|${labelId}|${search}`. */
+function listCacheLabelId(cacheKey: string): string {
+  const first = cacheKey.indexOf("|");
+  if (first < 0) return "";
+  const second = cacheKey.indexOf("|", first + 1);
+  if (second < 0) return cacheKey.slice(first + 1);
+  return cacheKey.slice(first + 1, second);
+}
+
 type GmailLabel = {
   id: string;
   name: string;
@@ -1672,6 +1690,82 @@ export default function InboxPage() {
     threadDataCache.current.delete(threadId);
   }, []);
 
+  /** Drop rows that no longer match the active label bucket (sidebar / Starred / Important). */
+  const filterRowsForActiveLabelView = useCallback(
+    (rows: ThreadRow[]) => {
+      if (mailSearch.trim() || !effectiveLabelId) return rows;
+      return rows.filter((r) => threadMatchesLabelView(r, effectiveLabelId));
+    },
+    [mailSearch, effectiveLabelId]
+  );
+
+  /** Keep cached label-bucket snapshots in sync when labels are added or removed. */
+  const syncLabelBucketCache = useCallback(
+    (
+      labelId: string,
+      threadIds: string[],
+      rowsById: Map<string, ThreadRow>,
+      action: "add" | "remove"
+    ) => {
+      listCacheRef.current.forEach((entry, cacheKey) => {
+        if (listCacheLabelId(cacheKey) !== labelId) return;
+        if (action === "remove") {
+          const idSet = new Set(threadIds);
+          const next = entry.threads.filter((t) => !idSet.has(t.id));
+          if (next.length !== entry.threads.length) {
+            listCacheRef.current.set(cacheKey, { ...entry, threads: next });
+          }
+        } else {
+          const existing = new Set(entry.threads.map((t) => t.id));
+          const toAdd = threadIds
+            .map((id) => rowsById.get(id))
+            .filter((r): r is ThreadRow => !!r && !existing.has(r.id));
+          if (toAdd.length > 0) {
+            listCacheRef.current.set(cacheKey, {
+              ...entry,
+              threads: [...toAdd, ...entry.threads],
+            });
+          }
+        }
+      });
+    },
+    []
+  );
+
+  const closeThreadIfMissingFromList = useCallback((rows: ThreadRow[]) => {
+    if (selectedId && !rows.some((r) => r.id === selectedId)) {
+      activeThreadLoadRef.current = null;
+      setSelectedId(null);
+      setMessages(null);
+      setThreadError(null);
+      setThreadLabelIds([]);
+    }
+  }, [selectedId]);
+
+  /** Optimistic list + label-bucket cache update after a label add/remove. */
+  const applyLabelListUpdate = useCallback(
+    (
+      transform: (rows: ThreadRow[]) => ThreadRow[],
+      opts: { labelId: string; added: boolean; threadIds: string[] }
+    ) => {
+      let updatedRows: ThreadRow[] = [];
+      mutateThreads((rows) => {
+        updatedRows = transform(rows);
+        const filtered = filterRowsForActiveLabelView(updatedRows);
+        closeThreadIfMissingFromList(filtered);
+        return filtered;
+      });
+      const rowsById = new Map(updatedRows.map((r) => [r.id, r]));
+      syncLabelBucketCache(
+        opts.labelId,
+        opts.threadIds,
+        rowsById,
+        opts.added ? "add" : "remove"
+      );
+    },
+    [mutateThreads, filterRowsForActiveLabelView, closeThreadIfMissingFromList, syncLabelBucketCache]
+  );
+
   /** LabelPicker checkboxes — thread state + list row (optimistic) stay in sync. */
   const openThreadLabelSelected = useMemo(() => {
     const ids = new Set(threadLabelIds);
@@ -1762,20 +1856,23 @@ export default function InboxPage() {
     (labelId: string, nextChecked: boolean) => {
       if (!selectedId) return;
       const prev = threadLabelIds;
+      const prevRow = threads.find((r) => r.id === selectedId);
       setThreadLabelIds((cur) =>
         nextChecked ? Array.from(new Set([...cur, labelId])) : cur.filter((id) => id !== labelId)
       );
-      mutateThreads((rows) =>
-        rows.map((r) =>
-          r.id === selectedId
-            ? {
-                ...r,
-                labelIds: nextChecked
-                  ? Array.from(new Set([...(r.labelIds ?? []), labelId]))
-                  : (r.labelIds ?? []).filter((id) => id !== labelId),
-              }
-            : r
-        )
+      applyLabelListUpdate(
+        (rows) =>
+          rows.map((r) =>
+            r.id === selectedId
+              ? {
+                  ...r,
+                  labelIds: nextChecked
+                    ? Array.from(new Set([...(r.labelIds ?? []), labelId]))
+                    : (r.labelIds ?? []).filter((id) => id !== labelId),
+                }
+              : r
+          ),
+        { labelId, added: nextChecked, threadIds: [selectedId] }
       );
       invalidateThreadCache(selectedId);
       if (labelId.startsWith("pending:")) return;
@@ -1796,14 +1893,33 @@ export default function InboxPage() {
           scheduleCountRefresh();
         } catch (e) {
           setThreadLabelIds(prev);
-          mutateThreads((rows) =>
-            rows.map((r) => (r.id === selectedId ? { ...r, labelIds: prev } : r))
+          applyLabelListUpdate(
+            (rows) => {
+              const exists = rows.some((r) => r.id === selectedId);
+              if (exists) {
+                return rows.map((r) =>
+                  r.id === selectedId ? { ...r, labelIds: prev } : r
+                );
+              }
+              if (prevRow) {
+                return [{ ...prevRow, labelIds: prev }, ...rows];
+              }
+              return rows;
+            },
+            { labelId, added: !nextChecked, threadIds: [selectedId] }
           );
           alert(e instanceof Error ? e.message : "Could not update labels");
         }
       })();
     },
-    [selectedId, threadLabelIds, scheduleCountRefresh, mutateThreads, invalidateThreadCache]
+    [
+      selectedId,
+      threadLabelIds,
+      threads,
+      scheduleCountRefresh,
+      applyLabelListUpdate,
+      invalidateThreadCache,
+    ]
   );
 
   // Create a new Gmail label and immediately apply it to the open thread.
@@ -1813,11 +1929,11 @@ export default function InboxPage() {
   const toggleThreadStar = useCallback(
     async (threadId: string, nextStarred: boolean) => {
       setRowBusy((s) => new Set(s).add(threadId));
-      mutateThreads((rows) =>
-        rows.map((r) => (r.id === threadId ? { ...r, starred: nextStarred } : r))
+      applyLabelListUpdate(
+        (rows) =>
+          rows.map((r) => (r.id === threadId ? { ...r, starred: nextStarred } : r)),
+        { labelId: "STARRED", added: nextStarred, threadIds: [threadId] }
       );
-      // Optimistically update the Starred badge so the UI feels instant.
-      // scheduleCountRefresh below catches up with Gmail's authoritative count.
       const change = nextStarred ? 1 : -1;
       setLabelCounts((prev) => {
         const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
@@ -1840,9 +1956,10 @@ export default function InboxPage() {
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
         scheduleCountRefresh();
       } catch (e) {
-        // Roll back the optimistic toggle across both rendered list and cache.
-        mutateThreads((rows) =>
-          rows.map((r) => (r.id === threadId ? { ...r, starred: !nextStarred } : r))
+        applyLabelListUpdate(
+          (rows) =>
+            rows.map((r) => (r.id === threadId ? { ...r, starred: !nextStarred } : r)),
+          { labelId: "STARRED", added: !nextStarred, threadIds: [threadId] }
         );
         setLabelCounts((prev) => {
           const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
@@ -1860,7 +1977,7 @@ export default function InboxPage() {
         });
       }
     },
-    [scheduleCountRefresh, mutateThreads]
+    [scheduleCountRefresh, applyLabelListUpdate]
   );
 
   // Toggle the IMPORTANT label on a thread (optimistic). Same shape as
@@ -1869,8 +1986,10 @@ export default function InboxPage() {
   const toggleThreadImportant = useCallback(
     async (threadId: string, nextImportant: boolean) => {
       setRowBusy((s) => new Set(s).add(threadId));
-      mutateThreads((rows) =>
-        rows.map((r) => (r.id === threadId ? { ...r, important: nextImportant } : r))
+      applyLabelListUpdate(
+        (rows) =>
+          rows.map((r) => (r.id === threadId ? { ...r, important: nextImportant } : r)),
+        { labelId: "IMPORTANT", added: nextImportant, threadIds: [threadId] }
       );
       const change = nextImportant ? 1 : -1;
       setLabelCounts((prev) => {
@@ -1891,8 +2010,10 @@ export default function InboxPage() {
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
         scheduleCountRefresh();
       } catch (e) {
-        mutateThreads((rows) =>
-          rows.map((r) => (r.id === threadId ? { ...r, important: !nextImportant } : r))
+        applyLabelListUpdate(
+          (rows) =>
+            rows.map((r) => (r.id === threadId ? { ...r, important: !nextImportant } : r)),
+          { labelId: "IMPORTANT", added: !nextImportant, threadIds: [threadId] }
         );
         setLabelCounts((prev) => {
           const cur = prev["IMPORTANT"] ?? { total: 0, unread: 0 };
@@ -1903,7 +2024,7 @@ export default function InboxPage() {
         setRowBusy((s) => { const next = new Set(s); next.delete(threadId); return next; });
       }
     },
-    [scheduleCountRefresh, mutateThreads]
+    [scheduleCountRefresh, applyLabelListUpdate]
   );
 
   // Row quick-actions: archive (remove INBOX), trash (add TRASH), and
@@ -2075,6 +2196,26 @@ export default function InboxPage() {
         next.add(real.id);
         return next;
       });
+      const remapRows = (rows: ThreadRow[]) =>
+        rows.map((r) => ({
+          ...r,
+          labelIds: r.labelIds?.map((id) => (id === tempId ? real.id : id)),
+        }));
+      const migrated: Array<[string, { threads: ThreadRow[]; nextPageToken?: string }]> = [];
+      listCacheRef.current.forEach((entry, cacheKey) => {
+        if (listCacheLabelId(cacheKey) === tempId) {
+          migrated.push([
+            cacheKey.replace(`|${tempId}|`, `|${real.id}|`),
+            { ...entry, threads: remapRows(entry.threads) },
+          ]);
+          listCacheRef.current.delete(cacheKey);
+        } else if (entry.threads.some((t) => t.labelIds?.includes(tempId))) {
+          listCacheRef.current.set(cacheKey, { ...entry, threads: remapRows(entry.threads) });
+        }
+      });
+      for (const [key, entry] of migrated) {
+        listCacheRef.current.set(key, entry);
+      }
     },
     [mutateThreads]
   );
@@ -2083,11 +2224,17 @@ export default function InboxPage() {
     (tempId: string) => {
       setAllLabels((prev) => prev.filter((l) => l.id !== tempId));
       setThreadLabelIds((cur) => cur.filter((id) => id !== tempId));
-      mutateThreads((rows) =>
-        rows.map((r) => ({
-          ...r,
-          labelIds: r.labelIds?.filter((id) => id !== tempId),
-        }))
+      applyLabelListUpdate(
+        (rows) =>
+          rows.map((r) => ({
+            ...r,
+            labelIds: r.labelIds?.filter((id) => id !== tempId),
+          })),
+        {
+          labelId: tempId,
+          added: false,
+          threadIds: threads.filter((t) => t.labelIds?.includes(tempId)).map((t) => t.id),
+        }
       );
       setBulkLabelSelected((prev) => {
         if (!prev.has(tempId)) return prev;
@@ -2096,7 +2243,7 @@ export default function InboxPage() {
         return next;
       });
     },
-    [mutateThreads]
+    [applyLabelListUpdate, threads]
   );
 
   const applyLabelOptimistic = useCallback(
@@ -2105,18 +2252,20 @@ export default function InboxPage() {
       if (selectedId === threadId) {
         setThreadLabelIds((cur) => Array.from(new Set([...cur, labelId])));
       }
-      mutateThreads((rows) =>
-        rows.map((r) =>
-          r.id === threadId
-            ? {
-                ...r,
-                labelIds: Array.from(new Set([...(r.labelIds ?? []), labelId])),
-              }
-            : r
-        )
+      applyLabelListUpdate(
+        (rows) =>
+          rows.map((r) =>
+            r.id === threadId
+              ? {
+                  ...r,
+                  labelIds: Array.from(new Set([...(r.labelIds ?? []), labelId])),
+                }
+              : r
+          ),
+        { labelId, added: true, threadIds: [threadId] }
       );
     },
-    [selectedId, mutateThreads, invalidateThreadCache]
+    [selectedId, applyLabelListUpdate, invalidateThreadCache]
   );
 
   /** Create on Gmail in the background after optimistic UI is already shown. */
@@ -2186,13 +2335,15 @@ export default function InboxPage() {
         if (nextChecked) next.add(labelId); else next.delete(labelId);
         return next;
       });
-      mutateThreads((rows) =>
-        rows.map((r) => {
-          if (!selectedThreadIds.has(r.id)) return r;
-          const cur = new Set(r.labelIds ?? []);
-          if (nextChecked) cur.add(labelId); else cur.delete(labelId);
-          return { ...r, labelIds: Array.from(cur) };
-        })
+      applyLabelListUpdate(
+        (rows) =>
+          rows.map((r) => {
+            if (!selectedThreadIds.has(r.id)) return r;
+            const cur = new Set(r.labelIds ?? []);
+            if (nextChecked) cur.add(labelId); else cur.delete(labelId);
+            return { ...r, labelIds: Array.from(cur) };
+          }),
+        { labelId, added: nextChecked, threadIds: ids }
       );
       if (selectedId && selectedThreadIds.has(selectedId)) {
         setThreadLabelIds((cur) => {
@@ -2221,7 +2372,13 @@ export default function InboxPage() {
         }
       })();
     },
-    [selectedThreadIds, selectedId, scheduleCountRefresh, mutateThreads, invalidateThreadCache]
+    [
+      selectedThreadIds,
+      selectedId,
+      scheduleCountRefresh,
+      applyLabelListUpdate,
+      invalidateThreadCache,
+    ]
   );
 
   /** Create a new label then immediately apply it to all selected threads. */
@@ -2233,18 +2390,20 @@ export default function InboxPage() {
       const pending = makePendingLabel(trimmed);
       setAllLabels((prev) => insertLabelSorted(prev, pending));
       setBulkLabelSelected((prev) => new Set(prev).add(pending.id));
-      mutateThreads((rows) =>
-        rows.map((r) => {
-          if (!selectedThreadIds.has(r.id)) return r;
-          return {
-            ...r,
-            labelIds: Array.from(new Set([...(r.labelIds ?? []), pending.id])),
-          };
-        })
+      applyLabelListUpdate(
+        (rows) =>
+          rows.map((r) => {
+            if (!selectedThreadIds.has(r.id)) return r;
+            return {
+              ...r,
+              labelIds: Array.from(new Set([...(r.labelIds ?? []), pending.id])),
+            };
+          }),
+        { labelId: pending.id, added: true, threadIds: ids }
       );
       void finalizeLabelCreation(pending.id, trimmed, { threadIds: ids });
     },
-    [selectedThreadIds, mutateThreads, finalizeLabelCreation]
+    [selectedThreadIds, applyLabelListUpdate, finalizeLabelCreation]
   );
 
   const toggleRowSelection = useCallback((threadId: string) => {

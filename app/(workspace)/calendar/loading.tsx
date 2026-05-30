@@ -4,7 +4,7 @@
  */
 export default function CalendarLoading() {
   return (
-    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] flex-col overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+    <div className="-mx-4 -mt-[calc(56px+16px)] -mb-6 flex h-[calc(100dvh-56px-24px)] min-h-0 flex-col overflow-hidden md:-mx-6 md:-mt-6 md:h-[calc(100dvh-48px)]">
       {/* Toolbar */}
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 py-3 md:px-5">
         <div className="flex items-center gap-2">

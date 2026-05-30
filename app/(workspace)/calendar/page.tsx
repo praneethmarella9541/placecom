@@ -1072,7 +1072,7 @@ export default function CalendarPage() {
       `}</style>
 
       {/* ── Full-bleed master layout ───────────────────── */}
-      <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+      <div className="-mx-4 -mt-[calc(56px+16px)] -mb-6 flex h-[calc(100dvh-56px-24px)] min-h-0 overflow-hidden md:-mx-6 md:-mt-6 md:h-[calc(100dvh-48px)]">
 
         {/* ── Left rail ─────────────────────────────── */}
         <aside className="hidden md:flex w-[220px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] overflow-y-auto">
@@ -1630,16 +1630,6 @@ export default function CalendarPage() {
                 >
                   {deleteBusy ? "Deleting…" : "Delete"}
                 </button>
-                {selectedEvent.htmlLink ? (
-                  <a
-                    href={selectedEvent.htmlLink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn-ghost text-xs"
-                  >
-                    Open in Google Calendar
-                  </a>
-                ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
                 {selectedEvent.hangoutLink ? (

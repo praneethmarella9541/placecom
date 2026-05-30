@@ -92,6 +92,17 @@ type ThreadRow = {
   historyId?: string;
 };
 
+/** Merge label ids for thread UI — keeps optimistic user labels across stale API/cache. */
+function mergeThreadLabelIds(...sources: (string[] | undefined)[]): string[] {
+  const merged = new Set<string>();
+  for (const ids of sources) {
+    for (const id of ids ?? []) {
+      if (id && id !== "UNREAD") merged.add(id);
+    }
+  }
+  return Array.from(merged);
+}
+
 type GmailLabel = {
   id: string;
   name: string;
@@ -499,7 +510,6 @@ export default function InboxPage() {
   const [threadLabelIds, setThreadLabelIds] = useState<string[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
   const [threadError, setThreadError] = useState<string | null>(null);
-  const [labelBusy, setLabelBusy] = useState(false);
   // Left-rail "Create label" inline form state
   const [newLabelInput, setNewLabelInput] = useState("");
   const [showNewLabelForm, setShowNewLabelForm] = useState(false);
@@ -1659,6 +1669,21 @@ export default function InboxPage() {
     [fetchThreadData]
   );
 
+  const invalidateThreadCache = useCallback((threadId: string) => {
+    threadDataCache.current.delete(threadId);
+  }, []);
+
+  /** LabelPicker checkboxes — thread state + list row (optimistic) stay in sync. */
+  const openThreadLabelSelected = useMemo(() => {
+    const ids = new Set(threadLabelIds);
+    if (selectedId) {
+      for (const id of threads.find((t) => t.id === selectedId)?.labelIds ?? []) {
+        ids.add(id);
+      }
+    }
+    return ids;
+  }, [threadLabelIds, selectedId, threads]);
+
   // Prefetch a draft on hover — same pattern as prefetchThread so openDraft
   // can reuse the already-in-flight response and open instantly on click.
   const prefetchDraft = useCallback((draftId: string) => {
@@ -1699,7 +1724,8 @@ export default function InboxPage() {
     activeThreadLoadRef.current = threadId;
     setSelectedId(threadId);
     setThreadError(null);
-    setThreadLabelIds([]);
+    const rowLabelIds = threads.find((r) => r.id === threadId)?.labelIds;
+    setThreadLabelIds(mergeThreadLabelIds(rowLabelIds));
     setMessages(null);
     setLoadingThread(true);
     if (composeOpen && (composeKind === "reply" || composeKind === "replyAll")) {
@@ -1710,7 +1736,7 @@ export default function InboxPage() {
       const data = await fetchThreadData(threadId);
       if (activeThreadLoadRef.current !== threadId) return;
       setMessages(data.messages);
-      setThreadLabelIds(data.labelIds);
+      setThreadLabelIds((prev) => mergeThreadLabelIds(prev, data.labelIds, rowLabelIds));
       void loadTracking();
     } catch (e) {
       if (activeThreadLoadRef.current !== threadId) return;
@@ -1753,8 +1779,8 @@ export default function InboxPage() {
             : r
         )
       );
+      invalidateThreadCache(selectedId);
       if (labelId.startsWith("pending:")) return;
-      setLabelBusy(true);
       try {
         const res = await fetch(
           `/api/gmail/threads/${encodeURIComponent(selectedId)}/labels`,
@@ -1769,17 +1795,14 @@ export default function InboxPage() {
         if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Failed");
         scheduleCountRefresh();
       } catch (e) {
-        // Roll back
         setThreadLabelIds(prev);
-        setThreads((rows) =>
-          rows.map((r) => (r.id === selectedId ? { ...r, labelIds: r.labelIds } : r))
+        mutateThreads((rows) =>
+          rows.map((r) => (r.id === selectedId ? { ...r, labelIds: prev } : r))
         );
         alert(e instanceof Error ? e.message : "Could not update labels");
-      } finally {
-        setLabelBusy(false);
       }
     },
-    [selectedId, threadLabelIds, scheduleCountRefresh, mutateThreads]
+    [selectedId, threadLabelIds, scheduleCountRefresh, mutateThreads, invalidateThreadCache]
   );
 
   // Create a new Gmail label and immediately apply it to the open thread.
@@ -2077,6 +2100,7 @@ export default function InboxPage() {
 
   const applyLabelOptimistic = useCallback(
     (threadId: string, labelId: string) => {
+      invalidateThreadCache(threadId);
       if (selectedId === threadId) {
         setThreadLabelIds((cur) => Array.from(new Set([...cur, labelId])));
       }
@@ -2091,7 +2115,7 @@ export default function InboxPage() {
         )
       );
     },
-    [selectedId, mutateThreads]
+    [selectedId, mutateThreads, invalidateThreadCache]
   );
 
   /** Create on Gmail in the background after optimistic UI is already shown. */
@@ -2170,6 +2194,16 @@ export default function InboxPage() {
           return { ...r, labelIds: Array.from(cur) };
         })
       );
+      if (selectedId && selectedThreadIds.has(selectedId)) {
+        setThreadLabelIds((cur) => {
+          const next = new Set(cur);
+          if (nextChecked) next.add(labelId); else next.delete(labelId);
+          return Array.from(next);
+        });
+      }
+      if (!labelId.startsWith("pending:")) {
+        for (const id of ids) invalidateThreadCache(id);
+      }
 
       if (labelId.startsWith("pending:")) return;
 
@@ -2190,7 +2224,7 @@ export default function InboxPage() {
         setBulkLabelBusy(false);
       }
     },
-    [selectedThreadIds, bulkLabelBusy, scheduleCountRefresh, mutateThreads]
+    [selectedThreadIds, selectedId, bulkLabelBusy, scheduleCountRefresh, mutateThreads, invalidateThreadCache]
   );
 
   /** Create a new label then immediately apply it to all selected threads. */
@@ -3499,10 +3533,9 @@ export default function InboxPage() {
                     <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
                     <LabelPicker
                       allLabels={allLabels}
-                      selected={new Set(threadLabelIds)}
+                      selected={openThreadLabelSelected}
                       onToggle={(id, checked) => void toggleThreadLabel(id, checked)}
                       onCreate={createAndApplyLabel}
-                      busy={labelBusy}
                       align="left"
                     />
                     <ThreadPaneNavButton
@@ -3521,9 +3554,9 @@ export default function InboxPage() {
                       onForward={() => openForward()}
                     />
                   </div>
-                  {threadLabelIds.length > 0 && (
+                  {(openThreadLabelSelected.size > 0 || threadLabelIds.length > 0) && (
                     <div className="mb-2 flex flex-wrap gap-1 pl-12">
-                      {threadLabelIds
+                      {mergeThreadLabelIds(threadLabelIds, Array.from(openThreadLabelSelected))
                         .map((id) => labelsById.get(id))
                         .filter((l): l is GmailLabel => !!l && l.type === "user")
                         .map((l) => (
@@ -3531,7 +3564,7 @@ export default function InboxPage() {
                             key={l.id}
                             label={l}
                             accent={labelColorMap.get(l.id)}
-                            onRemove={labelBusy ? undefined : () => void toggleThreadLabel(l.id, false)}
+                            onRemove={() => void toggleThreadLabel(l.id, false)}
                           />
                         ))}
                     </div>

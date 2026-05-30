@@ -160,6 +160,8 @@ export default function DrivePage() {
   const [driveFiles, setDriveFiles] = useState<DriveFileRow[]>([]);
   const [driveNextPageToken, setDriveNextPageToken] = useState<string | undefined>();
   const [loadingDrive, setLoadingDrive] = useState(true);
+  const [refreshingDrive, setRefreshingDrive] = useState(false);
+  const driveFilesRef = useRef<DriveFileRow[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false); // stable for the IntersectionObserver
   const listScrollRef = useRef<HTMLUListElement>(null);
@@ -255,6 +257,10 @@ export default function DrivePage() {
     },
     []
   );
+
+  useEffect(() => {
+    driveFilesRef.current = driveFiles;
+  }, [driveFiles]);
 
   useEffect(() => {
     const t = setTimeout(() => setDriveSearch(driveSearchInput.trim()), 200);
@@ -495,6 +501,16 @@ export default function DrivePage() {
     [view, mimeFilter, pathStack.length, sharedDriveIdForApi, fetchDriveListPage]
   );
 
+  const prefetchVisibleFolders = useCallback(
+    (files: DriveFileRow[]) => {
+      const folders = files
+        .filter((f) => f.mimeType === "application/vnd.google-apps.folder")
+        .slice(0, 8);
+      for (const folder of folders) prefetchDriveFolder(folder.id);
+    },
+    [prefetchDriveFolder]
+  );
+
   const loadDriveFiles = useCallback(
     async (opts: { append: boolean; pageToken?: string; bust?: boolean }) => {
       const loadId = `${driveListContextKey}\0${opts.pageToken ?? ""}\0${opts.append ? "a" : "f"}`;
@@ -507,9 +523,15 @@ export default function DrivePage() {
           setDriveFiles(cached.files);
           setDriveNextPageToken(cached.nextPageToken);
           setLoadingDrive(false);
+          setRefreshingDrive(true);
         } else {
-          setDriveFiles([]);
-          setLoadingDrive(true);
+          const hadList = driveFilesRef.current.length > 0;
+          if (!hadList) {
+            setDriveFiles([]);
+            setLoadingDrive(true);
+          } else {
+            setRefreshingDrive(true);
+          }
         }
       } else {
         setLoadingMore(true);
@@ -538,13 +560,15 @@ export default function DrivePage() {
           return next;
         });
         setDriveNextPageToken(data.nextPageToken);
+        if (!opts.append) prefetchVisibleFolders(data.files);
       } catch (e) {
         if (!opts.append && activeDriveListLoadRef.current !== loadId) return;
         setDriveListError(e instanceof Error ? e.message : "Failed to load");
-        if (!opts.append) setDriveFiles([]);
+        if (!opts.append && driveFilesRef.current.length === 0) setDriveFiles([]);
       } finally {
         if (!opts.append && activeDriveListLoadRef.current === loadId) {
           setLoadingDrive(false);
+          setRefreshingDrive(false);
         }
         setLoadingMore(false);
         loadingMoreRef.current = false;
@@ -555,6 +579,7 @@ export default function DrivePage() {
       currentParentId,
       pathStack.length,
       fetchDriveListPage,
+      prefetchVisibleFolders,
     ]
   );
 
@@ -1459,6 +1484,9 @@ export default function DrivePage() {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {refreshingDrive && !loadingDrive ? (
+          <div className="h-[2px] shrink-0 origin-left animate-progress-bar bg-[var(--color-primary)]" aria-hidden />
+        ) : null}
         {loadingDrive ? (
           <div className="scrollbar-thin flex-1 space-y-2 overflow-y-auto p-4">
             {[...Array(8)].map((_, i) => (
@@ -1485,7 +1513,7 @@ export default function DrivePage() {
             </p>
           </div>
         ) : (
-          <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className={cn("flex min-h-0 flex-1 overflow-hidden", refreshingDrive && "opacity-70")}>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             {/* Column headers — frozen above the scrolling file list (list view only). */}
             {viewMode === "list" && (
@@ -1657,6 +1685,7 @@ export default function DrivePage() {
                       className="group relative flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-colors hover:border-[var(--color-primary)] hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                       onContextMenu={(e) => openRowContextMenu(e, file)}
                       onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
+                      onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                     >
                       {/* Kebab — top-right corner */}
                       <div className="absolute right-1.5 top-1.5 z-10">{RowMenu}</div>
@@ -1706,6 +1735,7 @@ export default function DrivePage() {
                     className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
                     onContextMenu={(e) => openRowContextMenu(e, file)}
                     onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
+                    onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                   >
                     {/* Name column — icon + clickable label */}
                     <button

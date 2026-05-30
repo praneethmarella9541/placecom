@@ -118,6 +118,30 @@ async function getMyDriveRootId(accessToken: string): Promise<string> {
   return data.id?.trim() || "root";
 }
 
+let cachedMyDriveRootId: { id: string; expiresAt: number } | null = null;
+let cachedSharedDrivesList: { drives: SharedDrive[]; expiresAt: number } | null = null;
+const DRIVE_ROOT_CACHE_MS = 10 * 60 * 1000;
+
+async function getMyDriveRootIdCached(accessToken: string): Promise<string> {
+  const now = Date.now();
+  if (cachedMyDriveRootId && cachedMyDriveRootId.expiresAt > now) {
+    return cachedMyDriveRootId.id;
+  }
+  const id = await getMyDriveRootId(accessToken);
+  cachedMyDriveRootId = { id, expiresAt: now + DRIVE_ROOT_CACHE_MS };
+  return id;
+}
+
+async function getSharedDrivesCached(accessToken: string): Promise<SharedDrive[]> {
+  const now = Date.now();
+  if (cachedSharedDrivesList && cachedSharedDrivesList.expiresAt > now) {
+    return cachedSharedDrivesList.drives;
+  }
+  const drives = await listSharedDrives(accessToken).catch(() => [] as SharedDrive[]);
+  cachedSharedDrivesList = { drives, expiresAt: now + DRIVE_ROOT_CACHE_MS };
+  return drives;
+}
+
 async function fetchFolderMetaCached(
   accessToken: string,
   id: string,
@@ -151,8 +175,8 @@ async function enrichRecentFileLocations(
 ): Promise<void> {
   const rawById = new Map(raw.map((f) => [f.id, f]));
   const [myDriveRootId, sharedDriveList] = await Promise.all([
-    getMyDriveRootId(accessToken),
-    listSharedDrives(accessToken).catch(() => [] as SharedDrive[]),
+    getMyDriveRootIdCached(accessToken),
+    getSharedDrivesCached(accessToken),
   ]);
   const sharedDriveNames = new Map(sharedDriveList.map((d) => [d.id, d.name]));
   const metaCache = new Map<string, FolderMeta>();
@@ -176,36 +200,22 @@ async function enrichRecentFileLocations(
         view = "shared-with-me";
       }
 
-      const stopIds = new Set<string>([myDriveRootId]);
-      if (sharedDriveId) stopIds.add(sharedDriveId);
-
-      const path: Array<{ id: string; name: string }> = [];
-      let currentId = parentId;
-      for (let depth = 0; depth < 25 && currentId && !stopIds.has(currentId); depth++) {
-        const meta = await fetchFolderMetaCached(accessToken, currentId, metaCache);
-        if (!meta) break;
-        path.unshift({ id: meta.id, name: meta.name });
-        const nextParent = meta.parents?.[0]?.trim();
-        if (!nextParent || nextParent === currentId) break;
-        currentId = nextParent;
-      }
-
       let label: string;
       let folderId = parentId;
+      const path: Array<{ id: string; name: string }> = [];
 
       if (parentId === myDriveRootId) {
         label = "My Drive";
         folderId = "root";
-        path.length = 0;
       } else if (sharedDriveId && parentId === sharedDriveId) {
         label = sharedDriveNames.get(sharedDriveId) ?? "Shared drive";
-        path.length = 0;
-      } else if (sharedWithMe && path.length === 0 && parentId === myDriveRootId) {
+      } else if (sharedWithMe && parentId === myDriveRootId) {
         label = "Shared with me";
         folderId = "root";
       } else {
         const parentMeta = await fetchFolderMetaCached(accessToken, parentId, metaCache);
         label = parentMeta?.name?.trim() || "Folder";
+        path.push({ id: parentId, name: label });
       }
 
       file.location = {
@@ -283,15 +293,9 @@ export async function listDriveFilesPage(
     params.set("corpora", "user");
     params.set("supportsAllDrives", "true");
   }
-  // Drive API rejects orderBy when the query uses `fullText contains` —
-  // results come back in descending relevance order automatically. So we
-  // only set orderBy in browse mode (no search).
-  if (!hasSearch) {
-    if (atViewRoot && view === "recent") {
-      params.set("orderBy", "viewedByMeTime desc");
-    } else {
-      params.set("orderBy", "folder,modifiedTime desc,name_natural");
-    }
+  // Client sorts folders/files — skip server orderBy for faster folder listings.
+  if (!hasSearch && atViewRoot && view === "recent") {
+    params.set("orderBy", "viewedByMeTime desc");
   }
   if (options.pageToken) params.set("pageToken", options.pageToken);
 

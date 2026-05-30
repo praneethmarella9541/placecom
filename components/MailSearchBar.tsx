@@ -369,26 +369,23 @@ export function MailSearchBar({
       ) : null}
 
       {showDropdown ? (
-        <div className="mt-2 flex flex-wrap gap-2 px-0.5">
-          {QUICK_FILTERS.map(({ label, modifier }) => (
-            <button
-              key={modifier}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => applyQuickFilter(modifier)}
-              className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-[13px] text-[var(--color-text-muted)] shadow-sm transition hover:bg-[var(--color-surface-offset)]"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {showDropdown ? (
         <div
-          className="absolute left-0 right-0 top-[calc(100%+44px)] z-30 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+          className="absolute left-0 right-0 top-full z-30 mt-0.5 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
           role="listbox"
         >
+          <div className="flex flex-wrap gap-2 border-b border-[var(--gmail-border-row)] px-3 py-2">
+            {QUICK_FILTERS.map(({ label, modifier }) => (
+              <button
+                key={modifier}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => applyQuickFilter(modifier)}
+                className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-[13px] text-[var(--color-text-muted)] transition hover:bg-[var(--color-surface-offset)]"
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {loading && mergedContacts.length === 0 && threads.length === 0 ? (
             <div className="flex items-center justify-center gap-2 py-6 text-[13px] text-[var(--color-text-faint)]">
               <Loader2 className="h-4 w-4 animate-spin" />

@@ -45,6 +45,7 @@ export async function POST(request: Request) {
         addMeet?: boolean;
         sendUpdates?: SendUpdates;
         extraAttendeeEmails?: string[];
+        recurrence?: string[];
       }
     | null;
 
@@ -108,6 +109,7 @@ export async function POST(request: Request) {
         location: body?.location,
         timeZone: body?.timeZone,
         extraAttendeeEmails,
+        recurrence: body?.recurrence,
         addMeet: body?.addMeet !== false,           // default true
         sendUpdates: body?.sendUpdates ?? "all",     // default: send invite emails
       }

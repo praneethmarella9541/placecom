@@ -10,6 +10,7 @@ import {
   parseCalendarInviteHtml,
   type CalendarInviteParsed,
 } from "@/lib/calendar-invite-email";
+import { CalendarRsvpButtons } from "@/components/CalendarRsvpButtons";
 import { EmailHtmlBody } from "@/components/EmailHtmlBody";
 import type { InlineImageAttachment } from "@/lib/email-html-inline-images";
 import { titleCase } from "@/lib/title-case";
@@ -108,28 +109,37 @@ export function CalendarInviteCard({ subject, bodyHtml, className }: CalendarInv
               </InviteSection>
             )}
 
-            {(parsed.rsvp.yes || parsed.rsvp.no || parsed.rsvp.maybe) && (
+            {(parsed.rsvp.yes || parsed.rsvp.no || parsed.rsvp.maybe || eventId) && (
               <div className="mt-5 border-t border-[#e8eaed] pt-4">
                 {parsed.replyForEmail && (
                   <p className="mb-2 text-[13px] text-[#5f6368]">
                     {titleCase("Reply")} for {parsed.replyForEmail}
                   </p>
                 )}
-                <div className="flex flex-wrap items-center gap-2">
-                  <RsvpButton href={parsed.rsvp.yes} label={titleCase("Yes")} />
-                  <RsvpButton href={parsed.rsvp.no} label={titleCase("No")} />
-                  <RsvpButton href={parsed.rsvp.maybe} label={titleCase("Maybe")} />
-                  {parsed.rsvp.moreOptions && (
-                    <a
-                      href={parsed.rsvp.moreOptions}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-full border border-[#dadce0] bg-white px-4 py-1.5 text-[13px] font-medium text-[#3c4043] hover:bg-[#f8f9fa]"
-                    >
-                      {titleCase("More options")}
-                    </a>
-                  )}
-                </div>
+                {eventId ? (
+                  <>
+                    <CalendarRsvpButtons eventId={eventId} variant="invite" />
+                    <p className="mt-2 text-[11px] text-[#5f6368]">
+                      Your response syncs to Google Calendar instantly.
+                    </p>
+                  </>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <RsvpButton href={parsed.rsvp.yes} label={titleCase("Yes")} />
+                    <RsvpButton href={parsed.rsvp.no} label={titleCase("No")} />
+                    <RsvpButton href={parsed.rsvp.maybe} label={titleCase("Maybe")} />
+                    {parsed.rsvp.moreOptions && (
+                      <a
+                        href={parsed.rsvp.moreOptions}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="rounded-full border border-[#dadce0] bg-white px-4 py-1.5 text-[13px] font-medium text-[#3c4043] hover:bg-[#f8f9fa]"
+                      >
+                        {titleCase("More options")}
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

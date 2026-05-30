@@ -14,8 +14,25 @@ export type CalendarEventItem = {
   status?: string;
   start: { dateTime?: string; date?: string; timeZone?: string };
   end: { dateTime?: string; date?: string; timeZone?: string };
-  attendees?: { email?: string; displayName?: string; responseStatus?: string }[];
+  attendees?: {
+    email?: string;
+    displayName?: string;
+    responseStatus?: string;
+    organizer?: boolean;
+    self?: boolean;
+  }[];
+  organizer?: { email?: string; displayName?: string; self?: boolean };
   hangoutLink?: string;
+  recurrence?: string[];
+  recurringEventId?: string;
+};
+
+export type RsvpStatus = "accepted" | "declined" | "tentative";
+
+export type FreeBusySlot = { start: string; end: string };
+
+export type FreeBusyResult = {
+  calendars: Record<string, { busy: FreeBusySlot[] }>;
 };
 
 export type SendUpdates = "all" | "externalOnly" | "none";
@@ -155,6 +172,70 @@ export async function getCalendarEvent(
   return (await res.json()) as CalendarEventItem;
 }
 
+export async function queryCalendarFreeBusy(
+  accessToken: string,
+  input: { timeMin: string; timeMax: string; calendarIds: string[] }
+): Promise<FreeBusyResult> {
+  const ids = Array.from(new Set(input.calendarIds.map((id) => id.trim()).filter(Boolean)));
+  if (ids.length === 0) return { calendars: {} };
+
+  let res: Response;
+  try {
+    res = await fetch(`${CALENDAR_API}/freeBusy`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        timeMin: input.timeMin,
+        timeMax: input.timeMax,
+        items: ids.map((id) => ({ id })),
+      }),
+      cache: "no-store",
+    });
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(e, "Google Calendar API (freeBusy)")
+    );
+  }
+  if (!res.ok) {
+    const msg = await parseGoogleErrorBody(res);
+    const err = new Error(`Google Calendar freeBusy failed: ${msg}`) as Error & {
+      code?: string;
+    };
+    err.code = toErrorCode(res.status);
+    throw err;
+  }
+  const body = (await res.json()) as FreeBusyResult;
+  return { calendars: body.calendars ?? {} };
+}
+
+/** Update one guest's RSVP (organizer token may set any attendee response). */
+export async function updateCalendarEventRsvp(
+  accessToken: string,
+  eventId: string,
+  attendeeEmail: string,
+  responseStatus: RsvpStatus,
+  opts: { sendUpdates?: SendUpdates } = {}
+): Promise<CalendarEventItem> {
+  const event = await getCalendarEvent(accessToken, eventId);
+  const target = attendeeEmail.trim().toLowerCase();
+  const attendees = (event.attendees ?? []).map((a) => {
+    if (a.email?.trim().toLowerCase() === target) {
+      return { email: a.email, responseStatus };
+    }
+    return { email: a.email!, responseStatus: a.responseStatus };
+  });
+  if (!attendees.some((a) => a.email?.trim().toLowerCase() === target)) {
+    throw new Error("You are not listed as a guest on this event.");
+  }
+  return patchCalendarEvent(accessToken, eventId, {
+    attendees: attendees.filter((a) => a.email) as { email: string }[],
+    sendUpdates: opts.sendUpdates ?? "all",
+  });
+}
+
 /**
  * Generic create — accepts the Google Calendar event shape directly.
  * Used by POST /api/calendar/events from both web and mobile.
@@ -174,6 +255,7 @@ export async function createCalendarEvent(
     attendees?: { email: string }[];
     addMeet?: boolean;
     sendUpdates?: SendUpdates;
+    recurrence?: string[];
   }
 ): Promise<CalendarEventItem> {
   const { addMeet, sendUpdates, ...rest } = input;
@@ -232,6 +314,7 @@ export async function patchCalendarEvent(
     attendees?: { email: string }[];
     addMeet?: boolean;
     sendUpdates?: SendUpdates;
+    recurrence?: string[];
   }
 ): Promise<CalendarEventItem> {
   const { addMeet, sendUpdates, ...rest } = input;
@@ -334,6 +417,7 @@ export async function createPlacementMeetingEvent(
     addMeet?: boolean;
     /** Whether to send invite emails to attendees. Defaults to "all". */
     sendUpdates?: SendUpdates;
+    recurrence?: string[];
   }
 ): Promise<CalendarEventItem> {
   const seen = new Set<string>();
@@ -366,6 +450,7 @@ export async function createPlacementMeetingEvent(
     },
     attendees,
     guestsCanInviteOthers: false,
+    ...(input.recurrence?.length ? { recurrence: input.recurrence } : {}),
     ...(wantMeet && {
       conferenceData: {
         createRequest: {

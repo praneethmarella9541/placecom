@@ -20,6 +20,7 @@ type PatchBody = {
   attendees?: { email: string }[];
   addMeet?: boolean;
   sendUpdates?: SendUpdates;
+  recurrence?: string[];
 };
 
 function handleError(e: unknown) {

@@ -20,6 +20,15 @@ import {
 } from "@/components/Icons";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
+import {
+  RECURRENCE_OPTIONS,
+  buildRecurrenceRules,
+  formatRecurrenceLabel,
+  parseRecurrencePreset,
+  type RecurrencePreset,
+} from "@/lib/calendar-recurrence";
+import { CalendarFreeBusyPanel } from "@/components/CalendarFreeBusyPanel";
+import { CalendarRsvpButtons, type RsvpStatus } from "@/components/CalendarRsvpButtons";
 
 /* ─── Types ─────────────────────────────────────────────────── */
 type Attendee = {
@@ -42,6 +51,8 @@ type EventRow = {
   end?: { dateTime?: string; date?: string };
   attendees?: Attendee[];
   organizer?: { email?: string; displayName?: string; self?: boolean };
+  recurrence?: string[];
+  recurringEventId?: string;
 };
 
 type RecruiterRow = {
@@ -351,6 +362,11 @@ export default function CalendarPage() {
   const [endDateTime, setEndDateTime] = useState("");
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [addMeet, setAddMeet] = useState(true);
+  const [recurrencePreset, setRecurrencePreset] = useState<RecurrencePreset>("none");
+
+  // Signed-in user emails — for in-app RSVP matching
+  const [sessionEmail, setSessionEmail] = useState<string | null>(null);
+  const [mailboxEmail, setMailboxEmail] = useState<string | null>(null);
 
   // Edit form fields
   const [editBusy, setEditBusy] = useState(false);
@@ -364,6 +380,8 @@ export default function CalendarPage() {
   const [editAddMeet, setEditAddMeet] = useState(false);
   const [editAttendees, setEditAttendees] = useState(""); // comma-sep emails
   const [editNotify, setEditNotify] = useState<SendUpdates>("all");
+  const [editRecurrencePreset, setEditRecurrencePreset] = useState<RecurrencePreset>("none");
+  const [editIsSeriesInstance, setEditIsSeriesInstance] = useState(false);
   // Success state — shown after meeting created
   const [createdMeetLink, setCreatedMeetLink] = useState<string | null>(null);
 
@@ -402,6 +420,17 @@ export default function CalendarPage() {
   }, []);
 
   useEffect(() => { void loadRecruiters(); }, [loadRecruiters]);
+
+  useEffect(() => {
+    fetch("/api/me/mailbox")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const data = j as { sessionEmail?: string | null; mailboxEmail?: string | null } | null;
+        if (data?.sessionEmail) setSessionEmail(data.sessionEmail.trim().toLowerCase());
+        if (data?.mailboxEmail) setMailboxEmail(data.mailboxEmail.trim().toLowerCase());
+      })
+      .catch(() => {});
+  }, []);
 
   // Pull Google contacts once on mount — same source the Compose modal uses,
   // so the meeting recipient pickers feel consistent with the mail flow.
@@ -470,8 +499,42 @@ export default function CalendarPage() {
     const defaults = defaultMeetingTimes();
     setStartDateTime(prefill?.start ?? defaults.start);
     setEndDateTime(prefill?.end ?? defaults.end);
+    setRecurrencePreset("none");
     setScheduleError(null);
     setScheduleOpen(true);
+  }
+
+  function findSelfAttendee(ev: EventRow): Attendee | undefined {
+    const emails = new Set(
+      [sessionEmail, mailboxEmail].filter(Boolean) as string[]
+    );
+    return (ev.attendees ?? []).find((a) => {
+      if (a.self) return !a.organizer;
+      const em = a.email?.trim().toLowerCase();
+      return em ? emails.has(em) && !a.organizer : false;
+    });
+  }
+
+  function canRsvp(ev: EventRow): boolean {
+    return !!findSelfAttendee(ev);
+  }
+
+  function applyRsvpToEvent(ev: EventRow, status: RsvpStatus): EventRow {
+    const self = findSelfAttendee(ev);
+    if (!self?.email) return ev;
+    const target = self.email.toLowerCase();
+    return {
+      ...ev,
+      attendees: (ev.attendees ?? []).map((a) =>
+        a.email?.toLowerCase() === target ? { ...a, responseStatus: status } : a
+      ),
+    };
+  }
+
+  function onRsvpUpdated(ev: EventRow, status: RsvpStatus) {
+    const updated = applyRsvpToEvent(ev, status);
+    setEvents((prev) => prev.map((e) => (e.id === ev.id ? { ...e, ...updated } : e)));
+    setSelectedEvent((cur) => (cur?.id === ev.id ? { ...cur, ...updated } : cur));
   }
 
   function onDateSelect(arg: DateSelectArg) {
@@ -497,7 +560,7 @@ export default function CalendarPage() {
     () =>
       filteredEvents.map((e) => ({
         id: e.id,
-        title: e.summary || "(untitled)",
+        title: `${e.recurrence?.length || e.recurringEventId ? "↻ " : ""}${e.summary || "(untitled)"}`,
         start: e.start?.dateTime || e.start?.date,
         end: e.end?.dateTime || e.end?.date,
         url: "",
@@ -535,6 +598,7 @@ export default function CalendarPage() {
           timeZone: USER_TZ,
           startDateTime: new Date(startDateTime).toISOString(),
           endDateTime: new Date(endDateTime).toISOString(),
+          recurrence: buildRecurrenceRules(recurrencePreset),
           addMeet,
           sendUpdates: "all",
           extraAttendeeEmails: extras.length ? extras : undefined,
@@ -586,6 +650,8 @@ export default function CalendarPage() {
     );
     setEditAttendees((ev.attendees ?? []).map((a) => a.email).filter(Boolean).join(", "));
     setEditAddMeet(!ev.hangoutLink);
+    setEditRecurrencePreset(parseRecurrencePreset(ev.recurrence));
+    setEditIsSeriesInstance(!!ev.recurringEventId && ev.recurringEventId !== ev.id);
     setEditNotify("all");
     setEditError(null);
     setSelectedEvent(null);
@@ -712,6 +778,14 @@ export default function CalendarPage() {
           attendees: attendees.length ? attendees : undefined,
           addMeet: editAddMeet && !editEvent.hangoutLink ? true : undefined,
           sendUpdates: editNotify,
+          ...(editIsSeriesInstance
+            ? {}
+            : {
+                recurrence:
+                  editRecurrencePreset === "none"
+                    ? []
+                    : buildRecurrenceRules(editRecurrencePreset),
+              }),
         }),
       });
       const body = (await res.json()) as { error?: string; event?: EventRow };
@@ -826,6 +900,23 @@ export default function CalendarPage() {
 
     void resolveDeepLink();
   }, [events, loadingEvents, searchParams, router]);
+
+  const scheduleGuestEmails = useMemo(
+    () => extractAllEmailsFromText(recruiterEmail),
+    [recruiterEmail]
+  );
+
+  const scheduleStartIso = startDateTime ? new Date(startDateTime).toISOString() : null;
+  const scheduleEndIso = endDateTime ? new Date(endDateTime).toISOString() : null;
+
+  const editGuestEmails = useMemo(
+    () => extractAllEmailsFromText(editAttendees),
+    [editAttendees]
+  );
+
+  const editStartIso =
+    editStart && !editAllDay ? new Date(editStart).toISOString() : null;
+  const editEndIso = editEnd && !editAllDay ? new Date(editEnd).toISOString() : null;
 
   /* ── Render ──────────────────────────────────────────── */
   return (
@@ -1270,6 +1361,25 @@ export default function CalendarPage() {
                 ))}
                 <span className="self-center text-[10px] text-[var(--color-text-faint)]">{USER_TZ}</span>
               </div>
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Repeat</span>
+                <select
+                  value={recurrencePreset}
+                  onChange={(e) => setRecurrencePreset(e.target.value as RecurrencePreset)}
+                  className="input-field"
+                >
+                  {RECURRENCE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <CalendarFreeBusyPanel
+                startIso={scheduleStartIso}
+                endIso={scheduleEndIso}
+                emails={scheduleGuestEmails}
+              />
               <input
                 type="text"
                 placeholder="Location or video call link (optional)"
@@ -1376,7 +1486,30 @@ export default function CalendarPage() {
                   {formatCalendarDateTime(selectedEvent.start?.dateTime || selectedEvent.start?.date || "")}
                   {" — "}
                   {formatCalendarDateTime(selectedEvent.end?.dateTime || selectedEvent.end?.date || "")}
+                  {formatRecurrenceLabel(selectedEvent.recurrence) ? (
+                    <span className="mt-1 block text-[12px] text-[var(--color-text-muted)]">
+                      ↻ {formatRecurrenceLabel(selectedEvent.recurrence)}
+                    </span>
+                  ) : selectedEvent.recurringEventId ? (
+                    <span className="mt-1 block text-[12px] text-[var(--color-text-muted)]">
+                      ↻ Part of a repeating series
+                    </span>
+                  ) : null}
                 </dd>
+
+                {canRsvp(selectedEvent) ? (
+                  <>
+                    <dt className="text-[var(--color-text-faint)] font-medium">Going?</dt>
+                    <dd>
+                      <CalendarRsvpButtons
+                        eventId={selectedEvent.id}
+                        currentStatus={findSelfAttendee(selectedEvent)?.responseStatus}
+                        onUpdated={(status) => onRsvpUpdated(selectedEvent, status)}
+                        variant="detail"
+                      />
+                    </dd>
+                  </>
+                ) : null}
 
                 {selectedEvent.location ? (
                   <>
@@ -1578,6 +1711,35 @@ export default function CalendarPage() {
                   />
                 </div>
               )}
+
+              {!editAllDay && !editIsSeriesInstance ? (
+                <label className="block">
+                  <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Repeat</span>
+                  <select
+                    value={editRecurrencePreset}
+                    onChange={(e) => setEditRecurrencePreset(e.target.value as RecurrencePreset)}
+                    className="input-field"
+                  >
+                    {RECURRENCE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : editIsSeriesInstance ? (
+                <p className="rounded-lg bg-[var(--color-surface-offset)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+                  Recurrence applies to the whole series — edit the series in Google Calendar to change the repeat rule.
+                </p>
+              ) : null}
+
+              {!editAllDay ? (
+                <CalendarFreeBusyPanel
+                  startIso={editStartIso}
+                  endIso={editEndIso}
+                  emails={editGuestEmails}
+                />
+              ) : null}
 
               <input
                 type="text"

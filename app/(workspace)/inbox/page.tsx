@@ -161,6 +161,7 @@ type AttachmentView = {
   filename: string;
   mimeType: string;
   size: number;
+  contentId?: string;
 };
 
 type MsgView = {
@@ -2571,7 +2572,7 @@ export default function InboxPage() {
     <div
       data-gmail-mail
       className={cn(
-        "flex min-h-0 overflow-hidden bg-[#f6f8fc] text-[#202124]",
+        "flex min-h-0 overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]",
         /* Cancel WorkspaceChrome padding so the pane is exactly viewport-tall (no page scroll). */
         "-mx-4 -mt-[calc(56px+16px)] -mb-6 h-[calc(100dvh-40px)]",
         "md:-mx-6 md:-mt-6 md:-mb-6 md:h-[calc(100dvh-48px)]"
@@ -2580,7 +2581,7 @@ export default function InboxPage() {
 
       {/* ══ LEFT RAIL — desktop only ══ */}
       <aside
-        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-[#e8eaed] bg-[#f6f8fc] md:flex"
+        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--gmail-border-light)] bg-[var(--color-bg)] md:flex"
         style={{ width: sidebarWidth }}
       >
         {/* Compose + Refresh — Gmail pill compose button */}
@@ -2588,7 +2589,7 @@ export default function InboxPage() {
           <button
             type="button"
             onClick={() => openNewCompose()}
-            className="inline-flex h-12 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-[#c2e7ff] px-4 text-[14px] font-medium text-[#001d35] shadow-sm transition hover:bg-[#b6daf8] hover:shadow-md"
+            className="inline-flex h-12 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-[var(--gmail-compose-pill)] px-4 text-[14px] font-medium text-[var(--gmail-compose-pill-text)] shadow-sm transition hover:brightness-95 hover:shadow-md"
           >
             <PencilLine className="h-[18px] w-[18px] shrink-0" strokeWidth={2} />
             {titleCase("Compose")}
@@ -2631,8 +2632,8 @@ export default function InboxPage() {
                 className={cn(
                   "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-3 pr-3 text-[14px] transition-colors",
                   active
-                    ? "bg-[#d3e3fd] font-semibold text-[#001d35]"
-                    : "font-medium text-[#444746] hover:bg-[#e8eaed]",
+                    ? "bg-[var(--color-primary-light)] font-semibold text-[var(--gmail-nav-active-text)]"
+                    : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
                 )}
               >
                 <Icon className={cn(
@@ -2646,7 +2647,7 @@ export default function InboxPage() {
                 {badge !== null && (
                   <span className={cn(
                     "min-w-[20px] rounded-full px-1.5 py-[1px] text-center text-[11px] font-bold tabular-nums",
-                    active ? "text-[#0b57d0]" : "text-[#5f6368]"
+                    active ? "text-[var(--color-primary)]" : "text-[var(--color-text-faint)]"
                   )}>
                     {badge > 9999 ? `${Math.floor(badge / 1000)}k` : badge}
                   </span>
@@ -2726,8 +2727,8 @@ export default function InboxPage() {
                     className={cn(
                       "group flex w-full items-center gap-2.5 rounded-r-full py-[7px] pl-2 pr-3 text-[13px] transition-colors",
                       active
-                        ? "bg-[#d3e3fd] font-semibold text-[#001d35] shadow-[inset_3px_0_0_0_var(--label-accent)]"
-                        : "font-medium text-[#444746] hover:bg-[#e8eaed]",
+                        ? "bg-[var(--color-primary-light)] font-semibold text-[var(--gmail-nav-active-text)] shadow-[inset_3px_0_0_0_var(--label-accent)]"
+                        : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
                     )}
                     style={
                       active
@@ -2752,7 +2753,7 @@ export default function InboxPage() {
                     <span
                       className={cn(
                         "min-w-0 flex-1 truncate text-left",
-                        !active && "group-hover:text-[#202124]"
+                        !active && "group-hover:text-[var(--color-text)]"
                       )}
                     >
                       {l.name}
@@ -2762,8 +2763,8 @@ export default function InboxPage() {
                         className={cn(
                           "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
                           active
-                            ? "bg-white/80 text-[#001d35]"
-                            : "bg-[#e8eaed] text-[var(--color-text-muted)] group-hover:bg-white"
+                            ? "bg-[var(--color-surface)]/80 text-[var(--gmail-nav-active-text)]"
+                            : "bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] group-hover:bg-[var(--color-surface)]"
                         )}
                       >
                         {unread > 999 ? "999+" : unread}
@@ -2785,7 +2786,7 @@ export default function InboxPage() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
 
         {/* Mobile folder tabs (replaces left rail on small screens) */}
-        <div className="flex shrink-0 border-b border-[#e8eaed] bg-white md:hidden">
+        <div className="flex shrink-0 border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] md:hidden">
           <div className="flex flex-1 overflow-x-auto">
             {FOLDER_NAV.map(({ key, label, Icon, countId, unreadOnly }) => {
               const count = countId ? labelCounts[countId] : undefined;
@@ -2809,8 +2810,8 @@ export default function InboxPage() {
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-3 text-[13px] font-medium transition-colors",
                     active
-                      ? "border-[#0b57d0] text-[#0b57d0]"
-                      : "border-transparent text-[#5f6368]",
+                      ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                      : "border-transparent text-[var(--color-text-faint)]",
                   )}
                 >
                   <Icon className="h-4 w-4" />
@@ -2851,7 +2852,7 @@ export default function InboxPage() {
 
         {/* ── Category tabs (Primary / Promotions / Social…) — top of right area, only on Inbox ── */}
         {folder === "inbox" && !filterLabelId && (
-          <div className="flex shrink-0 gap-0 overflow-x-auto border-b border-[#e8eaed] bg-[#f6f8fc]">
+          <div className="flex shrink-0 gap-0 overflow-x-auto border-b border-[var(--gmail-border-light)] bg-[var(--color-bg)]">
             {(
               [
                 { key: "primary"    as const, label: "Primary"    },
@@ -2870,8 +2871,8 @@ export default function InboxPage() {
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-5 py-3 text-[13px] font-medium transition-colors",
                     active
-                      ? "border-[#0b57d0] font-semibold text-[#0b57d0]"
-                      : "border-transparent text-[#444746] hover:bg-[#e8eaed]"
+                      ? "border-[var(--color-primary)] font-semibold text-[var(--color-primary)]"
+                      : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
                   )}
                 >
                   {t.label}
@@ -2885,9 +2886,9 @@ export default function InboxPage() {
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <div
             className={cn(
-                "relative flex min-h-0 flex-col overflow-hidden bg-white md:bg-[#f6f8fc]",
+                "relative flex min-h-0 flex-col overflow-hidden bg-[var(--color-surface)] md:bg-[var(--color-bg)]",
               selectedId
-                ? "hidden w-full shrink-0 border-[#e8eaed] md:flex md:border-r"
+                ? "hidden w-full shrink-0 border-[var(--gmail-border-light)] md:flex md:border-r"
                 : "flex flex-1",
             )}
             style={selectedId ? { width: listPaneWidth } : undefined}
@@ -2906,7 +2907,7 @@ export default function InboxPage() {
             <div
               ref={filterPanelRef}
               className={cn(
-                "relative shrink-0 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 pt-2",
+                "relative shrink-0 border-b border-[var(--gmail-border-light)] bg-[var(--color-bg)] px-3 pt-2",
                 filterOpen ? "pb-0" : "pb-2",
               )}
             >
@@ -3028,7 +3029,7 @@ export default function InboxPage() {
 
             {/* Bulk-action / select-all toolbar */}
             {threads.length > 0 && (
-              <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[#e8eaed] bg-[#f6f8fc] px-3 text-[12px]">
+              <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--gmail-border-light)] bg-[var(--color-bg)] px-3 text-[12px]">
                 <input
                   type="checkbox"
                   checked={allSelected}
@@ -3042,7 +3043,7 @@ export default function InboxPage() {
                     <button
                       type="button"
                       onClick={clearSelection}
-                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] transition-colors hover:bg-[#e8eaed] hover:text-[var(--color-text)]"
+                      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
                       aria-label={titleCase("Clear selection")}
                       title={titleCase("Clear selection")}
                     >
@@ -3221,15 +3222,15 @@ export default function InboxPage() {
                         else void openThread(t.id);
                       }}
                       className={cn(
-                        "group relative flex h-[40px] cursor-pointer items-center overflow-hidden border-b border-[#f1f3f4] text-[13px] transition-colors",
+                        "group relative flex h-[40px] cursor-pointer items-center overflow-hidden border-b border-[var(--gmail-border-row)] text-[13px] transition-colors",
                         isActiveThread
-                          ? "bg-[#c2e3ff] shadow-[inset_3px_0_0_0_#0b57d0]"
+                          ? "bg-[var(--gmail-row-selected)] shadow-[inset_3px_0_0_0_var(--color-primary)]"
                           : isSelected
-                            ? "bg-[#d3e3fd]"
+                            ? "bg-[var(--color-primary-light)]"
                             : isUnread
-                              ? "bg-white font-semibold"
-                              : "bg-white font-normal",
-                        !isActiveThread && "hover:bg-[#f2f6fc] hover:shadow-sm",
+                              ? "bg-[var(--color-surface)] font-semibold"
+                              : "bg-[var(--color-surface)] font-normal",
+                        !isActiveThread && "hover:bg-[var(--gmail-row-hover)] hover:shadow-sm",
                       )}
                     >
                       {/* Checkbox — fixed 40px slot */}
@@ -3351,7 +3352,7 @@ export default function InboxPage() {
                             });
                           return isCal ? (
                             <span title={titleCase("Calendar event")} className="inline-flex shrink-0">
-                              <IconCalendar className="h-[15px] w-[15px] text-[#5f6368]" />
+                              <IconCalendar className="h-[15px] w-[15px] text-[var(--color-text-faint)]" />
                             </span>
                           ) : null;
                         })()}
@@ -3423,12 +3424,12 @@ export default function InboxPage() {
 
         {/* ── THREAD DETAIL view ── */}
         {selectedId && (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
             {loadingThread ? (
               <div className="flex h-full flex-col">
                 {/* Header skeleton — mirrors the real subject row + sender meta */}
-                <div className="border-b border-[#e8eaed] bg-white px-2 py-2 md:px-4">
-                  <div className="mb-3 flex items-center gap-1 border-b border-[#f1f3f4] pb-2">
+                <div className="border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] px-2 py-2 md:px-4">
+                  <div className="mb-3 flex items-center gap-1 border-b border-[var(--gmail-border-row)] pb-2">
                     <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
                     <Skeleton className="skeleton-shimmer h-8 w-20 shrink-0 rounded-md" />
                     <ThreadPaneNavButton variant="close" onClick={closeThread} className="ml-auto hidden md:inline-flex" />
@@ -3453,7 +3454,7 @@ export default function InboxPage() {
                   {[0, 1].map((idx) => (
                     <article
                       key={idx}
-                      className="rounded-lg border border-[#e8eaed] bg-white p-5 md:p-6"
+                      className="rounded-lg border border-[var(--gmail-border-light)] bg-[var(--color-surface)] p-5 md:p-6"
                     >
                       {/* Top row: avatar + from/to + date */}
                       <div className="flex items-start justify-between gap-2">
@@ -3493,8 +3494,8 @@ export default function InboxPage() {
             ) : messages && messages.length ? (
               <>
                 {/* Thread header — Gmail action bar + subject */}
-                <div className="border-b border-[#e8eaed] bg-white px-2 py-2 md:px-4">
-                  <div className="mb-2 flex items-center gap-1 border-b border-[#f1f3f4] pb-2">
+                <div className="border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] px-2 py-2 md:px-4">
+                  <div className="mb-2 flex items-center gap-1 border-b border-[var(--gmail-border-row)] pb-2">
                     <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
                     <LabelPicker
                       allLabels={allLabels}
@@ -3511,7 +3512,7 @@ export default function InboxPage() {
                     />
                   </div>
                   <div className="flex items-start gap-1 px-2 md:px-0">
-                    <h2 className="min-w-0 flex-1 text-xl font-normal leading-snug text-[#202124]">
+                    <h2 className="min-w-0 flex-1 text-xl font-normal leading-snug text-[var(--color-text)]">
                       {messages[0]?.subject || "(no subject)"}
                     </h2>
                     <ThreadActionsMenu
@@ -3551,13 +3552,13 @@ export default function InboxPage() {
                     const fromEmail = extractEmailAddress(m.from || "");
                     const fromName = senderName(m.from || "");
                     return (
-                    <article key={m.id} className="flex gap-4 border-b border-[#f1f3f4] px-4 py-5 md:px-8">
+                    <article key={m.id} className="flex gap-4 border-b border-[var(--gmail-border-row)] px-4 py-5 md:px-8">
                       <GmailAvatar seed={fromEmail} name={fromName} size={40} className="mt-0.5" />
                       <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                            <p className="truncate text-[14px] font-medium text-[#202124]">{fromName}</p>
-                            <p className="text-[12px] leading-snug text-[#5f6368]">
+                            <p className="truncate text-[14px] font-medium text-[var(--color-text)]">{fromName}</p>
+                            <p className="text-[12px] leading-snug text-[var(--color-text-faint)]">
                               {(() => {
                                 const parts = formatMessageRecipientsLine(m);
                                 if (parts.length === 0) {
@@ -3570,8 +3571,8 @@ export default function InboxPage() {
                                 return parts.map((part, i) => (
                                   <span key={part.label} className={i > 0 ? "ml-1" : undefined}>
                                     {i > 0 ? "· " : null}
-                                    <span className="text-[#80868b]">{part.label}</span>{" "}
-                                    <span className="text-[#5f6368]">{part.value}</span>
+                                    <span className="text-[var(--color-text-faint)]">{part.label}</span>{" "}
+                                    <span className="text-[var(--color-text-faint)]">{part.value}</span>
                                   </span>
                                 ));
                               })()}
@@ -3598,13 +3599,15 @@ export default function InboxPage() {
                               </span>
                             );
                           })()}
-                          <time className="whitespace-nowrap text-[12px] text-[#5f6368]">{formatDate(m.date)}</time>
+                          <time className="whitespace-nowrap text-[12px] text-[var(--color-text-faint)]">{formatDate(m.date)}</time>
                         </div>
                       </div>
                       <CalendarInviteOrHtml
                         subject={m.subject}
                         bodyHtml={m.bodyHtml}
                         plain={m.body}
+                        messageId={m.id}
+                        attachments={m.attachments}
                       />
                       {(() => {
                         const files = (m.attachments ?? []).filter(
@@ -3691,7 +3694,7 @@ export default function InboxPage() {
               <button
                 type="button"
                 onClick={sendSnack.retry}
-                className="ml-1 rounded bg-white/15 px-2 py-0.5 text-[12px] font-semibold hover:bg-white/25"
+                className="ml-1 rounded bg-[var(--color-surface)]/15 px-2 py-0.5 text-[12px] font-semibold hover:bg-[var(--color-surface)]/25"
               >
                 Retry
               </button>
@@ -3769,7 +3772,7 @@ function ThreadPaneNavButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-0 text-[#444746] hover:bg-[#e8eaed]",
+        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full p-0 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
         className
       )}
       aria-label={label}

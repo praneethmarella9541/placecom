@@ -129,8 +129,16 @@
     --accent-soft: var(--color-primary-light);
   }
 
-  /* /inbox mail UI — lock tokens to Gmail web colors */
+  /* /inbox mail UI — Gmail web tokens (light + dark via data-theme) */
   [data-gmail-mail] {
+    --gmail-border-light: #e8eaed;
+    --gmail-border-row: #f1f3f4;
+    --gmail-compose-pill: #c2e7ff;
+    --gmail-compose-pill-text: #001d35;
+    --gmail-nav-active-text: #001d35;
+    --gmail-search-bg: #eaf1fb;
+    --gmail-row-hover: #f2f6fc;
+    --gmail-row-selected: #c2e3ff;
     --color-bg: #f6f8fc;
     --color-surface: #ffffff;
     --color-surface-2: #f8f9fa;
@@ -150,6 +158,36 @@
     --color-danger: #d93025;
     --color-danger-light: #fce8e6;
     --shadow-glow: 0 0 0 1px rgba(11, 87, 208, 0.2), 0 4px 16px rgba(11, 87, 208, 0.12);
+  }
+
+  [data-theme="dark"] [data-gmail-mail] {
+    --gmail-border-light: rgba(255, 255, 255, 0.08);
+    --gmail-border-row: rgba(255, 255, 255, 0.06);
+    --gmail-compose-pill: rgba(138, 180, 248, 0.22);
+    --gmail-compose-pill-text: #e8eaed;
+    --gmail-nav-active-text: #8ab4f8;
+    --gmail-search-bg: #3c4043;
+    --gmail-row-hover: rgba(255, 255, 255, 0.04);
+    --gmail-row-selected: rgba(138, 180, 248, 0.14);
+    --color-bg: #202124;
+    --color-surface: #2d2e30;
+    --color-surface-2: #35363a;
+    --color-surface-offset: #3c3d40;
+    --color-border: rgba(255, 255, 255, 0.10);
+    --color-border-strong: rgba(255, 255, 255, 0.16);
+    --color-text: #e8eaed;
+    --color-text-muted: #9aa0a6;
+    --color-text-faint: #5f6368;
+    --color-primary: #8ab4f8;
+    --color-primary-hover: #aecbfa;
+    --color-primary-light: rgba(138, 180, 248, 0.16);
+    --color-primary-tint: rgba(138, 180, 248, 0.24);
+    --color-blue: #8ab4f8;
+    --color-success: #81c995;
+    --color-success-light: rgba(129, 201, 149, 0.14);
+    --color-danger: #f28b82;
+    --color-danger-light: rgba(242, 139, 130, 0.14);
+    --shadow-glow: 0 0 0 1px rgba(138, 180, 248, 0.2), 0 4px 16px rgba(0, 0, 0, 0.35);
   }
 
   *,

@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { titleCase } from "@/lib/title-case";
+import {
+  rewriteCidImageUrls,
+  type InlineImageAttachment,
+} from "@/lib/email-html-inline-images";
 
 /** Strip scripts and inline event handlers — email must not execute JS. */
 function sanitizeEmailHtml(html: string): string {
@@ -14,17 +18,20 @@ function sanitizeEmailHtml(html: string): string {
 /** Measure rendered email height without growing with the iframe viewport. */
 function measureEmailBodyHeight(doc: Document): number {
   const root = doc.querySelector<HTMLElement>(".email_message_body");
-  if (!root) return 40;
-  const prev = root.style.height;
-  const prevMin = root.style.minHeight;
-  const prevOverflow = root.style.overflow;
-  root.style.height = "auto";
-  root.style.minHeight = "0";
-  root.style.overflow = "visible";
-  const h = Math.ceil(root.scrollHeight);
-  root.style.height = prev;
-  root.style.minHeight = prevMin;
-  root.style.overflow = prevOverflow;
+  const el = root ?? doc.body;
+  if (!el) return 40;
+  const prev = el.style.height;
+  const prevMin = el.style.minHeight;
+  const prevOverflow = el.style.overflow;
+  el.style.height = "auto";
+  el.style.minHeight = "0";
+  el.style.overflow = "visible";
+  const h = Math.ceil(
+    Math.max(el.scrollHeight, el.offsetHeight, doc.documentElement.scrollHeight),
+  );
+  el.style.height = prev;
+  el.style.minHeight = prevMin;
+  el.style.overflow = prevOverflow;
   return Math.max(40, h);
 }
 
@@ -57,14 +64,29 @@ function prepareEmailFragment(html: string): { styles: string; body: string } {
  * Render HTML email bodies the way Gmail does: always light mode, preserve
  * sender styles, no forced table stretching, isolated sandboxed iframe.
  */
-export function EmailHtmlBody({ html, plain }: { html?: string; plain?: string }) {
+export function EmailHtmlBody({
+  html,
+  plain,
+  messageId,
+  attachments,
+}: {
+  html?: string;
+  plain?: string;
+  messageId?: string;
+  attachments?: InlineImageAttachment[];
+}) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(80);
 
-  const prepared = useMemo(
-    () => (html ? prepareEmailFragment(html) : null),
-    [html]
-  );
+  const prepared = useMemo(() => {
+    if (!html) return null;
+    const fragment = prepareEmailFragment(html);
+    const body =
+      messageId && attachments?.length
+        ? rewriteCidImageUrls(fragment.body, messageId, attachments)
+        : fragment.body;
+    return { styles: fragment.styles, body };
+  }, [html, messageId, attachments]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -88,7 +110,7 @@ export function EmailHtmlBody({ html, plain }: { html?: string; plain?: string }
       height: auto !important;
       min-height: 0 !important;
       max-height: none !important;
-      overflow: hidden;
+      overflow: visible;
     }
     body {
       font-family: "Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -112,7 +134,8 @@ export function EmailHtmlBody({ html, plain }: { html?: string; plain?: string }
     }
     a { color: #1155cc; text-decoration: none; }
     a:hover { text-decoration: underline; }
-    img { max-width: 100% !important; height: auto !important; border: 0; }
+    /* Gmail: cap width but keep sender height attributes for table layouts */
+    img { max-width: 100%; border: 0; vertical-align: top; }
     pre { white-space: pre-wrap; overflow-x: auto; }
     /* Do NOT force table width — marketing layouts break when width:100% */
     table { border-collapse: collapse; }
@@ -213,7 +236,7 @@ export function EmailHtmlBody({ html, plain }: { html?: string; plain?: string }
 
   if (!html || !prepared?.body) {
     return (
-      <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-[14px] leading-relaxed text-[#202124]">
+      <pre className="mt-2 whitespace-pre-wrap break-words font-sans text-[14px] leading-relaxed text-[var(--color-text)]">
         {plain || "(empty body)"}
       </pre>
     );
@@ -223,8 +246,8 @@ export function EmailHtmlBody({ html, plain }: { html?: string; plain?: string }
     <iframe
       ref={iframeRef}
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      className="mt-2 w-full border-0 bg-white"
-      style={{ height: `${height}px`, minHeight: 40, overflow: "hidden" }}
+      className="mt-2 w-full border-0 bg-white dark:bg-[#ffffff]"
+      style={{ height: `${height}px`, minHeight: 40 }}
       title={titleCase("Email body")}
     />
   );

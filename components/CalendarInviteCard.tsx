@@ -11,6 +11,7 @@ import {
   type CalendarInviteParsed,
 } from "@/lib/calendar-invite-email";
 import { EmailHtmlBody } from "@/components/EmailHtmlBody";
+import type { InlineImageAttachment } from "@/lib/email-html-inline-images";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 
@@ -26,7 +27,13 @@ export function CalendarInviteOrHtml({
   bodyHtml,
   plain,
   className,
-}: CalendarInviteCardProps & { plain?: string }) {
+  messageId,
+  attachments,
+}: CalendarInviteCardProps & {
+  plain?: string;
+  messageId?: string;
+  attachments?: InlineImageAttachment[];
+}) {
   const isWorkspaceShare = useMemo(
     () => isGoogleWorkspaceShareNotification({ subject, bodyHtml }),
     [subject, bodyHtml]
@@ -35,13 +42,14 @@ export function CalendarInviteOrHtml({
     () => (bodyHtml ? parseCalendarInviteHtml(bodyHtml, subject) : null),
     [bodyHtml, subject]
   );
+  const htmlProps = { html: bodyHtml, plain, messageId, attachments };
   if (isWorkspaceShare) {
-    return <EmailHtmlBody html={bodyHtml} plain={plain} />;
+    return <EmailHtmlBody {...htmlProps} />;
   }
   if (parsed && hasCalendarInviteCardData(parsed)) {
     return <CalendarInviteCard subject={subject} bodyHtml={bodyHtml} className={className} />;
   }
-  return <EmailHtmlBody html={bodyHtml} plain={plain} />;
+  return <EmailHtmlBody {...htmlProps} />;
 }
 
 /** Gmail-style structured calendar invitation (When / Organizer / RSVP / Meet). */

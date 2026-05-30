@@ -488,6 +488,8 @@ export type AttachmentInfo = {
   filename: string;
   mimeType: string;
   size: number;
+  /** Content-ID for inline MIME parts (`cid:` in HTML). */
+  contentId?: string;
 };
 
 export type ThreadMessageView = {
@@ -509,15 +511,19 @@ function collectAttachments(payload: Record<string, unknown>, messageId: string)
   const attachments: AttachmentInfo[] = [];
   const body = payload.body as { attachmentId?: string; size?: number } | undefined;
   const filename = String(payload.filename || "");
-  const mimeType = String(payload.mimeType || "");
+  const mimeType = String(payload.mimeType || "application/octet-stream");
+  const headers = (payload.headers as GmailHeader[]) || [];
+  const contentIdRaw = getHeader(headers, "Content-ID");
+  const contentId = contentIdRaw ? contentIdRaw.replace(/^<|>$/g, "").trim() : undefined;
   const parts = payload.parts as Record<string, unknown>[] | undefined;
 
-  if (filename && body?.attachmentId) {
+  if (body?.attachmentId) {
     attachments.push({
       attachmentId: body.attachmentId,
-      filename,
+      filename: filename || "inline",
       mimeType,
       size: body.size || 0,
+      contentId: contentId || undefined,
     });
   }
 

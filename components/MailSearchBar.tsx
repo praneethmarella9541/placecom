@@ -296,7 +296,7 @@ export function MailSearchBar({
   return (
     <div ref={rootRef} className="relative">
       <div className="relative">
-        <IconSearch className="pointer-events-none absolute left-3 top-1/2 z-20 h-4 w-4 -translate-y-1/2 text-[#5f6368]" />
+        <IconSearch className="pointer-events-none absolute left-3 top-1/2 z-20 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
         {completionSuffix && focused ? (
           <div
             aria-hidden
@@ -304,7 +304,7 @@ export function MailSearchBar({
           >
             <span className="invisible whitespace-pre">{inputValue}</span>
             <span className="whitespace-pre text-[#9aa0a6]">{completionSuffix}</span>
-            <span className="ml-2 rounded border border-[#dadce0] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#5f6368]">
+            <span className="ml-2 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-faint)]">
               tab
             </span>
           </div>
@@ -319,9 +319,9 @@ export function MailSearchBar({
           onKeyDown={onKeyDown}
           placeholder={titleCase("Search mail")}
           className={cn(
-            "relative z-[11] h-[46px] w-full border border-transparent bg-[#eaf1fb] pl-10 text-[16px] text-[#202124] outline-none transition focus:border-[#0b57d0] focus:bg-white focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]",
+            "relative z-[11] h-[46px] w-full border border-transparent bg-[var(--gmail-search-bg)] pl-10 text-[16px] text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:bg-[var(--color-surface)] focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]",
             filterOpen
-              ? "rounded-t-full rounded-b-none border-b-[#dadce0]"
+              ? "rounded-t-full rounded-b-none border-b-[var(--color-border)]"
               : "rounded-full",
             inputValue.trim() ? "pr-[4.5rem]" : "pr-10",
           )}
@@ -331,7 +331,7 @@ export function MailSearchBar({
           <button
             type="button"
             onClick={onReset}
-            className="absolute right-10 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[#5f6368] hover:bg-[#dadce0]"
+            className="absolute right-10 top-1/2 z-20 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)]"
             aria-label={titleCase("Clear search")}
           >
             <IconX className="h-4 w-4" strokeWidth={2} />
@@ -355,7 +355,7 @@ export function MailSearchBar({
       </div>
 
       {activeQuery && !showDropdown && !filterOpen ? (
-        <p className="mt-1.5 px-1 text-[11px] text-[#5f6368]">
+        <p className="mt-1.5 px-1 text-[11px] text-[var(--color-text-faint)]">
           Results use the Gmail API with your exact query (same order as Gmail search).{" "}
           <a
             href={gmailWebSearchUrl(activeQuery)}
@@ -376,7 +376,7 @@ export function MailSearchBar({
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => applyQuickFilter(modifier)}
-              className="rounded-full border border-[#dadce0] bg-white px-3 py-1 text-[13px] text-[#3c4043] shadow-sm transition hover:bg-[#f1f3f4]"
+              className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1 text-[13px] text-[var(--color-text-muted)] shadow-sm transition hover:bg-[var(--color-surface-offset)]"
             >
               {label}
             </button>
@@ -386,11 +386,11 @@ export function MailSearchBar({
 
       {showDropdown ? (
         <div
-          className="absolute left-0 right-0 top-[calc(100%+44px)] z-30 overflow-hidden rounded-lg border border-[#dadce0] bg-white shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+          className="absolute left-0 right-0 top-[calc(100%+44px)] z-30 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
           role="listbox"
         >
           {loading && mergedContacts.length === 0 && threads.length === 0 ? (
-            <div className="flex items-center justify-center gap-2 py-6 text-[13px] text-[#5f6368]">
+            <div className="flex items-center justify-center gap-2 py-6 text-[13px] text-[var(--color-text-faint)]">
               <Loader2 className="h-4 w-4 animate-spin" />
               {titleCase("Searching…")}
             </div>
@@ -408,8 +408,8 @@ export function MailSearchBar({
                 aria-selected={active && highlight >= 0}
                 className={cn(
                   "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
-                  i > 0 && "border-t border-[#f1f3f4]",
-                  active ? "bg-[#e8f0fe]" : "hover:bg-[#f1f3f4]",
+                  i > 0 && "border-t border-[var(--gmail-border-row)]",
+                  active ? "bg-[var(--color-primary-tint)]" : "hover:bg-[var(--color-surface-offset)]",
                 )}
                 onMouseEnter={() => setHighlight(idx)}
                 onClick={() => {
@@ -421,15 +421,15 @@ export function MailSearchBar({
                 <div className="min-w-0 flex-1">
                   {named ? (
                     <>
-                      <p className="truncate text-[14px] font-medium text-[#202124]">
+                      <p className="truncate text-[14px] font-medium text-[var(--color-text)]">
                         <HighlightMatch text={c.displayName!} query={q} />
                       </p>
-                      <p className="truncate text-[12px] text-[#5f6368]">
+                      <p className="truncate text-[12px] text-[var(--color-text-faint)]">
                         <HighlightMatch text={c.email} query={q} />
                       </p>
                     </>
                   ) : (
-                    <p className="truncate text-[14px] text-[#202124]">
+                    <p className="truncate text-[14px] text-[var(--color-text)]">
                       <HighlightMatch text={c.email} query={q} />
                     </p>
                   )}
@@ -439,7 +439,7 @@ export function MailSearchBar({
           })}
 
           {threads.length > 0 && mergedContacts.length > 0 ? (
-            <div className="border-t border-[#e8eaed]" aria-hidden />
+            <div className="border-t border-[var(--gmail-border-light)]" aria-hidden />
           ) : null}
 
           {threads.map((t) => {
@@ -454,7 +454,7 @@ export function MailSearchBar({
                 aria-selected={active && highlight >= 0}
                 className={cn(
                   "flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors",
-                  active ? "bg-[#e8f0fe]" : "hover:bg-[#f1f3f4]",
+                  active ? "bg-[var(--color-primary-tint)]" : "hover:bg-[var(--color-surface-offset)]",
                 )}
                 onMouseEnter={() => setHighlight(idx)}
                 onClick={() => {
@@ -462,15 +462,15 @@ export function MailSearchBar({
                   onOpenThread(t.id);
                 }}
               >
-                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f1f3f4] text-[#5f6368]">
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-offset)] text-[var(--color-text-faint)]">
                   <Mail className="h-4 w-4" strokeWidth={2} />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <p className="min-w-0 flex-1 truncate text-[14px] font-medium text-[#202124]">
+                    <p className="min-w-0 flex-1 truncate text-[14px] font-medium text-[var(--color-text)]">
                       {t.subject || "(no subject)"}
                     </p>
-                    <span className="flex shrink-0 items-center gap-1 text-[11px] text-[#5f6368]">
+                    <span className="flex shrink-0 items-center gap-1 text-[11px] text-[var(--color-text-faint)]">
                       {t.hasAttachments ? (
                         <Paperclip className="h-3.5 w-3.5" strokeWidth={2} aria-label="Has attachment" />
                       ) : null}
@@ -478,7 +478,7 @@ export function MailSearchBar({
                     </span>
                   </div>
                   {people ? (
-                    <p className="truncate text-[12px] text-[#5f6368]">
+                    <p className="truncate text-[12px] text-[var(--color-text-faint)]">
                       <HighlightMatch text={people} query={q} />
                     </p>
                   ) : null}
@@ -492,17 +492,17 @@ export function MailSearchBar({
             role="option"
             aria-selected={highlight === itemCount - 1}
             className={cn(
-              "flex w-full items-center justify-between gap-2 border-t border-[#dadce0] px-4 py-3 text-left text-[13px] transition-colors",
-              highlight === itemCount - 1 ? "bg-[#e8f0fe]" : "hover:bg-[#f1f3f4]",
+              "flex w-full items-center justify-between gap-2 border-t border-[var(--color-border)] px-4 py-3 text-left text-[13px] transition-colors",
+              highlight === itemCount - 1 ? "bg-[var(--color-primary-tint)]" : "hover:bg-[var(--color-surface-offset)]",
             )}
             onMouseEnter={() => setHighlight(itemCount - 1)}
             onClick={() => submitSearch(inputValue)}
           >
-            <span className="flex items-center gap-2 text-[#202124]">
-              <IconSearch className="h-4 w-4 text-[#5f6368]" />
+            <span className="flex items-center gap-2 text-[var(--color-text)]">
+              <IconSearch className="h-4 w-4 text-[var(--color-text-faint)]" />
               {`All search results for "${q}"`}
             </span>
-            <span className="text-[11px] font-medium uppercase tracking-wide text-[#5f6368]">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-faint)]">
               Press Enter
             </span>
           </button>

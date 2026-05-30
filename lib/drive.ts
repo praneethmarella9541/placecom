@@ -288,15 +288,16 @@ export async function listDriveFilesPage(
     params.set("corpora", "user");
     params.set("supportsAllDrives", "true");
   }
-  const orderBy = (options.orderBy || "").trim();
-  if (orderBy) {
-    params.set("orderBy", orderBy);
-  } else if (!hasSearch && atViewRoot && view === "recent") {
-    params.set("orderBy", "viewedByMeTime desc");
-  } else if (!hasSearch) {
-    params.set("orderBy", "folder,name_natural");
-  } else {
-    params.set("orderBy", "folder,modifiedTime desc");
+  // fullText search queries cannot use orderBy — Drive returns relevance order.
+  if (!hasSearch) {
+    const orderBy = (options.orderBy || "").trim();
+    if (orderBy) {
+      params.set("orderBy", orderBy);
+    } else if (atViewRoot && view === "recent") {
+      params.set("orderBy", "viewedByMeTime desc");
+    } else {
+      params.set("orderBy", "folder,name_natural");
+    }
   }
   if (options.pageToken) params.set("pageToken", options.pageToken);
 

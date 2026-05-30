@@ -146,10 +146,8 @@ function buildDriveOrderBy(
   sortKey: SortKey,
   sortDir: "asc" | "desc",
   view: DriveView | "shared-drive",
-  pathDepth: number,
-  hasSearch: boolean
+  pathDepth: number
 ): string {
-  if (hasSearch) return "folder,modifiedTime desc";
   if (pathDepth === 0 && view === "recent") return "viewedByMeTime desc";
   const dir = sortDir === "desc" ? " desc" : "";
   switch (sortKey) {
@@ -430,10 +428,12 @@ export default function DrivePage() {
       });
       if (pageToken) params.set("pageToken", pageToken);
       if (driveSearch) params.set("search", driveSearch);
-      params.set(
-        "orderBy",
-        buildDriveOrderBy(sortKey, sortDir, view, pathDepth, !!driveSearch)
-      );
+      if (!driveSearch) {
+        params.set(
+          "orderBy",
+          buildDriveOrderBy(sortKey, sortDir, view, pathDepth, false)
+        );
+      }
       if (
         !driveSearch &&
         pathDepth === 0 &&

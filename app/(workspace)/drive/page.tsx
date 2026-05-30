@@ -431,7 +431,7 @@ export default function DrivePage() {
       if (!driveSearch) {
         params.set(
           "orderBy",
-          buildDriveOrderBy(sortKey, sortDir, view, pathDepth, false)
+          buildDriveOrderBy(sortKey, sortDir, view, pathDepth)
         );
       }
       if (

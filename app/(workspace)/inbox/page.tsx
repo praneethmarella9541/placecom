@@ -3236,7 +3236,8 @@ export default function InboxPage() {
                     unread={unread}
                     accent={accent}
                     onSelect={() => {
-                      setFilterLabelId(active ? null : l.id);
+                      if (filterLabelId === l.id) return;
+                      setFilterLabelId(l.id);
                       setFolder("inbox");
                       setSelectedId(null);
                       setMessages(null);

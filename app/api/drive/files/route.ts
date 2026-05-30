@@ -25,6 +25,7 @@ export async function GET(request: Request) {
   // a larger page is still fast. Default cap is 50 for mixed listings.
   const mimeTypeFilter = searchParams.get("mimeType")?.trim() || undefined;
   const sharedDriveId = searchParams.get("sharedDriveId")?.trim() || undefined;
+  const orderBy = searchParams.get("orderBy")?.trim() || undefined;
   const maxPageSize = 100;
   const pageSize = Math.min(
     maxPageSize,
@@ -40,10 +41,17 @@ export async function GET(request: Request) {
       view,
       mimeTypeFilter,
       sharedDriveId,
+      orderBy,
     });
     return NextResponse.json(
       { files: page.files, nextPageToken: page.nextPageToken },
-      { headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=300" } }
+      {
+        headers: {
+          "Cache-Control": search
+            ? "private, no-store"
+            : "private, max-age=60, stale-while-revalidate=300",
+        },
+      }
     );
   } catch (e) {
     const err = e as Error & { code?: string };

@@ -124,6 +124,8 @@ function driveListCacheKey(parts: {
   mimeFilter: MimeFilter;
   pathDepth: number;
   sharedDriveId: string | null;
+  sortKey: string;
+  sortDir: string;
 }): string {
   return [
     parts.parent,
@@ -132,7 +134,32 @@ function driveListCacheKey(parts: {
     parts.mimeFilter,
     String(parts.pathDepth),
     parts.sharedDriveId ?? "",
+    parts.sortKey,
+    parts.sortDir,
   ].join("\0");
+}
+
+type SortKey = "name" | "modifiedTime" | "size";
+
+/** Maps UI sort to Drive API orderBy (folders first where applicable). */
+function buildDriveOrderBy(
+  sortKey: SortKey,
+  sortDir: "asc" | "desc",
+  view: DriveView | "shared-drive",
+  pathDepth: number,
+  hasSearch: boolean
+): string {
+  if (hasSearch) return "folder,modifiedTime desc";
+  if (pathDepth === 0 && view === "recent") return "viewedByMeTime desc";
+  const dir = sortDir === "desc" ? " desc" : "";
+  switch (sortKey) {
+    case "modifiedTime":
+      return `folder,modifiedTime${dir}`;
+    case "size":
+      return `folder,quotaBytesUsed${dir}`;
+    default:
+      return `folder,name_natural${dir}`;
+  }
 }
 
 export default function DrivePage() {
@@ -203,10 +230,7 @@ export default function DrivePage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
 
-  // Client-side sort column + direction for the table view.  Default
-  // matches Google Drive's default: name ascending. Folders always sort
-  // ahead of files in any direction (matches Drive too).
-  type SortKey = "name" | "modifiedTime" | "size";
+  // Sort column + direction — passed to Drive API orderBy (not re-sorted client-side).
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   useEffect(() => {
@@ -367,6 +391,8 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth: pathStack.length,
         sharedDriveId: sharedDriveIdForApi,
+        sortKey,
+        sortDir,
       }),
     [
       currentParentId,
@@ -375,6 +401,8 @@ export default function DrivePage() {
       mimeFilter,
       pathStack.length,
       sharedDriveIdForApi,
+      sortKey,
+      sortDir,
     ]
   );
 
@@ -402,6 +430,10 @@ export default function DrivePage() {
       });
       if (pageToken) params.set("pageToken", pageToken);
       if (driveSearch) params.set("search", driveSearch);
+      params.set(
+        "orderBy",
+        buildDriveOrderBy(sortKey, sortDir, view, pathDepth, !!driveSearch)
+      );
       if (
         !driveSearch &&
         pathDepth === 0 &&
@@ -417,7 +449,7 @@ export default function DrivePage() {
       }
       return params;
     },
-    [driveSearch, view, mimeFilter, currentSharedDrive]
+    [driveSearch, view, mimeFilter, currentSharedDrive, sortKey, sortDir]
   );
 
   const fetchDriveListPage = useCallback(
@@ -434,6 +466,8 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth,
         sharedDriveId: sharedDriveIdForApi,
+        sortKey,
+        sortDir,
       });
       const inflightKey = `${cacheKey}\0${pageToken ?? ""}`;
       if (!bust) {
@@ -446,7 +480,7 @@ export default function DrivePage() {
       const params = buildFilesListParams(parent, pathDepth, pageToken);
       const promise = fetch(
         `/api/drive/files?${params.toString()}`,
-        bust ? { cache: "no-store" } : undefined
+        bust || driveSearch ? { cache: "no-store" } : undefined
       ).then(async (res) => {
         const raw = await res.text();
         let data: { error?: string; files?: DriveFileRow[]; nextPageToken?: string } = {};
@@ -481,6 +515,8 @@ export default function DrivePage() {
       mimeFilter,
       sharedDriveIdForApi,
       buildFilesListParams,
+      sortKey,
+      sortDir,
     ]
   );
 
@@ -494,11 +530,13 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth,
         sharedDriveId: sharedDriveIdForApi,
+        sortKey,
+        sortDir,
       });
       if (driveListCacheRef.current.has(cacheKey)) return;
       void fetchDriveListPage(folderId, pathDepth);
     },
-    [view, mimeFilter, pathStack.length, sharedDriveIdForApi, fetchDriveListPage]
+    [view, mimeFilter, pathStack.length, sharedDriveIdForApi, fetchDriveListPage, sortKey, sortDir]
   );
 
   const prefetchVisibleFolders = useCallback(
@@ -583,42 +621,13 @@ export default function DrivePage() {
     ]
   );
 
-  /** Sorted view of the loaded files. Folders always come before files
-   *  regardless of direction (matches Google Drive). Within each group,
-   *  sort by the chosen column in the chosen direction. */
-  const sortedFiles = useMemo<DriveFileRow[]>(() => {
-    const folders: DriveFileRow[] = [];
-    const files: DriveFileRow[] = [];
-    for (const f of driveFiles) {
-      if (f.mimeType === "application/vnd.google-apps.folder") folders.push(f);
-      else files.push(f);
-    }
-    const cmp = (a: DriveFileRow, b: DriveFileRow): number => {
-      let n = 0;
-      if (sortKey === "name") {
-        n = a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
-      } else if (sortKey === "modifiedTime") {
-        const ta = a.modifiedTime ? new Date(a.modifiedTime).getTime() : 0;
-        const tb = b.modifiedTime ? new Date(b.modifiedTime).getTime() : 0;
-        n = ta - tb;
-      } else {
-        const sa = a.size ? parseInt(a.size, 10) : 0;
-        const sb = b.size ? parseInt(b.size, 10) : 0;
-        n = sa - sb;
-      }
-      return sortDir === "asc" ? n : -n;
-    };
-    folders.sort(cmp);
-    files.sort(cmp);
-    return [...folders, ...files];
-  }, [driveFiles, sortKey, sortDir]);
-
+  /** Drive API orderBy — list order matches Google Drive (no client re-sort). */
   const displayFiles = useMemo(
     () =>
-      mimeFilter === "all" || mimeFilter === "folders"
-        ? sortedFiles
-        : sortedFiles.filter((f) => matchesMimeFilter(f, mimeFilter)),
-    [sortedFiles, mimeFilter]
+      driveSearch || mimeFilter === "all" || mimeFilter === "folders"
+        ? driveFiles
+        : driveFiles.filter((f) => matchesMimeFilter(f, mimeFilter)),
+    [driveFiles, mimeFilter, driveSearch]
   );
 
   function enterFolder(id: string, name: string) {

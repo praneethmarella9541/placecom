@@ -72,15 +72,8 @@ function buildFilesListQ(
   const t = (search || "").trim();
   if (t) {
     const esc = escapeDriveQFragment(t);
-    // Always include name-only match; also add fullText only for multi-word
-    // queries where content search adds real value. fullText triggers a full
-    // corpus scan and is significantly slower — keeping it name-only for
-    // short queries matches Google Drive's fast-path behaviour.
-    if (t.includes(" ")) {
-      const fullTextTerm = `"${esc}"`;
-      return `(name contains '${esc}' or fullText contains '${fullTextTerm}') and trashed = false`;
-    }
-    return `name contains '${esc}' and trashed = false`;
+    // Match filename and body text (Drive search bar behaviour).
+    return `(name contains '${esc}' or fullText contains '${esc}') and trashed = false`;
   }
   // At the root of a special view, use Drive's flag; otherwise descend by parent.
   if (atViewRoot && view === "shared-with-me") {
@@ -248,6 +241,8 @@ export async function listDriveFilesPage(
     mimeTypeFilter?: string;
     /** When listing inside a shared drive, pass its id so Drive uses corpora=drive. */
     sharedDriveId?: string;
+    /** Drive files.list orderBy — e.g. "folder,name_natural". */
+    orderBy?: string;
   }
 ): Promise<DriveListPage> {
   const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
@@ -293,9 +288,15 @@ export async function listDriveFilesPage(
     params.set("corpora", "user");
     params.set("supportsAllDrives", "true");
   }
-  // Client sorts folders/files — skip server orderBy for faster folder listings.
-  if (!hasSearch && atViewRoot && view === "recent") {
+  const orderBy = (options.orderBy || "").trim();
+  if (orderBy) {
+    params.set("orderBy", orderBy);
+  } else if (!hasSearch && atViewRoot && view === "recent") {
     params.set("orderBy", "viewedByMeTime desc");
+  } else if (!hasSearch) {
+    params.set("orderBy", "folder,name_natural");
+  } else {
+    params.set("orderBy", "folder,modifiedTime desc");
   }
   if (options.pageToken) params.set("pageToken", options.pageToken);
 

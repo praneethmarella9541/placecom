@@ -375,7 +375,7 @@ export default function DrivePage() {
   }
 
   const showLocationColumn =
-    view === "recent" && pathStack.length === 0 && !driveSearch;
+    (view === "recent" && pathStack.length === 0) || !!driveSearch;
 
   const sharedDriveIdForApi =
     view === "shared-drive" && currentSharedDrive ? currentSharedDrive.id : null;

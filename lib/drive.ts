@@ -263,7 +263,9 @@ export async function listDriveFilesPage(
     q = `${q} and mimeType = '${escapeDriveQFragment(options.mimeTypeFilter)}'`;
   }
   const includeRecentLocation = !hasSearch && atViewRoot && view === "recent";
-  const listFields = includeRecentLocation ? LIST_FILE_FIELDS_RECENT : LIST_FILE_FIELDS;
+  // Also fetch parents/driveId for search so we can resolve locations.
+  const includeLocation = includeRecentLocation || hasSearch;
+  const listFields = includeLocation ? LIST_FILE_FIELDS_RECENT : LIST_FILE_FIELDS;
   const params = new URLSearchParams({
     pageSize: String(pageSize),
     fields: `nextPageToken, files(${listFields})`,
@@ -367,7 +369,7 @@ export async function listDriveFilesPage(
     })
   );
 
-  if (includeRecentLocation && files.length > 0) {
+  if (includeLocation && files.length > 0) {
     await enrichRecentFileLocations(accessToken, files, data.files || []);
   }
 

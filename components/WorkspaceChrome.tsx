@@ -103,7 +103,7 @@ function NavItem({
         )}
         strokeWidth={active ? 2.5 : 2}
       />
-      <span className="truncate leading-none">{label}</span>
+      <span className="truncate leading-normal">{label}</span>
     </Link>
   );
 }

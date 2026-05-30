@@ -587,6 +587,11 @@ export default function DrivePage() {
           const next = opts.append
             ? [...prev, ...data.files]
             : (() => {
+                // In search mode always replace — merging browse-mode files
+                // into search results would show irrelevant local entries.
+                if (driveSearch) return data.files;
+                // In browse mode, keep any locally-added files (e.g. fresh
+                // uploads) that the server hasn't indexed yet.
                 const serverIds = new Set(data.files.map((f) => f.id));
                 const localOnly = prev.filter((f) => !serverIds.has(f.id));
                 return [...localOnly, ...data.files];
@@ -616,6 +621,7 @@ export default function DrivePage() {
       driveListContextKey,
       currentParentId,
       pathStack.length,
+      driveSearch,
       fetchDriveListPage,
       prefetchVisibleFolders,
     ]

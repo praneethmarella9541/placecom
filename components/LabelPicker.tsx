@@ -161,7 +161,7 @@ export function LabelPicker({
   function submitDelete(labelId: string, displayName: string) {
     if (!onDelete) return;
     const ok = window.confirm(
-      `Delete label "${displayName}"?\n\nMessages will not be deleted — only this label will be removed from them.`
+      `Delete label "${displayName}"?`
     );
     if (!ok) return;
     onDelete(labelId);

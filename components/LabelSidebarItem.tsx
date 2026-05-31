@@ -59,7 +59,7 @@ export function LabelSidebarItem({
   function confirmDelete() {
     setMenuOpen(false);
     const ok = window.confirm(
-      `Delete label "${label.name}"?\n\nMessages will not be deleted — only this label will be removed from them.`
+      `Delete label "${label.name}"?`
     );
     if (ok) onDelete(label.id);
   }

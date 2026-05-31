@@ -158,12 +158,8 @@ export function LabelPicker({
     onEdit(labelId, trimmed);
   }
 
-  function submitDelete(labelId: string, displayName: string) {
+  function submitDelete(labelId: string) {
     if (!onDelete) return;
-    const ok = window.confirm(
-      `Delete label "${displayName}"?`
-    );
-    if (!ok) return;
     onDelete(labelId);
   }
 
@@ -262,7 +258,7 @@ export function LabelPicker({
                   <button
                     type="button"
                     title="Delete label"
-                    onClick={() => void submitDelete(l.id, labelDisplayName(l))}
+                    onClick={() => void submitDelete(l.id)}
                     className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#5f6368] opacity-0 transition-opacity hover:bg-[#fce8e6] hover:text-[#c5221f] group-hover:opacity-100"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>

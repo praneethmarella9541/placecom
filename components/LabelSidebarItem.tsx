@@ -56,12 +56,9 @@ export function LabelSidebarItem({
     onEdit(label.id, trimmed);
   }
 
-  function confirmDelete() {
+  function handleDelete() {
     setMenuOpen(false);
-    const ok = window.confirm(
-      `Delete label "${label.name}"?`
-    );
-    if (ok) onDelete(label.id);
+    onDelete(label.id);
   }
 
   if (editing) {
@@ -166,7 +163,7 @@ export function LabelSidebarItem({
               className="flex w-full px-3 py-2 text-left text-[13px] text-[#c5221f] hover:bg-[#fce8e6]"
               onClick={(e) => {
                 e.stopPropagation();
-                confirmDelete();
+                handleDelete();
               }}
             >
               Delete

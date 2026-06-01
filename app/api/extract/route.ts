@@ -174,7 +174,7 @@ export async function POST(request: Request) {
 
       const { error: insErr } = await supabase
         .from("email_extractions")
-        .insert(rows);
+        .upsert(rows, { onConflict: "user_id,email_id" });
 
       if (insErr) {
         throw new Error(insErr.message);
@@ -287,7 +287,7 @@ export async function POST(request: Request) {
 
       const { error: insErr } = await supabase
         .from("email_extractions")
-        .insert(rows);
+        .upsert(rows, { onConflict: "user_id,email_id" });
 
       if (insErr) {
         throw new Error(insErr.message);

@@ -3,6 +3,18 @@ export type LabelOption = "inbox" | "sent" | "all";
 
 const MAX_KEY = "gmail_extract_max_emails";
 const LABEL_KEY = "gmail_extract_label";
+const SKIP_KEY = "gmail_extract_skip_existing";
+
+export function getSkipExtractedSetting(): boolean {
+  if (typeof window === "undefined") return true;
+  const v = localStorage.getItem(SKIP_KEY);
+  if (v === null) return true;
+  return v === "1";
+}
+
+export function setSkipExtractedSetting(skip: boolean) {
+  localStorage.setItem(SKIP_KEY, skip ? "1" : "0");
+}
 
 export function getMaxEmailsSetting(): MaxEmailsOption {
   if (typeof window === "undefined") return "50";

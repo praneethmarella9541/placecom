@@ -73,7 +73,8 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
     if (pathname.startsWith(p)) return null;
   }
 
-  if (pathname.startsWith("/api/gmail") || pathname.startsWith("/api/fetch-emails")) return "inbox";
+  if (pathname.startsWith("/api/fetch-emails")) return "dashboard";
+  if (pathname.startsWith("/api/gmail")) return "inbox";
   if (pathname.startsWith("/api/mailbox")) return "inbox";
 
   if (pathname.startsWith("/api/drive")) return "drive";

@@ -9,14 +9,17 @@ import { groupContactsFromExtraction } from "@/lib/contact-grouping";
 import {
   getLabelSetting,
   getMaxEmailsSetting,
+  getSkipExtractedSetting,
   parseMaxEmails,
   setLabelSetting,
   setMaxEmailsSetting,
+  setSkipExtractedSetting,
   type LabelOption,
   type MaxEmailsOption,
 } from "@/lib/user-settings";
 import { getExtractHttpBatchSize } from "@/lib/extract-config";
 import { ExportButton } from "@/components/ExportButton";
+import { ExtractionJobHistory } from "@/components/ExtractionJobHistory";
 import { ProgressBar } from "@/components/ProgressBar";
 import type { ResultRow } from "@/components/ResultsTable";
 import { ResultsTable } from "@/components/ResultsTable";
@@ -58,9 +61,12 @@ export default function DashboardPage() {
 
   const [maxEmails, setMax] = useState<MaxEmailsOption>("50");
   const [label, setLab] = useState<LabelOption>("inbox");
+  const [skipExtracted, setSkipExtracted] = useState(true);
   const [settingsReady, setSettingsReady] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
+  const [jobHistoryKey, setJobHistoryKey] = useState(0);
+  const [lastRunSummary, setLastRunSummary] = useState<string | null>(null);
 
   const loadExtractions = useCallback(async () => {
     setLoadingRows(true);
@@ -119,8 +125,32 @@ export default function DashboardPage() {
   useEffect(() => {
     setMax(getMaxEmailsSetting());
     setLab(getLabelSetting());
+    setSkipExtracted(getSkipExtractedSetting());
     setSettingsReady(true);
   }, []);
+
+  async function fetchExistingEmailIds(): Promise<Set<string>> {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return new Set();
+    const { data, error } = await supabase
+      .from("email_extractions")
+      .select("email_id")
+      .eq("user_id", user.id);
+    if (error) {
+      console.error(error);
+      return new Set();
+    }
+    return new Set((data ?? []).map((r) => r.email_id as string).filter(Boolean));
+  }
+
+  function handleSkipExtractedChange(checked: boolean) {
+    setSkipExtracted(checked);
+    setSkipExtractedSetting(checked);
+    setSettingsMsg(titleCase("Preferences saved on this device."));
+    setTimeout(() => setSettingsMsg(null), 2500);
+  }
 
   function savePreferences() {
     setMaxEmailsSetting(maxEmails);
@@ -160,7 +190,9 @@ export default function DashboardPage() {
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j.error || "Delete failed");
       setSettingsMsg(titleCase("All extracted data removed."));
+      setLastRunSummary(null);
       await loadExtractions();
+      setJobHistoryKey((k) => k + 1);
     } catch (e) {
       setSettingsMsg(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -170,6 +202,7 @@ export default function DashboardPage() {
 
   async function runPipeline() {
     setError(null);
+    setLastRunSummary(null);
     setPhase("fetching");
     setProgress(0);
     setProgressMax(1);
@@ -326,6 +359,15 @@ export default function DashboardPage() {
       return;
     }
 
+    const fetchedCount = emails.length;
+    let skippedCount = 0;
+    if (getSkipExtractedSetting() && emails.length > 0) {
+      const existing = await fetchExistingEmailIds();
+      const before = emails.length;
+      emails = emails.filter((e) => !existing.has(e.id));
+      skippedCount = before - emails.length;
+    }
+
     let patch: Response;
     try {
       patch = await fetch(`/api/jobs/${jobId}`, {
@@ -360,7 +402,17 @@ export default function DashboardPage() {
       setPhase("done");
       setProgressLabel("");
       setProgressHint("");
+      if (skippedCount > 0) {
+        setLastRunSummary(
+          titleCase(
+            `Fetched ${fetchedCount} — skipped ${skippedCount} already extracted, none left to process.`
+          )
+        );
+      } else {
+        setLastRunSummary(titleCase("No new messages to extract."));
+      }
       await loadExtractions();
+      setJobHistoryKey((k) => k + 1);
       return;
     }
 
@@ -410,7 +462,18 @@ export default function DashboardPage() {
     setProgress(emails.length);
     setProgressLabel("");
     setProgressHint("");
+    const parts = [
+      titleCase(`Extracted ${emails.length} email${emails.length === 1 ? "" : "s"}.`),
+    ];
+    if (skippedCount > 0) {
+      parts.push(titleCase(`Skipped ${skippedCount} already in your results.`));
+    }
+    if (fetchedCount > emails.length + skippedCount) {
+      /* defensive — should not happen */
+    }
+    setLastRunSummary(parts.join(" "));
     await loadExtractions();
+    setJobHistoryKey((k) => k + 1);
   }
 
   const busy = phase === "fetching" || phase === "extracting";
@@ -475,6 +538,24 @@ export default function DashboardPage() {
               </select>
             </label>
           </div>
+          <label className="mt-4 flex cursor-pointer items-start gap-3 text-[13px] text-[var(--color-text-muted)]">
+            <input
+              type="checkbox"
+              checked={skipExtracted}
+              onChange={(e) => handleSkipExtractedChange(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-[var(--color-border)]"
+            />
+            <span>
+              <span className="font-medium text-[var(--color-text)]">
+                {titleCase("Skip already extracted emails")}
+              </span>
+              <span className="mt-0.5 block text-[12px] text-[var(--color-text-faint)]">
+                {titleCase(
+                  "Re-runs update existing rows instead of duplicating. Skipped messages are not sent to OpenAI again."
+                )}
+              </span>
+            </span>
+          </label>
           <div className="mt-4 flex justify-end">
             <button type="button" onClick={savePreferences} className="btn-ghost text-[13px]">
               {titleCase("Save Preferences")}
@@ -542,13 +623,23 @@ export default function DashboardPage() {
           </div>
         ) : null}
 
-        {phase === "done" && !error ? (
+        {phase === "done" && !error && lastRunSummary ? (
+          <div className="mt-5 space-y-2">
+            <div className="rounded-[var(--radius-lg)] border border-[var(--color-primary-light)] bg-[var(--color-primary-light)] px-4 py-3 text-sm text-[var(--color-primary)]">
+              {lastRunSummary}
+            </div>
+          </div>
+        ) : phase === "done" && !error ? (
           <div className="mt-5 space-y-2">
             <div className="rounded-[var(--radius-lg)] border border-[var(--color-primary-light)] bg-[var(--color-primary-light)] px-4 py-3 text-sm text-[var(--color-primary)]">
               {titleCase(`Extraction complete — ${progressMax} emails processed.`)}
             </div>
           </div>
         ) : null}
+      </div>
+
+      <div className="surface-card rounded-[var(--radius-lg)] p-6">
+        <ExtractionJobHistory refreshKey={jobHistoryKey} />
       </div>
 
       <div className="surface-card overflow-hidden rounded-[var(--radius-lg)]">

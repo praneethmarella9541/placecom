@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import type { GroupedContact } from "@/lib/contact-grouping";
@@ -18,8 +18,11 @@ export type ResultRow = {
 
 type Props = { rows: ResultRow[]; className?: string };
 
+const PAGE_SIZE = 25;
+
 export function ResultsTable({ rows, className }: Props) {
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -42,6 +45,21 @@ export function ResultsTable({ rows, className }: Props) {
       return hay.includes(s);
     });
   }, [rows, q]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setPage(1);
+  }, [q, rows.length]);
+
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+
+  const pageRows = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, page]);
 
   const totals = useMemo(() => {
     let names = 0,
@@ -86,7 +104,7 @@ export function ResultsTable({ rows, className }: Props) {
 
   return (
     <div className={cn("space-y-4", className)}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="relative w-full sm:max-w-sm sm:shrink-0">
           <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
           <input
@@ -98,6 +116,14 @@ export function ResultsTable({ rows, className }: Props) {
             aria-label={titleCase("Search results")}
           />
         </div>
+        {filtered.length > 0 ? (
+          <p className="text-[12px] text-zinc-500 dark:text-zinc-400">
+            {titleCase("Showing")}{" "}
+            {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)}{" "}
+            {titleCase("of")} {filtered.length.toLocaleString()}
+            {q.trim() ? ` (${rows.length.toLocaleString()} total)` : ""}
+          </p>
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-xl border border-zinc-200 bg-[var(--card)] shadow-sm dark:border-zinc-800">
@@ -147,7 +173,7 @@ export function ResultsTable({ rows, className }: Props) {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
-            {filtered.map((r) => (
+            {pageRows.map((r) => (
               <tr
                 key={r.id}
                 className="transition-colors hover:bg-zinc-50/70 dark:hover:bg-zinc-900/40"
@@ -238,6 +264,29 @@ export function ResultsTable({ rows, className }: Props) {
           </div>
         ) : null}
         </div>
+        {filtered.length > PAGE_SIZE ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-200 px-4 py-3 dark:border-zinc-800">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="btn-ghost text-xs disabled:opacity-40"
+            >
+              {titleCase("Previous")}
+            </button>
+            <span className="text-xs text-zinc-500">
+              {titleCase("Page")} {page} {titleCase("of")} {pageCount}
+            </span>
+            <button
+              type="button"
+              disabled={page >= pageCount}
+              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+              className="btn-ghost text-xs disabled:opacity-40"
+            >
+              {titleCase("Next")}
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

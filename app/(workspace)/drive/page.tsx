@@ -1752,17 +1752,17 @@ export default function DrivePage() {
                 return (
                   <li
                     key={file.id}
-                    className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--color-surface-offset)]"
+                    role="button"
+                    tabIndex={0}
+                    onClick={rowOnClick}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); rowOnClick(); } }}
+                    className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--color-surface-offset)]"
                     onContextMenu={(e) => openRowContextMenu(e, file)}
                     onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                     onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                   >
-                    {/* Name column — icon + clickable label */}
-                    <button
-                      type="button"
-                      onClick={rowOnClick}
-                      className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                    >
+                    {/* Name column */}
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       <DriveMimeIcon
                         mimeType={file.mimeType}
                         name={file.name}
@@ -1775,7 +1775,7 @@ export default function DrivePage() {
                           <Star className="h-3 w-3 shrink-0 fill-amber-500 text-amber-500" />
                         )}
                       </span>
-                    </button>
+                    </div>
 
                     {showLocationColumn && (
                       <span className="w-[160px] shrink-0">
@@ -1808,8 +1808,8 @@ export default function DrivePage() {
                       {sizeLabel}
                     </span>
 
-                    {/* Actions */}
-                    <div className="w-7 shrink-0">
+                    {/* Actions — stop propagation so kebab doesn't trigger row click */}
+                    <div className="w-7 shrink-0" onClick={(e) => e.stopPropagation()}>
                       {RowMenu}
                     </div>
                   </li>

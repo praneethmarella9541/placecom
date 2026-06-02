@@ -637,7 +637,12 @@ export default function DrivePage() {
   );
 
   function enterFolder(id: string, name: string) {
-    setPathStack((prev) => [...prev, { id, name }]);
+    // Guard: don't push if this folder is already the current parent
+    // (prevents double-entry when the user clicks while the list is loading).
+    setPathStack((prev) => {
+      if (prev.length > 0 && prev[prev.length - 1].id === id) return prev;
+      return [...prev, { id, name }];
+    });
     setDriveNextPageToken(undefined);
     // Match Google Drive: opening a folder exits search mode and shows
     // the folder's normal contents.
@@ -1688,7 +1693,7 @@ export default function DrivePage() {
                 );
 
                 const rowOnClick = () => {
-                  if (isRenaming) return;
+                  if (isRenaming || loadingDrive) return;
                   if (isFolder) enterFolder(file.id, file.name);
                   else setPreviewFile(file);
                 };

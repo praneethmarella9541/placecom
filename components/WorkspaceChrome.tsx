@@ -26,6 +26,8 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { pathToFeature } from "@/lib/feature-access";
+import { ExtractionRunProvider } from "@/components/ExtractionRunProvider";
+import { ExtractionRunBanner } from "@/components/ExtractionRunBanner";
 
 /* ─── nav config ──────────────────────────────────────────── */
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
@@ -342,6 +344,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
   const sidebarProps = { links, pathname, searchParams, displayName, email, initials, onSignOut: () => void signOut() };
 
   return (
+    <ExtractionRunProvider>
     <div className="flex min-h-screen bg-[var(--color-bg)]">
 
       {/* ── Desktop sidebar ──────────────────────────────────── */}
@@ -412,7 +415,9 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
+      <ExtractionRunBanner />
     </div>
+    </ExtractionRunProvider>
   );
 }
 

@@ -189,14 +189,19 @@ export async function POST(request: Request) {
         cost: costUsd,
       });
 
-      await supabase
-        .from("extraction_jobs")
-        .update({
-          processed_emails: newProcessed,
-          total_emails: jobTotalEmails,
-          status: isLast ? "done" : "running",
-        })
-        .eq("id", jobId);
+      const jobUpdate: Record<string, unknown> = {
+        processed_emails: newProcessed,
+        total_emails: jobTotalEmails,
+        next_batch_index: batchIndex + 1,
+        error_message: null,
+        status: isLast ? "done" : "running",
+      };
+      if (isLast) {
+        jobUpdate.pending_emails = null;
+        jobUpdate.batch_count = batchCount;
+      }
+
+      await supabase.from("extraction_jobs").update(jobUpdate).eq("id", jobId);
 
       return NextResponse.json({
         jobId,
@@ -210,7 +215,12 @@ export async function POST(request: Request) {
       const msg = e instanceof Error ? e.message : "Extraction failed";
       await supabase
         .from("extraction_jobs")
-        .update({ status: "error" })
+        .update({
+          status: "partial",
+          error_message: msg.slice(0, 2000),
+          next_batch_index: batchIndex,
+          batch_count: batchCount,
+        })
         .eq("id", jobId);
       console.error(e);
       return NextResponse.json({ error: msg }, { status: 500 });

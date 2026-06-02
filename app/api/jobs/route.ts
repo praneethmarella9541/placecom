@@ -14,7 +14,7 @@ export async function GET() {
   const { data: jobs, error } = await supabase
     .from("extraction_jobs")
     .select(
-      "id, status, total_emails, processed_emails, openai_input_tokens, openai_output_tokens, openai_cost_usd, created_at"
+      "id, status, total_emails, processed_emails, openai_input_tokens, openai_output_tokens, openai_cost_usd, created_at, next_batch_index, batch_count, error_message, fetched_count, skipped_count, pending_emails"
     )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })

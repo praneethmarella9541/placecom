@@ -1,8 +1,15 @@
-export type ExtractionJobStatus = "pending" | "running" | "done" | "error";
+import type { ExtractionEmailPayload } from "@/lib/extraction-types";
+
+export type ExtractionJobStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "error"
+  | "partial";
 
 export type ExtractionJob = {
   id: string;
-  user_id: string;
+  user_id?: string;
   status: ExtractionJobStatus;
   total_emails: number;
   processed_emails: number;
@@ -10,6 +17,12 @@ export type ExtractionJob = {
   openai_output_tokens?: number | null;
   openai_cost_usd?: number | null;
   created_at: string;
+  next_batch_index?: number;
+  batch_count?: number;
+  error_message?: string | null;
+  fetched_count?: number;
+  skipped_count?: number;
+  pending_emails?: ExtractionEmailPayload[] | null;
 };
 
 export type GroupedContactRow = {

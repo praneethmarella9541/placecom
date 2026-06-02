@@ -4,6 +4,18 @@ export type LabelOption = "inbox" | "sent" | "all";
 const MAX_KEY = "gmail_extract_max_emails";
 const LABEL_KEY = "gmail_extract_label";
 const SKIP_KEY = "gmail_extract_skip_existing";
+const NOTIFY_KEY = "gmail_extract_notify_complete";
+
+export function getNotifyOnExtractionCompleteSetting(): boolean {
+  if (typeof window === "undefined") return true;
+  const v = localStorage.getItem(NOTIFY_KEY);
+  if (v === null) return true;
+  return v === "1";
+}
+
+export function setNotifyOnExtractionCompleteSetting(notify: boolean) {
+  localStorage.setItem(NOTIFY_KEY, notify ? "1" : "0");
+}
 
 export function getSkipExtractedSetting(): boolean {
   if (typeof window === "undefined") return true;

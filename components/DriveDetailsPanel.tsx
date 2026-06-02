@@ -70,8 +70,8 @@ export function DriveDetailsPanel({ fileId, onClose }: Props) {
 
   return (
     <aside className="flex w-full max-w-[320px] shrink-0 flex-col border-l border-[var(--color-border)] bg-[var(--color-surface)] sm:w-[280px]">
-      <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3">
-        <h2 className="text-[14px] font-semibold text-[var(--color-text)]">
+      <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-offset)]/40 px-4 py-3">
+        <h2 className="font-display text-[13px] font-semibold text-[var(--color-text)]">
           {titleCase("Details")}
         </h2>
         <button
@@ -158,11 +158,11 @@ export function DriveDetailsPanel({ fileId, onClose }: Props) {
 
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <dt className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-faint)]">
+    <div className="flex flex-col gap-0.5 rounded-lg bg-[var(--color-surface-offset)]/50 px-3 py-2">
+      <dt className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
         {label}
       </dt>
-      <dd className="mt-0.5 text-[var(--color-text)]">{value}</dd>
+      <dd className="text-[13px] text-[var(--color-text)]">{value}</dd>
     </div>
   );
 }

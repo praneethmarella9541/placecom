@@ -1264,7 +1264,7 @@ export default function DrivePage() {
       )}
       <aside
         className={cn(
-          "z-50 flex w-[208px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg)]",
+          "z-50 flex w-[208px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]",
           "fixed inset-y-0 left-0 shadow-xl transition-transform sm:static sm:shadow-none",
           mobileNavOpen ? "translate-x-0" : "-translate-x-full sm:translate-x-0"
         )}
@@ -1296,7 +1296,7 @@ export default function DrivePage() {
       >
         {isDragOver && (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[var(--color-primary)]/10">
-            <p className="rounded-lg bg-white px-4 py-2 text-sm font-medium shadow-lg dark:bg-zinc-900">
+            <p className="rounded-xl bg-[var(--color-surface)] px-4 py-2 text-sm font-medium shadow-[var(--shadow-lg)]">
               {titleCase("Drop files to upload")}
             </p>
           </div>
@@ -1320,20 +1320,20 @@ export default function DrivePage() {
             <button
               type="button"
               onClick={() => navigateToDepth(0)}
-              className="rounded-md px-2 py-1 font-medium text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+              className="rounded-md px-2 py-1 font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-tint)]"
             >
               {viewRootLabel}
             </button>
             {pathStack.map((crumb, index) => (
               <span key={crumb.id} className="flex items-center gap-1">
-                <IconChevronRight className="h-3 w-3 shrink-0 text-zinc-300 dark:text-zinc-600" />
+                <IconChevronRight className="h-3 w-3 shrink-0 text-[var(--color-text-faint)]" />
                 <button
                   type="button"
                   onClick={() => navigateToDepth(index + 1)}
-                  className={`max-w-[200px] truncate rounded-md px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
+                  className={`max-w-[200px] truncate rounded-md px-2 py-1 hover:bg-[var(--color-surface-offset)] ${
                     index === pathStack.length - 1
-                      ? "font-semibold text-zinc-900 dark:text-zinc-100"
-                      : "font-medium text-zinc-600 dark:text-zinc-400"
+                      ? "font-semibold text-[var(--color-text)]"
+                      : "font-medium text-[var(--color-text-muted)]"
                   }`}
                 >
                   {crumb.name}
@@ -1349,11 +1349,11 @@ export default function DrivePage() {
             className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-2.5 text-[13px]"
             aria-live="polite"
           >
-            <span className="flex items-center gap-2 text-zinc-600 dark:text-zinc-400">
+            <span className="flex items-center gap-2 text-[var(--color-text-muted)]">
               <IconSearch className="h-3.5 w-3.5 shrink-0" />
               <span>
                 {titleCase("Searching all of Drive for")}{" "}
-                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                <span className="font-semibold text-[var(--color-text)]">
                   &ldquo;{driveSearch}&rdquo;
                 </span>
               </span>
@@ -1364,14 +1364,14 @@ export default function DrivePage() {
                 setDriveSearchInput("");
                 setDriveSearch("");
               }}
-              className="rounded-md px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950/40"
+              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-tint)]"
             >
               {titleCase("Clear search")}
             </button>
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] p-1.5">
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
           <button
             type="button"
             onClick={() => setMobileNavOpen(true)}
@@ -1381,7 +1381,7 @@ export default function DrivePage() {
             <Menu className="h-4 w-4" />
           </button>
           <div className="relative shrink-0">
-            <Filter className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
+            <Filter className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
             <select
               value={mimeFilter}
               onChange={(e) => setMimeFilter(e.target.value as MimeFilter)}
@@ -1399,7 +1399,7 @@ export default function DrivePage() {
           </div>
           <div className="min-w-0 flex-1 px-2 py-1">
             <div className="relative">
-              <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+              <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
               <input
                 type="search"
                 value={driveSearchInput}
@@ -1462,7 +1462,7 @@ export default function DrivePage() {
             </button>
             {uploadMenuOpen && (
               <div
-                className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-md)]"
                 role="menu"
               >
                 <RowMenuItem
@@ -1514,10 +1514,10 @@ export default function DrivePage() {
           </div>
         ) : displayFiles.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden p-10">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
-              <IconFolder className="h-7 w-7 text-zinc-400" />
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-offset)]">
+              <IconFolder className="h-7 w-7 text-[var(--color-text-faint)]" />
             </div>
-            <p className="text-center text-sm text-zinc-500">
+            <p className="text-center text-sm text-[var(--color-text-muted)]">
               {titleCase(
                 driveSearch
                   ? "No items match your search"
@@ -1532,7 +1532,7 @@ export default function DrivePage() {
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             {/* Column headers — frozen above the scrolling file list (list view only). */}
             {viewMode === "list" && (
-            <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-[12px] font-medium text-[var(--color-text-muted)]">
+            <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-offset)]/50 px-4 py-2 text-[12px] font-medium text-[var(--color-text-muted)]">
               <SortHeader
                 label="Name"
                 active={sortKey === "name"}
@@ -1642,7 +1642,7 @@ export default function DrivePage() {
                         e.stopPropagation();
                         setMenuOpenId(menuOpenId === file.id ? null : file.id);
                       }}
-                      className="shrink-0 rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+                      className="shrink-0 rounded-md p-1.5 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
                       title="More actions"
                       aria-label="More actions"
                       aria-haspopup="menu"
@@ -1652,7 +1652,7 @@ export default function DrivePage() {
                     </button>
                     {menuOpenId === file.id && (
                       <div
-                        className="absolute right-0 top-full z-20 mt-1 w-48 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+                        className="absolute right-0 top-full z-20 mt-1 w-48 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-md)]"
                         role="menu"
                       >
                         {rowMenuActions}
@@ -1679,10 +1679,10 @@ export default function DrivePage() {
                       if (!isFolder && dot > 0) e.currentTarget.setSelectionRange(0, dot);
                       else e.currentTarget.select();
                     }}
-                    className="w-full rounded border border-indigo-300 bg-white px-1.5 py-0.5 text-[13px] text-zinc-900 outline-none focus:border-indigo-500 dark:border-indigo-700 dark:bg-zinc-900 dark:text-zinc-100"
+                    className="w-full rounded-md border border-[var(--color-primary)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[13px] text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
                   />
                 ) : (
-                  <span className="truncate text-[13px] text-zinc-900 dark:text-zinc-100">
+                  <span className="truncate text-[13px] text-[var(--color-text)]">
                     {file.name}
                   </span>
                 );
@@ -1697,7 +1697,7 @@ export default function DrivePage() {
                   return (
                     <li
                       key={file.id}
-                      className="group relative flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-colors hover:border-[var(--color-primary)] hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                      className="group relative flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-[var(--shadow-md)] hover:bg-[var(--color-surface-offset)]/40"
                       onContextMenu={(e) => openRowContextMenu(e, file)}
                       onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                       onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
@@ -1720,7 +1720,7 @@ export default function DrivePage() {
                         {file.starred && (
                           <Star className="absolute left-2 top-2 h-3.5 w-3.5 fill-amber-500 text-amber-500" />
                         )}
-                        <span className="line-clamp-2 w-full break-words px-1 text-[13px] text-zinc-900 dark:text-zinc-100">
+                        <span className="line-clamp-2 w-full break-words px-1 text-[13px] text-[var(--color-text)]">
                           {isRenaming ? NameOrEditor : file.name}
                         </span>
                       </button>
@@ -1737,7 +1737,7 @@ export default function DrivePage() {
                           {file.location.label}
                         </button>
                       )}
-                      <span className="mt-auto truncate text-center text-[11px] text-zinc-400">
+                      <span className="mt-auto truncate text-center text-[11px] text-[var(--color-text-faint)]">
                         {isFolder ? dateLabel : `${sizeLabel} · ${dateLabel}`}
                       </span>
                     </li>
@@ -1747,7 +1747,7 @@ export default function DrivePage() {
                 return (
                   <li
                     key={file.id}
-                    className="group flex items-center gap-3 px-4 py-2 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900/50"
+                    className="group flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--color-surface-offset)]"
                     onContextMenu={(e) => openRowContextMenu(e, file)}
                     onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                     onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
@@ -1794,12 +1794,12 @@ export default function DrivePage() {
                     )}
 
                     {/* Date modified */}
-                    <span className="hidden w-[140px] shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400 sm:block">
+                    <span className="hidden w-[140px] shrink-0 text-[13px] text-[var(--color-text-muted)] sm:block">
                       {dateLabel}
                     </span>
 
                     {/* File size */}
-                    <span className="hidden w-[90px] shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400 sm:block">
+                    <span className="hidden w-[90px] shrink-0 text-[13px] text-[var(--color-text-muted)] sm:block">
                       {sizeLabel}
                     </span>
 
@@ -1855,7 +1855,7 @@ export default function DrivePage() {
 
       {contextMenu ? (
         <div
-          className="fixed z-[60] w-48 overflow-hidden rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-900"
+          className="fixed z-[60] w-48 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-lg)]"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           role="menu"
           data-row-menu
@@ -1926,17 +1926,17 @@ export default function DrivePage() {
           }}
         >
           <div
-            className="flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl dark:bg-zinc-950"
+            className="flex h-full w-full max-w-2xl flex-col bg-[var(--color-surface)] shadow-2xl"
             role="dialog"
             aria-modal="true"
             aria-labelledby="drive-preview-title"
           >
-            <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 py-3">
               <div className="min-w-0 flex-1">
-                <h2 id="drive-preview-title" className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-50">
+                <h2 id="drive-preview-title" className="truncate text-base font-semibold text-[var(--color-text)]">
                   {previewFile.name}
                 </h2>
-                <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500">{previewFile.mimeType}</p>
+                <p className="mt-0.5 truncate font-mono text-[11px] text-[var(--color-text-faint)]">{previewFile.mimeType}</p>
               </div>
               <button
                 type="button"
@@ -1948,16 +1948,16 @@ export default function DrivePage() {
               </button>
             </div>
 
-            <div className="relative min-h-0 flex-1 bg-white dark:bg-zinc-950">
+            <div className="relative min-h-0 flex-1 bg-[var(--color-bg)]">
               {supportsInAppPreview(previewFile.mimeType, previewFile.name) ? (
                 <>
                   {previewLoading && (
                     <div
-                      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white dark:bg-zinc-950"
+                      className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-bg)]"
                       aria-live="polite"
                     >
                       <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
-                      <p className="text-sm font-medium text-zinc-600 dark:text-zinc-300">
+                      <p className="text-sm font-medium text-[var(--color-text-muted)]">
                         {titleCase("Opening file")}
                       </p>
                     </div>
@@ -1987,7 +1987,7 @@ export default function DrivePage() {
               )}
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-200 p-4">
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] p-4">
               {isOfficeMimeType(previewFile.mimeType) && previewFile.webViewLink ? (
                 <a
                   href={previewFile.webViewLink}
@@ -2133,8 +2133,8 @@ function SortHeader({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1 rounded px-1.5 py-0.5 text-left transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800",
-        active && "text-zinc-900 dark:text-zinc-100",
+        "flex items-center gap-1 rounded px-1.5 py-0.5 text-left transition-colors hover:bg-[var(--color-surface-offset)]",
+        active ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]",
         className,
       )}
     >
@@ -2166,10 +2166,10 @@ function RowMenuItem({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-zinc-700 hover:bg-zinc-50 dark:text-zinc-200 dark:hover:bg-zinc-800"
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-[var(--color-text)] hover:bg-[var(--color-surface-offset)]"
       role="menuitem"
     >
-      <span className="shrink-0 text-zinc-500 dark:text-zinc-400">{icon}</span>
+      <span className="shrink-0 text-[var(--color-text-faint)]">{icon}</span>
       <span>{label}</span>
     </button>
   );
@@ -2195,9 +2195,9 @@ function SidebarItem({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-4 pr-3 text-left text-[13px] font-medium transition-colors",
+        "flex w-full items-center gap-3 rounded-lg py-[6px] pl-3 pr-3 text-left text-[13px] font-medium transition-colors",
         active
-          ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+          ? "bg-[var(--color-primary-light)] text-[var(--color-primary)] border-l-2 border-[var(--color-primary)]"
           : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
       )}
     >

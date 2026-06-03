@@ -692,37 +692,12 @@ export function FormEditor({ formId }: { formId: string }) {
               ))}
             </select>
           </div>
-          <div className="border-t border-[var(--color-border)] pt-4">
-            <a
-              href={`https://docs.google.com/forms/d/${encodeURIComponent(formId)}/edit`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-[13px] font-medium text-[var(--color-primary)] hover:underline"
-            >
-              <ExternalLink className="h-4 w-4" strokeWidth={2} />
-              {titleCase("Open in Google Forms")}
-            </a>
-            <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
-              {titleCase(
-                "Use Google Forms for themes, confirmation messages, response validation, grids, images, and quiz answer keys.",
-              )}
-            </p>
-          </div>
         </div>
       ) : tab === "preview" ? (
         <div className="space-y-4">
           {responderUri ? (
             <>
               <div className="flex flex-wrap gap-2">
-                <a
-                  href={responderUri}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-primary inline-flex h-10 items-center gap-2 px-4 text-[13px]"
-                >
-                  <ExternalLink className="h-4 w-4" strokeWidth={2} />
-                  {titleCase("Open live form")}
-                </a>
                 <button
                   type="button"
                   onClick={() => void copyResponderLink()}

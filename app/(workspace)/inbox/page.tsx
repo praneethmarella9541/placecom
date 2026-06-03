@@ -1782,9 +1782,7 @@ export default function InboxPage() {
   const fetchThreadData = useCallback((threadId: string): Promise<ThreadCacheData> => {
     const existing = threadDataCache.current.get(threadId);
     if (existing) return existing;
-    const promise = fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`, {
-      cache: "no-store",
-    }).then(async (res) => {
+    const promise = fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`).then(async (res) => {
       const data = (await res.json()) as {
         error?: string;
         messages?: MsgView[];
@@ -1800,7 +1798,7 @@ export default function InboxPage() {
     promise.catch(() => {
       threadDataCache.current.delete(threadId);
     });
-    setTimeout(() => threadDataCache.current.delete(threadId), 120_000);
+    setTimeout(() => threadDataCache.current.delete(threadId), 600_000);
     return promise;
   }, []);
 

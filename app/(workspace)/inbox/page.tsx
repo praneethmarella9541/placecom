@@ -57,7 +57,7 @@ import { GmailDatePicker } from "@/components/GmailDatePicker";
 import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
 import { formatMessageRecipientsLine } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
-import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail } from "lucide-react";
+import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -244,99 +244,162 @@ function MessageBubble({
   myEmail: string;
 }) {
   const [expanded, setExpanded] = useState(isLast);
+  const [fullscreen, setFullscreen] = useState(false);
   const isCollapsed = !expanded;
   const fromEmail = extractEmailAddress(m.from || "");
   const fromName = senderName(m.from || "");
 
+  const bodyContent = (
+    <>
+      <CalendarInviteOrHtml
+        subject={m.subject}
+        bodyHtml={m.bodyHtml}
+        plain={m.body}
+        messageId={m.id}
+        attachments={m.attachments}
+      />
+      {(() => {
+        const files = (m.attachments ?? []).filter(
+          (a) =>
+            !/invite\.ics$/i.test(a.filename) &&
+            !/^text\/calendar/i.test(a.mimeType)
+        );
+        if (files.length === 0) return null;
+        return (
+          <div className="mt-4">
+            <GmailAttachmentPreviews attachments={files} messageId={m.id} />
+          </div>
+        );
+      })()}
+    </>
+  );
+
+  const recipientLine = (
+    <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-faint)]">
+      {(() => {
+        const parts = formatMessageRecipientsLine(m);
+        if (parts.length === 0) return <>{titleCase("to")} —</>;
+        return parts.map((part, i) => (
+          <span key={part.label} className={i > 0 ? "ml-1" : undefined}>
+            {i > 0 ? "· " : null}
+            <span className="text-[var(--color-text-faint)]">{part.label}</span>{" "}
+            <span>{part.value}</span>
+          </span>
+        ));
+      })()}
+    </p>
+  );
+
   return (
-    <article
-      className={cn(
-        "border-b border-[var(--gmail-border-row)]",
-        isCollapsed && "cursor-pointer hover:bg-[var(--gmail-row-hover)]"
-      )}
-      onClick={isCollapsed ? () => setExpanded(true) : undefined}
-    >
-      {/* Always-visible header */}
-      <div className="flex items-start gap-3 px-4 py-3 md:px-6" onClick={!isCollapsed ? (e) => e.stopPropagation() : undefined}>
-        <GmailAvatar seed={fromEmail} name={fromName} size={36} className="mt-0.5 shrink-0" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline justify-between gap-2">
-            <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
-              {fromName || fromEmail}
-            </p>
-            <div className="flex shrink-0 items-center gap-2">
-              {trackingRow && !isSelfSentEmail(m.from, m.to, m.cc, myEmail) && (
-                trackingRow.opened ? (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
-                    title={`Opened ${trackingRow.open_count}x`}
+    <>
+      <article
+        className={cn(
+          "border-b border-[var(--gmail-border-row)]",
+          isCollapsed && "cursor-pointer hover:bg-[var(--gmail-row-hover)]"
+        )}
+        onClick={isCollapsed ? () => setExpanded(true) : undefined}
+      >
+        {/* Always-visible header */}
+        <div className="flex items-start gap-3 px-4 py-3 md:px-6">
+          <GmailAvatar seed={fromEmail} name={fromName} size={36} className="mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-2">
+              <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
+                {fromName || fromEmail}
+              </p>
+              <div className="flex shrink-0 items-center gap-1.5">
+                {trackingRow && !isSelfSentEmail(m.from, m.to, m.cc, myEmail) && (
+                  trackingRow.opened ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
+                      title={`Opened ${trackingRow.open_count}x`}
+                    >
+                      <IconEye className="h-3 w-3" />
+                      Opened{trackingRow.open_count > 1 ? ` ${trackingRow.open_count}x` : ""} · {timeAgo(trackingRow.opened_at ?? "")}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
+                      <IconCheck className="h-3 w-3" />
+                      {titleCase("Sent")}
+                    </span>
+                  )
+                )}
+                <time className="whitespace-nowrap text-[12px] text-[var(--color-text-faint)]">
+                  {formatDate(m.date)}
+                </time>
+                {/* Fullscreen button — only visible when expanded */}
+                {!isCollapsed && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setFullscreen(true); }}
+                    className="ml-1 flex h-6 w-6 items-center justify-center rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+                    title="Full screen"
+                    aria-label="View in full screen"
                   >
-                    <IconEye className="h-3 w-3" />
-                    Opened{trackingRow.open_count > 1 ? ` ${trackingRow.open_count}x` : ""} · {timeAgo(trackingRow.opened_at ?? "")}
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
-                    <IconCheck className="h-3 w-3" />
-                    {titleCase("Sent")}
-                  </span>
-                )
-              )}
-              <time className="whitespace-nowrap text-[12px] text-[var(--color-text-faint)]">
-                {formatDate(m.date)}
-              </time>
+                    <Maximize2 className="h-3.5 w-3.5" strokeWidth={2} />
+                  </button>
+                )}
+              </div>
+            </div>
+            {/* Collapsed: snippet; Expanded: to/cc */}
+            {isCollapsed ? (
+              <p className="mt-0.5 truncate text-[13px] text-[var(--color-text-faint)]">
+                {m.body?.split("\n").find((l) => l.trim()) ?? "(no preview)"}
+              </p>
+            ) : recipientLine}
+          </div>
+        </div>
+
+        {/* Body — inline */}
+        {!isCollapsed && (
+          <div className="px-4 pb-4 md:px-6">
+            <div className="max-w-[720px]">
+              {bodyContent}
             </div>
           </div>
-          {/* Collapsed: snippet preview; Expanded: to/cc line */}
-          {isCollapsed ? (
-            <p className="mt-0.5 truncate text-[13px] text-[var(--color-text-faint)]">
-              {m.body?.split("\n").find((l) => l.trim()) ?? "(no preview)"}
-            </p>
-          ) : (
-            <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-faint)]">
-              {(() => {
-                const parts = formatMessageRecipientsLine(m);
-                if (parts.length === 0) return <>{titleCase("to")} —</>;
-                return parts.map((part, i) => (
-                  <span key={part.label} className={i > 0 ? "ml-1" : undefined}>
-                    {i > 0 ? "· " : null}
-                    <span className="text-[var(--color-text-faint)]">{part.label}</span>{" "}
-                    <span>{part.value}</span>
-                  </span>
-                ));
-              })()}
-            </p>
-          )}
-        </div>
-      </div>
+        )}
+      </article>
 
-      {/* Body — only when expanded */}
-      {!isCollapsed && (
-        <div className="px-4 pb-4 md:px-6">
-          <div className="max-w-[720px]">
-            <CalendarInviteOrHtml
-              subject={m.subject}
-              bodyHtml={m.bodyHtml}
-              plain={m.body}
-              messageId={m.id}
-              attachments={m.attachments}
-            />
-            {(() => {
-              const files = (m.attachments ?? []).filter(
-                (a) =>
-                  !/invite\.ics$/i.test(a.filename) &&
-                  !/^text\/calendar/i.test(a.mimeType)
-              );
-              if (files.length === 0) return null;
-              return (
-                <div className="mt-4">
-                  <GmailAttachmentPreviews attachments={files} messageId={m.id} />
-                </div>
-              );
-            })()}
+      {/* Fullscreen overlay — rendered via portal so it escapes the reading pane */}
+      {fullscreen && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex flex-col bg-white dark:bg-[#202124] animate-fade-in"
+          style={{ animationDuration: "0.15s" }}
+        >
+          {/* Fullscreen header */}
+          <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3">
+            <GmailAvatar seed={fromEmail} name={fromName} size={32} className="shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
+                {fromName || fromEmail}
+              </p>
+              {recipientLine}
+            </div>
+            <time className="shrink-0 text-[12px] text-[var(--color-text-faint)]">
+              {formatDate(m.date)}
+            </time>
+            <button
+              type="button"
+              onClick={() => setFullscreen(false)}
+              className="ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+              aria-label="Exit full screen"
+            >
+              <XIcon className="h-4 w-4" strokeWidth={2} />
+            </button>
           </div>
-        </div>
+          {/* Fullscreen body — scrollable */}
+          <div className="scrollbar-thin flex-1 overflow-y-auto px-6 py-5 md:px-12 md:py-8">
+            <div className="mx-auto max-w-[860px]">
+              <h2 className="mb-4 text-[18px] font-semibold text-[var(--color-text)]">
+                {m.subject || "(no subject)"}
+              </h2>
+              {bodyContent}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
-    </article>
+    </>
   );
 }
 

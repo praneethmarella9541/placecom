@@ -228,6 +228,118 @@ type TrackingRow = {
   open_count: number;
 };
 
+/* ── Collapsible message bubble ──────────────────────────────
+ * Defined outside the page so useState is a valid hook call.
+ * All older messages (not last) start collapsed; the last is open.
+ * ────────────────────────────────────────────────────────── */
+function MessageBubble({
+  m,
+  isLast,
+  trackingRow,
+  myEmail,
+}: {
+  m: MsgView;
+  isLast: boolean;
+  trackingRow: TrackingRow | undefined;
+  myEmail: string;
+}) {
+  const [expanded, setExpanded] = useState(isLast);
+  const isCollapsed = !expanded;
+  const fromEmail = extractEmailAddress(m.from || "");
+  const fromName = senderName(m.from || "");
+
+  return (
+    <article
+      className={cn(
+        "border-b border-[var(--gmail-border-row)]",
+        isCollapsed && "cursor-pointer hover:bg-[var(--gmail-row-hover)]"
+      )}
+      onClick={isCollapsed ? () => setExpanded(true) : undefined}
+    >
+      {/* Always-visible header */}
+      <div className="flex items-start gap-3 px-4 py-3 md:px-6">
+        <GmailAvatar seed={fromEmail} name={fromName} size={36} className="mt-0.5 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
+              {fromName || fromEmail}
+            </p>
+            <div className="flex shrink-0 items-center gap-2">
+              {trackingRow && !isSelfSentEmail(m.from, m.to, m.cc, myEmail) && (
+                trackingRow.opened ? (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
+                    title={`Opened ${trackingRow.open_count}x`}
+                  >
+                    <IconEye className="h-3 w-3" />
+                    Opened{trackingRow.open_count > 1 ? ` ${trackingRow.open_count}x` : ""} · {timeAgo(trackingRow.opened_at ?? "")}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
+                    <IconCheck className="h-3 w-3" />
+                    {titleCase("Sent")}
+                  </span>
+                )
+              )}
+              <time className="whitespace-nowrap text-[12px] text-[var(--color-text-faint)]">
+                {formatDate(m.date)}
+              </time>
+            </div>
+          </div>
+          {/* Collapsed: snippet preview; Expanded: to/cc line */}
+          {isCollapsed ? (
+            <p className="mt-0.5 truncate text-[13px] text-[var(--color-text-faint)]">
+              {m.body?.split("\n").find((l) => l.trim()) ?? "(no preview)"}
+            </p>
+          ) : (
+            <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-faint)]">
+              {(() => {
+                const parts = formatMessageRecipientsLine(m);
+                if (parts.length === 0) return <>{titleCase("to")} —</>;
+                return parts.map((part, i) => (
+                  <span key={part.label} className={i > 0 ? "ml-1" : undefined}>
+                    {i > 0 ? "· " : null}
+                    <span className="text-[var(--color-text-faint)]">{part.label}</span>{" "}
+                    <span>{part.value}</span>
+                  </span>
+                ));
+              })()}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Body — only when expanded */}
+      {!isCollapsed && (
+        <div className="px-4 pb-6 md:px-6">
+          <div className="max-w-[720px]">
+            <CalendarInviteOrHtml
+              subject={m.subject}
+              bodyHtml={m.bodyHtml}
+              plain={m.body}
+              messageId={m.id}
+              attachments={m.attachments}
+            />
+            {(() => {
+              const files = (m.attachments ?? []).filter(
+                (a) =>
+                  !/invite\.ics$/i.test(a.filename) &&
+                  !/^text\/calendar/i.test(a.mimeType)
+              );
+              if (files.length === 0) return null;
+              return (
+                <div className="mt-4">
+                  <GmailAttachmentPreviews attachments={files} messageId={m.id} />
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -3976,7 +4088,7 @@ export default function InboxPage() {
               </div>
             ) : messages && messages.length ? (
               <>
-                {/* Thread header — Gmail action bar + subject */}
+                {/* Thread header — subject + actions only, no redundant sender info */}
                 <div className="border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] px-2 py-2 md:px-4">
                   <div className="mb-2 flex items-center gap-1 border-b border-[var(--gmail-border-row)] pb-2">
                     <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
@@ -3995,10 +4107,15 @@ export default function InboxPage() {
                       className="ml-auto hidden md:inline-flex"
                     />
                   </div>
-                  <div className="flex items-start gap-1 px-2 md:px-0">
-                    <h2 className="min-w-0 flex-1 text-xl font-normal leading-snug text-[var(--color-text)]">
+                  <div className="flex items-center gap-2 px-2 md:px-0">
+                    <h2 className="min-w-0 flex-1 text-[18px] font-semibold leading-snug text-[var(--color-text)]">
                       {messages[0]?.subject || "(no subject)"}
                     </h2>
+                    {messages.length > 1 && (
+                      <span className="shrink-0 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-faint)]">
+                        {messages.length}
+                      </span>
+                    )}
                     <ThreadActionsMenu
                       onReply={() => openReply("reply")}
                       onReplyAll={() => openReply("replyAll")}
@@ -4006,7 +4123,7 @@ export default function InboxPage() {
                     />
                   </div>
                   {(openThreadLabelSelected.size > 0 || threadLabelIds.length > 0) && (
-                    <div className="mb-2 flex flex-wrap gap-1 pl-12">
+                    <div className="mt-1.5 flex flex-wrap gap-1">
                       {mergeThreadLabelIds(threadLabelIds, Array.from(openThreadLabelSelected))
                         .map((id) => labelsById.get(id))
                         .filter((l): l is GmailLabel => !!l && l.type === "user")
@@ -4020,96 +4137,19 @@ export default function InboxPage() {
                         ))}
                     </div>
                   )}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-12 text-[13px]">
-                    <span className="font-semibold text-[var(--color-text)]">{senderName(messages[0]?.from || "")}</span>
-                    <span className="text-[var(--color-text-muted)]">&lt;{extractEmailAddress(messages[0]?.from || "")}&gt;</span>
-                    <time className="ml-auto text-[var(--color-text-faint)]">{formatDate(messages[0]?.date || "")}</time>
-                  </div>
-                  <p className="mt-1 pl-12 text-[11px] text-[var(--color-text-muted)]">
-                    {titleCase(`${messages.length} message${messages.length !== 1 ? "s" : ""} in thread`)}
-                  </p>
                 </div>
 
                 {/* Messages + reply actions (scroll together like Gmail) */}
                 <div className="scrollbar-thin flex-1 overflow-y-auto">
-                  {messages.map((m) => {
-                    const fromEmail = extractEmailAddress(m.from || "");
-                    const fromName = senderName(m.from || "");
-                    return (
-                    <article key={m.id} className="flex gap-4 border-b border-[var(--gmail-border-row)] px-4 py-5 md:px-8">
-                      <GmailAvatar seed={fromEmail} name={fromName} size={40} className="mt-0.5" />
-                      <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                            <p className="truncate text-[14px] font-medium text-[var(--color-text)]">{fromName}</p>
-                            <p className="text-[12px] leading-snug text-[var(--color-text-faint)]">
-                              {(() => {
-                                const parts = formatMessageRecipientsLine(m);
-                                if (parts.length === 0) {
-                                  return (
-                                    <>
-                                      {titleCase("to")} —
-                                    </>
-                                  );
-                                }
-                                return parts.map((part, i) => (
-                                  <span key={part.label} className={i > 0 ? "ml-1" : undefined}>
-                                    {i > 0 ? "· " : null}
-                                    <span className="text-[var(--color-text-faint)]">{part.label}</span>{" "}
-                                    <span className="text-[var(--color-text-faint)]">{part.value}</span>
-                                  </span>
-                                ));
-                              })()}
-                            </p>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          {(() => {
-                            const tr = trackingMap[m.id];
-                            if (!tr || isSelfSentEmail(m.from, m.to, m.cc, myEmail)) {
-                              return null;
-                            }
-                            if (tr.opened) {
-                              return (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]" title={`Opened ${tr.open_count}x`}>
-                                  <IconEye className="h-3 w-3" />
-                                  Opened{tr.open_count > 1 ? ` ${tr.open_count}x` : ""} · {timeAgo(tr.opened_at)}
-                                </span>
-                              );
-                            }
-                            return (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
-                                <IconCheck className="h-3 w-3" />
-                                {titleCase("Sent")}
-                              </span>
-                            );
-                          })()}
-                          <time className="whitespace-nowrap text-[12px] text-[var(--color-text-faint)]">{formatDate(m.date)}</time>
-                        </div>
-                      </div>
-                      <CalendarInviteOrHtml
-                        subject={m.subject}
-                        bodyHtml={m.bodyHtml}
-                        plain={m.body}
-                        messageId={m.id}
-                        attachments={m.attachments}
-                      />
-                      {(() => {
-                        const files = (m.attachments ?? []).filter(
-                          (a) =>
-                            !/invite\.ics$/i.test(a.filename) &&
-                            !/^text\/calendar/i.test(a.mimeType)
-                        );
-                        if (files.length === 0) return null;
-                        return (
-                          <div className="mt-3">
-                            <GmailAttachmentPreviews attachments={files} messageId={m.id} />
-                          </div>
-                        );
-                      })()}
-                      </div>
-                    </article>
-                  );
-                  })}
+                  {messages.map((m, msgIdx) => (
+                    <MessageBubble
+                      key={m.id}
+                      m={m}
+                      isLast={msgIdx === messages.length - 1}
+                      trackingRow={trackingMap[m.id]}
+                      myEmail={myEmail}
+                    />
+                  ))}
 
                   <GmailInlineReply
                     onStartReply={() => openReply("reply")}

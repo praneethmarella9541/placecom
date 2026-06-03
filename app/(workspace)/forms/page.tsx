@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ClipboardList, ExternalLink, Loader2, Plus, Search } from "lucide-react";
+import { ClipboardList, Loader2, Plus, Search } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
@@ -202,15 +202,6 @@ export default function FormsPage() {
                   </p>
                 </Link>
                 <div className="flex shrink-0 items-center gap-3">
-                  <a
-                    href={`https://docs.google.com/forms/d/${encodeURIComponent(f.id)}/edit`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" strokeWidth={2} />
-                    {titleCase("Google")}
-                  </a>
                   <Link
                     href={`/forms/${encodeURIComponent(f.id)}/edit`}
                     className="text-[13px] font-semibold text-[var(--color-primary)]"

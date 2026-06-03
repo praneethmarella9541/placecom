@@ -146,7 +146,7 @@ export function EmailHtmlBody({
     // whenever content reflows (images load, fonts render, etc.)
     const applyHeight = () => {
       const h = measureDoc(doc);
-      setHeight(h + 16);
+      setHeight(h + 4);
     };
 
     // Initial measure
@@ -192,8 +192,8 @@ export function EmailHtmlBody({
     <iframe
       ref={iframeRef}
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      className="mt-3 w-full border-0 bg-white"
-      style={{ height: `${height}px`, minHeight: 80 }}
+      className="mt-1 w-full border-0 bg-white"
+      style={{ height: `${height}px`, minHeight: 40 }}
       title={titleCase("Email body")}
     />
   );

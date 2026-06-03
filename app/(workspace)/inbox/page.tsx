@@ -257,7 +257,7 @@ function MessageBubble({
       onClick={isCollapsed ? () => setExpanded(true) : undefined}
     >
       {/* Always-visible header */}
-      <div className="flex items-start gap-3 px-4 py-3 md:px-6">
+      <div className="flex items-start gap-3 px-4 py-3 md:px-6" onClick={!isCollapsed ? (e) => e.stopPropagation() : undefined}>
         <GmailAvatar seed={fromEmail} name={fromName} size={36} className="mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-2">
@@ -311,7 +311,7 @@ function MessageBubble({
 
       {/* Body — only when expanded */}
       {!isCollapsed && (
-        <div className="px-4 pb-6 md:px-6">
+        <div className="px-4 pb-4 md:px-6">
           <div className="max-w-[720px]">
             <CalendarInviteOrHtml
               subject={m.subject}

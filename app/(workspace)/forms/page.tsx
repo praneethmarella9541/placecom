@@ -105,11 +105,6 @@ export default function FormsPage() {
           <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--color-text)]">
             {titleCase("Forms")}
           </h1>
-          <p className="mt-1 text-sm leading-relaxed text-[var(--color-text-muted)]">
-            {titleCase(
-              "Build and manage Google Forms here. Publishing uses your connected admin Google account (same token as Mail). Share the responder link from the editor — no need to open Google Forms.",
-            )}
-          </p>
         </div>
       </div>
 

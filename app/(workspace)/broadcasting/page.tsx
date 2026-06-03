@@ -20,7 +20,6 @@ import { MailMergePanel } from "@/components/MailMergePanel";
 
 type Channel = "mail" | "sms" | "whatsapp";
 type MailSubView = "broadcast" | "merge";
-
 type PendingFile = { file: File; base64: string };
 
 function fileToBase64(file: File): Promise<string> {
@@ -39,6 +38,44 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/* ── Channel tab pill ──────────────────────────────────────── */
+function ChannelTab({
+  icon: Icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: React.ElementType;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium transition-all duration-150",
+        active
+          ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-[var(--shadow-sm)]"
+          : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]"
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {titleCase(label)}
+    </button>
+  );
+}
+
+/* ── Section label ─────────────────────────────────────────── */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
+      {children}
+    </p>
+  );
 }
 
 function BroadcastingPageInner() {
@@ -161,10 +198,7 @@ function BroadcastingPageInner() {
         failed?: { email: string; error: string }[];
       };
       if (!res.ok) throw new Error(data.error || "Send failed");
-      setSendResult({
-        sent: data.sent ?? 0,
-        failed: data.failed ?? [],
-      });
+      setSendResult({ sent: data.sent ?? 0, failed: data.failed ?? [] });
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "Send failed");
     } finally {
@@ -173,67 +207,45 @@ function BroadcastingPageInner() {
   };
 
   return (
-    <div className={cn("mx-auto space-y-6", channel === "whatsapp" || channel === "sms" ? "max-w-5xl" : "max-w-4xl")}>
-      <>
+    <div className={cn("mx-auto space-y-5", channel === "whatsapp" || channel === "sms" ? "max-w-5xl" : "max-w-4xl")}>
+
+      {/* ── Header ───────────────────────────────────────────── */}
+      <div className="animate-fade-up flex items-end justify-between" style={{ animationDuration: "0.3s" }}>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h1 className="font-display text-[22px] font-bold tracking-tight text-[var(--color-text)]">
             {titleCase("Broadcasting")}
           </h1>
-          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-            {titleCase("Reach candidates by mail, SMS (Twilio), or WhatsApp — use the tabs below.")}
+          <p className="mt-0.5 text-[13px] text-[var(--color-text-faint)]">
+            {titleCase("Reach your audience by mail, SMS, or WhatsApp")}
           </p>
         </div>
+      </div>
 
-        <div className="inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/80">
-          {(
-            [
-              { key: "mail" as const, label: "Mail", icon: IconMail },
-              { key: "sms" as const, label: "SMS", icon: IconSms },
-              { key: "whatsapp" as const, label: "WhatsApp", icon: IconMessageChat },
-            ] as const
-          ).map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => selectChannel(tab.key)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                  channel === tab.key
-                    ? "bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-400"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {titleCase(tab.label)}
-              </button>
-            );
-          })}
-        </div>
-      </>
+      {/* ── Channel tabs ─────────────────────────────────────── */}
+      <div className="inline-flex rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1">
+        <ChannelTab icon={IconMail}        label="Mail"      active={channel === "mail"}      onClick={() => selectChannel("mail")} />
+        <ChannelTab icon={IconSms}         label="SMS"       active={channel === "sms"}       onClick={() => selectChannel("sms")} />
+        <ChannelTab icon={IconMessageChat} label="WhatsApp"  active={channel === "whatsapp"}  onClick={() => selectChannel("whatsapp")} />
+      </div>
 
+      {/* ── Mail channel ─────────────────────────────────────── */}
       {channel === "mail" ? (
         <div className="space-y-4">
-          <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100/80 p-0.5 dark:border-zinc-700 dark:bg-zinc-900/60">
-            {(
-              [
-                { key: "broadcast" as const, label: "Broadcast" },
-                { key: "merge" as const, label: "Mail merge" },
-              ] as const
-            ).map((tab) => (
+          {/* Broadcast / Mail merge sub-tabs */}
+          <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-0.5">
+            {(["broadcast", "merge"] as const).map((key) => (
               <button
-                key={tab.key}
+                key={key}
                 type="button"
-                onClick={() => setMailSubView(tab.key)}
+                onClick={() => setMailSubView(key)}
                 className={cn(
-                  "rounded-md px-4 py-2 text-sm font-medium transition-colors",
-                  mailSubView === tab.key
-                    ? "bg-white text-indigo-700 shadow-sm dark:bg-zinc-950 dark:text-indigo-400"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200",
+                  "rounded-md px-4 py-1.5 text-[13px] font-medium transition-all duration-150",
+                  mailSubView === key
+                    ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-[var(--shadow-sm)]"
+                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 )}
               >
-                {titleCase(tab.label)}
+                {titleCase(key === "broadcast" ? "Broadcast" : "Mail merge")}
               </button>
             ))}
           </div>
@@ -241,211 +253,240 @@ function BroadcastingPageInner() {
           {mailSubView === "merge" ? (
             <MailMergePanel />
           ) : (
-        <div className="card space-y-6 p-5 sm:p-6">
+            <div className="surface-card rounded-2xl p-5 sm:p-6">
+              <div className="grid gap-6 lg:grid-cols-2">
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <div className="space-y-4">
-              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                {titleCase("Recipients")}
-              </h2>
+                {/* ── Recipients ──────────────────────────────── */}
+                <div className="space-y-4">
+                  <SectionLabel>{titleCase("Recipients")}</SectionLabel>
 
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-500">
-                  {titleCase("Import CSV or Excel")}
-                </label>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept=".csv,.xlsx,.xls,.ods"
-                  className="hidden"
-                  onChange={(e) => void onPickFile(e.target.files)}
-                />
-                <button
-                  type="button"
-                  disabled={parseBusy}
-                  onClick={() => fileRef.current?.click()}
-                  className="btn-secondary w-full justify-center sm:w-auto"
-                >
-                  {parseBusy ? titleCase("Reading…") : titleCase("Choose file")}
-                </button>
-                {parseError ? (
-                  <p className="mt-2 text-xs text-red-600 dark:text-red-400">{parseError}</p>
-                ) : null}
-              </div>
+                  {/* CSV import */}
+                  <div>
+                    <p className="mb-2 text-[12px] font-medium text-[var(--color-text-muted)]">
+                      {titleCase("Import CSV or Excel")}
+                    </p>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      accept=".csv,.xlsx,.xls,.ods"
+                      className="hidden"
+                      onChange={(e) => void onPickFile(e.target.files)}
+                    />
+                    <button
+                      type="button"
+                      disabled={parseBusy}
+                      onClick={() => fileRef.current?.click()}
+                      className="btn-secondary w-full justify-center sm:w-auto"
+                    >
+                      {parseBusy ? titleCase("Reading…") : titleCase("Choose file")}
+                    </button>
+                    {parseError && (
+                      <p className="mt-2 text-[12px] text-[var(--color-danger)]">{parseError}</p>
+                    )}
+                  </div>
 
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-500">
-                  {titleCase("Or paste addresses (comma, space, or one per line)")}
-                </label>
-                <textarea
-                  value={manualInput}
-                  onChange={(e) => setManualInput(e.target.value)}
-                  rows={4}
-                  className="input-field resize-none text-sm"
-                  placeholder="a@example.com, b@example.com"
-                />
-                <button type="button" onClick={applyManual} className="btn-ghost mt-2 gap-1 text-sm">
-                  <IconPlus className="h-4 w-4" />
-                  {titleCase("Add to list")}
-                </button>
-              </div>
+                  {/* Manual paste */}
+                  <div>
+                    <p className="mb-2 text-[12px] font-medium text-[var(--color-text-muted)]">
+                      {titleCase("Or paste addresses")}
+                    </p>
+                    <textarea
+                      value={manualInput}
+                      onChange={(e) => setManualInput(e.target.value)}
+                      rows={4}
+                      className="input-field resize-none text-[13px]"
+                      placeholder="a@example.com, b@example.com"
+                    />
+                    <button
+                      type="button"
+                      onClick={applyManual}
+                      className="btn-ghost mt-2 gap-1.5 text-[13px]"
+                    >
+                      <IconPlus className="h-3.5 w-3.5" />
+                      {titleCase("Add to list")}
+                    </button>
+                  </div>
 
-              <div>
-                <p className="mb-2 text-xs font-medium text-zinc-500">
-                  {titleCase("List")} ({recipients.length})
-                </p>
-                {recipients.length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-zinc-200 px-3 py-6 text-center text-sm text-zinc-400 dark:border-zinc-700">
-                    {titleCase("No recipients yet")}
-                  </p>
-                ) : (
-                  <ul className="scrollbar-thin max-h-40 space-y-1 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50/50 p-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-                    {recipients.map((email) => (
-                      <li
-                        key={email}
-                        className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-1.5 text-xs dark:bg-zinc-950"
-                      >
-                        <span className="truncate font-mono text-zinc-800 dark:text-zinc-200">{email}</span>
+                  {/* Recipient list */}
+                  <div>
+                    <div className="mb-2 flex items-center justify-between">
+                      <p className="text-[12px] font-medium text-[var(--color-text-muted)]">
+                        {titleCase("List")}
+                        {recipients.length > 0 && (
+                          <span className="ml-1.5 rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+                            {recipients.length}
+                          </span>
+                        )}
+                      </p>
+                      {recipients.length > 0 && (
                         <button
                           type="button"
-                          onClick={() => setRecipients((r) => r.filter((x) => x !== email))}
-                          className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40"
-                          aria-label={titleCase("Remove")}
+                          onClick={() => setRecipients([])}
+                          className="text-[11px] font-medium text-[var(--color-danger)] hover:underline"
                         >
-                          <IconX className="h-3.5 w-3.5" />
+                          {titleCase("Clear all")}
                         </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {recipients.length > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => setRecipients([])}
-                    className="btn-ghost mt-2 text-xs text-red-600 dark:text-red-400"
-                  >
-                    {titleCase("Clear all")}
-                  </button>
-                ) : null}
-              </div>
-            </div>
+                      )}
+                    </div>
+                    {recipients.length === 0 ? (
+                      <div className="flex flex-col items-center rounded-xl border border-dashed border-[var(--color-border)] px-3 py-8 text-center">
+                        <p className="text-[13px] text-[var(--color-text-faint)]">
+                          {titleCase("No recipients yet")}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-[var(--color-text-faint)]">
+                          {titleCase("Import a file or paste addresses above")}
+                        </p>
+                      </div>
+                    ) : (
+                      <ul className="scrollbar-thin max-h-44 space-y-1 overflow-y-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
+                        {recipients.map((email) => (
+                          <li
+                            key={email}
+                            className="flex items-center justify-between gap-2 rounded-lg bg-[var(--color-surface)] px-2.5 py-1.5"
+                          >
+                            <span className="truncate font-mono text-[12px] text-[var(--color-text)]">
+                              {email}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setRecipients((r) => r.filter((x) => x !== email))}
+                              className="shrink-0 rounded-md p-0.5 text-[var(--color-text-faint)] hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
+                              aria-label={titleCase("Remove")}
+                            >
+                              <IconX className="h-3.5 w-3.5" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
 
-            <div className="space-y-4">
-              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                {titleCase("Message")}
-              </h2>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-500">
-                  {titleCase("Subject")}
-                </label>
-                <input
-                  type="text"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  className="input-field"
-                  placeholder={titleCase("e.g. Placement update")}
-                />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-medium text-zinc-500">
-                  {titleCase("Body")}
-                </label>
-                <textarea
-                  value={body}
-                  onChange={(e) => setBody(e.target.value)}
-                  rows={10}
-                  className="input-field resize-y text-sm"
-                  placeholder={titleCase("Write the message…")}
-                />
-              </div>
-              <div>
-                <input
-                  ref={attachRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => void onAttach(e.target.files)}
-                />
-                <button
-                  type="button"
-                  onClick={() => attachRef.current?.click()}
-                  className="btn-ghost gap-1.5 text-sm"
-                >
-                  <IconPaperclip className="h-4 w-4" />
-                  {titleCase("Add attachments")}
-                </button>
-                {attachments.length > 0 ? (
-                  <ul className="mt-2 space-y-1">
-                    {attachments.map((a, i) => (
-                      <li
-                        key={`${a.file.name}-${i}`}
-                        className="flex items-center justify-between gap-2 rounded-lg bg-zinc-100 px-2 py-1.5 text-xs dark:bg-zinc-800"
-                      >
-                        <span className="truncate">
-                          {a.file.name}{" "}
-                          <span className="text-zinc-400">({formatBytes(a.file.size)})</span>
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setAttachments((p) => p.filter((_, j) => j !== i))}
-                          className="text-zinc-400 hover:text-red-500"
-                        >
-                          <IconX className="h-3.5 w-3.5" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            </div>
-          </div>
+                {/* ── Message ─────────────────────────────────── */}
+                <div className="space-y-4">
+                  <SectionLabel>{titleCase("Message")}</SectionLabel>
 
-          {sendError ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
-              {sendError}
-            </div>
-          ) : null}
-          {sendResult ? (
-            <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 px-4 py-3 text-sm text-indigo-900 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-100">
-              <p className="font-medium">
-                {titleCase(`Sent: ${sendResult.sent}`)}
-                {sendResult.failed.length > 0
-                  ? ` · ${titleCase(`Failed: ${sendResult.failed.length}`)}`
-                  : ""}
-              </p>
-              {sendResult.failed.length > 0 ? (
-                <ul className="mt-2 max-h-32 list-inside list-disc overflow-y-auto text-xs">
-                  {sendResult.failed.map((f) => (
-                    <li key={f.email}>
-                      <span className="font-mono">{f.email}</span>: {f.error}
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
+                  <div>
+                    <p className="mb-1.5 text-[12px] font-medium text-[var(--color-text-muted)]">
+                      {titleCase("Subject")}
+                    </p>
+                    <input
+                      type="text"
+                      value={subject}
+                      onChange={(e) => setSubject(e.target.value)}
+                      className="input-field"
+                      placeholder={titleCase("e.g. Placement update")}
+                    />
+                  </div>
 
-          <div className="flex flex-wrap items-center justify-end gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
-            <button
-              type="button"
-              disabled={sendBusy || recipients.length === 0}
-              onClick={() => void sendBroadcast()}
-              className="btn-primary min-w-[160px] justify-center"
-            >
-              {sendBusy ? (
-                <>
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  {titleCase("Sending…")}
-                </>
-              ) : (
-                <>
-                  <IconSend className="h-4 w-4" />
-                  {titleCase("Send broadcast")}
-                </>
+                  <div>
+                    <p className="mb-1.5 text-[12px] font-medium text-[var(--color-text-muted)]">
+                      {titleCase("Body")}
+                    </p>
+                    <textarea
+                      value={body}
+                      onChange={(e) => setBody(e.target.value)}
+                      rows={10}
+                      className="input-field resize-y text-[13px]"
+                      placeholder={titleCase("Write the message…")}
+                    />
+                  </div>
+
+                  {/* Attachments */}
+                  <div>
+                    <input
+                      ref={attachRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => void onAttach(e.target.files)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => attachRef.current?.click()}
+                      className="btn-ghost gap-1.5 text-[13px]"
+                    >
+                      <IconPaperclip className="h-3.5 w-3.5" />
+                      {titleCase("Add attachments")}
+                    </button>
+                    {attachments.length > 0 && (
+                      <ul className="mt-2 space-y-1.5">
+                        {attachments.map((a, i) => (
+                          <li
+                            key={`${a.file.name}-${i}`}
+                            className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2 text-[12px]"
+                          >
+                            <span className="truncate text-[var(--color-text)]">
+                              {a.file.name}{" "}
+                              <span className="text-[var(--color-text-faint)]">
+                                ({formatBytes(a.file.size)})
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setAttachments((p) => p.filter((_, j) => j !== i))}
+                              className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"
+                            >
+                              <IconX className="h-3.5 w-3.5" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* ── Status messages ──────────────────────────── */}
+              {sendError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-[var(--color-danger)] dark:border-red-900/50 dark:bg-red-950/30">
+                  {sendError}
+                </div>
               )}
-            </button>
-          </div>
-        </div>
+              {sendResult && (
+                <div className="mt-4 rounded-xl border border-[var(--color-primary-light)] bg-[var(--color-primary-tint)] px-4 py-3 text-[13px]">
+                  <p className="font-semibold text-[var(--color-primary)]">
+                    {titleCase(`Sent: ${sendResult.sent}`)}
+                    {sendResult.failed.length > 0 && (
+                      <span className="ml-2 text-[var(--color-danger)]">
+                        · {titleCase(`Failed: ${sendResult.failed.length}`)}
+                      </span>
+                    )}
+                  </p>
+                  {sendResult.failed.length > 0 && (
+                    <ul className="mt-2 max-h-32 list-inside list-disc overflow-y-auto text-[11px] text-[var(--color-text-muted)]">
+                      {sendResult.failed.map((f) => (
+                        <li key={f.email}>
+                          <span className="font-mono">{f.email}</span>: {f.error}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {/* ── Send button ──────────────────────────────── */}
+              <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border)] pt-4">
+                <button
+                  type="button"
+                  disabled={sendBusy || recipients.length === 0}
+                  onClick={() => void sendBroadcast()}
+                  className="btn-primary min-w-[160px] justify-center gap-2"
+                >
+                  {sendBusy ? (
+                    <>
+                      <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                      {titleCase("Sending…")}
+                    </>
+                  ) : (
+                    <>
+                      <IconSend className="h-3.5 w-3.5" />
+                      {titleCase("Send broadcast")}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       ) : channel === "sms" ? (
@@ -461,7 +502,7 @@ export default function BroadcastingPage() {
   return (
     <Suspense
       fallback={
-        <div className="mx-auto max-w-4xl space-y-6 py-12 text-center text-sm text-zinc-500 dark:text-zinc-400">
+        <div className="mx-auto max-w-4xl space-y-6 py-12 text-center text-[13px] text-[var(--color-text-faint)]">
           {titleCase("Loading…")}
         </div>
       }

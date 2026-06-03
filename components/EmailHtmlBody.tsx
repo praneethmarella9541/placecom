@@ -7,7 +7,6 @@ import {
   type InlineImageAttachment,
 } from "@/lib/email-html-inline-images";
 
-/** Strip scripts and inline event handlers — email must not execute JS. */
 function sanitizeEmailHtml(html: string): string {
   return html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
@@ -35,8 +34,55 @@ function prepareEmailFragment(html: string): { styles: string; body: string } {
   return { styles: styles.join("\n"), body: fragment.trim() };
 }
 
-function buildSrcdoc(styles: string, body: string): string {
-  return `<!DOCTYPE html>
+function measureDoc(doc: Document): number {
+  // Temporarily clear height constraints so scrollHeight reflects true content
+  const body = doc.body;
+  const html = doc.documentElement;
+  if (!body) return 80;
+  const prevBodyH = body.style.height;
+  const prevHtmlH = html.style.height;
+  body.style.height = "auto";
+  html.style.height = "auto";
+  const h = Math.max(body.scrollHeight, html.scrollHeight, 40);
+  body.style.height = prevBodyH;
+  html.style.height = prevHtmlH;
+  return h;
+}
+
+export function EmailHtmlBody({
+  html,
+  plain,
+  messageId,
+  attachments,
+}: {
+  html?: string;
+  plain?: string;
+  messageId?: string;
+  attachments?: InlineImageAttachment[];
+}) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(80);
+
+  const prepared = useMemo(() => {
+    if (!html) return null;
+    const { styles, body: rawBody } = prepareEmailFragment(html);
+    const body =
+      messageId && attachments?.length
+        ? rewriteCidImageUrls(rawBody, messageId, attachments)
+        : rawBody;
+    return { styles, body };
+  }, [html, messageId, attachments]);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe || !prepared) return;
+
+    const doc = iframe.contentDocument;
+    if (!doc) return;
+
+    // Write the full document
+    doc.open();
+    doc.write(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -49,6 +95,7 @@ function buildSrcdoc(styles: string, body: string): string {
       background: #ffffff !important;
       height: auto !important;
       min-height: 0 !important;
+      max-height: none !important;
       overflow: visible;
     }
     body {
@@ -70,82 +117,70 @@ function buildSrcdoc(styles: string, body: string): string {
     a { color: #1a73e8; text-decoration: none; }
     a:hover { text-decoration: underline; }
     img { max-width: 100%; border: 0; vertical-align: top; }
-    pre { white-space: pre-wrap; overflow-x: auto; font-family: "Roboto Mono", "Courier New", monospace; font-size: 13px; }
+    pre { white-space: pre-wrap; overflow-x: auto; font-family: "Roboto Mono", monospace; font-size: 13px; }
     table { border-collapse: collapse; }
     td, th { vertical-align: top; }
-    /* Notify parent when layout settles */
-    html { height: auto; }
-    ${styles}
+    ${prepared.styles}
   </style>
 </head>
-<body>
-  <div class="email_message_body">${body}</div>
-  <script>
-    function notifyHeight() {
-      const h = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight, 40);
-      window.parent.postMessage({ type: 'email-height', height: h }, '*');
-    }
-    // Fire immediately, then after images load
-    notifyHeight();
-    window.addEventListener('load', notifyHeight);
-    new MutationObserver(notifyHeight).observe(document.body, { childList: true, subtree: true, attributes: true });
-    document.querySelectorAll('img').forEach(img => {
-      if (!img.complete) {
-        img.addEventListener('load', notifyHeight);
-        img.addEventListener('error', notifyHeight);
-      }
-    });
-  </script>
-</body>
-</html>`;
-}
+<body><div class="email_message_body">${prepared.body}</div></body>
+</html>`);
+    doc.close();
 
-export function EmailHtmlBody({
-  html,
-  plain,
-  messageId,
-  attachments,
-}: {
-  html?: string;
-  plain?: string;
-  messageId?: string;
-  attachments?: InlineImageAttachment[];
-}) {
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(120);
-
-  const srcdoc = useMemo(() => {
-    if (!html) return null;
-    const { styles, body: rawBody } = prepareEmailFragment(html);
-    const body =
-      messageId && attachments?.length
-        ? rewriteCidImageUrls(rawBody, messageId, attachments)
-        : rawBody;
-    return buildSrcdoc(styles, body);
-  }, [html, messageId, attachments]);
-
-  // Listen for height messages from the iframe script
-  useEffect(() => {
-    if (!srcdoc) return;
-    const handler = (e: MessageEvent) => {
-      if (
-        e.data &&
-        typeof e.data === "object" &&
-        e.data.type === "email-height" &&
-        typeof e.data.height === "number"
-      ) {
-        setHeight((prev) => {
-          const next = e.data.height + 8;
-          return Math.abs(next - prev) > 2 ? next : prev;
-        });
-      }
+    // Handle link clicks — open externally
+    const onLinkClick = (e: Event) => {
+      const anchor = (e.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
+      if (!anchor) return;
+      const href = anchor.getAttribute("href") ?? "";
+      if (!href || href.startsWith("#")) return;
+      let abs: string;
+      try { abs = new URL(href, doc.baseURI).toString(); } catch { abs = href; }
+      if (/^(mailto|tel|sms):/i.test(abs)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(abs, "_blank", "noopener,noreferrer");
     };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, [srcdoc]);
+    doc.addEventListener("click", onLinkClick, true);
 
-  // Fallback: plain text
-  if (!html || !srcdoc) {
+    // Measure height using ResizeObserver on the body element — fires
+    // whenever content reflows (images load, fonts render, etc.)
+    const applyHeight = () => {
+      const h = measureDoc(doc);
+      setHeight(h + 16);
+    };
+
+    // Initial measure
+    applyHeight();
+
+    // Watch for size changes via ResizeObserver (much better than setTimeout polling)
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && doc.body) {
+      ro = new ResizeObserver(applyHeight);
+      ro.observe(doc.body);
+    }
+
+    // Also watch image loads in case ResizeObserver misses them
+    const imgs = Array.from(doc.querySelectorAll<HTMLImageElement>("img"));
+    for (const img of imgs) {
+      if (!img.complete) {
+        img.addEventListener("load", applyHeight, { once: true });
+        img.addEventListener("error", applyHeight, { once: true });
+      }
+    }
+
+    // Fallback timeouts for web fonts / late-loading content
+    const t1 = setTimeout(applyHeight, 200);
+    const t2 = setTimeout(applyHeight, 800);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      ro?.disconnect();
+      doc.removeEventListener("click", onLinkClick, true);
+    };
+  }, [prepared]);
+
+  if (!html || !prepared) {
     return (
       <div className="mt-3 max-w-[680px] whitespace-pre-wrap break-words font-sans text-[14px] leading-relaxed text-[var(--color-text)]">
         {plain || "(empty body)"}
@@ -156,10 +191,9 @@ export function EmailHtmlBody({
   return (
     <iframe
       ref={iframeRef}
-      srcDoc={srcdoc}
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
       className="mt-3 w-full border-0 bg-white"
-      style={{ height: `${height}px`, minHeight: 40 }}
+      style={{ height: `${height}px`, minHeight: 80 }}
       title={titleCase("Email body")}
     />
   );

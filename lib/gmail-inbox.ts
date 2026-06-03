@@ -556,9 +556,7 @@ export async function getThreadMessages(
   try {
     res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      // Cache server-side for 5 min — email bodies are immutable once delivered.
-      next: { revalidate: 300 },
-    } as RequestInit & { next?: { revalidate?: number } });
+    });
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (thread get)"));
   }

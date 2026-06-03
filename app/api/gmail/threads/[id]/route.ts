@@ -33,9 +33,7 @@ export async function GET(
       { threadId, messages, labelIds },
       {
         headers: {
-          // Allow the browser to cache thread bodies for 5 min.
-          // Email bodies are immutable once delivered so this is safe.
-          "Cache-Control": "private, max-age=300",
+          "Cache-Control": "no-store",
         },
       }
     );

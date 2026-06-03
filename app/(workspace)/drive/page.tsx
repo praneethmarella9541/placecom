@@ -1719,7 +1719,7 @@ export default function DrivePage() {
                           mimeType={file.mimeType}
                           name={file.name}
                           thumbnailLink={file.thumbnailLink}
-                          className="h-12 w-12 rounded-lg bg-zinc-100 dark:bg-zinc-800"
+                          className="h-12 w-12"
                           iconClassName="h-6 w-6"
                         />
                         {file.starred && (
@@ -1767,6 +1767,7 @@ export default function DrivePage() {
                         mimeType={file.mimeType}
                         name={file.name}
                         thumbnailLink={file.thumbnailLink}
+                        className="h-8 w-8"
                         iconClassName="h-4 w-4"
                       />
                       <span className="min-w-0 flex-1 flex items-center gap-1.5">

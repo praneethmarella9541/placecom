@@ -99,6 +99,7 @@ type Msg = {
 type StatusPayload = {
   provider?: string;
   sendConfigured?: boolean;
+  apiHost?: string;
   businessLine?: string | null;
   lineError?: string | null;
   sandbox?: boolean;
@@ -415,6 +416,12 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
             <li>
               Admin assigns each team member their <strong>Exotel number</strong> and <strong>mobile</strong> under Team (same line used for
               calls).
+            </li>
+            <li>
+              API host in use:{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">{status?.apiHost ?? "api.exotel.com"}</code>{" "}
+              (set <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">EXOTEL_API_HOST=api.in.exotel.com</code> for
+              Mumbai).
             </li>
             <li>
               Server env: <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">EXOTEL_SID</code>,{" "}

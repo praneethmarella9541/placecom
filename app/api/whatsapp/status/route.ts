@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
+import { getExotelApiHost } from "@/lib/exotel-config";
 import {
   getExotelWhatsAppWebhookUrl,
   isExotelWhatsAppConfigured,
@@ -26,6 +27,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     provider: "exotel",
     sendConfigured: isExotelWhatsAppConfigured(),
+    apiHost: getExotelApiHost(),
     businessLine,
     lineError,
     fromPreview: businessLine ? businessLine : null,

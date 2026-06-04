@@ -1,45 +1,42 @@
 import "server-only";
 
 import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
+import {
+  getExotelApiHost,
+  getExotelApiHostCandidates,
+  getExotelBasicAuthHeader,
+  getExotelCredentials,
+  getExotelV2MessagesUrl,
+  parseExotelErrorBody,
+} from "@/lib/exotel-config";
 import { normalizePhone } from "@/lib/phone";
 
 export function isExotelWhatsAppConfigured(): boolean {
-  return Boolean(
-    process.env.EXOTEL_SID?.trim() &&
-      process.env.EXOTEL_API_KEY?.trim() &&
-      process.env.EXOTEL_API_TOKEN?.trim()
-  );
+  return Boolean(getExotelCredentials());
 }
 
 export function getExotelAccountSid(): string {
-  return process.env.EXOTEL_SID?.trim() ?? "";
+  return getExotelCredentials()?.sid ?? "";
 }
 
-/** Mumbai default; Singapore uses api.exotel.com — set EXOTEL_API_HOST if needed. */
-export function getExotelApiHost(): string {
-  return process.env.EXOTEL_API_HOST?.trim() || "api.in.exotel.com";
-}
+export { getExotelApiHost };
 
-function getExotelCredentials(): { sid: string; apiKey: string; apiToken: string } | null {
-  const sid = process.env.EXOTEL_SID?.trim();
-  const apiKey = process.env.EXOTEL_API_KEY?.trim();
-  const apiToken = process.env.EXOTEL_API_TOKEN?.trim();
-  if (!sid || !apiKey || !apiToken) return null;
-  return { sid, apiKey, apiToken };
-}
-
-/** URL without embedded credentials (fetch rejects user:pass in URL). */
-export function getExotelV2MessagesUrl(): string | null {
-  const creds = getExotelCredentials();
-  if (!creds) return null;
-  const host = getExotelApiHost();
-  return `https://${host}/v2/accounts/${creds.sid}/messages`;
-}
-
-function getExotelBasicAuthHeader(): string | null {
-  const creds = getExotelCredentials();
-  if (!creds) return null;
-  return `Basic ${Buffer.from(`${creds.apiKey}:${creds.apiToken}`).toString("base64")}`;
+function extractMessageSidFromSendResponse(json: Record<string, unknown>): string | undefined {
+  const response = json.response;
+  if (!response || typeof response !== "object") return undefined;
+  const whatsapp = (response as Record<string, unknown>).whatsapp;
+  if (!whatsapp || typeof whatsapp !== "object") return undefined;
+  const messages = (whatsapp as Record<string, unknown>).messages;
+  if (!Array.isArray(messages) || messages.length === 0) return undefined;
+  const first = messages[0];
+  if (!first || typeof first !== "object") return undefined;
+  const row = first as Record<string, unknown>;
+  if (typeof row.sid === "string") return row.sid;
+  const data = row.data;
+  if (data && typeof data === "object" && typeof (data as Record<string, unknown>).sid === "string") {
+    return (data as Record<string, unknown>).sid as string;
+  }
+  return undefined;
 }
 
 export function getExotelWhatsAppWebhookUrl(): string | null {
@@ -59,8 +56,8 @@ export async function sendExotelWhatsAppText(params: {
   body: string;
   statusCallback?: string | null;
 }): Promise<{ sid: string }> {
-  const url = getExotelV2MessagesUrl();
-  if (!url) {
+  const creds = getExotelCredentials();
+  if (!creds) {
     throw new Error(
       "Exotel WhatsApp is not configured. Set EXOTEL_SID, EXOTEL_API_KEY, and EXOTEL_API_TOKEN."
     );
@@ -87,47 +84,41 @@ export async function sendExotelWhatsAppText(params: {
     },
   };
 
-  const authorization = getExotelBasicAuthHeader();
-  if (!authorization) {
-    throw new Error(
-      "Exotel WhatsApp is not configured. Set EXOTEL_SID, EXOTEL_API_KEY, and EXOTEL_API_TOKEN."
-    );
+  const authorization = getExotelBasicAuthHeader(creds);
+  const hosts = getExotelApiHostCandidates();
+  let lastError = "Exotel WhatsApp send failed";
+  let lastStatus = 0;
+
+  for (const host of hosts) {
+    const url = getExotelV2MessagesUrl(host, creds.sid);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authorization,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const json: Record<string, unknown> = await res.json().catch(() => ({}));
+    if (res.ok) {
+      const sid = extractMessageSidFromSendResponse(json);
+      if (!sid) {
+        throw new Error("Exotel accepted the message but returned no message sid.");
+      }
+      return { sid };
+    }
+
+    lastStatus = res.status;
+    lastError = parseExotelErrorBody(json, res.status);
+
+    // Wrong regional host often returns 401 — try the other cluster once.
+    if (res.status !== 401 || hosts.length === 1) {
+      break;
+    }
   }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: authorization,
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const json = (await res.json().catch(() => ({}))) as {
-    message?: string;
-    error?: string;
-    response?: {
-      whatsapp?: {
-        messages?: Array<{ data?: { sid?: string }; sid?: string; status?: string; message?: string }>;
-      };
-    };
-  };
-
-  if (!res.ok) {
-    const msg =
-      json.message ||
-      json.error ||
-      json.response?.whatsapp?.messages?.[0]?.message ||
-      `Exotel WhatsApp send failed (${res.status})`;
-    throw new Error(msg);
-  }
-
-  const first = json.response?.whatsapp?.messages?.[0];
-  const sid = first?.data?.sid ?? first?.sid;
-  if (!sid) {
-    throw new Error("Exotel accepted the message but returned no message sid.");
-  }
-  return { sid };
+  throw new Error(lastError || `Exotel WhatsApp send failed (${lastStatus})`);
 }
 
 /** Extract display text from Exotel inbound_message payload. */

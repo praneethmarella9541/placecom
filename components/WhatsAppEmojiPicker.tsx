@@ -24,7 +24,6 @@ export function WhatsAppEmojiPicker({ open, onPick, anchorRef, className }: Prop
   useEffect(() => {
     if (!open || !anchorRef?.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
-    const pickerH = 340;
     const pickerW = 320;
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - pickerW - 8));
     const bottom = window.innerHeight - rect.top + 8;

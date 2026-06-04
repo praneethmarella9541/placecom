@@ -188,11 +188,19 @@ export function extractExotelInboundBody(message: Record<string, unknown> | unde
       return { body: "[Sticker]", numMedia: 0 };
     case "location":
       return { body: "[Location]", numMedia: 0 };
+    case "button": {
+      const button = message.button as { text?: string } | undefined;
+      return { body: button?.text?.trim() || "[Button reply]", numMedia: 0 };
+    }
     case "interactive": {
       const interactive = message.interactive as Record<string, unknown> | undefined;
       const btn = interactive?.button_reply as { title?: string } | undefined;
       const list = interactive?.list_reply as { title?: string } | undefined;
-      return { body: btn?.title || list?.title || "[Interactive reply]", numMedia: 0 };
+      const nfm = interactive?.nfm_reply as { body?: string } | undefined;
+      return {
+        body: btn?.title || list?.title || nfm?.body || "[Interactive reply]",
+        numMedia: 0,
+      };
     }
     default:
       return { body: type ? `[${type}]` : "", numMedia: 0 };

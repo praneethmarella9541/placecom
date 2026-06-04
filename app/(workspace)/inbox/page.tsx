@@ -237,14 +237,35 @@ function MessageBubble({
   isLast,
   trackingRow,
   myEmail,
+  onReply,
+  onReplyAll,
+  onForward,
 }: {
   m: MsgView;
   isLast: boolean;
   trackingRow: TrackingRow | undefined;
   myEmail: string;
+  onReply?: () => void;
+  onReplyAll?: () => void;
+  onForward?: () => void;
 }) {
   const [expanded, setExpanded] = useState(isLast);
   const [fullscreen, setFullscreen] = useState(false);
+  const hasThreadActions = Boolean(onReply && onReplyAll && onForward);
+
+  const runThreadAction = (fn?: () => void) => {
+    setFullscreen(false);
+    fn?.();
+  };
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
   const isCollapsed = !expanded;
   const fromEmail = extractEmailAddress(m.from || "");
   const fromName = senderName(m.from || "");
@@ -378,10 +399,18 @@ function MessageBubble({
             <time className="shrink-0 text-[12px] text-[var(--color-text-faint)]">
               {formatDate(m.date)}
             </time>
+            {hasThreadActions ? (
+              <ThreadActionsMenu
+                className="ml-1"
+                onReply={() => runThreadAction(onReply)}
+                onReplyAll={() => runThreadAction(onReplyAll)}
+                onForward={() => runThreadAction(onForward)}
+              />
+            ) : null}
             <button
               type="button"
               onClick={() => setFullscreen(false)}
-              className="ml-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+              className="ml-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
               aria-label="Exit full screen"
             >
               <XIcon className="h-4 w-4" strokeWidth={2} />
@@ -396,6 +425,13 @@ function MessageBubble({
               {bodyContent}
             </div>
           </div>
+          {hasThreadActions ? (
+            <GmailInlineReply
+              onStartReply={() => runThreadAction(onReply)}
+              onStartReplyAll={() => runThreadAction(onReplyAll)}
+              onForward={() => runThreadAction(onForward)}
+            />
+          ) : null}
         </div>,
         document.body
       )}
@@ -4211,6 +4247,9 @@ export default function InboxPage() {
                       isLast={msgIdx === messages.length - 1}
                       trackingRow={trackingMap[m.id]}
                       myEmail={myEmail}
+                      onReply={() => openReply("reply")}
+                      onReplyAll={() => openReply("replyAll")}
+                      onForward={() => openForward()}
                     />
                   ))}
 

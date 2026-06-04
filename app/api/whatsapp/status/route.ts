@@ -41,6 +41,6 @@ export async function GET(request: Request) {
       previewExample: formatTemplatePreview(template, ["Customer", "Your name"]),
     },
     migrationHint:
-      "Apply 0016_whatsapp_messages.sql, 0017_whatsapp_message_actions.sql, 0023_profile_telephony.sql, and 0024_whatsapp_business_line.sql. Configure the webhook URL in Exotel Dashboard → WhatsApp → Webhooks.",
+      "Apply migrations 0016, 0017, 0023, 0024, and 0025_whatsapp_peer_e164_fix.sql. Configure the webhook URL in Exotel Dashboard → WhatsApp → Webhooks.",
   });
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
+import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 
 export const runtime = "nodejs";
@@ -57,8 +58,17 @@ export async function GET(request: Request) {
   >();
   for (const r of rows || []) {
     if (r.deleted_at) continue;
-    const peer = r.peer_e164 as string;
-    if (!byPeer.has(peer)) {
+    const peer = canonicalWhatsAppPeer((r.peer_e164 as string) || "");
+    if (!peer) continue;
+    const existing = byPeer.get(peer);
+    if (!existing) {
+      byPeer.set(peer, {
+        peer_e164: peer,
+        last_body: (r.body as string | null) ?? null,
+        last_at: r.created_at as string,
+        last_dir: r.direction as string,
+      });
+    } else if (new Date(r.created_at as string).getTime() > new Date(existing.last_at).getTime()) {
       byPeer.set(peer, {
         peer_e164: peer,
         last_body: (r.body as string | null) ?? null,

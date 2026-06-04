@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
-import { hasOpenWhatsAppSession } from "@/lib/whatsapp-session";
+import { hasOpenWhatsAppSessionForPeer } from "@/lib/whatsapp-session";
 import { getDefaultWhatsAppTemplate, formatTemplatePreview } from "@/lib/whatsapp-template";
-import { normalizePeerE164 } from "@/lib/whatsapp-address";
+import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 
 export const runtime = "nodejs";
 
@@ -21,14 +21,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "peer query required" }, { status: 400 });
   }
 
-  let peerNorm: string;
-  try {
-    peerNorm = normalizePeerE164(peer);
-  } catch {
+  const peerNorm = canonicalWhatsAppPeer(peer);
+  if (!peerNorm || !/^\+[1-9]\d{7,14}$/.test(peerNorm)) {
     return NextResponse.json({ error: "Invalid peer phone" }, { status: 400 });
   }
 
-  const sessionOpen = await hasOpenWhatsAppSession(
+  const sessionOpen = await hasOpenWhatsAppSessionForPeer(
     supabase,
     peerNorm,
     lineResult.data.line

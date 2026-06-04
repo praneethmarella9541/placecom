@@ -377,12 +377,13 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
           ...(replyTo?.id ? { replyToId: replyTo.id } : {}),
         }),
       });
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; peerE164?: string };
       if (!res.ok) throw new Error(body.error || "Send failed");
       setDraft("");
       setReplyTo(null);
-      if (!peer) {
-        setPeer(to);
+      const threadPeer = body.peerE164 || to;
+      if (!peer || peer !== threadPeer) {
+        setPeer(threadPeer);
         setNewPhone("");
       }
       setMobileShowThread(true);

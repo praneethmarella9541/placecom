@@ -6,12 +6,13 @@ import {
   isExotelWhatsAppConfigured,
 } from "@/lib/exotel-whatsapp";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
-import { hasOpenWhatsAppSession } from "@/lib/whatsapp-session";
+import { hasOpenWhatsAppSessionForPeer } from "@/lib/whatsapp-session";
 import {
   formatTemplatePreview,
   getDefaultWhatsAppTemplate,
 } from "@/lib/whatsapp-template";
-import { peerForOutbound } from "@/lib/whatsapp-address";
+import { createServiceSupabase } from "@/lib/supabase-service";
+import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import { isValidE164, normalizePhone } from "@/lib/phone";
 
 export const runtime = "nodejs";
@@ -61,8 +62,8 @@ export async function POST(request: Request) {
     );
   }
 
-  const peerNorm = peerForOutbound(to);
-  const sessionOpen = await hasOpenWhatsAppSession(supabase, peerNorm, businessLine);
+  const peerNorm = canonicalWhatsAppPeer(to);
+  const sessionOpen = await hasOpenWhatsAppSessionForPeer(supabase, peerNorm, businessLine);
   const mustUseTemplate = forceTemplate || (!forceSession && !sessionOpen);
 
   const templateConfig = getDefaultWhatsAppTemplate();
@@ -107,7 +108,7 @@ export async function POST(request: Request) {
       refErr ||
       !ref ||
       ref.deleted_at ||
-      ref.peer_e164 !== peerNorm ||
+      canonicalWhatsAppPeer(ref.peer_e164 as string) !== peerNorm ||
       (ref.business_e164 && ref.business_e164 !== businessLine)
     ) {
       return NextResponse.json({ error: "Invalid reply reference for this chat" }, { status: 400 });
@@ -134,9 +135,9 @@ export async function POST(request: Request) {
           body: text,
         });
 
-    const { error: logErr } = await supabase.from("whatsapp_messages").insert({
+    const logRow = {
       user_id: user.id,
-      direction: "outbound",
+      direction: "outbound" as const,
       peer_e164: peerNorm,
       business_e164: businessLine,
       from_addr: businessLine,
@@ -146,14 +147,53 @@ export async function POST(request: Request) {
       num_media: 0,
       reply_to_id: replyToId,
       delivery_status: "sent",
-    });
-    if (logErr && !String(logErr.message).includes("does not exist")) {
-      console.warn("[whatsapp/send] log insert:", logErr.message);
+    };
+
+    let logErr: { message: string; code?: string } | null = null;
+    try {
+      const svc = createServiceSupabase();
+      const { error } = await svc.from("whatsapp_messages").insert(logRow);
+      logErr = error;
+    } catch {
+      const { error } = await supabase.from("whatsapp_messages").insert(logRow);
+      logErr = error;
+      if (!logErr) {
+        console.warn("[whatsapp/send] service role unavailable, used user client for log");
+      }
     }
+
+    if (logErr) {
+      const dup = (logErr as { code?: string }).code === "23505";
+      if (dup) {
+        console.warn("[whatsapp/send] duplicate message_sid:", sid);
+      } else if (!String(logErr.message).includes("does not exist")) {
+        console.error("[whatsapp/send] log insert:", logErr, { peer: peerNorm, to: normalizePhone(to) });
+        return NextResponse.json(
+          {
+            error: `WhatsApp API accepted the message but saving failed: ${logErr.message}. Check Supabase migrations 0016 and 0024.`,
+            messageSid: sid,
+            peerE164: peerNorm,
+          },
+          { status: 500 }
+        );
+      }
+    }
+
+    console.log(
+      "[whatsapp/send] ok | peer:",
+      peerNorm,
+      "| business:",
+      businessLine,
+      "| type:",
+      mustUseTemplate ? "template" : "session",
+      "| sid:",
+      sid
+    );
 
     return NextResponse.json({
       ok: true,
       messageSid: sid,
+      peerE164: peerNorm,
       messageType: mustUseTemplate ? "template" : "session",
       sessionOpen,
     });

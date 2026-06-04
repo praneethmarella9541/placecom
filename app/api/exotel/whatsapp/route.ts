@@ -6,6 +6,7 @@ import {
   parseExotelInboundWebhook,
   parseExotelStatusWebhook,
 } from "@/lib/exotel-webhook-parse";
+import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
 
 export const runtime = "nodejs";
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
   const { error } = await supabase.from("whatsapp_messages").insert({
     user_id: ownerUserId,
     direction: "inbound",
-    peer_e164: finalized.peerE164,
+    peer_e164: canonicalWhatsAppPeer(finalized.peerE164),
     business_e164: finalized.businessE164,
     from_addr: finalized.fromRaw,
     to_addr: finalized.toRaw,

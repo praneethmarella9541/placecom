@@ -24,7 +24,6 @@ import {
   IconPin,
   IconRefresh,
   IconReply,
-  IconSettings,
   IconStar,
   IconTrash,
   IconX,
@@ -152,7 +151,6 @@ export type WhatsAppMessagingProps = {
 
 /* ── component ────────────────────────────────────────────── */
 export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) {
-  const [setupOpen, setSetupOpen] = useState(false);
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [conversations, setConversations] = useState<Conv[]>([]);
   const [peer, setPeer] = useState<string | null>(null);
@@ -281,6 +279,11 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
     }
   }, []);
 
+  // Keep a ref to the current peer so the visibilitychange handler can
+  // access it without re-registering on every peer change.
+  const peerRef = useRef<string | null>(null);
+  useEffect(() => { peerRef.current = peer; }, [peer]);
+
   useEffect(() => {
     void loadStatus();
     void loadConversations();
@@ -291,12 +294,13 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void loadConversations({ silent: true });
-        if (peer) void loadMessages(peer, { silent: true });
+        if (peerRef.current) void loadMessages(peerRef.current, { silent: true });
       }
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => { window.clearInterval(t); document.removeEventListener("visibilitychange", onVisible); };
-  }, [loadStatus, loadConversations, loadMessages, peer]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadStatus, loadConversations, loadMessages]);
 
   useEffect(() => {
     // Clear previous peer's messages immediately so they never bleed into the new thread
@@ -608,15 +612,16 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                   <button type="button" className="btn-ghost h-7 px-2 text-[12px]" onClick={() => { setEditingName(null); setNameInput(""); }}>✕</button>
                 </form>
               ) : (
-                <button
-                  type="button"
-                  className="group flex items-center gap-1 text-left"
-                  onClick={() => { setEditingName(peer); setNameInput(contacts[peer] || ""); }}
-                  title="Save contact name"
-                >
+                <div className="flex items-center gap-2">
                   <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
-                  <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-[var(--color-text-faint)] opacity-0 transition-opacity group-hover:opacity-100" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M11 2l3 3-8 8H3v-3l8-8z"/></svg>
-                </button>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-faint)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
+                    onClick={() => { setEditingName(peer); setNameInput(contacts[peer] || ""); }}
+                  >
+                    {contacts[peer] ? "Edit name" : "Save name"}
+                  </button>
+                </div>
               )}
               {sessionOpen !== null && editingName !== peer && (
                 <p className="text-[11px] text-[var(--color-text-faint)]">
@@ -688,42 +693,9 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
             >
               <IconRefresh className="h-4 w-4" />
             </button>
-            <button
-              type="button"
-              onClick={() => setSetupOpen((v) => !v)}
-              className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
-                setupOpen
-                  ? "bg-[var(--color-primary-tint)] text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
-              )}
-              title={titleCase("Setup")}
-            >
-              <IconSettings className="h-4 w-4" />
-            </button>
           </div>
         )}
       </div>
-
-      {/* Setup drawer */}
-      {setupOpen && (
-        <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-warning-light)] px-4 py-3 text-[13px] text-[var(--color-text)]">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="font-semibold">{titleCase("Exotel WhatsApp setup")}</p>
-            <button type="button" onClick={() => setSetupOpen(false)} className="rounded p-1 hover:bg-black/10" aria-label="Close">
-              <IconX className="h-4 w-4" />
-            </button>
-          </div>
-          <ol className="list-decimal space-y-1.5 pl-4 text-[12px] leading-relaxed text-[var(--color-text-muted)]">
-            <li>Admin assigns each team member their <strong>Exotel number</strong> and <strong>mobile</strong> under Admin → Team.</li>
-            <li>API host: <code className="rounded bg-white/80 px-1">{status?.apiHost ?? "api.exotel.com"}</code> (set <code className="rounded bg-white/80 px-1">EXOTEL_API_HOST=api.in.exotel.com</code> for Mumbai).</li>
-            <li>Env vars: <code className="rounded bg-white/80 px-1">EXOTEL_SID</code>, <code className="rounded bg-white/80 px-1">EXOTEL_API_KEY</code>, <code className="rounded bg-white/80 px-1">EXOTEL_API_TOKEN</code>, <code className="rounded bg-white/80 px-1">EXOTEL_VIRTUAL_NUMBERS</code>.</li>
-            <li>Inbound webhook: <code className="break-all rounded bg-white/80 px-1">{status?.suggestedInboundWebhookUrl || "https://YOUR_HOST/api/exotel/whatsapp"}</code></li>
-            <li>Your line: <code className="rounded bg-white/80 px-1">{status?.businessLine || status?.lineError || "not assigned"}</code></li>
-          </ol>
-          {status?.migrationHint && <p className="mt-2 text-[11px] text-[var(--color-text-muted)]">{status.migrationHint}</p>}
-        </div>
-      )}
 
       {/* Error bar */}
       {error && (
@@ -1063,7 +1035,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
           <p className="mt-0.5 text-[13px] text-[var(--color-text-faint)]">
             {status?.sendConfigured
               ? `Connected · ${status.sandbox ? "Sandbox" : "Live"}${status.businessLine ? ` · ${formatPhone(status.businessLine)}` : ""}`
-              : titleCase("Check configuration via the settings icon")}
+              : titleCase("Not configured")}
           </p>
         </div>
       </div>

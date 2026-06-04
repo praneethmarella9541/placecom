@@ -1,31 +1,36 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { getWhatsAppFromAddress, isWhatsAppSandbox, isWhatsAppSendConfigured } from "@/lib/whatsapp";
+import { getUserOr401 } from "@/lib/request-auth";
 import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
+import {
+  getExotelWhatsAppWebhookUrl,
+  isExotelWhatsAppConfigured,
+} from "@/lib/exotel-whatsapp";
+import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 
 export const runtime = "nodejs";
 
-/** Public-ish status for UI: whether send + DB are likely to work (no secrets). */
-export async function GET() {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: authErr,
-  } = await supabase.auth.getUser();
-
-  if (authErr || !user) {
+/** Status for UI: Exotel send + user's assigned business line (no secrets). */
+export async function GET(request: Request) {
+  const { supabase, user } = await getUserOr401(request);
+  if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
+  const lineResult = await getUserWhatsAppLine(supabase, user.id);
+  const businessLine = lineResult.ok ? lineResult.data.line : null;
+  const lineError = lineResult.ok ? null : lineResult.error;
+
   const base = getTwilioWebhookBaseUrl();
-  const suggestedWebhook = base ? `${base}/api/twilio/whatsapp` : null;
+  const suggestedWebhook = getExotelWhatsAppWebhookUrl() ?? (base ? `${base}/api/exotel/whatsapp` : null);
 
   return NextResponse.json({
-    sendConfigured: isWhatsAppSendConfigured(),
-    sandbox: isWhatsAppSandbox(),
-    fromPreview: getWhatsAppFromAddress() ? "configured" : null,
+    provider: "exotel",
+    sendConfigured: isExotelWhatsAppConfigured(),
+    businessLine,
+    lineError,
+    fromPreview: businessLine ? businessLine : null,
     suggestedInboundWebhookUrl: suggestedWebhook,
     migrationHint:
-      "Apply supabase/migrations/0016_whatsapp_messages.sql and 0017_whatsapp_message_actions.sql for message history and actions.",
+      "Apply 0016_whatsapp_messages.sql, 0017_whatsapp_message_actions.sql, 0023_profile_telephony.sql, and 0024_whatsapp_business_line.sql. Configure the webhook URL in Exotel Dashboard → WhatsApp → Webhooks.",
   });
 }

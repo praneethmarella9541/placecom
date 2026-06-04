@@ -3,7 +3,9 @@ import { createClient } from "@supabase/supabase-js";
 import twilio from "twilio";
 import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
 import { getWhatsAppFromAddress } from "@/lib/whatsapp";
-import { peerFromInboundWebhook } from "@/lib/whatsapp-address";
+import { peerFromInboundWebhook, stripWhatsAppPrefix } from "@/lib/whatsapp-address";
+import { normalizePhone } from "@/lib/phone";
+import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -95,10 +97,17 @@ export async function POST(request: Request) {
     if (parent?.id) replyToId = parent.id as string;
   }
 
+  const ourFrom = getWhatsAppFromAddress();
+  const businessE164 = ourFrom
+    ? normalizePhone(stripWhatsAppPrefix(ourFrom))
+    : normalizePhone(stripWhatsAppPrefix(to));
+  const ownerUserId = businessE164 ? await findUserIdForBusinessLine(businessE164) : null;
+
   const insertRow: Record<string, unknown> = {
-    user_id: null,
+    user_id: ownerUserId,
     direction: "inbound",
     peer_e164: peer,
+    business_e164: businessE164 || null,
     from_addr: from,
     to_addr: to,
     body: displayBody || null,

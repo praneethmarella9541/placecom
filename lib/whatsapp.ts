@@ -1,6 +1,7 @@
 import "server-only";
 
 import twilio from "twilio";
+import { isExotelWhatsAppConfigured } from "@/lib/exotel-whatsapp";
 
 type TwilioClient = ReturnType<typeof twilio>;
 
@@ -41,7 +42,9 @@ export function getWhatsAppFromAddress(): string | null {
   return `whatsapp:${base}`;
 }
 
+/** Primary: Exotel WhatsApp API. Twilio remains available for legacy broadcast paths. */
 export function isWhatsAppSendConfigured(): boolean {
+  if (isExotelWhatsAppConfigured()) return true;
   return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && getWhatsAppFromAddress());
 }
 

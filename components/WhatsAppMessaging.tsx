@@ -97,7 +97,10 @@ type Msg = {
 };
 
 type StatusPayload = {
+  provider?: string;
   sendConfigured?: boolean;
+  businessLine?: string | null;
+  lineError?: string | null;
   sandbox?: boolean;
   fromPreview?: string | null;
   suggestedInboundWebhookUrl?: string | null;
@@ -398,7 +401,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
       {setupOpen ? (
         <div className="shrink-0 border-b border-zinc-200 bg-amber-50/95 px-4 py-3 text-sm text-amber-950 dark:border-zinc-800 dark:bg-amber-950/30 dark:text-amber-50">
           <div className="mb-2 flex items-start justify-between gap-2">
-            <p className="font-semibold">{titleCase("Twilio & Supabase setup")}</p>
+            <p className="font-semibold">{titleCase("Exotel WhatsApp setup")}</p>
             <button
               type="button"
               onClick={() => setSetupOpen(false)}
@@ -410,25 +413,33 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
           </div>
           <ol className="list-decimal space-y-1.5 pl-4 text-xs leading-relaxed">
             <li>
-              Sandbox: <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">TWILIO_WHATSAPP_SANDBOX=true</code> — join keyword on
-              your test phone.
+              Admin assigns each team member their <strong>Exotel number</strong> and <strong>mobile</strong> under Team (same line used for
+              calls).
             </li>
             <li>
-              Webhook POST:{" "}
+              Server env: <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">EXOTEL_SID</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">EXOTEL_API_KEY</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">EXOTEL_API_TOKEN</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">EXOTEL_VIRTUAL_NUMBERS</code>.
+            </li>
+            <li>
+              Exotel Dashboard → WhatsApp → Webhooks (inbound + status):{" "}
               <code className="break-all rounded bg-white/80 px-1 dark:bg-zinc-900">
-                {status?.suggestedInboundWebhookUrl || "https://YOUR_HOST/api/twilio/whatsapp"}
+                {status?.suggestedInboundWebhookUrl || "https://YOUR_HOST/api/exotel/whatsapp"}
+              </code>
+            </li>
+            <li>
+              Your line:{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">
+                {status?.businessLine || status?.lineError || "not assigned"}
               </code>{" "}
-              — Twilio includes <code className="rounded bg-white/80 px-0.5 dark:bg-zinc-900">OriginalRepliedMessageSid</code> when a user
-              replies to a specific message (about 7 days); the app links it to your stored thread.
+              — you only see chats for this number.
             </li>
             <li>
-              Supabase: <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0016_whatsapp_messages.sql</code> +{" "}
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0017_whatsapp_message_actions.sql</code> +{" "}
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">SUPABASE_SERVICE_ROLE_KEY</code>.
-            </li>
-            <li>
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">TWILIO_WEBHOOK_BASE_URL</code> must match the public URL Twilio
-              calls (e.g. ngrok).
+              Migrations: <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0016</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0017</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0023</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0024</code>.
             </li>
           </ol>
           {status?.migrationHint ? <p className="mt-2 text-[11px] opacity-90">{status.migrationHint}</p> : null}

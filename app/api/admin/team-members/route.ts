@@ -241,12 +241,13 @@ export async function PATCH(request: Request) {
         { status: 503 }
       );
     }
-    const { role: _r, restricted_features: _rf, mobile_phone: _mp, exotel_virtual_number: _ev, ...rest } =
-      profilePatch;
     updErr = (
       await svc
         .from("profiles")
-        .update(rest)
+        .update({
+          role,
+          updated_at: new Date().toISOString(),
+        })
         .eq("id", userId)
         .eq("mailbox_owner_id", auth.userId)
     ).error;

@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
 
 export const runtime = "nodejs";
 
-function validPhone(input: string): boolean {
-  return /^\+[1-9]\d{7,14}$/.test(input.replace(/\s+/g, ""));
-}
 
 const DIAL_STATUS_MAP: Record<string, string> = {
   completed:   "completed",
@@ -94,6 +93,12 @@ export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
 
+  const { data: telephony } = await supabase
+    .from("profiles")
+    .select("mobile_phone, exotel_virtual_number")
+    .eq("id", user.id)
+    .maybeSingle();
+
   const { data, error } = await supabase
     .from("call_logs")
     .select(
@@ -127,30 +132,37 @@ export async function GET(request: Request) {
   // Derive direction + peer (the "other party" number, never our own).
   // Incoming: from_number = external caller, to_number = our agent.
   // Outbound: from_number = our virtual number, to_number = destination.
-  const virtualNumber = (process.env.EXOTEL_VIRTUAL_NUMBER ?? "").trim();
-  const incomingAgent = (process.env.INCOMING_AGENT_NUMBER ?? "").trim();
-  const norm = (s: string | null | undefined) =>
-    (s ?? "").replace(/[\s\-().]/g, "").replace(/^0/, "").replace(/^\+?91/, "").replace(/^\+/, "");
-  const virtualN = norm(virtualNumber);
-  const agentN = norm(incomingAgent);
+  const userMobile = (telephony?.mobile_phone as string | null) ?? "";
+  const userExotel = (telephony?.exotel_virtual_number as string | null) ?? "";
+  const allVirtuals = [
+    ...listConfiguredExotelNumbers(),
+    ...(userExotel ? [normalizePhone(userExotel)] : []),
+  ].filter((v, i, a) => v && a.indexOf(v) === i);
 
   const enriched = rows.map((r) => {
-    const fromN = norm(r.from_number);
-    const toN = norm(r.to_number);
+    const fromIsVirtual = allVirtuals.some((v) => phoneMatches(v, r.from_number ?? ""));
+    const toIsUserMobile = userMobile && phoneMatches(userMobile, r.to_number ?? "");
+    const fromIsExternal =
+      r.from_number &&
+      !allVirtuals.some((v) => phoneMatches(v, r.from_number ?? "")) &&
+      !(userMobile && phoneMatches(userMobile, r.from_number ?? ""));
+
     let direction: "incoming" | "outbound" = "outbound";
-    if (virtualN && fromN === virtualN) {
-      direction = "outbound";
-    } else if (agentN && toN === agentN && fromN && fromN !== virtualN) {
-      direction = "incoming";
-    } else if (fromN && fromN !== virtualN && fromN !== agentN) {
-      // Fallback: if from_number is some external party, treat as incoming
-      direction = "incoming";
-    }
+    if (fromIsVirtual) direction = "outbound";
+    else if (toIsUserMobile && fromIsExternal) direction = "incoming";
+    else if (fromIsExternal) direction = "incoming";
+
     const peer_number = direction === "incoming" ? r.from_number : r.to_number;
     return { ...r, direction, peer_number };
   });
 
-  return NextResponse.json({ logs: enriched });
+  return NextResponse.json({
+    logs: enriched,
+    telephony: {
+      mobilePhone: userMobile || null,
+      exotelVirtualNumber: userExotel || null,
+    },
+  });
 }
 
 export async function POST(request: Request) {
@@ -162,18 +174,50 @@ export async function POST(request: Request) {
     agentPhone?: string;
   } | null;
   const to = body?.to?.trim() || "";
-  const agentPhone = body?.agentPhone?.trim() || "";
+  let agentPhone = body?.agentPhone?.trim() || "";
 
-  if (!validPhone(to)) {
+  const { data: telephony, error: telErr } = await supabase
+    .from("profiles")
+    .select("mobile_phone, exotel_virtual_number")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (telErr) return NextResponse.json({ error: telErr.message }, { status: 500 });
+
+  const profileMobile = (telephony?.mobile_phone as string | null)?.trim() ?? "";
+  const profileExotel = (telephony?.exotel_virtual_number as string | null)?.trim() ?? "";
+  if (!agentPhone && profileMobile) agentPhone = profileMobile;
+
+  if (!isValidE164(normalizePhone(to))) {
     return NextResponse.json(
       { error: "Provide a valid phone number with country code, e.g. +919876543210." },
       { status: 400 }
     );
   }
-  // agent_number is also validated when present, so the webhook can match precisely
-  if (agentPhone && !validPhone(agentPhone)) {
+  if (!agentPhone) {
+    return NextResponse.json(
+      {
+        error:
+          "Your mobile number is not set. Ask your admin to add it under Team, or set it in the dialer.",
+      },
+      { status: 400 }
+    );
+  }
+  if (!isValidE164(normalizePhone(agentPhone))) {
     return NextResponse.json(
       { error: "Agent phone must include country code, e.g. +918056101540." },
+      { status: 400 }
+    );
+  }
+  agentPhone = normalizePhone(agentPhone);
+
+  const exotelLine =
+    profileExotel ||
+    listConfiguredExotelNumbers()[0] ||
+    process.env.EXOTEL_VIRTUAL_NUMBER?.trim() ||
+    "";
+  if (!exotelLine) {
+    return NextResponse.json(
+      { error: "No Exotel number assigned. Ask your admin to assign one under Team." },
       { status: 400 }
     );
   }
@@ -183,11 +227,8 @@ export async function POST(request: Request) {
     .insert({
       user_id: user.id,
       call_sid: `pending_${Date.now()}`,
-      to_number: to,
-      from_number: process.env.EXOTEL_VIRTUAL_NUMBER ?? "",
-      // agent_number holds the dialing user's phone so the Exotel connect
-      // webhook can match the right pending row when multiple users (or
-      // multiple attempts) are in flight.
+      to_number: normalizePhone(to),
+      from_number: normalizePhone(exotelLine),
       agent_number: agentPhone,
       status: "pending",
       created_at: new Date().toISOString(),

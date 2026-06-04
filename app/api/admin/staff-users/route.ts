@@ -4,6 +4,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
+import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
 
 export const runtime = "nodejs";
 
@@ -14,6 +16,8 @@ type Body = {
   password?: string;
   role?: "staff" | "committee";
   restrictedFeatures?: string[];
+  mobilePhone?: string | null;
+  exotelVirtualNumber?: string | null;
 };
 
 /**
@@ -70,6 +74,34 @@ export async function POST(request: Request) {
     );
   }
 
+  let mobilePhone: string | null = null;
+  if (body.mobilePhone != null && String(body.mobilePhone).trim() !== "") {
+    mobilePhone = normalizePhone(String(body.mobilePhone).trim());
+    if (!isValidE164(mobilePhone)) {
+      return NextResponse.json(
+        { error: "Mobile phone must include country code, e.g. +919876543210." },
+        { status: 400 }
+      );
+    }
+  }
+  let exotelVirtualNumber: string | null = null;
+  if (body.exotelVirtualNumber != null && String(body.exotelVirtualNumber).trim() !== "") {
+    exotelVirtualNumber = normalizePhone(String(body.exotelVirtualNumber).trim());
+    if (!isValidE164(exotelVirtualNumber)) {
+      return NextResponse.json(
+        { error: "Exotel number must include country code, e.g. +919513886363." },
+        { status: 400 }
+      );
+    }
+    const configured = listConfiguredExotelNumbers();
+    if (configured.length > 0 && !configured.some((n) => phoneMatches(n, exotelVirtualNumber!))) {
+      return NextResponse.json(
+        { error: "That Exotel number is not configured on the server." },
+        { status: 400 }
+      );
+    }
+  }
+
   if (email === user.email?.trim().toLowerCase()) {
     return NextResponse.json(
       { error: "Use a different email than your own admin account." },
@@ -120,6 +152,36 @@ export async function POST(request: Request) {
   const newId = created.user.id;
   const displayUsername = email.split("@")[0]?.slice(0, 64) || "staff";
 
+  if (exotelVirtualNumber) {
+    const { data: peers, error: peerErr } = await svc
+      .from("profiles")
+      .select("id, exotel_virtual_number")
+      .eq("mailbox_owner_id", user.id);
+    if (peerErr && /exotel_virtual_number/i.test(peerErr.message ?? "")) {
+      await svc.auth.admin.deleteUser(newId);
+      return NextResponse.json(
+        { error: "Database migration 0023_profile_telephony.sql is required for call settings." },
+        { status: 503 }
+      );
+    }
+    if (
+      peers?.some(
+        (p) => p.exotel_virtual_number && phoneMatches(p.exotel_virtual_number as string, exotelVirtualNumber)
+      )
+    ) {
+      await svc.auth.admin.deleteUser(newId);
+      return NextResponse.json(
+        { error: "That Exotel number is already assigned to another team member." },
+        { status: 400 }
+      );
+    }
+  }
+
+  const telephonyFields = {
+    mobile_phone: mobilePhone,
+    exotel_virtual_number: exotelVirtualNumber,
+  };
+
   let { data: updated, error: profErr } = await svc
     .from("profiles")
     .update({
@@ -127,11 +189,19 @@ export async function POST(request: Request) {
       restricted_features: restrictedFeatures,
       mailbox_owner_id: user.id,
       display_username: displayUsername,
+      ...telephonyFields,
       updated_at: new Date().toISOString(),
     })
     .eq("id", newId)
     .select("id")
     .maybeSingle();
+  if (profErr && /mobile_phone|exotel_virtual_number/i.test(profErr.message ?? "")) {
+    await svc.auth.admin.deleteUser(newId);
+    return NextResponse.json(
+      { error: "Database migration 0023_profile_telephony.sql is required for call settings." },
+      { status: 503 }
+    );
+  }
   if (profErr && /restricted_features/i.test(profErr.message ?? "")) {
     if (role === "committee") {
       await svc.auth.admin.deleteUser(newId);
@@ -146,6 +216,7 @@ export async function POST(request: Request) {
         role,
         mailbox_owner_id: user.id,
         display_username: displayUsername,
+        ...telephonyFields,
         updated_at: new Date().toISOString(),
       })
       .eq("id", newId)
@@ -167,6 +238,7 @@ export async function POST(request: Request) {
       restricted_features: restrictedFeatures,
       mailbox_owner_id: user.id,
       display_username: displayUsername,
+      ...telephonyFields,
     });
     if (insErr && /restricted_features/i.test(insErr.message ?? "")) {
       if (role === "committee") {
@@ -182,6 +254,7 @@ export async function POST(request: Request) {
           role,
           mailbox_owner_id: user.id,
           display_username: displayUsername,
+          ...telephonyFields,
         })
       ).error;
     }

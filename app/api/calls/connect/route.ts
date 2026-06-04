@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { normalizePhone, phoneLookupVariants, phoneMatches } from "@/lib/phone";
 
 export const runtime = "nodejs";
 
@@ -94,13 +96,36 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
     .eq("call_sid", callSid);
 }
 
-function normalizePhone(raw: string): string {
-  const cleaned = raw.replace(/[\s\-().]/g, "");
-  if (cleaned.startsWith("+")) return cleaned;
-  if (/^\d{10}$/.test(cleaned)) return `+91${cleaned}`;
-  if (/^0\d{10}$/.test(cleaned)) return `+91${cleaned.slice(1)}`;
-  if (/^\d{11,14}$/.test(cleaned)) return `+${cleaned}`;
-  return cleaned;
+type TelephonyAssignee = {
+  id: string;
+  mobile_phone: string;
+};
+
+async function findAssigneeByExotelNumber(calledNumber: string): Promise<TelephonyAssignee | null> {
+  const calledNorm = normalizePhone(calledNumber);
+  if (!calledNorm) return null;
+
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .select("id, mobile_phone, exotel_virtual_number")
+    .not("exotel_virtual_number", "is", null)
+    .not("mobile_phone", "is", null);
+
+  if (error) {
+    if (/exotel_virtual_number|mobile_phone/i.test(error.message ?? "")) {
+      console.warn("[calls/connect] telephony columns missing — run migration 0023");
+    }
+    return null;
+  }
+
+  const row = (data ?? []).find(
+    (p) =>
+      p.exotel_virtual_number &&
+      p.mobile_phone &&
+      phoneMatches(p.exotel_virtual_number as string, calledNorm)
+  );
+  if (!row?.mobile_phone) return null;
+  return { id: row.id as string, mobile_phone: row.mobile_phone as string };
 }
 
 async function resolveDestination(
@@ -111,7 +136,6 @@ async function resolveDestination(
   calledNumber: string
 ): Promise<{ destination: string; isIncoming: boolean }> {
   const dtmfDigits = params.get("digits")?.toString() ?? params.get("Digits")?.toString() ?? "";
-  const incomingAgent = process.env.INCOMING_AGENT_NUMBER?.trim() ?? "";
   const defaultUserId = process.env.INCOMING_DEFAULT_USER_ID?.trim() ?? "";
 
   const callerNormalized = normalizePhone(callerPhone);
@@ -124,9 +148,7 @@ async function resolveDestination(
   const since = new Date(Date.now() - 3 * 60 * 1000).toISOString();
   let pending: { id: string; to_number: string } | null = null;
   if (callerNormalized) {
-    const candidates = [callerPhone, callerNormalized, `+91${callerNormalized}`].filter(
-      (v, i, arr) => v && arr.indexOf(v) === i
-    );
+    const candidates = phoneLookupVariants(callerPhone);
     const { data } = await supabaseAdmin
       .from("call_logs")
       .select("id, to_number, agent_number")
@@ -168,15 +190,20 @@ async function resolveDestination(
     return { destination, isIncoming: false };
   }
 
-  // Step 2: no pending row for this caller. Treat as INCOMING — someone
-  // external called our virtual number. Route to INCOMING_AGENT_NUMBER.
-  // Important guard: if the caller IS the incoming agent (i.e. they dialed
-  // their own routing number without first creating a pending row), do NOT
-  // route the call back to themselves — that's the bug we just fixed.
+  // Step 2: INCOMING — route by which Exotel DID was called (team assignment).
+  const assignee = await findAssigneeByExotelNumber(calledNumber);
+  let incomingAgent = assignee?.mobile_phone ?? "";
+  let logUserId = assignee?.id ?? defaultUserId;
+
+  if (!incomingAgent) {
+    incomingAgent = process.env.INCOMING_AGENT_NUMBER?.trim() ?? "";
+    if (!logUserId) logUserId = defaultUserId;
+  }
+
   const incomingAgentNorm = incomingAgent ? normalizePhone(incomingAgent) : "";
-  if (incomingAgentNorm && callerNormalized && incomingAgentNorm === callerNormalized) {
+  if (incomingAgentNorm && callerNormalized && phoneMatches(incomingAgent, callerPhone)) {
     console.warn(
-      "[calls/connect] caller is incoming-agent but has no pending row — refusing to loop call to self. caller:",
+      "[calls/connect] caller matches route target but has no pending row — refusing self-loop. caller:",
       callerPhone
     );
     return { destination: "", isIncoming: false };
@@ -184,7 +211,7 @@ async function resolveDestination(
 
   if (!incomingAgent) {
     console.error(
-      "[calls/connect] no pending row matched and INCOMING_AGENT_NUMBER not set — cannot route. caller:",
+      "[calls/connect] no pending row and no route for called number. caller:",
       callerPhone,
       "| called:",
       calledNumber,
@@ -194,9 +221,8 @@ async function resolveDestination(
     return { destination: "", isIncoming: true };
   }
 
-  // Log the incoming call (idempotent on call_sid)
   const from = normalizePhone(callerPhone);
-  if (defaultUserId && exotelCallSid) {
+  if (logUserId && exotelCallSid) {
     const { data: existing } = await supabaseAdmin
       .from("call_logs")
       .select("id")
@@ -204,7 +230,7 @@ async function resolveDestination(
       .maybeSingle();
     if (!existing) {
       await supabaseAdmin.from("call_logs").insert({
-        user_id: defaultUserId,
+        user_id: logUserId,
         call_sid: exotelCallSid,
         to_number: incomingAgent,
         from_number: from,
@@ -219,15 +245,19 @@ async function resolveDestination(
   console.log(
     "[calls/connect] INCOMING | from:",
     from,
-    "-> agent:",
+    "-> mobile:",
     incomingAgent,
+    "| called DID:",
+    calledNumber,
+    "| assignee:",
+    assignee?.id ?? "(env fallback)",
     "| sid:",
     exotelCallSid
   );
   return { destination: incomingAgent, isIncoming: true };
 }
 
-function buildResponse(destination: string) {
+function buildResponse(destination: string, outgoingPhoneNumber?: string) {
   if (!destination) {
     return NextResponse.json(
       { destination: { numbers: [] } },
@@ -235,7 +265,12 @@ function buildResponse(destination: string) {
     );
   }
 
-  const virtualNumber = process.env.EXOTEL_VIRTUAL_NUMBER ?? "+919513886363";
+  const configured = listConfiguredExotelNumbers();
+  const virtualNumber =
+    (outgoingPhoneNumber && normalizePhone(outgoingPhoneNumber)) ||
+    configured[0] ||
+    process.env.EXOTEL_VIRTUAL_NUMBER ||
+    "";
 
   return NextResponse.json(
     {
@@ -278,7 +313,7 @@ export async function GET(request: Request) {
   }
 
   const { destination } = await resolveDestination(url.searchParams, callerPhone, exotelCallSid, direction, calledNumber);
-  const resp = buildResponse(destination);
+  const resp = buildResponse(destination, calledNumber);
   console.log("[calls/connect] returning destination:", destination || "(empty)", "| status:", resp.status);
   return resp;
 }
@@ -310,5 +345,5 @@ export async function POST(request: Request) {
   }
 
   const { destination } = await resolveDestination(params, callerPhone, exotelCallSid, direction, calledNumber);
-  return buildResponse(destination);
+  return buildResponse(destination, calledNumber);
 }

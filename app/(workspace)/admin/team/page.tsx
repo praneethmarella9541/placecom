@@ -12,6 +12,8 @@ type TeamMember = {
   displayUsername: string | null;
   role: "staff" | "committee";
   restrictedFeatures: FeatureKey[];
+  mobilePhone: string | null;
+  exotelVirtualNumber: string | null;
   newPassword?: string;
 };
 
@@ -26,6 +28,9 @@ export default function AdminTeamPage() {
   const [loadingMembers, setLoadingMembers] = useState(true);
   const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
   const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
+  const [exotelNumbers, setExotelNumbers] = useState<string[]>([]);
+  const [newMobilePhone, setNewMobilePhone] = useState("");
+  const [newExotelNumber, setNewExotelNumber] = useState("");
 
   function feedbackClass(text: string | null): string {
     if (!text) return "";
@@ -65,6 +70,15 @@ export default function AdminTeamPage() {
 
   useEffect(() => {
     void loadMembers();
+    void (async () => {
+      try {
+        const res = await fetch("/api/admin/exotel-numbers");
+        const j = (await res.json().catch(() => ({}))) as { numbers?: string[] };
+        if (res.ok) setExotelNumbers(j.numbers ?? []);
+      } catch {
+        setExotelNumbers([]);
+      }
+    })();
   }, []);
 
   async function createStaff() {
@@ -79,6 +93,8 @@ export default function AdminTeamPage() {
           password,
           role,
           restrictedFeatures: role === "committee" ? restricted : [],
+          mobilePhone: newMobilePhone.trim() || null,
+          exotelVirtualNumber: newExotelNumber.trim() || null,
         }),
       });
       const j = (await res.json().catch(() => ({}))) as {
@@ -97,6 +113,8 @@ export default function AdminTeamPage() {
       setPassword("");
       setRole("staff");
       setRestricted([]);
+      setNewMobilePhone("");
+      setNewExotelNumber("");
       void loadMembers();
     } catch {
       setMsg("Network error");
@@ -117,6 +135,8 @@ export default function AdminTeamPage() {
           password: member.newPassword ?? "",
           role: member.role,
           restrictedFeatures: member.role === "committee" ? member.restrictedFeatures : [],
+          mobilePhone: member.mobilePhone,
+          exotelVirtualNumber: member.exotelVirtualNumber,
         }),
       });
       const j = (await res.json().catch(() => ({}))) as { error?: string };
@@ -180,7 +200,7 @@ export default function AdminTeamPage() {
         </div>
         <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
           {titleCase(
-            "Create staff accounts here. Each person gets their own login and automatically uses your connected Gmail. Tell them the password you set, or have them change it later in Supabase if you prefer."
+            "Create staff accounts here. Each person gets their own login and automatically uses your connected Gmail. Assign each member an Exotel line and their personal mobile so inbound calls to that line transfer to them and outbound calls work from the app."
           )}
         </p>
         {msg ? (
@@ -249,6 +269,46 @@ export default function AdminTeamPage() {
             </div>
           </div>
         ) : null}
+        <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          {titleCase("Personal mobile (for incoming call transfer)")}
+        </label>
+        <input
+          type="tel"
+          value={newMobilePhone}
+          onChange={(e) => setNewMobilePhone(e.target.value)}
+          placeholder="+91 98765 43210"
+          className="input-field w-full text-sm"
+        />
+        <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          {titleCase("Assigned Exotel number")}
+        </label>
+        {exotelNumbers.length > 0 ? (
+          <select
+            value={newExotelNumber}
+            onChange={(e) => setNewExotelNumber(e.target.value)}
+            className="input-field w-full text-sm"
+          >
+            <option value="">{titleCase("Not assigned")}</option>
+            {exotelNumbers.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            type="tel"
+            value={newExotelNumber}
+            onChange={(e) => setNewExotelNumber(e.target.value)}
+            placeholder="+91… (set EXOTEL_VIRTUAL_NUMBERS on server)"
+            className="input-field w-full text-sm"
+          />
+        )}
+        <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+          {titleCase(
+            "Inbound calls to this Exotel line ring their mobile. Outbound calls dial this Exotel number from the app.",
+          )}
+        </p>
         <button
           type="button"
           disabled={busy || !email.trim() || password.length < 8}
@@ -304,6 +364,68 @@ export default function AdminTeamPage() {
                       }
                       className="input-field w-full text-sm"
                     />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                      {titleCase("Personal mobile")}
+                    </label>
+                    <input
+                      type="tel"
+                      value={member.mobilePhone ?? ""}
+                      onChange={(e) =>
+                        setMembers((prev) =>
+                          prev.map((m) =>
+                            m.id === member.id ? { ...m, mobilePhone: e.target.value || null } : m
+                          )
+                        )
+                      }
+                      placeholder="+91 98765 43210"
+                      className="input-field w-full text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                      {titleCase("Exotel number")}
+                    </label>
+                    {exotelNumbers.length > 0 ? (
+                      <select
+                        value={member.exotelVirtualNumber ?? ""}
+                        onChange={(e) =>
+                          setMembers((prev) =>
+                            prev.map((m) =>
+                              m.id === member.id
+                                ? { ...m, exotelVirtualNumber: e.target.value || null }
+                                : m
+                            )
+                          )
+                        }
+                        className="input-field w-full text-sm"
+                      >
+                        <option value="">{titleCase("Not assigned")}</option>
+                        {exotelNumbers.map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="tel"
+                        value={member.exotelVirtualNumber ?? ""}
+                        onChange={(e) =>
+                          setMembers((prev) =>
+                            prev.map((m) =>
+                              m.id === member.id
+                                ? { ...m, exotelVirtualNumber: e.target.value || null }
+                                : m
+                            )
+                          )
+                        }
+                        className="input-field w-full text-sm"
+                      />
+                    )}
                   </div>
 
                   <div>

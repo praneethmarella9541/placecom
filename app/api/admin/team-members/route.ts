@@ -3,6 +3,8 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
 import { isValidEmail } from "@/lib/broadcast-recipients";
+import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
 
 export const runtime = "nodejs";
 const MIN_PASSWORD_LEN = 8;
@@ -13,7 +15,57 @@ type PatchBody = {
   password?: string;
   role?: "staff" | "committee";
   restrictedFeatures?: string[];
+  mobilePhone?: string | null;
+  exotelVirtualNumber?: string | null;
 };
+
+function normalizeOptionalPhone(
+  value: string | null | undefined,
+  fieldLabel: string
+): { ok: true; value: string | null | undefined } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true, value: undefined };
+  if (value === null || value === "") return { ok: true, value: null };
+  const normalized = normalizePhone(String(value).trim());
+  if (!isValidE164(normalized)) {
+    return {
+      ok: false,
+      error: `${fieldLabel} must include country code, e.g. +919876543210.`,
+    };
+  }
+  return { ok: true, value: normalized };
+}
+
+async function assertExotelNotTaken(
+  svc: ReturnType<typeof createServiceSupabase>,
+  adminId: string,
+  exotel: string | null,
+  excludeUserId: string
+): Promise<string | null> {
+  if (!exotel) return null;
+  const configured = listConfiguredExotelNumbers();
+  if (configured.length > 0 && !configured.some((n) => phoneMatches(n, exotel))) {
+    return "That Exotel number is not configured on the server. Add it to EXOTEL_VIRTUAL_NUMBERS.";
+  }
+  const { data: peers, error } = await svc
+    .from("profiles")
+    .select("id, exotel_virtual_number")
+    .eq("mailbox_owner_id", adminId)
+    .not("exotel_virtual_number", "is", null);
+  if (error) {
+    if (/exotel_virtual_number/i.test(error.message ?? "")) {
+      return "Database migration 0023_profile_telephony.sql is required.";
+    }
+    return error.message;
+  }
+  const taken = (peers ?? []).find(
+    (p) =>
+      (p.id as string) !== excludeUserId &&
+      p.exotel_virtual_number &&
+      phoneMatches(p.exotel_virtual_number as string, exotel)
+  );
+  if (taken) return "That Exotel number is already assigned to another team member.";
+  return null;
+}
 
 async function assertAdminUserId() {
   const supabase = createServerSupabaseClient();
@@ -45,10 +97,12 @@ export async function GET() {
 
   let { data, error } = await svc
     .from("profiles")
-    .select("id, role, display_username, mailbox_owner_id, restricted_features, created_at")
+    .select(
+      "id, role, display_username, mailbox_owner_id, restricted_features, mobile_phone, exotel_virtual_number, created_at"
+    )
     .eq("mailbox_owner_id", auth.userId)
     .order("created_at", { ascending: true });
-  if (error && /restricted_features/i.test(error.message ?? "")) {
+  if (error && /restricted_features|mobile_phone|exotel_virtual_number/i.test(error.message ?? "")) {
     const fallback = await svc
       .from("profiles")
       .select("id, role, display_username, mailbox_owner_id, created_at")
@@ -76,6 +130,8 @@ export async function GET() {
     role: row.role as string,
     displayUsername: (row.display_username as string | null) ?? null,
     restrictedFeatures: normalizeRestrictedFeatures(row.restricted_features),
+    mobilePhone: (row.mobile_phone as string | null) ?? null,
+    exotelVirtualNumber: (row.exotel_virtual_number as string | null) ?? null,
   }));
 
   return NextResponse.json({ members });
@@ -131,6 +187,19 @@ export async function PATCH(request: Request) {
       ? normalizeRestrictedFeatures(body.restrictedFeatures ?? existing.restricted_features)
       : [];
 
+  const mobileParsed = normalizeOptionalPhone(body.mobilePhone, "Mobile phone");
+  if (!mobileParsed.ok) {
+    return NextResponse.json({ error: mobileParsed.error }, { status: 400 });
+  }
+  const exotelParsed = normalizeOptionalPhone(body.exotelVirtualNumber, "Exotel number");
+  if (!exotelParsed.ok) {
+    return NextResponse.json({ error: exotelParsed.error }, { status: 400 });
+  }
+  if (body.exotelVirtualNumber !== undefined) {
+    const takenErr = await assertExotelNotTaken(svc, auth.userId, exotelParsed.value, userId);
+    if (takenErr) return NextResponse.json({ error: takenErr }, { status: 400 });
+  }
+
   if (role === "committee") {
     const { error: colErr } = await svc
       .from("profiles")
@@ -144,29 +213,40 @@ export async function PATCH(request: Request) {
     }
   }
 
+  const profilePatch: Record<string, unknown> = {
+    role,
+    restricted_features: restrictedFeatures,
+    updated_at: new Date().toISOString(),
+  };
+  if (body.mobilePhone !== undefined) profilePatch.mobile_phone = mobileParsed.value;
+  if (body.exotelVirtualNumber !== undefined) {
+    profilePatch.exotel_virtual_number = exotelParsed.value;
+  }
+
   let { error: updErr } = await svc
     .from("profiles")
-    .update({
-      role,
-      restricted_features: restrictedFeatures,
-      updated_at: new Date().toISOString(),
-    })
+    .update(profilePatch)
     .eq("id", userId)
     .eq("mailbox_owner_id", auth.userId);
-  if (updErr && /restricted_features/i.test(updErr.message ?? "")) {
-    if (role === "committee") {
+  if (updErr && /restricted_features|mobile_phone|exotel_virtual_number/i.test(updErr.message ?? "")) {
+    if (role === "committee" && /restricted_features/i.test(updErr.message ?? "")) {
       return NextResponse.json(
         { error: "Database migration 0019_committee_feature_access.sql is required for committee access." },
         { status: 503 }
       );
     }
+    if (/mobile_phone|exotel_virtual_number/i.test(updErr.message ?? "")) {
+      return NextResponse.json(
+        { error: "Database migration 0023_profile_telephony.sql is required for call settings." },
+        { status: 503 }
+      );
+    }
+    const { role: _r, restricted_features: _rf, mobile_phone: _mp, exotel_virtual_number: _ev, ...rest } =
+      profilePatch;
     updErr = (
       await svc
         .from("profiles")
-        .update({
-          role,
-          updated_at: new Date().toISOString(),
-        })
+        .update(rest)
         .eq("id", userId)
         .eq("mailbox_owner_id", auth.userId)
     ).error;

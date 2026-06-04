@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
+import { isValidE164, normalizePhone } from "@/lib/phone";
 import { titleCase } from "@/lib/title-case";
 import {
   IconCheck,
@@ -113,6 +114,10 @@ type StatusPayload = {
   suggestedInboundWebhookUrl?: string | null;
   migrationHint?: string;
 };
+
+function recipientE164(raw: string): string {
+  return normalizePhone(raw.trim());
+}
 
 function peerInitials(peer: string): string {
   const digits = peer.replace(/\D/g, "");
@@ -251,8 +256,9 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
 
 
   useEffect(() => {
-    const p = peer || newPhone.trim();
-    if (!p.startsWith("+") || p.length < 8) {
+    const raw = peer || newPhone.trim();
+    const p = recipientE164(raw);
+    if (!raw || !isValidE164(p)) {
       setSessionOpen(null);
       return;
     }
@@ -340,10 +346,10 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   const needsTemplate = forceTemplate || sessionOpen === false;
 
   async function sendMessage() {
-    const to = (peer || newPhone).trim();
+    const to = recipientE164(peer || newPhone);
     const text = draft.trim();
-    if (!to.startsWith("+") || to.length < 8) {
-      setError("Recipient must be E.164 with country code, e.g. +14155552671");
+    if (!isValidE164(to)) {
+      setError("Enter a valid mobile with country code, e.g. +918489431508 or 8489431508");
       return;
     }
     if (needsTemplate) {
@@ -545,7 +551,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
             <div className="flex gap-2">
               <input
                 className="input-field min-w-0 flex-1 text-sm"
-                placeholder="+15551234567"
+                placeholder="+91… or 10-digit mobile"
                 value={newPhone}
                 onChange={(e) => setNewPhone(e.target.value)}
               />
@@ -553,8 +559,13 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 type="button"
                 className="btn-secondary shrink-0 px-3 py-2 text-xs"
                 onClick={() => {
-                  const t = newPhone.trim();
-                  if (t.startsWith("+")) selectPeer(t);
+                  const t = recipientE164(newPhone);
+                  if (!isValidE164(t)) {
+                    setError("Enter a valid mobile, e.g. +918489431508 or 8489431508");
+                    return;
+                  }
+                  setError(null);
+                  selectPeer(t);
                 }}
               >
                 {titleCase("Open")}
@@ -1199,7 +1210,13 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    if (!sending && draft.trim() && (peer || newPhone).trim().startsWith("+")) void sendMessage();
+                    if (
+                      !sending &&
+                      (needsTemplate || draft.trim()) &&
+                      isValidE164(recipientE164(peer || newPhone))
+                    ) {
+                      void sendMessage();
+                    }
                   }
                 }}
                 autoComplete="off"
@@ -1210,8 +1227,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 className="btn-primary mb-0.5 shrink-0 rounded-full px-4 py-2.5"
                 disabled={
                   sending ||
-                  (!(peer || newPhone).trim().startsWith("+") ||
-                    (peer || newPhone).trim().length < 8) ||
+                  !isValidE164(recipientE164(peer || newPhone)) ||
                   (needsTemplate
                     ? !templateVar1.trim() || !templateVar2.trim()
                     : !draft.trim())

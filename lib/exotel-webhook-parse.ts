@@ -115,12 +115,10 @@ function parseInboundFromDataBlock(
 }
 
 function safePeerE164(fromRaw: string): string {
-  try {
-    return normalizePeerE164(fromRaw);
-  } catch {
-    const n = normalizePhone(fromRaw);
-    return n.startsWith("+") ? n : `+${fromRaw.replace(/\D/g, "")}`;
-  }
+  const peer = normalizePeerE164(fromRaw);
+  if (peer.startsWith("+")) return peer;
+  const n = normalizePhone(fromRaw);
+  return n.startsWith("+") ? n : `+${fromRaw.replace(/\D/g, "")}`;
 }
 
 /**

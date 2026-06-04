@@ -1,5 +1,6 @@
 import "server-only";
 
+import { normalizePhone } from "@/lib/phone";
 import { getWhatsAppFromAddress } from "@/lib/whatsapp";
 
 /** `whatsapp:+1555...` → `+15551234567` */
@@ -9,11 +10,17 @@ export function stripWhatsAppPrefix(addr: string): string {
   return `+${t.replace(/\D/g, "")}`;
 }
 
-/** E.164 with + only digits after + */
+/**
+ * Canonical peer E.164 for DB queries and session checks.
+ * Must match `normalizePhone` used for Exotel send (e.g. 10-digit IN → +91…).
+ */
 export function normalizePeerE164(e164: string): string {
   const t = e164.trim();
-  const digits = t.startsWith("+") ? t.slice(1).replace(/\D/g, "") : t.replace(/\D/g, "");
-  return `+${digits}`;
+  if (!t) return "";
+  const viaPhone = normalizePhone(t);
+  if (viaPhone.startsWith("+")) return viaPhone;
+  const digits = t.replace(/\D/g, "");
+  return digits ? `+${digits}` : "";
 }
 
 /**

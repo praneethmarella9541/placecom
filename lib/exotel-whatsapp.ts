@@ -20,13 +20,26 @@ export function getExotelApiHost(): string {
   return process.env.EXOTEL_API_HOST?.trim() || "api.in.exotel.com";
 }
 
-export function getExotelV2MessagesUrl(): string | null {
+function getExotelCredentials(): { sid: string; apiKey: string; apiToken: string } | null {
   const sid = process.env.EXOTEL_SID?.trim();
   const apiKey = process.env.EXOTEL_API_KEY?.trim();
   const apiToken = process.env.EXOTEL_API_TOKEN?.trim();
   if (!sid || !apiKey || !apiToken) return null;
+  return { sid, apiKey, apiToken };
+}
+
+/** URL without embedded credentials (fetch rejects user:pass in URL). */
+export function getExotelV2MessagesUrl(): string | null {
+  const creds = getExotelCredentials();
+  if (!creds) return null;
   const host = getExotelApiHost();
-  return `https://${encodeURIComponent(apiKey)}:${encodeURIComponent(apiToken)}@${host}/v2/accounts/${sid}/messages`;
+  return `https://${host}/v2/accounts/${creds.sid}/messages`;
+}
+
+function getExotelBasicAuthHeader(): string | null {
+  const creds = getExotelCredentials();
+  if (!creds) return null;
+  return `Basic ${Buffer.from(`${creds.apiKey}:${creds.apiToken}`).toString("base64")}`;
 }
 
 export function getExotelWhatsAppWebhookUrl(): string | null {
@@ -74,9 +87,19 @@ export async function sendExotelWhatsAppText(params: {
     },
   };
 
+  const authorization = getExotelBasicAuthHeader();
+  if (!authorization) {
+    throw new Error(
+      "Exotel WhatsApp is not configured. Set EXOTEL_SID, EXOTEL_API_KEY, and EXOTEL_API_TOKEN."
+    );
+  }
+
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: authorization,
+    },
     body: JSON.stringify(payload),
   });
 

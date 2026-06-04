@@ -60,6 +60,10 @@ export function WhatsAppComposerBar({
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const emojiBtnRef = useRef<HTMLButtonElement>(null);
+  const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const resolvedTextareaRef = (textareaRef && "current" in (textareaRef as React.RefObject<HTMLTextAreaElement>)
+    ? textareaRef
+    : internalTextareaRef) as React.RefObject<HTMLTextAreaElement>;
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -92,6 +96,14 @@ export function WhatsAppComposerBar({
       window.removeEventListener("keydown", onKey);
     };
   }, [emojiOpen, attachMenuOpen, wrapperRef]);
+
+  // Auto-resize textarea to fit content, up to ~6 lines
+  useEffect(() => {
+    const el = resolvedTextareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 144)}px`;
+  }, [draft, resolvedTextareaRef]);
 
   async function handleFile(file: File) {
     setUploadError(null);
@@ -263,9 +275,9 @@ export function WhatsAppComposerBar({
 
         <div className="mb-0.5 flex min-h-[42px] min-w-0 flex-1 items-end rounded-3xl bg-white px-3 py-1.5 shadow-sm dark:bg-[#2a3942]">
           <textarea
-            ref={textareaRef}
+            ref={resolvedTextareaRef}
             className={cn(
-              "max-h-32 min-h-[24px] w-full flex-1 resize-none border-0 bg-transparent py-1 text-[15px] leading-snug text-zinc-900 outline-none ring-0 focus:ring-0 dark:text-[#e9edef]",
+              "min-h-[24px] w-full flex-1 resize-none border-0 bg-transparent py-1 text-[15px] leading-snug text-zinc-900 outline-none ring-0 focus:ring-0 dark:text-[#e9edef]",
               EMOJI_FONT,
             )}
             placeholder={
@@ -278,6 +290,9 @@ export function WhatsAppComposerBar({
               if (e.key === "Enter" && !e.shiftKey && canSend()) {
                 e.preventDefault();
                 handleSendClick();
+                // Reset height after send
+                const el = resolvedTextareaRef.current;
+                if (el) { el.style.height = "auto"; }
               }
             }}
           />
@@ -292,7 +307,7 @@ export function WhatsAppComposerBar({
               : "bg-[#8696a0]/40 text-white/80",
           )}
           disabled={!canSend()}
-          onClick={() => handleSendClick()}
+          onClick={() => { handleSendClick(); const el = resolvedTextareaRef.current; if (el) el.style.height = "auto"; }}
           aria-label={titleCase("Send")}
         >
           {uploading ? (

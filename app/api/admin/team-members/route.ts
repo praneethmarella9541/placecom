@@ -67,21 +67,26 @@ async function assertExotelNotTaken(
   return null;
 }
 
-async function assertAdminUserId() {
+type AdminAuthResult =
+  | { userId: string }
+  | { error: string; status: 401 | 403 | 500 };
+
+async function assertAdminUserId(): Promise<AdminAuthResult> {
   const supabase = createServerSupabaseClient();
   const {
     data: { user },
     error: userErr,
   } = await supabase.auth.getUser();
-  if (userErr || !user?.id) return { error: "Unauthorized", status: 401 as const };
+  if (userErr || !user?.id) return { error: "Unauthorized", status: 401 };
+  const adminUserId = user.id;
   const { data: me, error: meErr } = await supabase
     .from("profiles")
     .select("role")
-    .eq("id", user.id)
+    .eq("id", adminUserId)
     .maybeSingle();
-  if (meErr) return { error: meErr.message, status: 500 as const };
-  if (me?.role !== "admin") return { error: "Admin only", status: 403 as const };
-  return { userId: user.id };
+  if (meErr) return { error: meErr.message, status: 500 };
+  if (me?.role !== "admin") return { error: "Admin only", status: 403 };
+  return { userId: adminUserId };
 }
 
 export async function GET() {
@@ -196,7 +201,12 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: exotelParsed.error }, { status: 400 });
   }
   if (body.exotelVirtualNumber !== undefined) {
-    const takenErr = await assertExotelNotTaken(svc, auth.userId, exotelParsed.value, userId);
+    const takenErr = await assertExotelNotTaken(
+      svc,
+      auth.userId,
+      exotelParsed.value ?? null,
+      userId
+    );
     if (takenErr) return NextResponse.json({ error: takenErr }, { status: 400 });
   }
 

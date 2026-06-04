@@ -1015,6 +1015,19 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                       <dd className="break-all font-mono text-xs text-zinc-800 dark:text-zinc-200">{infoMsg.message_sid}</dd>
                     </div>
                   ) : null}
+                  {infoMsg.delivery_status ? (
+                    <div>
+                      <dt className="text-xs font-medium text-zinc-500">{titleCase("Delivery")}</dt>
+                      <dd
+                        className={cn(
+                          "text-sm text-zinc-900 dark:text-zinc-100",
+                          isWhatsAppDeliveryFailed(infoMsg.delivery_status) && "text-red-700 dark:text-red-300",
+                        )}
+                      >
+                        {formatWhatsAppDeliveryLabel(infoMsg.delivery_status)}
+                      </dd>
+                    </div>
+                  ) : null}
                   {infoMsg.from_addr ? (
                     <div>
                       <dt className="text-xs font-medium text-zinc-500">{titleCase("From")}</dt>

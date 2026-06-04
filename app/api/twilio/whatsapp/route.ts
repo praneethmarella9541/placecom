@@ -6,6 +6,7 @@ import { getWhatsAppFromAddress } from "@/lib/whatsapp";
 import { peerFromInboundWebhook, stripWhatsAppPrefix } from "@/lib/whatsapp-address";
 import { normalizePhone } from "@/lib/phone";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
+import { notifyWhatsAppInbound } from "@/lib/push-notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -127,7 +128,14 @@ export async function POST(request: Request) {
       return twimlOk();
     }
     console.error("[twilio/whatsapp] insert error:", error);
+    return twimlOk();
   }
+
+  void notifyWhatsAppInbound({
+    ownerUserId,
+    peerE164: peer,
+    bodyPreview: displayBody || null,
+  }).catch((e) => console.warn("[twilio/whatsapp] push notify:", e));
 
   return twimlOk();
 }

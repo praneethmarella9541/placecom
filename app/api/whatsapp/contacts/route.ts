@@ -44,6 +44,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid peer phone" }, { status: 400 });
   }
 
+  const variantKeys = peerKeysForQuery(peer);
+  if (variantKeys.length) {
+    await supabase
+      .from("wa_contacts")
+      .delete()
+      .eq("user_id", user.id)
+      .in("peer_e164", variantKeys);
+  }
+
   const { error } = await supabase
     .from("wa_contacts")
     .upsert(

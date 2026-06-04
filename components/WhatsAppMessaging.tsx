@@ -149,10 +149,12 @@ function recipientE164(raw: string): string {
 
 export type WhatsAppMessagingProps = {
   embedded?: boolean;
+  /** Fill the parent container completely — used on the dedicated /whatsapp page */
+  fullPage?: boolean;
 };
 
 /* ── component ────────────────────────────────────────────── */
-export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) {
+export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsAppMessagingProps) {
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [conversations, setConversations] = useState<Conv[]>([]);
   const [peer, setPeer] = useState<string | null>(null);
@@ -1013,10 +1015,15 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   const shell = (
     <div
       className={cn(
-        "surface-card flex flex-col overflow-hidden rounded-2xl",
-        embedded
-          ? "h-[min(680px,calc(100vh-12rem))]"
-          : "h-[min(720px,calc(100vh-8rem))]",
+        "flex flex-col overflow-hidden",
+        fullPage
+          ? "h-full flex-1 border-none rounded-none"
+          : cn(
+              "surface-card rounded-2xl",
+              embedded
+                ? "h-[min(680px,calc(100vh-12rem))]"
+                : "h-[min(720px,calc(100vh-8rem))]",
+            ),
       )}
     >
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
@@ -1026,7 +1033,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
     </div>
   );
 
-  if (embedded) return shell;
+  if (fullPage || embedded) return shell;
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">

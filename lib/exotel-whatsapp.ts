@@ -139,14 +139,11 @@ export async function sendExotelWhatsAppText(params: {
   body: string;
   statusCallback?: string | null;
 }): Promise<{ sid: string }> {
-  const from = normalizePhone(params.fromE164);
-  const to = normalizePhone(params.toE164);
-  const statusCallback = params.statusCallback ?? getExotelWhatsAppWebhookUrl();
   return sendExotelWhatsAppSession({
     fromE164: params.fromE164,
     to: params.toE164,
     content: { type: "text", text: { preview_url: false, body: params.body } },
-    statusCallback,
+    statusCallback: params.statusCallback,
   });
 }
 

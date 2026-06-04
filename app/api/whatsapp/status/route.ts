@@ -7,6 +7,7 @@ import {
   getExotelWhatsAppWebhookUrl,
   isExotelWhatsAppConfigured,
 } from "@/lib/exotel-whatsapp";
+import { listWhatsAppFeatures } from "@/lib/whatsapp-capabilities";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 
 export const runtime = "nodejs";
@@ -40,6 +41,7 @@ export async function GET(request: Request) {
       bodyParamCount: template.bodyParamCount,
       previewExample: formatTemplatePreview(template, ["Customer", "Your name"]),
     },
+    features: listWhatsAppFeatures(),
     deliveryHint:
       "A row in Supabase only means Exotel accepted the message. Delivery requires Meta/WhatsApp approval. Failed sends update delivery_status via the same webhook URL (status callbacks / DLR). Check Exotel → WhatsApp message logs for error codes (e.g. 131021 not on WhatsApp, marketing template without opt-in).",
     migrationHint:

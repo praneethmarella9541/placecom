@@ -32,7 +32,7 @@ export async function GET(request: Request) {
   const { data: rows, error } = await supabase
     .from("whatsapp_messages")
     .select(
-      "id, direction, peer_e164, business_e164, from_addr, to_addr, body, message_sid, created_at, reply_to_id, is_starred, is_pinned, deleted_at, delivery_status"
+      "id, direction, peer_e164, business_e164, from_addr, to_addr, body, message_sid, created_at, reply_to_id, is_starred, is_pinned, deleted_at, delivery_status, media_url, content_type"
     )
     .in("peer_e164", peerKeys)
     .eq("business_e164", businessLine)

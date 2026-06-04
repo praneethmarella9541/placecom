@@ -21,12 +21,12 @@ import {
   IconPin,
   IconRefresh,
   IconReply,
-  IconSend,
   IconSettings,
   IconStar,
   IconTrash,
   IconX,
 } from "@/components/Icons";
+import { WhatsAppComposerBar, type WhatsAppSendPayload } from "@/components/WhatsAppComposerBar";
 
 /** Color emoji + text fall back correctly in bubbles and composer */
 const EMOJI_FONT =
@@ -97,6 +97,8 @@ type Msg = {
   body: string | null;
   message_sid?: string | null;
   delivery_status?: string | null;
+  media_url?: string | null;
+  content_type?: string | null;
   created_at: string;
   reply_to_id?: string | null;
   is_starred?: boolean;
@@ -351,9 +353,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
 
   const needsTemplate = forceTemplate || sessionOpen === false;
 
-  async function sendMessage() {
+  async function sendMessage(payload: WhatsAppSendPayload) {
     const to = recipientE164(peer || newPhone);
-    const text = draft.trim();
     if (!isValidE164(to)) {
       setError("Enter a valid mobile with country code, e.g. +918489431508 or 8489431508");
       return;
@@ -363,8 +364,6 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
         setError("Fill in both template fields (recipient name and your name).");
         return;
       }
-    } else if (!text) {
-      return;
     }
     setSending(true);
     setError(null);
@@ -375,11 +374,18 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to,
-          text: needsTemplate ? "" : text,
           useTemplate: needsTemplate,
+          messageType: needsTemplate ? "template" : payload.messageType,
+          text: payload.text ?? draft.trim(),
           ...(needsTemplate
             ? { templateVariables: [templateVar1.trim(), templateVar2.trim()] }
             : {}),
+          mediaUrl: payload.mediaUrl,
+          mediaCaption: payload.mediaCaption,
+          mediaFilename: payload.mediaFilename,
+          location: payload.location,
+          interactiveBody: payload.interactiveBody,
+          interactiveButtons: payload.interactiveButtons,
           ...(replyTo?.id ? { replyToId: replyTo.id } : {}),
         }),
       });
@@ -499,7 +505,17 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               Migrations: <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0016</code>,{" "}
               <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0017</code>,{" "}
               <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0023</code>,{" "}
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0024</code>.
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0024</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0025</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0026</code>.
+            </li>
+            <li>
+              <strong>Session tools</strong> (after they reply): attach image/video/audio/document, location, quick-reply
+              buttons. Create public <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">whatsapp-media</code> bucket
+              in Supabase Storage.
+            </li>
+            <li>
+              <strong>Groups</strong> need Meta OBA + Exotel Groups API — not enabled in app yet (1:1 only).
             </li>
           </ol>
           {status?.migrationHint ? <p className="mt-2 text-[11px] opacity-90">{status.migrationHint}</p> : null}
@@ -815,6 +831,30 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                           </div>
                         ) : null}
                         <p className="whitespace-pre-wrap break-words [word-break:break-word]">{m.body || "—"}</p>
+                        {m.media_url && (m.content_type === "image" || !m.content_type) ? (
+                          <a
+                            href={m.media_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 block max-w-full"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={m.media_url}
+                              alt=""
+                              className="max-h-48 rounded-md object-cover"
+                            />
+                          </a>
+                        ) : m.media_url ? (
+                          <a
+                            href={m.media_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 block text-xs font-medium text-indigo-800 underline dark:text-indigo-200"
+                          >
+                            {titleCase("Open attachment")}
+                          </a>
+                        ) : null}
                         <p
                           className={cn(
                             "mt-0.5 text-[10px]",
@@ -1159,56 +1199,6 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 </div>
               </div>
             ) : null}
-            {needsTemplate ? (
-              <div className="mb-2 space-y-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
-                <p className="font-semibold">{titleCase("Opening message uses approved template")}</p>
-                <p className="leading-relaxed opacity-90">
-                  WhatsApp only delivers free text after the contact replies (24h window). Your template:{" "}
-                  <span className="font-mono">{status?.defaultTemplate?.name ?? "initial_conversation"}</span>{" "}
-                  (marketing). Meta may block cold outreach if the user already received too many marketing messages
-                  this week — wait 24h and retry once, or use call/SMS. Preview:{" "}
-                  {status?.defaultTemplate?.previewExample ??
-                    "Hi {{1}}, this is {{2}} from PlaceCom"}
-                </p>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <label className="block">
-                    <span className="text-[11px] font-medium">{titleCase("{{1}} Recipient name")}</span>
-                    <input
-                      className="input-field mt-1 w-full text-sm"
-                      value={templateVar1}
-                      onChange={(e) => setTemplateVar1(e.target.value)}
-                      placeholder="Rahul"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="text-[11px] font-medium">{titleCase("{{2}} Your name")}</span>
-                    <input
-                      className="input-field mt-1 w-full text-sm"
-                      value={templateVar2}
-                      onChange={(e) => setTemplateVar2(e.target.value)}
-                      placeholder="Priya"
-                    />
-                  </label>
-                </div>
-                <label className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={forceTemplate}
-                    onChange={(e) => setForceTemplate(e.target.checked)}
-                  />
-                  <span>{titleCase("Always use template (even if session is open)")}</span>
-                </label>
-              </div>
-            ) : (
-              <label className="mb-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                <input
-                  type="checkbox"
-                  checked={forceTemplate}
-                  onChange={(e) => setForceTemplate(e.target.checked)}
-                />
-                <span>{titleCase("Send as approved template instead of free text")}</span>
-              </label>
-            )}
             <div className="mb-1 flex gap-0.5 overflow-x-auto pb-0.5 [scrollbar-width:thin]">
               {EMOJI_PICKER.slice(0, 12).map((em, qi) => (
                 <button
@@ -1235,52 +1225,23 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 +{titleCase("More")}
               </button>
             </div>
-            <div className="flex items-end gap-2">
-              <textarea
-                ref={textareaRef}
-                className={cn(
-                  "input-field max-h-32 min-h-[44px] flex-1 resize-none rounded-2xl border-zinc-300 bg-white py-2.5 text-base leading-normal dark:border-zinc-700 dark:bg-zinc-950",
-                  EMOJI_FONT,
-                )}
-                placeholder={titleCase("Message")}
-                rows={2}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    if (
-                      !sending &&
-                      (needsTemplate || draft.trim()) &&
-                      isValidE164(recipientE164(peer || newPhone))
-                    ) {
-                      void sendMessage();
-                    }
-                  }
-                }}
-                autoComplete="off"
-                spellCheck
-              />
-              <button
-                type="button"
-                className="btn-primary mb-0.5 shrink-0 rounded-full px-4 py-2.5"
-                disabled={
-                  sending ||
-                  !isValidE164(recipientE164(peer || newPhone)) ||
-                  (needsTemplate
-                    ? !templateVar1.trim() || !templateVar2.trim()
-                    : !draft.trim())
-                }
-                onClick={() => void sendMessage()}
-                title={titleCase("Send")}
-              >
-                {sending ? (
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                ) : (
-                  <IconSend className="h-4 w-4" />
-                )}
-              </button>
-            </div>
+            <WhatsAppComposerBar
+              needsTemplate={needsTemplate}
+              draft={draft}
+              onDraftChange={setDraft}
+              templateVar1={templateVar1}
+              templateVar2={templateVar2}
+              onTemplateVar1Change={setTemplateVar1}
+              onTemplateVar2Change={setTemplateVar2}
+              forceTemplate={forceTemplate}
+              onForceTemplateChange={setForceTemplate}
+              templateName={status?.defaultTemplate?.name}
+              templatePreview={status?.defaultTemplate?.previewExample}
+              sending={sending}
+              recipientValid={isValidE164(recipientE164(peer || newPhone))}
+              onSend={(p) => void sendMessage(p)}
+              textareaRef={textareaRef}
+            />
           </div>
         </main>
       </div>

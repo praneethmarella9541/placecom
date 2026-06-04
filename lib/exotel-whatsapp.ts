@@ -89,11 +89,14 @@ async function postExotelWhatsAppPayload(
   throw new Error(lastError || `Exotel WhatsApp send failed (${lastStatus})`);
 }
 
+export type ExotelWhatsAppRecipientType = "individual" | "group";
+
 function buildMessageEnvelope(
   from: string,
   to: string,
   content: Record<string, unknown>,
-  statusCallback: string | null | undefined
+  statusCallback: string | null | undefined,
+  recipientType: ExotelWhatsAppRecipientType = "individual"
 ) {
   return {
     whatsapp: {
@@ -103,13 +106,30 @@ function buildMessageEnvelope(
           to,
           ...(statusCallback ? { status_callback: statusCallback } : {}),
           content: {
-            recipient_type: "individual",
+            recipient_type: recipientType,
             ...content,
           },
         },
       ],
     },
   };
+}
+
+/** Session message (text, media, location, interactive) — requires open 24h window. */
+export async function sendExotelWhatsAppSession(params: {
+  fromE164: string;
+  to: string;
+  content: Record<string, unknown>;
+  recipientType?: ExotelWhatsAppRecipientType;
+  statusCallback?: string | null;
+}): Promise<{ sid: string }> {
+  const from = normalizePhone(params.fromE164);
+  const to =
+    params.recipientType === "group" ? params.to.trim() : normalizePhone(params.to);
+  const statusCallback = params.statusCallback ?? getExotelWhatsAppWebhookUrl();
+  return postExotelWhatsAppPayload(
+    buildMessageEnvelope(from, to, params.content, statusCallback, params.recipientType ?? "individual")
+  );
 }
 
 /** Session (free-form) text — only delivered if the recipient messaged you within the last 24 hours. */
@@ -122,9 +142,12 @@ export async function sendExotelWhatsAppText(params: {
   const from = normalizePhone(params.fromE164);
   const to = normalizePhone(params.toE164);
   const statusCallback = params.statusCallback ?? getExotelWhatsAppWebhookUrl();
-  return postExotelWhatsAppPayload(
-    buildMessageEnvelope(from, to, { type: "text", text: { preview_url: false, body: params.body } }, statusCallback)
-  );
+  return sendExotelWhatsAppSession({
+    fromE164: params.fromE164,
+    to: params.toE164,
+    content: { type: "text", text: { preview_url: false, body: params.body } },
+    statusCallback,
+  });
 }
 
 /** Approved template — required to start a chat or message outside the 24h session window. */

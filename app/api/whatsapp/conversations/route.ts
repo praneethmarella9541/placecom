@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
-import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
+import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 
 export const runtime = "nodejs";
@@ -52,29 +52,69 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const readAtByPeer = new Map<string, string>();
+  const { data: readRows } = await supabase
+    .from("wa_thread_reads")
+    .select("peer_e164, read_at")
+    .eq("user_id", user.id);
+  for (const row of readRows ?? []) {
+    const key = canonicalWhatsAppPeer((row.peer_e164 as string) || "");
+    if (key && row.read_at) readAtByPeer.set(key, row.read_at as string);
+  }
+
+  function latestReadAt(peer: string): string | undefined {
+    let best: string | undefined;
+    for (const key of peerKeysForQuery(peer)) {
+      const at = readAtByPeer.get(canonicalWhatsAppPeer(key));
+      if (!at) continue;
+      if (!best || new Date(at).getTime() > new Date(best).getTime()) best = at;
+    }
+    return readAtByPeer.get(peer) ?? best;
+  }
+
   const byPeer = new Map<
     string,
-    { peer_e164: string; last_body: string | null; last_at: string; last_dir: string }
+    {
+      peer_e164: string;
+      last_body: string | null;
+      last_at: string;
+      last_dir: string;
+      unread_count: number;
+    }
   >();
   for (const r of rows || []) {
     if (r.deleted_at) continue;
     const peer = canonicalWhatsAppPeer((r.peer_e164 as string) || "");
     if (!peer) continue;
+    const createdAt = r.created_at as string;
+    const isInbound = r.direction === "inbound";
+    const readAt = latestReadAt(peer);
+    const countsAsUnread =
+      isInbound &&
+      (!readAt || new Date(createdAt).getTime() > new Date(readAt).getTime() + 50);
+
     const existing = byPeer.get(peer);
     if (!existing) {
       byPeer.set(peer, {
         peer_e164: peer,
         last_body: (r.body as string | null) ?? null,
-        last_at: r.created_at as string,
+        last_at: createdAt,
         last_dir: r.direction as string,
+        unread_count: countsAsUnread ? 1 : 0,
       });
-    } else if (new Date(r.created_at as string).getTime() > new Date(existing.last_at).getTime()) {
-      byPeer.set(peer, {
-        peer_e164: peer,
-        last_body: (r.body as string | null) ?? null,
-        last_at: r.created_at as string,
-        last_dir: r.direction as string,
-      });
+    } else {
+      const unread = existing.unread_count + (countsAsUnread ? 1 : 0);
+      if (new Date(createdAt).getTime() > new Date(existing.last_at).getTime()) {
+        byPeer.set(peer, {
+          peer_e164: peer,
+          last_body: (r.body as string | null) ?? null,
+          last_at: createdAt,
+          last_dir: r.direction as string,
+          unread_count: unread,
+        });
+      } else {
+        byPeer.set(peer, { ...existing, unread_count: unread });
+      }
     }
   }
 

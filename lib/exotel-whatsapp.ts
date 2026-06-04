@@ -205,7 +205,11 @@ export function extractExotelInboundBody(message: Record<string, unknown> | unde
     case "audio":
       return { body: "[Audio]", numMedia: 1 };
     case "sticker":
-      return { body: "[Sticker]", numMedia: 0 };
+      return { body: "[Sticker]", numMedia: 1 };
+    case "reaction": {
+      const reaction = message.reaction as { emoji?: string } | undefined;
+      return { body: reaction?.emoji?.trim() || "❤️", numMedia: 0 };
+    }
     case "location":
       return { body: "[Location]", numMedia: 0 };
     case "button": {

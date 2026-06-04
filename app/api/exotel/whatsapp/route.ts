@@ -9,6 +9,7 @@ import {
 } from "@/lib/exotel-webhook-parse";
 import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
+import { notifyWhatsAppInbound } from "@/lib/push-notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -130,6 +131,12 @@ export async function POST(request: Request) {
     "| sid:",
     finalized.messageSid
   );
+
+  void notifyWhatsAppInbound({
+    ownerUserId,
+    peerE164: canonicalWhatsAppPeer(finalized.peerE164),
+    bodyPreview: finalized.displayBody,
+  }).catch((e) => console.warn("[exotel/whatsapp] push:", e));
 
   return ok();
 }

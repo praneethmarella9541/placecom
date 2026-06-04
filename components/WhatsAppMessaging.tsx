@@ -67,9 +67,15 @@ function previewOutboundBody(
 ): string {
   if (needsTemplate) return `Hi ${templateVar1}, this is ${templateVar2} from PlaceCom`;
   if (payload.messageType === "text") return payload.text?.trim() || draft.trim();
+  // For media messages, only store the caption — never a [type] placeholder
   if (payload.mediaCaption?.trim()) return payload.mediaCaption.trim();
-  if (payload.mediaFilename) return `[${payload.messageType}: ${payload.mediaFilename}]`;
-  return `[${payload.messageType}]`;
+  return ""; // body will be empty; the media_url renders the image
+}
+
+/** True if the body text is just a system placeholder like [image] and shouldn't be shown */
+function isMediaPlaceholder(body: string | null): boolean {
+  if (!body) return true;
+  return /^\[(?:image|video|audio|document|sticker|location|template)(?::[^\]]+)?\]$/i.test(body.trim());
 }
 
 /** Format E.164 for display: +91 98494 31508 */
@@ -546,7 +552,7 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
               )}
             >
               <span className={cn(
-                "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-white",
+                "flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[13px] font-bold text-white",
                 peer === c.peer_e164 ? "bg-[var(--color-primary)]" : "bg-[#25d366]"
               )}>
                 {peerInitials(c.peer_e164, contacts[c.peer_e164])}
@@ -554,14 +560,14 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-2">
                   <span className={cn(
-                    "truncate text-[13px]",
+                    "truncate text-[14px]",
                     peer === c.peer_e164 ? "font-semibold text-[var(--color-primary)]" : "font-medium text-[var(--color-text)]"
                   )}>
                     {displayName(c.peer_e164)}
                   </span>
-                  <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">{formatListTime(c.last_at)}</span>
+                  <span className="shrink-0 text-[12px] text-[var(--color-text-faint)]">{formatListTime(c.last_at)}</span>
                 </span>
-                <span className="mt-0.5 line-clamp-1 text-[12px] text-[var(--color-text-muted)]">
+                <span className="mt-0.5 line-clamp-1 text-[13px] text-[var(--color-text-muted)]">
                   {c.last_dir === "outbound" ? "You: " : ""}{c.last_body || "—"}
                 </span>
               </span>
@@ -597,7 +603,7 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
 
         {peer ? (
           <>
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[11px] font-bold text-white">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[13px] font-bold text-white">
               {peerInitials(peer, contacts[peer])}
             </span>
             <div className="min-w-0 flex-1">
@@ -619,7 +625,7 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
                 </form>
               ) : (
                 <div className="flex items-center gap-2">
-                  <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
+                  <p className="truncate text-[15px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
                   <button
                     type="button"
                     className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-faint)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
@@ -789,7 +795,7 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
                     onContextMenu={(e) => { if (selectMode) return; e.preventDefault(); setMenu({ msg: m, x: e.clientX, y: e.clientY }); }}
                     onKeyDown={(e) => { if (selectMode && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggleSelected(m.id); } }}
                     className={cn(
-                      "relative max-w-[min(75%,28rem)] rounded-2xl px-3 py-2 text-[14px] leading-relaxed shadow-sm",
+                      "relative max-w-[min(80%,34rem)] rounded-2xl px-3 py-2 text-[15px] leading-relaxed shadow-sm",
                       outbound
                         ? "rounded-br-sm bg-[#dcf8c6] text-zinc-900"
                         : "rounded-bl-sm bg-white text-zinc-900",
@@ -829,25 +835,27 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
                       </div>
                     ) : null}
 
-                    {/* Body */}
-                    <p className="whitespace-pre-wrap break-words [word-break:break-word]">{m.body || "—"}</p>
+                    {/* Body — hide if it's just a media placeholder */}
+                    {!isMediaPlaceholder(m.body) && (
+                      <p className="whitespace-pre-wrap break-words [word-break:break-word]">{m.body}</p>
+                    )}
 
                     {/* Media */}
-                    {m.media_url && (m.content_type === "image" || !m.content_type) ? (
-                      <a href={m.media_url} target="_blank" rel="noopener noreferrer" className="mt-1.5 block">
+                    {m.media_url && (m.content_type === "image" || m.content_type?.startsWith("image") || (!m.content_type && m.num_media)) ? (
+                      <a href={m.media_url} target="_blank" rel="noopener noreferrer" className="mt-1 block">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={m.media_url} alt="" className="max-h-56 w-full rounded-lg object-cover" />
+                        <img src={m.media_url} alt="" className="max-h-80 w-full rounded-xl object-contain" />
                       </a>
                     ) : m.media_url ? (
                       <a href={m.media_url} target="_blank" rel="noopener noreferrer"
-                        className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-black/5 px-2 py-1.5 text-[12px] font-medium text-zinc-700 hover:bg-black/10">
+                        className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-black/5 px-2.5 py-2 text-[13px] font-medium text-zinc-700 hover:bg-black/10">
                         📎 {titleCase("Open attachment")}
                       </a>
                     ) : null}
 
                     {/* Timestamp + ticks */}
                     <p className={cn(
-                      "mt-1 flex items-center gap-1 text-[11px] text-zinc-500",
+                      "mt-1 flex items-center gap-1 text-[12px] text-zinc-500",
                       outbound ? "justify-end" : "justify-start"
                     )}>
                       <span className="tabular-nums">{formatDate(m.created_at)}</span>

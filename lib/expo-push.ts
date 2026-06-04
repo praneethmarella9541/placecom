@@ -14,12 +14,27 @@ export async function sendExpoPush(tokens: string[], payload: ExpoPushPayload): 
     const res = await fetch(EXPO_PUSH_URL, {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify(batch.map((to) => ({ to, sound: "default", ...payload }))),
+      body: JSON.stringify(
+        batch.map((to) => ({
+          to,
+          sound: "default",
+          priority: "high",
+          channelId: "default",
+          ...payload,
+        }))
+      ),
     });
-    if (!res.ok) { console.error("[expo-push]", res.status); continue; }
-    const body = (await res.json()) as { data?: { status?: string; details?: { error?: string } }[] };
+    if (!res.ok) {
+      console.error("[expo-push] HTTP", res.status, await res.text().catch(() => ""));
+      continue;
+    }
+    const body = (await res.json()) as {
+      data?: { status?: string; message?: string; details?: { error?: string } }[];
+    };
     (body.data ?? []).forEach((ticket, i) => {
-      if (ticket.status === "error" && ticket.details?.error === "DeviceNotRegistered" && batch[i]) invalid.push(batch[i]);
+      if (ticket.status !== "error") return;
+      console.warn("[expo-push] ticket error:", ticket.message, ticket.details);
+      if (ticket.details?.error === "DeviceNotRegistered" && batch[i]) invalid.push(batch[i]);
     });
   }
   return invalid;

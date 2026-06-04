@@ -117,10 +117,22 @@ export async function POST(request: Request) {
   };
   if (replyToId) insertRow.reply_to_id = replyToId;
 
+  const pushParams = {
+    ownerUserId,
+    peerE164: peer,
+    bodyPreview: displayBody || null,
+    businessE164: businessE164 || "",
+  };
+
   const { error } = await supabase.from("whatsapp_messages").insert(insertRow);
 
   if (error) {
     if ((error as { code?: string }).code === "23505") {
+      try {
+        await notifyWhatsAppInbound(pushParams);
+      } catch (e) {
+        console.warn("[twilio/whatsapp] push (duplicate):", e);
+      }
       return twimlOk();
     }
     if (error.message.includes("does not exist") || (error as { code?: string }).code === "42P01") {
@@ -131,12 +143,11 @@ export async function POST(request: Request) {
     return twimlOk();
   }
 
-  void notifyWhatsAppInbound({
-    ownerUserId,
-    peerE164: peer,
-    bodyPreview: displayBody || null,
-    businessE164: businessE164 || "",
-  }).catch((e) => console.warn("[twilio/whatsapp] push:", e));
+  try {
+    await notifyWhatsAppInbound(pushParams);
+  } catch (e) {
+    console.warn("[twilio/whatsapp] push:", e);
+  }
 
   return twimlOk();
 }

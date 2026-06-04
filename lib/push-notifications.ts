@@ -177,16 +177,27 @@ export async function notifyWhatsAppInbound(params: {
     sentCount += tokens.length;
   }
 
-  console.log(
-    "[push] WhatsApp notify | recipients:",
-    recipients.length,
-    "| tokens:",
-    sentCount,
-    "| peer:",
-    params.peerE164,
-    "| business:",
-    businessE164
-  );
+  if (sentCount === 0) {
+    console.warn(
+      "[push] WhatsApp notify: 0 tokens sent | recipients:",
+      recipients.length,
+      "| owner:",
+      ownerUserId ?? "(none)",
+      "| business:",
+      businessE164
+    );
+  } else {
+    console.log(
+      "[push] WhatsApp notify | recipients:",
+      recipients.length,
+      "| tokens:",
+      sentCount,
+      "| peer:",
+      params.peerE164,
+      "| business:",
+      businessE164
+    );
+  }
 }
 
 export async function sendTestPushToUser(userId: string): Promise<{ sent: number }> {

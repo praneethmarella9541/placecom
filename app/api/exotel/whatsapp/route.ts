@@ -107,8 +107,20 @@ export async function POST(request: Request) {
     num_media: finalized.numMedia,
   });
 
+  const pushParams = {
+    ownerUserId,
+    peerE164: canonicalWhatsAppPeer(finalized.peerE164),
+    bodyPreview: finalized.displayBody,
+    businessE164: finalized.businessE164,
+  };
+
   if (error) {
     if ((error as { code?: string }).code === "23505") {
+      try {
+        await notifyWhatsAppInbound(pushParams);
+      } catch (e) {
+        console.warn("[exotel/whatsapp] push (duplicate):", e);
+      }
       return ok();
     }
     if (error.message.includes("does not exist") || (error as { code?: string }).code === "42P01") {
@@ -132,12 +144,11 @@ export async function POST(request: Request) {
     finalized.messageSid
   );
 
-  void notifyWhatsAppInbound({
-    ownerUserId,
-    peerE164: canonicalWhatsAppPeer(finalized.peerE164),
-    bodyPreview: finalized.displayBody,
-    businessE164: finalized.businessE164,
-  }).catch((e) => console.warn("[exotel/whatsapp] push:", e));
+  try {
+    await notifyWhatsAppInbound(pushParams);
+  } catch (e) {
+    console.warn("[exotel/whatsapp] push:", e);
+  }
 
   return ok();
 }

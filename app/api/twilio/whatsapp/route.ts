@@ -135,6 +135,7 @@ export async function POST(request: Request) {
     ownerUserId,
     peerE164: peer,
     bodyPreview: displayBody || null,
+    businessE164: businessE164 || "",
   }).catch((e) => console.warn("[twilio/whatsapp] push:", e));
 
   return twimlOk();

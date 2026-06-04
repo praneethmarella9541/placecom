@@ -136,6 +136,7 @@ export async function POST(request: Request) {
     ownerUserId,
     peerE164: canonicalWhatsAppPeer(finalized.peerE164),
     bodyPreview: finalized.displayBody,
+    businessE164: finalized.businessE164,
   }).catch((e) => console.warn("[exotel/whatsapp] push:", e));
 
   return ok();

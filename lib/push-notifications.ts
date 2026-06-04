@@ -42,12 +42,15 @@ async function tokensForUser(userId: string): Promise<string[]> {
     const { data, error } = await svc
       .from("push_device_tokens")
       .select("expo_push_token")
-      .eq("user_id", userId);
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false })
+      .limit(1);
     if (error) {
       console.warn("[push] tokens query:", error.message);
       return [];
     }
-    return (data ?? []).map((r) => r.expo_push_token as string).filter(Boolean);
+    const token = (data?.[0]?.expo_push_token as string | undefined)?.trim();
+    return token ? [token] : [];
   } catch (e) {
     console.warn("[push] tokensForUser:", e);
     return [];

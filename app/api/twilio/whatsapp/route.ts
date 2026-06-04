@@ -128,11 +128,6 @@ export async function POST(request: Request) {
 
   if (error) {
     if ((error as { code?: string }).code === "23505") {
-      try {
-        await notifyWhatsAppInbound(pushParams);
-      } catch (e) {
-        console.warn("[twilio/whatsapp] push (duplicate):", e);
-      }
       return twimlOk();
     }
     if (error.message.includes("does not exist") || (error as { code?: string }).code === "42P01") {

@@ -116,11 +116,6 @@ export async function POST(request: Request) {
 
   if (error) {
     if ((error as { code?: string }).code === "23505") {
-      try {
-        await notifyWhatsAppInbound(pushParams);
-      } catch (e) {
-        console.warn("[exotel/whatsapp] push (duplicate):", e);
-      }
       return ok();
     }
     if (error.message.includes("does not exist") || (error as { code?: string }).code === "42P01") {

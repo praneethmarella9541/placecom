@@ -74,7 +74,9 @@ async function resolveWhatsAppPushRecipients(
     }
 
     const { data: tokenRows } = await svc.from("push_device_tokens").select("user_id");
-    const tokenUserIds = [...new Set((tokenRows ?? []).map((r) => r.user_id as string))];
+    const tokenUserIds = Array.from(
+      new Set((tokenRows ?? []).map((r) => r.user_id as string))
+    );
 
     for (const uid of tokenUserIds) {
       if (!(await userHasFeature(uid, "whatsapp"))) continue;

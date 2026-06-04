@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
@@ -181,6 +182,33 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   const [actionBusy, setActionBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [newPhoneInput, setNewPhoneInput] = useState(false);
+  // Contact names — stored in localStorage keyed by E.164
+  const [contacts, setContacts] = useState<Record<string, string>>({});
+  const [editingName, setEditingName] = useState<string | null>(null); // peer E.164 being renamed
+  const [nameInput, setNameInput] = useState("");
+
+  // Load contacts from localStorage on mount
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("wa-contacts");
+      if (raw) setContacts(JSON.parse(raw) as Record<string, string>);
+    } catch { /* ignore */ }
+  }, []);
+
+  function saveName(peer: string, name: string) {
+    const trimmed = name.trim();
+    setContacts((prev) => {
+      const next = trimmed ? { ...prev, [peer]: trimmed } : Object.fromEntries(Object.entries(prev).filter(([k]) => k !== peer));
+      try { localStorage.setItem("wa-contacts", JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+    setEditingName(null);
+    setNameInput("");
+  }
+
+  function displayName(peer: string): string {
+    return contacts[peer] || formatPhone(peer);
+  }
 
   const loadStatus = useCallback(async () => {
     try {
@@ -488,7 +516,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                     "truncate text-[13px]",
                     peer === c.peer_e164 ? "font-semibold text-[var(--color-primary)]" : "font-medium text-[var(--color-text)]"
                   )}>
-                    {formatPhone(c.peer_e164)}
+                    {displayName(c.peer_e164)}
                   </span>
                   <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">{formatListTime(c.last_at)}</span>
                 </span>
@@ -532,8 +560,34 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               {peerInitials(peer)}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">{formatPhone(peer)}</p>
-              {sessionOpen !== null && (
+              {editingName === peer ? (
+                <form
+                  className="flex items-center gap-1"
+                  onSubmit={(e) => { e.preventDefault(); saveName(peer, nameInput); }}
+                >
+                  <input
+                    autoFocus
+                    value={nameInput}
+                    onChange={(e) => setNameInput(e.target.value)}
+                    placeholder={formatPhone(peer)}
+                    className="input-field h-7 flex-1 text-[13px]"
+                    onKeyDown={(e) => { if (e.key === "Escape") { setEditingName(null); setNameInput(""); } }}
+                  />
+                  <button type="submit" className="btn-primary h-7 px-2.5 text-[12px]">Save</button>
+                  <button type="button" className="btn-ghost h-7 px-2 text-[12px]" onClick={() => { setEditingName(null); setNameInput(""); }}>✕</button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className="group flex items-center gap-1 text-left"
+                  onClick={() => { setEditingName(peer); setNameInput(contacts[peer] || ""); }}
+                  title="Save contact name"
+                >
+                  <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
+                  <svg viewBox="0 0 16 16" className="h-3 w-3 shrink-0 text-[var(--color-text-faint)] opacity-0 transition-opacity group-hover:opacity-100" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M11 2l3 3-8 8H3v-3l8-8z"/></svg>
+                </button>
+              )}
+              {sessionOpen !== null && editingName !== peer && (
                 <p className="text-[11px] text-[var(--color-text-faint)]">
                   {sessionOpen ? "● Session open" : "○ Session closed — template required"}
                 </p>
@@ -819,8 +873,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
         )}
       </div>
 
-      {/* Context menu */}
-      {menu && (
+      {/* Context menu — portalled to body so overflow:hidden doesn't clip it */}
+      {menu && typeof document !== "undefined" && createPortal(
         <>
           <div className="fixed inset-0 z-[55]" aria-hidden onClick={() => setMenu(null)} />
           <div
@@ -858,11 +912,12 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               );
             })}
           </div>
-        </>
+        </>,
+        document.body
       )}
 
-      {/* Message info dialog */}
-      {infoMsg && (
+      {/* Message info dialog — portalled to body */}
+      {infoMsg && typeof document !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
           role="dialog" aria-modal
@@ -898,7 +953,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               </div>
             </dl>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Composer */}

@@ -4,67 +4,60 @@ import { cn } from "@/lib/utils";
 import { formatWhatsAppDeliveryLabel, isWhatsAppDeliveryFailed } from "@/lib/whatsapp-delivery";
 import { getWhatsAppTickLevel } from "@/lib/whatsapp-tick-level";
 
-/** Single grey tick (sent to WhatsApp servers). */
-function MsgCheck({ className }: { className?: string }) {
+/** Single clean checkmark tick */
+function SingleTick({ className }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 12 11"
-      width="12"
-      height="11"
-      className={cn("block shrink-0", className)}
-      aria-hidden
-    >
-      <path
-        fill="currentColor"
-        d="M11.154.793a.5.5 0 0 1 .043.707L4.28 9.227a.5.5 0 0 1-.054.05l-.054.043a.5.5 0 0 1-.061.037l-.058.034a.5.5 0 0 1-.062.02l-.057.022a.5.5 0 0 1-.073.013l-.052.014a.5.5 0 0 1-.08.004l-.05.006a.5.5 0 0 1-.084 0l-.05-.006a.5.5 0 0 1-.08-.004l-.052-.014a.5.5 0 0 1-.073-.013l-.057-.022a.5.5 0 0 1-.062-.02l-.058-.034a.5.5 0 0 1-.061-.037l-.054-.043a.5.5 0 0 1-.054-.05L.793 1.5a.5.5 0 0 1 .707-.043l.707.707z"
-      />
+    <svg viewBox="0 0 16 11" width="16" height="11" className={cn("block shrink-0", className)} aria-hidden fill="none">
+      <polyline points="2,5.5 6,9.5 14,1.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-/** Overlapping double tick — same icon as WhatsApp Web `msg-dblcheck`. */
-function MsgDblCheck({ className }: { className?: string }) {
+/** Double overlapping checkmark ticks */
+function DoubleTick({ className }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 16 11"
-      width="16"
-      height="11"
-      className={cn("block shrink-0", className)}
-      aria-hidden
-    >
-      <path
-        fill="currentColor"
-        d="M11.078 0.684l-5.06 5.061L2.933 1.661 1.5 3.095l4.508 4.508 7.762-7.762-2.692-1.157zm-6.95 6.385L.792 3.763l-1.06 1.06 5.148 5.148 8.712-8.712-1.06-1.061-7.592 7.59z"
-      />
+    <svg viewBox="0 0 20 11" width="20" height="11" className={cn("block shrink-0", className)} aria-hidden fill="none">
+      {/* First tick (shifted left) */}
+      <polyline points="1,5.5 5,9.5 13,1.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      {/* Second tick (shifted right) */}
+      <polyline points="7,5.5 11,9.5 19,1.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-/** WhatsApp-style message ticks (single / double / blue double). */
+/** WhatsApp-style message ticks (single grey / double grey / double blue). */
 export function WhatsAppTicks({ deliveryStatus }: { deliveryStatus?: string | null }) {
   const level = getWhatsAppTickLevel(deliveryStatus);
   const title = formatWhatsAppDeliveryLabel(deliveryStatus) ?? undefined;
 
   if (level === "failed") {
     return (
-      <span className="inline-flex align-middle text-red-600 dark:text-red-400" title={title}>
-        <span className="text-[11px] font-bold leading-none">!</span>
+      <span className="inline-flex items-center align-middle" title={title}>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden>
+          <circle cx="8" cy="8" r="7" stroke="#ef4444" strokeWidth="1.5" />
+          <line x1="8" y1="4" x2="8" y2="9" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="8" cy="11.5" r="0.75" fill="#ef4444" />
+        </svg>
       </span>
     );
   }
 
-  const color =
-    level === "read"
-      ? "text-[#53bdeb]"
-      : level === "pending"
-        ? "text-[#8696a0]"
-        : "text-[#8696a0]";
+  if (level === "pending") {
+    return (
+      <span className="inline-flex items-center align-middle text-[#8696a0]" title={title}>
+        <svg viewBox="0 0 14 14" width="13" height="13" fill="none" aria-hidden>
+          <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
+        </svg>
+      </span>
+    );
+  }
 
   const showDouble = level === "delivered" || level === "read";
+  const color = level === "read" ? "text-[#53bdeb]" : "text-[#8696a0]";
 
   return (
-    <span className={cn("inline-flex shrink-0 align-middle", color)} title={title}>
-      {showDouble ? <MsgDblCheck /> : <MsgCheck />}
+    <span className={cn("inline-flex shrink-0 items-center align-middle", color)} title={title}>
+      {showDouble ? <DoubleTick /> : <SingleTick />}
     </span>
   );
 }

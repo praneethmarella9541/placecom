@@ -59,6 +59,7 @@ export function WhatsAppComposerBar({
   wrapperRef,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const emojiBtnRef = useRef<HTMLButtonElement>(null);
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -203,6 +204,7 @@ export function WhatsAppComposerBar({
           <>
             <div className="relative shrink-0 pb-1">
               <button
+                ref={emojiBtnRef}
                 type="button"
                 className={cn(
                   "flex h-10 w-10 items-center justify-center rounded-full text-[22px] leading-none text-[#54656f] transition hover:bg-black/5 dark:text-[#aebac1] dark:hover:bg-white/10",
@@ -218,7 +220,7 @@ export function WhatsAppComposerBar({
               </button>
               <WhatsAppEmojiPicker
                 open={emojiOpen}
-                className="left-0 right-auto w-[min(100%,320px)]"
+                anchorRef={emojiBtnRef}
                 onPick={(em) => {
                   onInsertEmoji(em);
                   setEmojiOpen(false);

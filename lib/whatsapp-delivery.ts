@@ -22,6 +22,18 @@ export function getDeliveryFailureAdvice(deliveryStatus: string | null | undefin
   if (!s.startsWith("failed")) return null;
 
   if (
+    s.includes("130472") ||
+    s.includes("part of an experiment") ||
+    s.includes("experiments")
+  ) {
+    return (
+      "Meta test group: this user cannot receive marketing templates unless they message you first " +
+      "(opens a 24-hour session) or you already have an active service window. Retrying the same template will not work. " +
+      "Contact them by call or SMS and ask them to send you a WhatsApp message; then reply with free text or resend the template."
+    );
+  }
+
+  if (
     s.includes("131049") ||
     s.includes("message limit per user") ||
     s.includes("healthy ecosystem") ||

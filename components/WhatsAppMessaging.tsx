@@ -187,23 +187,46 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   const [editingName, setEditingName] = useState<string | null>(null); // peer E.164 being renamed
   const [nameInput, setNameInput] = useState("");
 
-  // Load contacts from localStorage on mount
+  // Load contacts from Supabase on mount
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("wa-contacts");
-      if (raw) setContacts(JSON.parse(raw) as Record<string, string>);
-    } catch { /* ignore */ }
+    void (async () => {
+      try {
+        const res = await fetch("/api/whatsapp/contacts");
+        const data = (await res.json()) as { contacts?: { peer_e164: string; name: string }[] };
+        if (res.ok && data.contacts) {
+          const map: Record<string, string> = {};
+          for (const c of data.contacts) map[c.peer_e164] = c.name;
+          setContacts(map);
+        }
+      } catch { /* ignore — contacts just won't show names */ }
+    })();
   }, []);
 
-  function saveName(peer: string, name: string) {
+  async function saveName(peer: string, name: string) {
     const trimmed = name.trim();
-    setContacts((prev) => {
-      const next = trimmed ? { ...prev, [peer]: trimmed } : Object.fromEntries(Object.entries(prev).filter(([k]) => k !== peer));
-      try { localStorage.setItem("wa-contacts", JSON.stringify(next)); } catch { /* ignore */ }
-      return next;
-    });
+    // Optimistic update
+    setContacts((prev) =>
+      trimmed
+        ? { ...prev, [peer]: trimmed }
+        : Object.fromEntries(Object.entries(prev).filter(([k]) => k !== peer))
+    );
     setEditingName(null);
     setNameInput("");
+    try {
+      if (trimmed) {
+        await fetch("/api/whatsapp/contacts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ peer_e164: peer, name: trimmed }),
+        });
+      } else {
+        await fetch("/api/whatsapp/contacts", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ peer_e164: peer }),
+        });
+      }
+    } catch { /* ignore — optimistic state already applied */ }
   }
 
   function displayName(peer: string): string {
@@ -563,7 +586,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               {editingName === peer ? (
                 <form
                   className="flex items-center gap-1"
-                  onSubmit={(e) => { e.preventDefault(); saveName(peer, nameInput); }}
+                  onSubmit={(e) => { e.preventDefault(); void saveName(peer, nameInput); }}
                 >
                   <input
                     autoFocus

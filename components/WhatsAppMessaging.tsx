@@ -82,7 +82,9 @@ function formatPhone(e164: string): string {
   return e164;
 }
 
-function peerInitials(peer: string): string {
+function peerInitials(peer: string, name?: string): string {
+  if (name?.trim()) return name.trim()[0].toUpperCase();
+  // Fallback to last 2 digits of the number
   const digits = peer.replace(/\D/g, "");
   if (digits.length >= 2) return digits.slice(-2);
   return peer.slice(0, 2).toUpperCase() || "?";
@@ -543,7 +545,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-white",
                 peer === c.peer_e164 ? "bg-[var(--color-primary)]" : "bg-[#25d366]"
               )}>
-                {peerInitials(c.peer_e164)}
+                {peerInitials(c.peer_e164, contacts[c.peer_e164])}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-2">
@@ -592,7 +594,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
         {peer ? (
           <>
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[11px] font-bold text-white">
-              {peerInitials(peer)}
+              {peerInitials(peer, contacts[peer])}
             </span>
             <div className="min-w-0 flex-1">
               {editingName === peer ? (
@@ -896,7 +898,6 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               { key: "star",    label: menu.msg.is_starred ? "Unstar" : "Star", icon: IconStar, onClick: () => { void (async () => { try { await patchMessage(menu.msg.id, { is_starred: !menu.msg.is_starred }); if (peer) await loadMessages(peer, { silent: true }); } catch (e) { setError(clientFetchFailedMessage(e)); } finally { setMenu(null); } })(); } },
               { key: "info",    label: "Message info", icon: IconInfo,    onClick: () => { setInfoMsg(menu.msg); setMenu(null); } },
               { key: "select",  label: "Select",       icon: IconCheck,   onClick: () => { setSelectMode(true); setSelectedIds([menu.msg.id]); setMenu(null); } },
-              { key: "delete",  label: "Delete",       icon: IconTrash,   danger: true, onClick: () => { if (!window.confirm(titleCase("Delete this message?"))) { setMenu(null); return; } void (async () => { try { await patchMessage(menu.msg.id, { soft_delete: true }); if (peer) await loadMessages(peer, { silent: true }); await loadConversations({ silent: true }); } catch (e) { setError(clientFetchFailedMessage(e)); } finally { setMenu(null); } })(); } },
             ] as const).map((item) => {
               const Icon = item.icon;
               return (

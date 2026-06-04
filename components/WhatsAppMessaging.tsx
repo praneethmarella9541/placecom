@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { isValidE164, normalizePhone } from "@/lib/phone";
-import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import {
   formatWhatsAppDeliveryLabel,
   getDeliveryFailureAdvice,
@@ -197,8 +196,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
         if (res.ok && data.contacts) {
           const map: Record<string, string> = {};
           for (const c of data.contacts) {
-            const k = canonicalWhatsAppPeer(c.peer_e164);
-            if (k) map[k] = c.name;
+            if (c.peer_e164) map[c.peer_e164] = c.name;
           }
           setContacts(map);
         }

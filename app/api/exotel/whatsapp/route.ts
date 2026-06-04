@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getExotelAccountSid } from "@/lib/exotel-whatsapp";
 import {
   finalizeInbound,
+  formatDeliveryStatusForDb,
   parseExotelInboundWebhook,
   parseExotelStatusWebhook,
 } from "@/lib/exotel-webhook-parse";
@@ -48,10 +49,30 @@ export async function POST(request: Request) {
 
   const status = parseExotelStatusWebhook(body);
   if (status) {
-    await supabase
+    const deliveryStatus = formatDeliveryStatusForDb(status);
+    const { data: updated, error: updErr } = await supabase
       .from("whatsapp_messages")
-      .update({ delivery_status: status.status })
-      .eq("message_sid", status.messageSid);
+      .update({ delivery_status: deliveryStatus })
+      .eq("message_sid", status.messageSid)
+      .select("id");
+
+    if (updErr) {
+      console.error("[exotel/whatsapp] status update error:", updErr);
+    } else if (!updated?.length) {
+      console.warn(
+        "[exotel/whatsapp] status for unknown message_sid:",
+        status.messageSid,
+        "|",
+        deliveryStatus
+      );
+    } else {
+      console.log(
+        "[exotel/whatsapp] delivery | sid:",
+        status.messageSid,
+        "|",
+        deliveryStatus
+      );
+    }
     return ok();
   }
 

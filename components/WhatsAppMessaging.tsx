@@ -5,6 +5,10 @@ import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { isValidE164, normalizePhone } from "@/lib/phone";
+import {
+  formatWhatsAppDeliveryLabel,
+  isWhatsAppDeliveryFailed,
+} from "@/lib/whatsapp-delivery";
 import { titleCase } from "@/lib/title-case";
 import {
   IconCheck,
@@ -91,6 +95,7 @@ type Msg = {
   to_addr?: string | null;
   body: string | null;
   message_sid?: string | null;
+  delivery_status?: string | null;
   created_at: string;
   reply_to_id?: string | null;
   is_starred?: boolean;
@@ -818,6 +823,18 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                           )}
                         >
                           {formatDate(m.created_at)}
+                          {outbound && m.delivery_status ? (
+                            <span
+                              className={cn(
+                                "ml-1.5",
+                                isWhatsAppDeliveryFailed(m.delivery_status) &&
+                                  "font-medium text-red-700 dark:text-red-300",
+                              )}
+                              title={formatWhatsAppDeliveryLabel(m.delivery_status) ?? undefined}
+                            >
+                              · {formatWhatsAppDeliveryLabel(m.delivery_status)}
+                            </span>
+                          ) : null}
                         </p>
                       </div>
                       {outbound ? selectToggle : null}

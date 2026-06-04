@@ -40,7 +40,9 @@ export async function GET(request: Request) {
       bodyParamCount: template.bodyParamCount,
       previewExample: formatTemplatePreview(template, ["Customer", "Your name"]),
     },
+    deliveryHint:
+      "A row in Supabase only means Exotel accepted the message. Delivery requires Meta/WhatsApp approval. Failed sends update delivery_status via the same webhook URL (status callbacks / DLR). Check Exotel → WhatsApp message logs for error codes (e.g. 131021 not on WhatsApp, marketing template without opt-in).",
     migrationHint:
-      "Apply migrations 0016, 0017, 0023, 0024, and 0025_whatsapp_peer_e164_fix.sql. Configure the webhook URL in Exotel Dashboard → WhatsApp → Webhooks.",
+      "Apply migrations 0016, 0017, 0023, 0024, and 0025. Configure incoming + status webhooks to https://YOUR_HOST/api/exotel/whatsapp",
   });
 }

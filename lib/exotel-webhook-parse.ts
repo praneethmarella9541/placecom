@@ -19,6 +19,8 @@ export type ParsedInbound = {
 export type ParsedStatus = {
   messageSid: string;
   status: string;
+  /** Human-readable failure reason when status is failed. */
+  errorDetail?: string;
 };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -179,7 +181,74 @@ export function parseExotelInboundWebhook(body: Record<string, unknown>): Parsed
   return null;
 }
 
+function mapExoDetailedStatus(exo: string, description: string): ParsedStatus | null {
+  const code = exo.trim().toUpperCase();
+  if (!code) return null;
+  if (code === "EX_MESSAGE_DELIVERED") {
+    return { messageSid: "", status: "delivered" };
+  }
+  if (code === "EX_MESSAGE_SEEN") {
+    return { messageSid: "", status: "read" };
+  }
+  if (code === "EX_MESSAGE_SENT") {
+    return { messageSid: "", status: "sent" };
+  }
+  if (code.startsWith("EX_")) {
+    return {
+      messageSid: "",
+      status: "failed",
+      errorDetail: description || code.replace(/_/g, " ").toLowerCase(),
+    };
+  }
+  return null;
+}
+
+function parseStatusErrors(block: Record<string, unknown>): string | undefined {
+  const errors = block.errors;
+  if (!Array.isArray(errors) || !errors[0] || typeof errors[0] !== "object") return undefined;
+  const err = errors[0] as Record<string, unknown>;
+  return pickString(err.detail, err.title, err.message, err.code ? String(err.code) : "");
+}
+
+/** Map Exotel/Meta status webhooks and DLR callbacks to a DB delivery_status value. */
+export function formatDeliveryStatusForDb(status: ParsedStatus): string {
+  if (status.status === "failed" && status.errorDetail) {
+    return `failed: ${status.errorDetail.slice(0, 240)}`;
+  }
+  return status.status;
+}
+
 export function parseExotelStatusWebhook(body: Record<string, unknown>): ParsedStatus | null {
+  // Shape A (v2 send API DLR): { whatsapp: { messages: [{ callback_type: "dlr", sid, exo_detailed_status }] } }
+  const wa = asRecord(body.whatsapp);
+  const dlrList = (wa?.messages ?? body.messages) as unknown;
+  if (Array.isArray(dlrList)) {
+    for (const item of dlrList) {
+      const row = asRecord(item);
+      if (!row) continue;
+      const cb = String(row.callback_type ?? row.type ?? "").toLowerCase();
+      if (cb && cb !== "dlr" && cb !== "message_status") continue;
+      const messageSid = pickString(row.sid, row.message_sid, row.id);
+      const exo = pickString(row.exo_detailed_status);
+      const description = pickString(row.description);
+      if (exo) {
+        const mapped = mapExoDetailedStatus(exo, description);
+        if (mapped && messageSid) {
+          return { ...mapped, messageSid };
+        }
+      }
+      const status = pickString(row.status);
+      if (messageSid && status) {
+        return {
+          messageSid,
+          status,
+          errorDetail: status === "failed" ? description || parseStatusErrors(row) : undefined,
+        };
+      }
+    }
+  }
+
+  // Shape B/C: { type|event: "message_status", data|message: { message_sid|id, status, errors? } }
   if (body.type === "message_status" || body.event === "message_status") {
     const data = asRecord(body.data);
     const msg = asRecord(body.message);
@@ -187,7 +256,13 @@ export function parseExotelStatusWebhook(body: Record<string, unknown>): ParsedS
     if (!block) return null;
     const messageSid = pickString(block.message_sid, block.id);
     const status = pickString(block.status);
-    if (messageSid && status) return { messageSid, status };
+    if (messageSid && status) {
+      return {
+        messageSid,
+        status,
+        errorDetail: status === "failed" ? parseStatusErrors(block) : undefined,
+      };
+    }
   }
   return null;
 }

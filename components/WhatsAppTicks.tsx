@@ -4,12 +4,37 @@ import { cn } from "@/lib/utils";
 import { formatWhatsAppDeliveryLabel, isWhatsAppDeliveryFailed } from "@/lib/whatsapp-delivery";
 import { getWhatsAppTickLevel } from "@/lib/whatsapp-tick-level";
 
-function CheckMark({ className }: { className?: string }) {
+/** Single grey tick (sent to WhatsApp servers). */
+function MsgCheck({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 16 15" className={cn("h-[11px] w-[14px] shrink-0", className)} aria-hidden>
+    <svg
+      viewBox="0 0 12 11"
+      width="12"
+      height="11"
+      className={cn("block shrink-0", className)}
+      aria-hidden
+    >
       <path
         fill="currentColor"
-        d="M10.91 2.506a.48.48 0 0 0-.7-.055L6.44 6.986 4.9 5.482a.48.48 0 0 0-.67.69l2.02 2.128a.48.48 0 0 0 .7-.054l5.85-6.364a.48.48 0 0 0-.09-.396z"
+        d="M11.154.793a.5.5 0 0 1 .043.707L4.28 9.227a.5.5 0 0 1-.054.05l-.054.043a.5.5 0 0 1-.061.037l-.058.034a.5.5 0 0 1-.062.02l-.057.022a.5.5 0 0 1-.073.013l-.052.014a.5.5 0 0 1-.08.004l-.05.006a.5.5 0 0 1-.084 0l-.05-.006a.5.5 0 0 1-.08-.004l-.052-.014a.5.5 0 0 1-.073-.013l-.057-.022a.5.5 0 0 1-.062-.02l-.058-.034a.5.5 0 0 1-.061-.037l-.054-.043a.5.5 0 0 1-.054-.05L.793 1.5a.5.5 0 0 1 .707-.043l.707.707z"
+      />
+    </svg>
+  );
+}
+
+/** Overlapping double tick — same icon as WhatsApp Web `msg-dblcheck`. */
+function MsgDblCheck({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 11"
+      width="16"
+      height="11"
+      className={cn("block shrink-0", className)}
+      aria-hidden
+    >
+      <path
+        fill="currentColor"
+        d="M11.078 0.684l-5.06 5.061L2.933 1.661 1.5 3.095l4.508 4.508 7.762-7.762-2.692-1.157zm-6.95 6.385L.792 3.763l-1.06 1.06 5.148 5.148 8.712-8.712-1.06-1.061-7.592 7.59z"
       />
     </svg>
   );
@@ -22,7 +47,7 @@ export function WhatsAppTicks({ deliveryStatus }: { deliveryStatus?: string | nu
 
   if (level === "failed") {
     return (
-      <span className="ml-1 inline-flex text-red-600 dark:text-red-400" title={title}>
+      <span className="inline-flex align-middle text-red-600 dark:text-red-400" title={title}>
         <span className="text-[11px] font-bold leading-none">!</span>
       </span>
     );
@@ -32,15 +57,14 @@ export function WhatsAppTicks({ deliveryStatus }: { deliveryStatus?: string | nu
     level === "read"
       ? "text-[#53bdeb]"
       : level === "pending"
-        ? "text-zinc-400/80"
-        : "text-zinc-500/90 dark:text-zinc-400/90";
+        ? "text-[#8696a0]"
+        : "text-[#8696a0]";
 
   const showDouble = level === "delivered" || level === "read";
 
   return (
-    <span className={cn("ml-1 inline-flex items-center", color)} title={title}>
-      <CheckMark />
-      {showDouble ? <CheckMark className="-ml-1.5" /> : null}
+    <span className={cn("inline-flex shrink-0 align-middle", color)} title={title}>
+      {showDouble ? <MsgDblCheck /> : <MsgCheck />}
     </span>
   );
 }

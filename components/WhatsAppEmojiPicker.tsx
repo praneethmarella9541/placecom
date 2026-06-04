@@ -22,7 +22,7 @@ export function WhatsAppEmojiPicker({ open, onPick, className }: Props) {
   return (
     <div
       className={cn(
-        "absolute bottom-full left-2 right-2 z-10 mb-1 flex max-h-64 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900",
+        "absolute bottom-full left-2 right-2 z-20 mb-2 flex max-h-64 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-900",
         EMOJI_FONT,
         className
       )}

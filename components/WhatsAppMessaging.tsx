@@ -10,9 +10,7 @@ import {
   getDeliveryFailureAdvice,
   isWhatsAppDeliveryFailed,
 } from "@/lib/whatsapp-delivery";
-import { WHATSAPP_EMOJI_QUICK } from "@/lib/whatsapp-emojis";
 import { WhatsAppComposerBar, type WhatsAppSendPayload } from "@/components/WhatsAppComposerBar";
-import { WhatsAppEmojiPicker } from "@/components/WhatsAppEmojiPicker";
 import { showWhatsAppFailureDetail, WhatsAppTicks } from "@/components/WhatsAppTicks";
 import { titleCase } from "@/lib/title-case";
 import {
@@ -159,7 +157,6 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   const [templateVar1, setTemplateVar1] = useState("");
   const [templateVar2, setTemplateVar2] = useState("");
   const [mobileShowThread, setMobileShowThread] = useState(false);
-  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
   const scrollThreadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -316,23 +313,6 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
     if (!el || !peer || !stickToBottom) return;
     el.scrollTop = el.scrollHeight;
   }, [messages, stickToBottom, peer]);
-
-  useEffect(() => {
-    if (!emojiPickerOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      const node = e.target as Node;
-      if (composerRef.current && !composerRef.current.contains(node)) setEmojiPickerOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setEmojiPickerOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [emojiPickerOpen]);
 
   async function patchMessage(id: string, patch: Record<string, unknown>) {
     const res = await fetch(`/api/whatsapp/messages/${id}`, {
@@ -897,13 +877,13 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                         ) : null}
                         <p
                           className={cn(
-                            "mt-0.5 flex items-center gap-0.5 text-[10px]",
+                            "mt-0.5 flex items-center text-[11px] leading-none",
                             outbound
-                              ? "justify-end text-indigo-800/70 dark:text-indigo-200/70"
-                              : "text-left text-zinc-400",
+                              ? "justify-end gap-[3px] text-[#667781] dark:text-[#ffffff99]"
+                              : "justify-start text-zinc-400",
                           )}
                         >
-                          <span>{formatDate(m.created_at)}</span>
+                          <span className="tabular-nums">{formatDate(m.created_at)}</span>
                           {outbound ? <WhatsAppTicks deliveryStatus={m.delivery_status} /> : null}
                         </p>
                         {outbound && showWhatsAppFailureDetail(m.delivery_status) ? (
@@ -1173,10 +1153,10 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
 
           <div
             ref={composerRef}
-            className="relative shrink-0 border-t border-zinc-200 bg-zinc-100/95 p-2 dark:border-zinc-800 dark:bg-zinc-900/95"
+            className="relative shrink-0 border-t border-zinc-200 bg-[#f0f2f5] dark:border-zinc-800 dark:bg-[#111b21]"
           >
             {replyTo ? (
-              <div className="mb-2 flex items-start gap-2 rounded-xl border border-indigo-200/80 bg-indigo-50/90 px-3 py-2 text-xs dark:border-indigo-900/50 dark:bg-indigo-950/40">
+              <div className="mx-2 mb-2 mt-2 flex items-start gap-2 rounded-xl border border-indigo-200/80 bg-indigo-50/90 px-3 py-2 text-xs dark:border-indigo-900/50 dark:bg-indigo-950/40">
                 <IconReply className="mt-0.5 h-4 w-4 shrink-0 text-indigo-700 dark:text-indigo-400" />
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold text-indigo-900 dark:text-indigo-100">
@@ -1202,40 +1182,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 </button>
               </div>
             ) : null}
-            <WhatsAppEmojiPicker
-              open={emojiPickerOpen}
-              onPick={(em) => {
-                insertAtCursor(em);
-                setEmojiPickerOpen(false);
-              }}
-            />
-            <div className="mb-1 flex gap-0.5 overflow-x-auto pb-0.5 [scrollbar-width:thin]">
-              {WHATSAPP_EMOJI_QUICK.map((em, qi) => (
-                <button
-                  key={`q-${qi}`}
-                  type="button"
-                  className={cn(
-                    "shrink-0 rounded-md px-1.5 py-0.5 text-lg hover:bg-zinc-200/80 dark:hover:bg-zinc-800",
-                    EMOJI_FONT,
-                  )}
-                  onClick={() => insertAtCursor(em)}
-                  aria-label="Insert emoji"
-                >
-                  {em}
-                </button>
-              ))}
-              <button
-                type="button"
-                className={cn(
-                  "shrink-0 rounded-md px-2 py-0.5 text-xs font-medium text-zinc-600 hover:bg-zinc-200/80 dark:text-zinc-400 dark:hover:bg-zinc-800",
-                  EMOJI_FONT,
-                )}
-                onClick={() => setEmojiPickerOpen((o) => !o)}
-              >
-                +{titleCase("More")}
-              </button>
-            </div>
             <WhatsAppComposerBar
+              wrapperRef={composerRef}
               needsTemplate={needsTemplate}
               draft={draft}
               onDraftChange={setDraft}
@@ -1250,6 +1198,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               uploading={uploading}
               onUploadingChange={setUploading}
               recipientValid={isValidE164(recipientE164(peer || newPhone))}
+              onInsertEmoji={insertAtCursor}
               onSend={(p) => void sendMessage(p)}
               textareaRef={textareaRef}
             />

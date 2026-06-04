@@ -33,7 +33,7 @@ import {
 const EMOJI_FONT =
   "[font-family:system-ui,sans-serif,'Segoe_UI_Emoji','Segoe_UI_Symbol','Apple_Color_Emoji','Noto_Color_Emoji']";
 
-const POLL_MS = 3000;
+const POLL_MS = 1500;
 
 /* ── helpers ──────────────────────────────────────────────── */
 function mergeFetchedMessages(prev: Msg[], incoming: Msg[]): Msg[] {
@@ -265,7 +265,13 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
       if (!res.ok) throw new Error(body.error || "Failed to load messages");
       const incoming = body.messages || [];
       setMessages((prev) => {
-        if (silent && hasNewMessages(prev, incoming)) queueMicrotask(() => setStickToBottom(true));
+        if (!silent) {
+          // Initial load: replace entirely — never show old peer's messages
+          setStickToBottom(true);
+          return incoming;
+        }
+        // Background poll: merge to preserve optimistic messages
+        if (hasNewMessages(prev, incoming)) queueMicrotask(() => setStickToBottom(true));
         return mergeFetchedMessages(prev, incoming);
       });
     } catch (e) {
@@ -293,6 +299,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   }, [loadStatus, loadConversations, loadMessages, peer]);
 
   useEffect(() => {
+    // Clear previous peer's messages immediately so they never bleed into the new thread
+    setMessages([]);
     setStickToBottom(true); setSelectMode(false); setSelectedIds([]);
     setReplyTo(null); setMenu(null); setInfoMsg(null);
     messageRowRefs.current.clear(); setHighlightMessageId(null);

@@ -1,15 +1,21 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
-import { sendExotelWhatsAppText, isExotelWhatsAppConfigured } from "@/lib/exotel-whatsapp";
+import {
+  sendExotelWhatsAppTemplate,
+  sendExotelWhatsAppText,
+  isExotelWhatsAppConfigured,
+} from "@/lib/exotel-whatsapp";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
+import { hasOpenWhatsAppSession } from "@/lib/whatsapp-session";
+import {
+  formatTemplatePreview,
+  getDefaultWhatsAppTemplate,
+} from "@/lib/whatsapp-template";
 import { peerForOutbound } from "@/lib/whatsapp-address";
 import { isValidE164, normalizePhone } from "@/lib/phone";
 
 export const runtime = "nodejs";
 
-/**
- * Send a WhatsApp session text via Exotel (from = user's assigned Exotel line).
- */
 export async function POST(request: Request) {
   if (!isExotelWhatsAppConfigured()) {
     return NextResponse.json(
@@ -36,10 +42,17 @@ export async function POST(request: Request) {
     to?: string;
     text?: string;
     replyToId?: string;
+    useTemplate?: boolean;
+    templateName?: string;
+    templateLanguage?: string;
+    templateVariables?: string[];
   } | null;
+
   const to = body?.to?.trim() || "";
   const text = body?.text?.trim() || "";
   const replyToIdRaw = body?.replyToId?.trim() || "";
+  const forceTemplate = body?.useTemplate === true;
+  const forceSession = body?.useTemplate === false;
 
   if (!isValidE164(normalizePhone(to))) {
     return NextResponse.json(
@@ -47,11 +60,42 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-  if (!text) {
+
+  const peerNorm = peerForOutbound(to);
+  const sessionOpen = await hasOpenWhatsAppSession(supabase, peerNorm, businessLine);
+  const mustUseTemplate = forceTemplate || (!forceSession && !sessionOpen);
+
+  const templateConfig = getDefaultWhatsAppTemplate();
+  const templateName = body?.templateName?.trim() || templateConfig.name;
+  const templateLanguage = body?.templateLanguage?.trim() || templateConfig.languageCode;
+
+  let templateVariables = Array.isArray(body?.templateVariables)
+    ? body.templateVariables.map((v) => String(v).trim()).filter(Boolean)
+    : [];
+
+  if (mustUseTemplate) {
+    if (templateVariables.length < templateConfig.bodyParamCount) {
+      return NextResponse.json(
+        {
+          error: `First message must use template "${templateName}". Provide templateVariables with ${templateConfig.bodyParamCount} value(s) for {{1}} and {{2}} (e.g. recipient name, your name).`,
+        },
+        { status: 400 }
+      );
+    }
+    templateVariables = templateVariables.slice(0, templateConfig.bodyParamCount);
+    const missing = templateVariables.findIndex((v) => !v);
+    if (missing >= 0) {
+      return NextResponse.json(
+        {
+          error: `Template variable ${missing + 1} is required (maps to {{${missing + 1}}} in your template).`,
+        },
+        { status: 400 }
+      );
+    }
+  } else if (!text) {
     return NextResponse.json({ error: "text (message body) is required" }, { status: 400 });
   }
 
-  const peerNorm = peerForOutbound(to);
   let replyToId: string | null = null;
   if (replyToIdRaw) {
     const { data: ref, error: refErr } = await supabase
@@ -71,12 +115,24 @@ export async function POST(request: Request) {
     replyToId = ref.id as string;
   }
 
+  const logBody = mustUseTemplate
+    ? formatTemplatePreview(templateConfig, templateVariables)
+    : text;
+
   try {
-    const { sid } = await sendExotelWhatsAppText({
-      fromE164: businessLine,
-      toE164: normalizePhone(to),
-      body: text,
-    });
+    const { sid } = mustUseTemplate
+      ? await sendExotelWhatsAppTemplate({
+          fromE164: businessLine,
+          toE164: normalizePhone(to),
+          templateName,
+          languageCode: templateLanguage,
+          bodyVariables: templateVariables,
+        })
+      : await sendExotelWhatsAppText({
+          fromE164: businessLine,
+          toE164: normalizePhone(to),
+          body: text,
+        });
 
     const { error: logErr } = await supabase.from("whatsapp_messages").insert({
       user_id: user.id,
@@ -85,7 +141,7 @@ export async function POST(request: Request) {
       business_e164: businessLine,
       from_addr: businessLine,
       to_addr: normalizePhone(to),
-      body: text,
+      body: logBody,
       message_sid: sid,
       num_media: 0,
       reply_to_id: replyToId,
@@ -94,7 +150,13 @@ export async function POST(request: Request) {
     if (logErr && !String(logErr.message).includes("does not exist")) {
       console.warn("[whatsapp/send] log insert:", logErr.message);
     }
-    return NextResponse.json({ ok: true, messageSid: sid });
+
+    return NextResponse.json({
+      ok: true,
+      messageSid: sid,
+      messageType: mustUseTemplate ? "template" : "session",
+      sessionOpen,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to send WhatsApp message";
     return NextResponse.json({ error: msg }, { status: 500 });

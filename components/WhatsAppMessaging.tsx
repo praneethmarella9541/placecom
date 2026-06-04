@@ -102,6 +102,12 @@ type StatusPayload = {
   apiHost?: string;
   businessLine?: string | null;
   lineError?: string | null;
+  defaultTemplate?: {
+    name: string;
+    languageCode: string;
+    bodyParamCount: number;
+    previewExample?: string;
+  };
   sandbox?: boolean;
   fromPreview?: string | null;
   suggestedInboundWebhookUrl?: string | null;
@@ -146,6 +152,10 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   const [newPhone, setNewPhone] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [sessionOpen, setSessionOpen] = useState<boolean | null>(null);
+  const [forceTemplate, setForceTemplate] = useState(false);
+  const [templateVar1, setTemplateVar1] = useState("");
+  const [templateVar2, setTemplateVar2] = useState("");
   const [mobileShowThread, setMobileShowThread] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
@@ -241,6 +251,23 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
 
 
   useEffect(() => {
+    const p = peer || newPhone.trim();
+    if (!p.startsWith("+") || p.length < 8) {
+      setSessionOpen(null);
+      return;
+    }
+    void (async () => {
+      try {
+        const res = await fetch(`/api/whatsapp/session?peer=${encodeURIComponent(p)}`);
+        const data = (await res.json()) as { sessionOpen?: boolean; requiresTemplate?: boolean };
+        if (res.ok) setSessionOpen(data.sessionOpen ?? false);
+      } catch {
+        setSessionOpen(null);
+      }
+    })();
+  }, [peer, newPhone]);
+
+  useEffect(() => {
     if (!peer) return;
     void loadMessages(peer, { silent: false });
     const t = window.setInterval(() => {
@@ -310,6 +337,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
     });
   }
 
+  const needsTemplate = forceTemplate || sessionOpen === false;
+
   async function sendMessage() {
     const to = (peer || newPhone).trim();
     const text = draft.trim();
@@ -317,7 +346,14 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
       setError("Recipient must be E.164 with country code, e.g. +14155552671");
       return;
     }
-    if (!text) return;
+    if (needsTemplate) {
+      if (!templateVar1.trim() || !templateVar2.trim()) {
+        setError("Fill in both template fields (recipient name and your name).");
+        return;
+      }
+    } else if (!text) {
+      return;
+    }
     setSending(true);
     setError(null);
     setStickToBottom(true);
@@ -327,7 +363,11 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to,
-          text,
+          text: needsTemplate ? "" : text,
+          useTemplate: needsTemplate,
+          ...(needsTemplate
+            ? { templateVariables: [templateVar1.trim(), templateVar2.trim()] }
+            : {}),
           ...(replyTo?.id ? { replyToId: replyTo.id } : {}),
         }),
       });
@@ -1071,6 +1111,54 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 </div>
               </div>
             ) : null}
+            {needsTemplate ? (
+              <div className="mb-2 space-y-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+                <p className="font-semibold">{titleCase("Opening message uses approved template")}</p>
+                <p className="leading-relaxed opacity-90">
+                  WhatsApp only delivers free text after the contact replies (24h window). Your template:{" "}
+                  <span className="font-mono">{status?.defaultTemplate?.name ?? "initial_conversation"}</span> —{" "}
+                  {status?.defaultTemplate?.previewExample ??
+                    "Hi {{1}}, this is {{2}} from PlaceCom"}
+                </p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="text-[11px] font-medium">{titleCase("{{1}} Recipient name")}</span>
+                    <input
+                      className="input-field mt-1 w-full text-sm"
+                      value={templateVar1}
+                      onChange={(e) => setTemplateVar1(e.target.value)}
+                      placeholder="Rahul"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-medium">{titleCase("{{2}} Your name")}</span>
+                    <input
+                      className="input-field mt-1 w-full text-sm"
+                      value={templateVar2}
+                      onChange={(e) => setTemplateVar2(e.target.value)}
+                      placeholder="Priya"
+                    />
+                  </label>
+                </div>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={forceTemplate}
+                    onChange={(e) => setForceTemplate(e.target.checked)}
+                  />
+                  <span>{titleCase("Always use template (even if session is open)")}</span>
+                </label>
+              </div>
+            ) : (
+              <label className="mb-2 flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                <input
+                  type="checkbox"
+                  checked={forceTemplate}
+                  onChange={(e) => setForceTemplate(e.target.checked)}
+                />
+                <span>{titleCase("Send as approved template instead of free text")}</span>
+              </label>
+            )}
             <div className="mb-1 flex gap-0.5 overflow-x-auto pb-0.5 [scrollbar-width:thin]">
               {EMOJI_PICKER.slice(0, 12).map((em, qi) => (
                 <button
@@ -1122,9 +1210,11 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 className="btn-primary mb-0.5 shrink-0 rounded-full px-4 py-2.5"
                 disabled={
                   sending ||
-                  !draft.trim() ||
-                  !(peer || newPhone).trim().startsWith("+") ||
-                  (peer || newPhone).trim().length < 8
+                  (!(peer || newPhone).trim().startsWith("+") ||
+                    (peer || newPhone).trim().length < 8) ||
+                  (needsTemplate
+                    ? !templateVar1.trim() || !templateVar2.trim()
+                    : !draft.trim())
                 }
                 onClick={() => void sendMessage()}
                 title={titleCase("Send")}

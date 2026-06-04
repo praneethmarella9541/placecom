@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
 import { getExotelApiHost } from "@/lib/exotel-config";
+import { getDefaultWhatsAppTemplate, formatTemplatePreview } from "@/lib/whatsapp-template";
 import {
   getExotelWhatsAppWebhookUrl,
   isExotelWhatsAppConfigured,
@@ -23,6 +24,7 @@ export async function GET(request: Request) {
 
   const base = getTwilioWebhookBaseUrl();
   const suggestedWebhook = getExotelWhatsAppWebhookUrl() ?? (base ? `${base}/api/exotel/whatsapp` : null);
+  const template = getDefaultWhatsAppTemplate();
 
   return NextResponse.json({
     provider: "exotel",
@@ -32,6 +34,12 @@ export async function GET(request: Request) {
     lineError,
     fromPreview: businessLine ? businessLine : null,
     suggestedInboundWebhookUrl: suggestedWebhook,
+    defaultTemplate: {
+      name: template.name,
+      languageCode: template.languageCode,
+      bodyParamCount: template.bodyParamCount,
+      previewExample: formatTemplatePreview(template, ["Customer", "Your name"]),
+    },
     migrationHint:
       "Apply 0016_whatsapp_messages.sql, 0017_whatsapp_message_actions.sql, 0023_profile_telephony.sql, and 0024_whatsapp_business_line.sql. Configure the webhook URL in Exotel Dashboard → WhatsApp → Webhooks.",
   });

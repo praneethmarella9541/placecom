@@ -44,45 +44,15 @@ export function getExotelWhatsAppWebhookUrl(): string | null {
   return base ? `${base.replace(/\/+$/, "")}/api/exotel/whatsapp` : null;
 }
 
-type ExotelMessageContent = {
-  recipient_type: "individual";
-  type: "text";
-  text: { preview_url: boolean; body: string };
-};
-
-export async function sendExotelWhatsAppText(params: {
-  fromE164: string;
-  toE164: string;
-  body: string;
-  statusCallback?: string | null;
-}): Promise<{ sid: string }> {
+async function postExotelWhatsAppPayload(
+  payload: Record<string, unknown>
+): Promise<{ sid: string }> {
   const creds = getExotelCredentials();
   if (!creds) {
     throw new Error(
       "Exotel WhatsApp is not configured. Set EXOTEL_SID, EXOTEL_API_KEY, and EXOTEL_API_TOKEN."
     );
   }
-
-  const from = normalizePhone(params.fromE164);
-  const to = normalizePhone(params.toE164);
-  const statusCallback = params.statusCallback ?? getExotelWhatsAppWebhookUrl();
-
-  const payload = {
-    whatsapp: {
-      messages: [
-        {
-          from,
-          to,
-          ...(statusCallback ? { status_callback: statusCallback } : {}),
-          content: {
-            recipient_type: "individual",
-            type: "text",
-            text: { preview_url: false, body: params.body },
-          } satisfies ExotelMessageContent,
-        },
-      ],
-    },
-  };
 
   const authorization = getExotelBasicAuthHeader(creds);
   const hosts = getExotelApiHostCandidates();
@@ -111,14 +81,80 @@ export async function sendExotelWhatsAppText(params: {
 
     lastStatus = res.status;
     lastError = parseExotelErrorBody(json, res.status);
-
-    // Wrong regional host often returns 401 — try the other cluster once.
     if (res.status !== 401 || hosts.length === 1) {
       break;
     }
   }
 
   throw new Error(lastError || `Exotel WhatsApp send failed (${lastStatus})`);
+}
+
+function buildMessageEnvelope(
+  from: string,
+  to: string,
+  content: Record<string, unknown>,
+  statusCallback: string | null | undefined
+) {
+  return {
+    whatsapp: {
+      messages: [
+        {
+          from,
+          to,
+          ...(statusCallback ? { status_callback: statusCallback } : {}),
+          content: {
+            recipient_type: "individual",
+            ...content,
+          },
+        },
+      ],
+    },
+  };
+}
+
+/** Session (free-form) text — only delivered if the recipient messaged you within the last 24 hours. */
+export async function sendExotelWhatsAppText(params: {
+  fromE164: string;
+  toE164: string;
+  body: string;
+  statusCallback?: string | null;
+}): Promise<{ sid: string }> {
+  const from = normalizePhone(params.fromE164);
+  const to = normalizePhone(params.toE164);
+  const statusCallback = params.statusCallback ?? getExotelWhatsAppWebhookUrl();
+  return postExotelWhatsAppPayload(
+    buildMessageEnvelope(from, to, { type: "text", text: { preview_url: false, body: params.body } }, statusCallback)
+  );
+}
+
+/** Approved template — required to start a chat or message outside the 24h session window. */
+export async function sendExotelWhatsAppTemplate(params: {
+  fromE164: string;
+  toE164: string;
+  templateName: string;
+  languageCode: string;
+  bodyVariables: string[];
+  statusCallback?: string | null;
+}): Promise<{ sid: string }> {
+  const from = normalizePhone(params.fromE164);
+  const to = normalizePhone(params.toE164);
+  const statusCallback = params.statusCallback ?? getExotelWhatsAppWebhookUrl();
+  const parameters = params.bodyVariables.map((text) => ({ type: "text" as const, text }));
+  return postExotelWhatsAppPayload(
+    buildMessageEnvelope(
+      from,
+      to,
+      {
+        type: "template",
+        template: {
+          name: params.templateName,
+          language: { code: params.languageCode, policy: "deterministic" },
+          components: [{ type: "body", parameters }],
+        },
+      },
+      statusCallback
+    )
+  );
 }
 
 /** Extract display text from Exotel inbound_message payload. */

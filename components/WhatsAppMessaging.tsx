@@ -7,6 +7,7 @@ import { formatDate } from "@/lib/utils";
 import { isValidE164, normalizePhone } from "@/lib/phone";
 import {
   formatWhatsAppDeliveryLabel,
+  getDeliveryFailureAdvice,
   isWhatsAppDeliveryFailed,
 } from "@/lib/whatsapp-delivery";
 import { titleCase } from "@/lib/title-case";
@@ -836,6 +837,11 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                             </span>
                           ) : null}
                         </p>
+                        {outbound && isWhatsAppDeliveryFailed(m.delivery_status) ? (
+                          <p className="mt-1 text-[10px] leading-snug text-red-800/90 dark:text-red-200/90">
+                            {getDeliveryFailureAdvice(m.delivery_status)}
+                          </p>
+                        ) : null}
                       </div>
                       {outbound ? selectToggle : null}
                     </div>
@@ -1158,7 +1164,9 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 <p className="font-semibold">{titleCase("Opening message uses approved template")}</p>
                 <p className="leading-relaxed opacity-90">
                   WhatsApp only delivers free text after the contact replies (24h window). Your template:{" "}
-                  <span className="font-mono">{status?.defaultTemplate?.name ?? "initial_conversation"}</span> —{" "}
+                  <span className="font-mono">{status?.defaultTemplate?.name ?? "initial_conversation"}</span>{" "}
+                  (marketing). Meta may block cold outreach if the user already received too many marketing messages
+                  this week — wait 24h and retry once, or use call/SMS. Preview:{" "}
                   {status?.defaultTemplate?.previewExample ??
                     "Hi {{1}}, this is {{2}} from PlaceCom"}
                 </p>

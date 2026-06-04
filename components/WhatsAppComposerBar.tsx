@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { IconSend, IconX } from "@/components/Icons";
 
@@ -11,9 +10,6 @@ export type WhatsAppSendPayload = {
   mediaUrl?: string;
   mediaCaption?: string;
   mediaFilename?: string;
-  location?: { latitude: number; longitude: number; name?: string; address?: string };
-  interactiveBody?: string;
-  interactiveButtons?: Array<{ id: string; title: string }>;
 };
 
 type Props = {
@@ -28,7 +24,8 @@ type Props = {
   onForceTemplateChange: (v: boolean) => void;
   templateName?: string;
   templatePreview?: string;
-  sending: boolean;
+  uploading: boolean;
+  onUploadingChange?: (uploading: boolean) => void;
   recipientValid: boolean;
   onSend: (payload: WhatsAppSendPayload) => void | Promise<void>;
   textareaRef?: React.Ref<HTMLTextAreaElement>;
@@ -46,33 +43,24 @@ export function WhatsAppComposerBar({
   onForceTemplateChange,
   templateName,
   templatePreview,
-  sending,
+  uploading,
+  onUploadingChange,
   recipientValid,
   onSend,
   textareaRef,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [pendingMedia, setPendingMedia] = useState<{
     url: string;
     kind: string;
     filename: string;
   } | null>(null);
-  const [locOpen, setLocOpen] = useState(false);
-  const [lat, setLat] = useState("");
-  const [lng, setLng] = useState("");
-  const [locName, setLocName] = useState("");
-  const [locAddress, setLocAddress] = useState("");
-  const [btnOpen, setBtnOpen] = useState(false);
-  const [btnBody, setBtnBody] = useState("");
-  const [btn1, setBtn1] = useState("");
-  const [btn2, setBtn2] = useState("");
 
   async function handleFile(file: File) {
     setUploadError(null);
-    setUploading(true);
+    onUploadingChange?.(true);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -88,16 +76,14 @@ export function WhatsAppComposerBar({
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
     } finally {
-      setUploading(false);
+      onUploadingChange?.(false);
     }
   }
 
   function canSend(): boolean {
-    if (!recipientValid || sending || uploading) return false;
+    if (!recipientValid || uploading) return false;
     if (needsTemplate) return Boolean(templateVar1.trim() && templateVar2.trim());
     if (pendingMedia) return true;
-    if (locOpen) return Boolean(lat.trim() && lng.trim());
-    if (btnOpen) return Boolean(btnBody.trim() && btn1.trim());
     return Boolean(draft.trim());
   }
 
@@ -117,32 +103,6 @@ export function WhatsAppComposerBar({
       onDraftChange("");
       return;
     }
-    if (locOpen) {
-      void onSend({
-        messageType: "location",
-        location: {
-          latitude: Number(lat),
-          longitude: Number(lng),
-          name: locName.trim() || undefined,
-          address: locAddress.trim() || undefined,
-        },
-      });
-      setLocOpen(false);
-      return;
-    }
-    if (btnOpen) {
-      const buttons = [
-        { id: "btn_1", title: btn1.trim() },
-        ...(btn2.trim() ? [{ id: "btn_2", title: btn2.trim() }] : []),
-      ];
-      void onSend({
-        messageType: "interactive",
-        interactiveBody: btnBody.trim(),
-        interactiveButtons: buttons,
-      });
-      setBtnOpen(false);
-      return;
-    }
     void onSend({ messageType: "text", text: draft.trim() });
   }
 
@@ -157,33 +117,6 @@ export function WhatsAppComposerBar({
           >
             📎 {titleCase("Attach")}
           </button>
-          <button
-            type="button"
-            className={cn(
-              "rounded-lg px-2 py-1 text-xs font-medium",
-              locOpen ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950" : "text-zinc-700 hover:bg-white dark:text-zinc-300"
-            )}
-            onClick={() => {
-              setLocOpen((o) => !o);
-              setBtnOpen(false);
-            }}
-          >
-            📍 {titleCase("Location")}
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "rounded-lg px-2 py-1 text-xs font-medium",
-              btnOpen ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-950" : "text-zinc-700 hover:bg-white dark:text-zinc-300"
-            )}
-            onClick={() => {
-              setBtnOpen((o) => !o);
-              setLocOpen(false);
-            }}
-          >
-            🔘 {titleCase("Buttons")}
-          </button>
-          <span className="text-[10px] text-zinc-500">Session only · groups via Exotel OBA</span>
         </div>
       ) : null}
 
@@ -220,25 +153,6 @@ export function WhatsAppComposerBar({
           <button type="button" onClick={() => setPendingMedia(null)} aria-label="Remove">
             <IconX className="h-3.5 w-3.5" />
           </button>
-        </div>
-      ) : null}
-
-      {locOpen && !needsTemplate ? (
-        <div className="mb-2 grid gap-2 rounded-lg border border-zinc-200 bg-white p-2 text-xs dark:border-zinc-700 dark:bg-zinc-950 sm:grid-cols-2">
-          <input className="input-field" placeholder="Latitude" value={lat} onChange={(e) => setLat(e.target.value)} />
-          <input className="input-field" placeholder="Longitude" value={lng} onChange={(e) => setLng(e.target.value)} />
-          <input className="input-field sm:col-span-2" placeholder="Place name (optional)" value={locName} onChange={(e) => setLocName(e.target.value)} />
-          <input className="input-field sm:col-span-2" placeholder="Address (optional)" value={locAddress} onChange={(e) => setLocAddress(e.target.value)} />
-        </div>
-      ) : null}
-
-      {btnOpen && !needsTemplate ? (
-        <div className="mb-2 space-y-2 rounded-lg border border-zinc-200 bg-white p-2 text-xs dark:border-zinc-700 dark:bg-zinc-950">
-          <input className="input-field w-full" placeholder="Message above buttons" value={btnBody} onChange={(e) => setBtnBody(e.target.value)} />
-          <div className="flex gap-2">
-            <input className="input-field flex-1" placeholder="Button 1 label" value={btn1} onChange={(e) => setBtn1(e.target.value)} />
-            <input className="input-field flex-1" placeholder="Button 2 (optional)" value={btn2} onChange={(e) => setBtn2(e.target.value)} />
-          </div>
         </div>
       ) : null}
 
@@ -297,7 +211,7 @@ export function WhatsAppComposerBar({
           disabled={!canSend()}
           onClick={() => handleSendClick()}
         >
-          {sending || uploading ? (
+          {uploading ? (
             <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
           ) : (
             <IconSend className="h-4 w-4" />

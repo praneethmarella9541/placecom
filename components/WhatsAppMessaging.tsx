@@ -10,6 +10,10 @@ import {
   getDeliveryFailureAdvice,
   isWhatsAppDeliveryFailed,
 } from "@/lib/whatsapp-delivery";
+import { WHATSAPP_EMOJI_QUICK } from "@/lib/whatsapp-emojis";
+import { WhatsAppComposerBar, type WhatsAppSendPayload } from "@/components/WhatsAppComposerBar";
+import { WhatsAppEmojiPicker } from "@/components/WhatsAppEmojiPicker";
+import { showWhatsAppFailureDetail, WhatsAppTicks } from "@/components/WhatsAppTicks";
 import { titleCase } from "@/lib/title-case";
 import {
   IconCheck,
@@ -26,66 +30,51 @@ import {
   IconTrash,
   IconX,
 } from "@/components/Icons";
-import { WhatsAppComposerBar, type WhatsAppSendPayload } from "@/components/WhatsAppComposerBar";
 
 /** Color emoji + text fall back correctly in bubbles and composer */
 const EMOJI_FONT =
   "[font-family:system-ui,sans-serif,'Segoe_UI_Emoji','Segoe_UI_Symbol','Apple_Color_Emoji','Noto_Color_Emoji']";
 
-const EMOJI_PICKER: string[] = [
-  "😀",
-  "😃",
-  "😄",
-  "😁",
-  "😅",
-  "😂",
-  "🤣",
-  "😊",
-  "😇",
-  "🙂",
-  "😉",
-  "😍",
-  "🥰",
-  "😘",
-  "😋",
-  "😎",
-  "🤔",
-  "🙄",
-  "😴",
-  "🤝",
-  "👍",
-  "👎",
-  "👏",
-  "🙌",
-  "🙏",
-  "✌️",
-  "🤞",
-  "💪",
-  "❤️",
-  "🧡",
-  "💛",
-  "💚",
-  "💙",
-  "💜",
-  "🔥",
-  "✨",
-  "💯",
-  "✅",
-  "❌",
-  "⚠️",
-  "📌",
-  "📎",
-  "📞",
-  "💼",
-  "📝",
-  "✉️",
-  "🎉",
-  "👋",
-  "☕",
-  "🙋",
-  "🙋‍♂️",
-  "🙋‍♀️",
-];
+const POLL_MS = 3000;
+
+function mergeFetchedMessages(prev: Msg[], incoming: Msg[]): Msg[] {
+  const optimistics = prev.filter((m) => m.id.startsWith("optimistic-"));
+  const kept = optimistics.filter(
+    (o) =>
+      !incoming.some(
+        (n) =>
+          (n.message_sid && o.message_sid === n.message_sid) ||
+          (n.body === o.body &&
+            Math.abs(new Date(n.created_at).getTime() - new Date(o.created_at).getTime()) < 120_000)
+      )
+  );
+  return [...incoming, ...kept].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
+}
+
+function hasNewMessages(prev: Msg[], incoming: Msg[]): boolean {
+  const prevReal = prev.filter((m) => !m.id.startsWith("optimistic-"));
+  if (incoming.length > prevReal.length) return true;
+  if (!incoming.length) return false;
+  return prevReal[prevReal.length - 1]?.id !== incoming[incoming.length - 1]?.id;
+}
+
+function previewOutboundBody(
+  payload: WhatsAppSendPayload,
+  needsTemplate: boolean,
+  templateVar1: string,
+  templateVar2: string,
+  draft: string
+): string {
+  if (needsTemplate) {
+    return `Hi ${templateVar1}, this is ${templateVar2} from PlaceCom`;
+  }
+  if (payload.messageType === "text") return payload.text?.trim() || draft.trim();
+  if (payload.mediaCaption?.trim()) return payload.mediaCaption.trim();
+  if (payload.mediaFilename) return `[${payload.messageType}: ${payload.mediaFilename}]`;
+  return `[${payload.messageType}]`;
+}
 
 type Conv = { peer_e164: string; last_body: string | null; last_at: string; last_dir: string };
 type Msg = {
@@ -96,6 +85,7 @@ type Msg = {
   to_addr?: string | null;
   body: string | null;
   message_sid?: string | null;
+  num_media?: number;
   delivery_status?: string | null;
   media_url?: string | null;
   content_type?: string | null;
@@ -164,7 +154,6 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   const [error, setError] = useState<string | null>(null);
   const [newPhone, setNewPhone] = useState("");
   const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
   const [sessionOpen, setSessionOpen] = useState<boolean | null>(null);
   const [forceTemplate, setForceTemplate] = useState(false);
   const [templateVar1, setTemplateVar1] = useState("");
@@ -184,6 +173,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [actionBusy, setActionBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -220,10 +210,18 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
       setError(null);
     }
     try {
-      const res = await fetch(`/api/whatsapp/messages?peer=${encodeURIComponent(p)}`);
+      const res = await fetch(`/api/whatsapp/messages?peer=${encodeURIComponent(p)}`, {
+        cache: "no-store",
+      });
       const body = (await res.json()) as { messages?: Msg[]; error?: string };
       if (!res.ok) throw new Error(body.error || "Failed to load messages");
-      setMessages(body.messages || []);
+      const incoming = body.messages || [];
+      setMessages((prev) => {
+        if (silent && hasNewMessages(prev, incoming)) {
+          queueMicrotask(() => setStickToBottom(true));
+        }
+        return mergeFetchedMessages(prev, incoming);
+      });
     } catch (e) {
       if (!silent) setError(clientFetchFailedMessage(e));
     } finally {
@@ -234,7 +232,22 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
   useEffect(() => {
     void loadStatus();
     void loadConversations();
-  }, [loadStatus, loadConversations]);
+    const t = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadConversations({ silent: true });
+    }, POLL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void loadConversations({ silent: true });
+        if (peer) void loadMessages(peer, { silent: true });
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [loadStatus, loadConversations, loadMessages, peer]);
 
   useEffect(() => {
     setStickToBottom(true);
@@ -287,7 +300,7 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
     const t = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void loadMessages(peer, { silent: true });
-    }, 8000);
+    }, POLL_MS);
     return () => window.clearInterval(t);
   }, [peer, loadMessages]);
 
@@ -365,9 +378,34 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
         return;
       }
     }
-    setSending(true);
+
+    const tempId = `optimistic-${crypto.randomUUID()}`;
+    const previewBody = previewOutboundBody(payload, needsTemplate, templateVar1, templateVar2, draft);
+    const optimisticMsg: Msg = {
+      id: tempId,
+      direction: "outbound",
+      peer_e164: to,
+      body: previewBody,
+      created_at: new Date().toISOString(),
+      delivery_status: "sent",
+      message_sid: null,
+      num_media: payload.mediaUrl ? 1 : 0,
+      media_url: payload.mediaUrl ?? null,
+      content_type: needsTemplate ? "template" : payload.messageType,
+      reply_to_id: replyTo?.id ?? null,
+    };
+
     setError(null);
     setStickToBottom(true);
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setDraft("");
+    setReplyTo(null);
+    setMobileShowThread(true);
+    if (!peer) {
+      setPeer(to);
+      setNewPhone("");
+    }
+
     try {
       const res = await fetch("/api/whatsapp/send", {
         method: "POST",
@@ -383,28 +421,31 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
           mediaUrl: payload.mediaUrl,
           mediaCaption: payload.mediaCaption,
           mediaFilename: payload.mediaFilename,
-          location: payload.location,
-          interactiveBody: payload.interactiveBody,
-          interactiveButtons: payload.interactiveButtons,
           ...(replyTo?.id ? { replyToId: replyTo.id } : {}),
         }),
       });
-      const body = (await res.json()) as { error?: string; peerE164?: string };
+      const body = (await res.json()) as { error?: string; peerE164?: string; messageSid?: string };
       if (!res.ok) throw new Error(body.error || "Send failed");
-      setDraft("");
-      setReplyTo(null);
+
       const threadPeer = body.peerE164 || to;
-      if (!peer || peer !== threadPeer) {
-        setPeer(threadPeer);
-        setNewPhone("");
-      }
-      setMobileShowThread(true);
-      await loadConversations({ silent: true });
-      await loadMessages(to, { silent: true });
+      if (peer && peer !== threadPeer) setPeer(threadPeer);
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === tempId
+            ? { ...m, message_sid: body.messageSid ?? m.message_sid, delivery_status: "sent" }
+            : m
+        )
+      );
+
+      void loadConversations({ silent: true });
+      void loadMessages(threadPeer, { silent: true });
     } catch (e) {
-      setError(clientFetchFailedMessage(e));
-    } finally {
-      setSending(false);
+      const err = clientFetchFailedMessage(e);
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? { ...m, delivery_status: `failed: ${err}` } : m))
+      );
+      setError(err);
     }
   }
 
@@ -510,9 +551,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0026</code>.
             </li>
             <li>
-              <strong>Session tools</strong> (after they reply): attach image/video/audio/document, location, quick-reply
-              buttons. Create public <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">whatsapp-media</code> bucket
-              in Supabase Storage.
+              <strong>Session tools</strong> (after they reply): attach image/video/audio/document. Public{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">whatsapp-media</code> bucket in Supabase Storage.
             </li>
             <li>
               <strong>Groups</strong> need Meta OBA + Exotel Groups API — not enabled in app yet (1:1 only).
@@ -857,27 +897,16 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                         ) : null}
                         <p
                           className={cn(
-                            "mt-0.5 text-[10px]",
+                            "mt-0.5 flex items-center gap-0.5 text-[10px]",
                             outbound
-                              ? "text-right text-indigo-800/70 dark:text-indigo-200/70"
+                              ? "justify-end text-indigo-800/70 dark:text-indigo-200/70"
                               : "text-left text-zinc-400",
                           )}
                         >
-                          {formatDate(m.created_at)}
-                          {outbound && m.delivery_status ? (
-                            <span
-                              className={cn(
-                                "ml-1.5",
-                                isWhatsAppDeliveryFailed(m.delivery_status) &&
-                                  "font-medium text-red-700 dark:text-red-300",
-                              )}
-                              title={formatWhatsAppDeliveryLabel(m.delivery_status) ?? undefined}
-                            >
-                              · {formatWhatsAppDeliveryLabel(m.delivery_status)}
-                            </span>
-                          ) : null}
+                          <span>{formatDate(m.created_at)}</span>
+                          {outbound ? <WhatsAppTicks deliveryStatus={m.delivery_status} /> : null}
                         </p>
-                        {outbound && isWhatsAppDeliveryFailed(m.delivery_status) ? (
+                        {outbound && showWhatsAppFailureDetail(m.delivery_status) ? (
                           <p className="mt-1 text-[10px] leading-snug text-red-800/90 dark:text-red-200/90">
                             {getDeliveryFailureAdvice(m.delivery_status)}
                           </p>
@@ -1173,34 +1202,15 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
                 </button>
               </div>
             ) : null}
-            {emojiPickerOpen ? (
-              <div
-                className={cn(
-                  "absolute bottom-full left-2 right-2 z-10 mb-1 max-h-44 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-900",
-                  EMOJI_FONT,
-                )}
-                role="listbox"
-                aria-label="Emoji"
-              >
-                <div className="grid grid-cols-8 gap-0.5 sm:grid-cols-10">
-                  {EMOJI_PICKER.map((em, idx) => (
-                    <button
-                      key={`${idx}-${em}`}
-                      type="button"
-                      className="flex h-9 w-9 items-center justify-center rounded-md text-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
-                      onClick={() => {
-                        insertAtCursor(em);
-                        setEmojiPickerOpen(false);
-                      }}
-                    >
-                      {em}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ) : null}
+            <WhatsAppEmojiPicker
+              open={emojiPickerOpen}
+              onPick={(em) => {
+                insertAtCursor(em);
+                setEmojiPickerOpen(false);
+              }}
+            />
             <div className="mb-1 flex gap-0.5 overflow-x-auto pb-0.5 [scrollbar-width:thin]">
-              {EMOJI_PICKER.slice(0, 12).map((em, qi) => (
+              {WHATSAPP_EMOJI_QUICK.map((em, qi) => (
                 <button
                   key={`q-${qi}`}
                   type="button"
@@ -1237,7 +1247,8 @@ export function WhatsAppMessaging({ embedded = false }: WhatsAppMessagingProps) 
               onForceTemplateChange={setForceTemplate}
               templateName={status?.defaultTemplate?.name}
               templatePreview={status?.defaultTemplate?.previewExample}
-              sending={sending}
+              uploading={uploading}
+              onUploadingChange={setUploading}
               recipientValid={isValidE164(recipientE164(peer || newPhone))}
               onSend={(p) => void sendMessage(p)}
               textareaRef={textareaRef}

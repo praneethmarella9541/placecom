@@ -1,15 +1,15 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getUserOr401 } from "@/lib/request-auth";
+import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
 
 export const runtime = "nodejs";
 
 type ContactRow = { peer_e164: string; name: string };
 
 /** GET /api/whatsapp/contacts — return all saved contacts for the signed-in user */
-export async function GET() {
-  const supabase = createServerSupabaseClient();
-  const { data: { user }, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export async function GET(request: Request) {
+  const { supabase, user } = await getUserOr401(request);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { data, error } = await supabase
     .from("wa_contacts")
@@ -18,7 +18,6 @@ export async function GET() {
     .order("name", { ascending: true });
 
   if (error) {
-    // Table may not exist yet (migration not run)
     if (/relation.*wa_contacts.*does not exist/i.test(error.message)) {
       return NextResponse.json({ contacts: [] });
     }
@@ -30,16 +29,20 @@ export async function GET() {
 
 /** POST /api/whatsapp/contacts — upsert a contact name */
 export async function POST(request: Request) {
-  const supabase = createServerSupabaseClient();
-  const { data: { user }, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { supabase, user } = await getUserOr401(request);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = (await request.json().catch(() => null)) as { peer_e164?: string; name?: string } | null;
-  const peer = body?.peer_e164?.trim();
+  const peerRaw = body?.peer_e164?.trim();
   const name = body?.name?.trim();
 
-  if (!peer) return NextResponse.json({ error: "peer_e164 is required" }, { status: 400 });
+  if (!peerRaw) return NextResponse.json({ error: "peer_e164 is required" }, { status: 400 });
   if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
+
+  const peer = canonicalWhatsAppPeer(peerRaw);
+  if (!peer || !/^\+[1-9]\d{7,14}$/.test(peer)) {
+    return NextResponse.json({ error: "Invalid peer phone" }, { status: 400 });
+  }
 
   const { error } = await supabase
     .from("wa_contacts")
@@ -54,19 +57,23 @@ export async function POST(request: Request) {
 
 /** DELETE /api/whatsapp/contacts — remove a saved contact name */
 export async function DELETE(request: Request) {
-  const supabase = createServerSupabaseClient();
-  const { data: { user }, error: authErr } = await supabase.auth.getUser();
-  if (authErr || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { supabase, user } = await getUserOr401(request);
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = (await request.json().catch(() => null)) as { peer_e164?: string } | null;
-  const peer = body?.peer_e164?.trim();
-  if (!peer) return NextResponse.json({ error: "peer_e164 is required" }, { status: 400 });
+  const peerRaw = body?.peer_e164?.trim();
+  if (!peerRaw) return NextResponse.json({ error: "peer_e164 is required" }, { status: 400 });
+
+  const peerKeys = peerKeysForQuery(peerRaw);
+  if (!peerKeys.length) {
+    return NextResponse.json({ error: "Invalid peer phone" }, { status: 400 });
+  }
 
   const { error } = await supabase
     .from("wa_contacts")
     .delete()
     .eq("user_id", user.id)
-    .eq("peer_e164", peer);
+    .in("peer_e164", peerKeys);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ ok: true });

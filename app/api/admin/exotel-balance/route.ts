@@ -18,29 +18,9 @@ export async function GET() {
   const auth = await assertAdmin();
   if (!("ok" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  // Read directly — bypass the lib helper to rule out import issues
-  const sidRaw   = process.env.EXOTEL_SID ?? process.env.EXOTEL_ACCOUNT_SID ?? "";
-  const keyRaw   = process.env.EXOTEL_API_KEY ?? "";
-  const tokenRaw = process.env.EXOTEL_API_TOKEN ?? "";
-
-  console.log("[exotel-balance] env check — sid:", sidRaw ? `${sidRaw.slice(0,4)}…` : "EMPTY",
-    "key:", keyRaw ? `${keyRaw.slice(0,4)}…` : "EMPTY",
-    "token:", tokenRaw ? `${tokenRaw.slice(0,4)}…` : "EMPTY");
-
   const creds = getExotelCredentials();
   if (!creds) {
-    return NextResponse.json({
-      error: "Exotel not configured",
-      debug: {
-        hasSid:   !!sidRaw.trim(),
-        hasKey:   !!keyRaw.trim(),
-        hasToken: !!tokenRaw.trim(),
-        // Show first 4 chars so you can verify the right value is there
-        sidHint:   sidRaw   ? sidRaw.trim().slice(0, 4)   : null,
-        keyHint:   keyRaw   ? keyRaw.trim().slice(0, 4)   : null,
-        tokenHint: tokenRaw ? tokenRaw.trim().slice(0, 4) : null,
-      },
-    }, { status: 503 });
+    return NextResponse.json({ error: "Exotel not configured — set EXOTEL_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN" }, { status: 503 });
   }
 
   const authorization = getExotelBasicAuthHeader(creds);
@@ -56,24 +36,24 @@ export async function GET() {
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
-        console.log("[exotel-balance] API error:", res.status, text.slice(0, 300), "url:", url);
         if (res.status === 401 && hosts.length > 1) continue;
         return NextResponse.json({ error: `Exotel Balance API returned ${res.status}: ${text.slice(0, 200)}` }, { status: 502 });
       }
 
-      const rawText = await res.text();
-      console.log("[exotel-balance] raw response:", rawText.slice(0, 300));
-      let json: { Account?: { AccountSid?: string; BalanceData?: { Balance?: string; Currency?: string; PricingPlan?: string; DateUpdated?: string } } };
-      try { json = JSON.parse(rawText); } catch { return NextResponse.json({ error: `Non-JSON response: ${rawText.slice(0, 200)}` }, { status: 502 }); }
+      const json = (await res.json()) as Record<string, unknown>;
 
+      // Exotel actual format: {"Balance":{"Amount":3863.004267}}
+      // Documented format:    {"Account":{"BalanceData":{"Balance":"...","Currency":"INR",...}}}
+      const direct = json.Balance as { Amount?: number } | undefined;
+      const nested = (json.Account as { BalanceData?: { Balance?: string; Currency?: string; PricingPlan?: string; DateUpdated?: string } } | undefined)?.BalanceData;
+      const amount = direct?.Amount ?? (nested?.Balance ? parseFloat(nested.Balance) : null);
 
-      const bd = json.Account?.BalanceData;
       return NextResponse.json({
-        balance: bd?.Balance ? parseFloat(bd.Balance) : null,
-        currency: bd?.Currency ?? "INR",
-        pricingPlan: bd?.PricingPlan ?? null,
-        dateUpdated: bd?.DateUpdated ?? null,
-        accountSid: json.Account?.AccountSid ?? creds.sid,
+        balance: amount,
+        currency: nested?.Currency ?? "INR",
+        pricingPlan: nested?.PricingPlan ?? null,
+        dateUpdated: nested?.DateUpdated ?? null,
+        accountSid: (json.Account as { AccountSid?: string } | undefined)?.AccountSid ?? creds.sid,
       }, {
         headers: { "Cache-Control": "private, max-age=60" },
       });

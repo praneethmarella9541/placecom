@@ -56,6 +56,7 @@ type ExotelBalance = {
   dateUpdated: string | null;
   accountSid: string;
   error?: string;
+  debug?: { hasSid: boolean; hasKey: boolean; hasToken: boolean };
 };
 
 function formatNumber(n: number): string {
@@ -202,9 +203,16 @@ export default function AdminAnalyticsPage() {
             {[...Array(3)].map((_, i) => <div key={i} className="skeleton-shimmer h-14 flex-1 rounded-xl" />)}
           </div>
         ) : balance?.error || !balance || balance.balance === null ? (
-          <p className="text-[13px] text-[var(--color-text-muted)]">
-            {balance?.error ?? "Exotel not configured — set EXOTEL_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN."}
-          </p>
+          <div className="space-y-1">
+            <p className="text-[13px] text-[var(--color-text-muted)]">
+              {balance?.error ?? "Exotel not configured — set EXOTEL_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN."}
+            </p>
+            {balance?.debug && (
+              <p className="font-mono text-[11px] text-[var(--color-text-faint)]">
+                SID: {balance.debug.hasSid ? "✓" : "✗"} · API Key: {balance.debug.hasKey ? "✓" : "✗"} · API Token: {balance.debug.hasToken ? "✓" : "✗"}
+              </p>
+            )}
+          </div>
         ) : (
           <div className="flex flex-wrap gap-4">
             <div className="flex min-w-[160px] flex-1 flex-col gap-0.5 rounded-xl bg-[var(--color-surface-offset)]/50 px-4 py-3">

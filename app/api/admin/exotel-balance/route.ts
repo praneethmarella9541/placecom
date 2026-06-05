@@ -19,7 +19,19 @@ export async function GET() {
 
   const creds = getExotelCredentials();
   if (!creds) {
-    return NextResponse.json({ error: "Exotel not configured (EXOTEL_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN)" }, { status: 503 });
+    // Debug: show which vars are missing (values hidden)
+    const sid = process.env.EXOTEL_SID?.trim() || process.env.EXOTEL_ACCOUNT_SID?.trim();
+    const key = process.env.EXOTEL_API_KEY?.trim();
+    const token = process.env.EXOTEL_API_TOKEN?.trim();
+    const missing = [
+      !sid && "EXOTEL_SID",
+      !key && "EXOTEL_API_KEY",
+      !token && "EXOTEL_API_TOKEN",
+    ].filter(Boolean).join(", ");
+    return NextResponse.json({
+      error: `Exotel not configured — missing: ${missing || "unknown"}`,
+      debug: { hasSid: !!sid, hasKey: !!key, hasToken: !!token },
+    }, { status: 503 });
   }
 
   const authorization = getExotelBasicAuthHeader(creds);

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { normalizePhone, phoneMatches } from "@/lib/phone";
+import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
 
 export const runtime = "nodejs";
 
@@ -29,6 +32,11 @@ export async function POST(request: Request) {
   const recordingUrl = params.get("RecordingUrl") ?? params.get("recording_url") ?? "";
   const recordingDuration = params.get("RecordingDuration") ?? params.get("recording_duration") ?? "";
   const duration     = params.get("Duration") ?? params.get("duration") ?? "";
+  const conversationDuration =
+    params.get("ConversationDuration") ?? params.get("conversation_duration") ?? "";
+  // Per-leg dial status, when Exotel includes it — the strongest answered signal.
+  const legStatus =
+    params.get("DialCallStatus") ?? params.get("Legs[0][Status]") ?? params.get("leg_status") ?? "";
   const startTime    = params.get("StartTime") ?? params.get("start_time") ?? "";
   const endTime      = params.get("EndTime") ?? params.get("end_time") ?? "";
 
@@ -43,21 +51,32 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing CallSid" }, { status: 400 });
   }
 
-  const statusMap: Record<string, string> = {
-    completed:   "completed",
-    "no-answer": "no-answer",
-    "no answer": "no-answer",
-    busy:        "busy",
-    failed:      "failed",
-    canceled:    "failed",
-    cancelled:   "failed",
-  };
-  const mappedStatus = statusMap[status.toLowerCase()] ?? status.toLowerCase();
-
   // Store the S3 recording URL directly in recording_sid column.
   // The recording proxy fetches it using Exotel API credentials.
   // Fall back to presigned URL if base URL is missing (presigned expires in 5 min, but better than nothing).
   const storedRecordingUrl = recordingUrl || preSignedUrl || null;
+
+  // Determine direction from the stored row so an unanswered call is labelled
+  // correctly (missed for incoming, no-answer for outbound).
+  const { data: existing } = await supabaseAdmin
+    .from("call_logs")
+    .select("from_number")
+    .eq("call_sid", callSid)
+    .maybeSingle();
+  const virtuals = listConfiguredExotelNumbers().map((v) => normalizePhone(v));
+  const direction = deriveCallDirection(existing?.from_number, virtuals, phoneMatches);
+
+  const mappedStatus = resolveCallStatus(
+    {
+      status,
+      duration,
+      conversationDuration,
+      recordingDuration,
+      hasRecording: !!storedRecordingUrl,
+      legStatus,
+    },
+    direction
+  );
 
   const updates: Record<string, unknown> = {
     status: mappedStatus,

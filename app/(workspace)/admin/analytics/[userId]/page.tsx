@@ -337,6 +337,7 @@ export default function AdminUserAnalyticsPage() {
     const colors: Record<string, string> = {
       completed: "#10b981",
       "no-answer": "#f59e0b",
+      missed: "#ef4444",
       busy: "#fb923c",
       failed: "#ef4444",
       "in-progress": "#3b82f6",

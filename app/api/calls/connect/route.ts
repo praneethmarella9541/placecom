@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
 import { normalizePhone, phoneLookupVariants, phoneMatches } from "@/lib/phone";
+import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
 
 export const runtime = "nodejs";
 
@@ -19,13 +20,6 @@ const TERMINAL_CALL_TYPES = new Set([
   "completed", "incomplete", "client-hangup", "voicemail",
 ]);
 
-const DIAL_STATUS_MAP: Record<string, string> = {
-  completed:  "completed",
-  busy:       "busy",
-  "no-answer":"no-answer",
-  failed:     "failed",
-  canceled:   "failed",
-};
 
 async function fetchRecordingUrl(callSid: string): Promise<string | null> {
   const sid      = process.env.EXOTEL_SID?.trim();
@@ -60,15 +54,39 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
   const dialDuration  = params.get("DialCallDuration")?.toString() ?? "";
   const recordingUrl  = params.get("RecordingUrl")?.toString() ?? ""; // voicemail only
 
-  // Map to internal status
-  let mappedStatus = DIAL_STATUS_MAP[dialStatus.toLowerCase()] ?? "";
-  if (!mappedStatus) {
-    mappedStatus = callType === "completed" ? "completed"
-      : callType === "incomplete" ? "no-answer"
-      : callType === "client-hangup" ? "completed"
-      : callType === "voicemail" ? "completed"
-      : "failed";
-  }
+  // RecordingUrl present for voicemail; for regular calls fetch from Recordings API.
+  // A recording only exists when the agent leg actually connected, so fetching it
+  // first also gives us the strongest "was it answered" signal.
+  const storedUrl = recordingUrl || (await fetchRecordingUrl(callSid));
+
+  // DialCallStatus is the status of the *dialled leg* (the agent for incoming
+  // calls, the customer for outbound dials) and DialCallDuration is that leg's
+  // talk time — the authoritative answered signal. We do NOT trust CallType:
+  // Exotel reports "client-hangup"/"completed" even when the dialled party
+  // never picked up (caller hung up while ringing) → that is a MISSED/NO-ANSWER
+  // call, not a completed one.
+  //
+  // Direction is derived from the row so an unanswered call is labelled
+  // correctly: "missed" for incoming, "no-answer" for outbound.
+  const { data: existing } = await supabaseAdmin
+    .from("call_logs")
+    .select("from_number")
+    .eq("call_sid", callSid)
+    .maybeSingle();
+  const virtuals = listConfiguredExotelNumbers().map((v) => normalizePhone(v));
+  const direction = deriveCallDirection(existing?.from_number, virtuals, phoneMatches);
+
+  const mappedStatus = resolveCallStatus(
+    {
+      // Prefer the explicit leg status; fall back to CallType only as a hint.
+      status: dialStatus || callType,
+      duration: dialDuration,
+      conversationDuration: dialDuration,
+      hasRecording: !!storedUrl,
+      legStatus: dialStatus,
+    },
+    direction
+  );
 
   const updates: Record<string, unknown> = {
     status: mappedStatus,
@@ -83,8 +101,6 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
     try { updates.ended_at = new Date(endTime).toISOString(); } catch {}
   }
 
-  // RecordingUrl present for voicemail; for regular calls fetch from Recordings API
-  const storedUrl = recordingUrl || (await fetchRecordingUrl(callSid));
   if (storedUrl) updates.recording_sid = storedUrl;
 
   console.log("[calls/connect] end-of-call | sid:", callSid, "| callType:", callType,

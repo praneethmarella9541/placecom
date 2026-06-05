@@ -1,21 +1,17 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getAuthedRequest } from "@/lib/api-auth";
+import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { normalizePhone, phoneMatches } from "@/lib/phone";
+import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
 
 export const runtime = "nodejs";
-
-const DIAL_STATUS_MAP: Record<string, string> = {
-  completed:   "completed",
-  busy:        "busy",
-  "no-answer": "no-answer",
-  failed:      "failed",
-  canceled:    "failed",
-  cancelled:   "failed",
-};
 
 type ExotelCall = {
   Status?: string;
   Duration?: string | number;
+  ConversationDuration?: string | number;
+  RecordingDuration?: string | number;
   StartTime?: string;
   EndTime?: string;
   RecordingUrl?: string;
@@ -52,7 +48,7 @@ export async function POST(request: Request) {
 
   const { data: row } = await svc
     .from("call_logs")
-    .select("id, call_sid, status")
+    .select("id, call_sid, status, from_number")
     .eq("id", id)
     .eq("user_id", authed.user.id)
     .maybeSingle();
@@ -72,12 +68,26 @@ export async function POST(request: Request) {
   if (!call) return NextResponse.json({ ok: false, reason: "Call not found in Exotel" });
 
   const status = (call.Status ?? "").toLowerCase();
-  const mapped = DIAL_STATUS_MAP[status] ?? status;
+  const virtuals = listConfiguredExotelNumbers().map((v) => normalizePhone(v));
+  const direction = deriveCallDirection(row.from_number, virtuals, phoneMatches);
+  const mapped = resolveCallStatus(
+    {
+      status: call.Status,
+      duration: call.Duration,
+      conversationDuration: call.ConversationDuration,
+      recordingDuration: call.RecordingDuration,
+      hasRecording: !!call.RecordingUrl,
+    },
+    direction
+  );
 
   const updates: Record<string, unknown> = {
     status: mapped,
     updated_at: new Date().toISOString(),
   };
+  if (call.RecordingDuration != null) {
+    updates.recording_duration_seconds = parseInt(String(call.RecordingDuration), 10) || null;
+  }
   if (call.Duration != null) updates.duration_seconds = parseInt(String(call.Duration), 10) || null;
   if (call.StartTime) {
     try { updates.started_at = new Date(call.StartTime).toISOString(); } catch {}

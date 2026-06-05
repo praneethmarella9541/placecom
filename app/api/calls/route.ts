@@ -3,21 +3,15 @@ import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
+import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
 
 export const runtime = "nodejs";
 
-
-const DIAL_STATUS_MAP: Record<string, string> = {
-  completed:   "completed",
-  busy:        "busy",
-  "no-answer": "no-answer",
-  failed:      "failed",
-  canceled:    "failed",
-  cancelled:   "failed",
-};
-
 // Fetch one call's details from Exotel and persist to DB. Returns the updated row patch (or null if not terminal yet).
-async function refreshFromExotel(callSid: string): Promise<Record<string, unknown> | null> {
+async function refreshFromExotel(
+  callSid: string,
+  fromNumber?: string | null
+): Promise<Record<string, unknown> | null> {
   const sid      = process.env.EXOTEL_SID?.trim();
   const apiKey   = process.env.EXOTEL_API_KEY?.trim();
   const apiToken = process.env.EXOTEL_API_TOKEN?.trim();
@@ -37,14 +31,31 @@ async function refreshFromExotel(callSid: string): Promise<Record<string, unknow
     if (!call) return null;
 
     const status = (call.Status ?? "").toLowerCase();
-    const mapped = DIAL_STATUS_MAP[status] ?? status;
-    // Only persist if call has finished
-    if (!["completed", "busy", "no-answer", "failed"].includes(mapped)) return null;
+    // Only persist if the call has finished.
+    if (!["completed", "busy", "no-answer", "failed", "canceled", "cancelled"].includes(status)) {
+      return null;
+    }
+
+    const virtuals = listConfiguredExotelNumbers().map((v) => normalizePhone(v));
+    const direction = deriveCallDirection(fromNumber, virtuals, phoneMatches);
+    const mapped = resolveCallStatus(
+      {
+        status: call.Status,
+        duration: call.Duration,
+        conversationDuration: call.ConversationDuration,
+        recordingDuration: call.RecordingDuration,
+        hasRecording: !!call.RecordingUrl,
+      },
+      direction
+    );
 
     const updates: Record<string, unknown> = {
       status: mapped,
       updated_at: new Date().toISOString(),
     };
+    if (call.RecordingDuration) {
+      updates.recording_duration_seconds = parseInt(String(call.RecordingDuration), 10) || null;
+    }
     if (call.Duration) updates.duration_seconds = parseInt(call.Duration, 10) || null;
     if (call.StartTime) {
       try { updates.started_at = new Date(call.StartTime).toISOString(); } catch {}
@@ -121,7 +132,7 @@ export async function GET(request: Request) {
     );
     await Promise.all(
       stuck.map(async (row) => {
-        const patch = await refreshFromExotel(row.call_sid);
+        const patch = await refreshFromExotel(row.call_sid, row.from_number);
         if (!patch) return;
         await svc.from("call_logs").update(patch).eq("id", row.id);
         Object.assign(row, patch);

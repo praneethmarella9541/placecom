@@ -52,6 +52,7 @@ type UserAnalytics = {
     talkMinutes: number;
     smsSent: number;
     whatsappSent: number;
+    whatsappReceived: number;
     emailsSent: number;
     tokensIn: number;
     tokensOut: number;
@@ -206,7 +207,7 @@ export async function GET(request: Request) {
   // Pull activity rows scoped to the team window. We do per-query .in() filters
   // so RLS-bypass (service role) is targeted, not table-wide. Upper bound
   // (`lt`) is exclusive next-day-midnight so `toUtc` itself is included.
-  const [callsRes, smsRes, waRes, emailsRes, jobsRes, ...emailEntries] = await Promise.all([
+  const [callsRes, smsRes, waOutRes, waInRes, emailsRes, jobsRes, ...emailEntries] = await Promise.all([
     svc
       .from("call_logs")
       .select("user_id, status, from_number, to_number, duration_seconds, created_at")
@@ -228,6 +229,13 @@ export async function GET(request: Request) {
       .gte("created_at", sinceIso)
       .lt("created_at", queryUpperIso),
     svc
+      .from("whatsapp_messages")
+      .select("user_id, direction, created_at")
+      .in("user_id", userIdsForQuery)
+      .eq("direction", "inbound")
+      .gte("created_at", sinceIso)
+      .lt("created_at", queryUpperIso),
+    svc
       .from("email_tracking")
       .select("user_id, sent_at")
       .in("user_id", userIdsForQuery)
@@ -246,7 +254,7 @@ export async function GET(request: Request) {
 
   // Surface the first hard error if any; missing tables (e.g. migration not
   // applied) give a friendlier message than a 500.
-  for (const { error } of [callsRes, smsRes, waRes, emailsRes, jobsRes]) {
+  for (const { error } of [callsRes, smsRes, waOutRes, waInRes, emailsRes, jobsRes]) {
     if (error) {
       // 42P01 = table doesn't exist. Treat as empty rather than failing the
       // whole dashboard — different installs are at different migration levels.
@@ -274,6 +282,7 @@ export async function GET(request: Request) {
       talkMinutes: 0,
       smsSent: 0,
       whatsappSent: 0,
+      whatsappReceived: 0,
       emailsSent: 0,
       tokensIn: 0,
       tokensOut: 0,
@@ -310,12 +319,18 @@ export async function GET(request: Request) {
       if (i !== undefined) series[i].messages += 1;
     }
 
-    // WhatsApp (outbound)
-    for (const r of (waRes.data as MessageRow[] | null) ?? []) {
+    // WhatsApp outbound
+    for (const r of (waOutRes.data as MessageRow[] | null) ?? []) {
       if (r.user_id !== uid) continue;
       totals.whatsappSent += 1;
       const i = dayIdx.get(dayKey(r.created_at));
       if (i !== undefined) series[i].messages += 1;
+    }
+
+    // WhatsApp inbound (received)
+    for (const r of (waInRes.data as MessageRow[] | null) ?? []) {
+      if (r.user_id !== uid) continue;
+      totals.whatsappReceived += 1;
     }
 
     // Email
@@ -352,9 +367,25 @@ export async function GET(request: Request) {
     };
   });
 
+  // Account-level totals (sum across all team members)
+  const accountTotals = result.reduce(
+    (acc, u) => ({
+      callsIn: acc.callsIn + u.totals.callsIn,
+      callsOut: acc.callsOut + u.totals.callsOut,
+      talkMinutes: Math.round((acc.talkMinutes + u.totals.talkMinutes) * 10) / 10,
+      smsSent: acc.smsSent + u.totals.smsSent,
+      whatsappSent: acc.whatsappSent + u.totals.whatsappSent,
+      whatsappReceived: acc.whatsappReceived + u.totals.whatsappReceived,
+      emailsSent: acc.emailsSent + u.totals.emailsSent,
+      costUsd: Math.round((acc.costUsd + u.totals.costUsd) * 10000) / 10000,
+    }),
+    { callsIn: 0, callsOut: 0, talkMinutes: 0, smsSent: 0, whatsappSent: 0, whatsappReceived: 0, emailsSent: 0, costUsd: 0 }
+  );
+
   return NextResponse.json(
     {
       users: result,
+      accountTotals,
       windowDays,
       from: fromUtc.toISOString().slice(0, 10),
       to: toUtc.toISOString().slice(0, 10),

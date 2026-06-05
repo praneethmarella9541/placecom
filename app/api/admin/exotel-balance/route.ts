@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { getExotelCredentials, getExotelApiHostCandidates, getExotelBasicAuthHeader } from "@/lib/exotel-config";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 async function assertAdmin() {
   const supabase = createServerSupabaseClient();
@@ -42,8 +43,8 @@ export async function GET() {
     try {
       const res = await fetch(url, {
         headers: { Authorization: authorization },
-        next: { revalidate: 60 }, // cache 1 min server-side
-      } as RequestInit & { next?: { revalidate?: number } });
+        cache: "no-store",
+      });
 
       if (!res.ok) {
         if (res.status === 401 && hosts.length > 1) continue; // try other region

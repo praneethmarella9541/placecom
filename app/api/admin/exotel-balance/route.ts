@@ -55,22 +55,17 @@ export async function GET() {
       });
 
       if (!res.ok) {
-        if (res.status === 401 && hosts.length > 1) continue; // try other region
         const text = await res.text().catch(() => "");
-        return NextResponse.json({ error: `Exotel Balance API returned ${res.status}: ${text}` }, { status: 502 });
+        console.log("[exotel-balance] API error:", res.status, text.slice(0, 300), "url:", url);
+        if (res.status === 401 && hosts.length > 1) continue;
+        return NextResponse.json({ error: `Exotel Balance API returned ${res.status}: ${text.slice(0, 200)}` }, { status: 502 });
       }
 
-      const json = (await res.json()) as {
-        Account?: {
-          AccountSid?: string;
-          BalanceData?: {
-            Balance?: string;
-            Currency?: string;
-            PricingPlan?: string;
-            DateUpdated?: string;
-          };
-        };
-      };
+      const rawText = await res.text();
+      console.log("[exotel-balance] raw response:", rawText.slice(0, 300));
+      let json: { Account?: { AccountSid?: string; BalanceData?: { Balance?: string; Currency?: string; PricingPlan?: string; DateUpdated?: string } } };
+      try { json = JSON.parse(rawText); } catch { return NextResponse.json({ error: `Non-JSON response: ${rawText.slice(0, 200)}` }, { status: 502 }); }
+
 
       const bd = json.Account?.BalanceData;
       return NextResponse.json({

@@ -56,7 +56,7 @@ type ExotelBalance = {
   dateUpdated: string | null;
   accountSid: string;
   error?: string;
-  debug?: { hasSid: boolean; hasKey: boolean; hasToken: boolean };
+  debug?: { hasSid: boolean; hasKey: boolean; hasToken: boolean; sidHint?: string | null; keyHint?: string | null; tokenHint?: string | null };
 };
 
 function formatNumber(n: number): string {
@@ -209,7 +209,9 @@ export default function AdminAnalyticsPage() {
             </p>
             {balance?.debug && (
               <p className="font-mono text-[11px] text-[var(--color-text-faint)]">
-                SID: {balance.debug.hasSid ? "✓" : "✗"} · API Key: {balance.debug.hasKey ? "✓" : "✗"} · API Token: {balance.debug.hasToken ? "✓" : "✗"}
+                SID: {balance.debug.hasSid ? `✓ (${balance.debug.sidHint}…)` : "✗ MISSING"} ·{" "}
+                API Key: {balance.debug.hasKey ? `✓ (${balance.debug.keyHint}…)` : "✗ MISSING"} ·{" "}
+                API Token: {balance.debug.hasToken ? `✓ (${balance.debug.tokenHint}…)` : "✗ MISSING"}
               </p>
             )}
           </div>

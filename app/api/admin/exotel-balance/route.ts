@@ -18,20 +18,28 @@ export async function GET() {
   const auth = await assertAdmin();
   if (!("ok" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
+  // Read directly — bypass the lib helper to rule out import issues
+  const sidRaw   = process.env.EXOTEL_SID ?? process.env.EXOTEL_ACCOUNT_SID ?? "";
+  const keyRaw   = process.env.EXOTEL_API_KEY ?? "";
+  const tokenRaw = process.env.EXOTEL_API_TOKEN ?? "";
+
+  console.log("[exotel-balance] env check — sid:", sidRaw ? `${sidRaw.slice(0,4)}…` : "EMPTY",
+    "key:", keyRaw ? `${keyRaw.slice(0,4)}…` : "EMPTY",
+    "token:", tokenRaw ? `${tokenRaw.slice(0,4)}…` : "EMPTY");
+
   const creds = getExotelCredentials();
   if (!creds) {
-    // Debug: show which vars are missing (values hidden)
-    const sid = process.env.EXOTEL_SID?.trim() || process.env.EXOTEL_ACCOUNT_SID?.trim();
-    const key = process.env.EXOTEL_API_KEY?.trim();
-    const token = process.env.EXOTEL_API_TOKEN?.trim();
-    const missing = [
-      !sid && "EXOTEL_SID",
-      !key && "EXOTEL_API_KEY",
-      !token && "EXOTEL_API_TOKEN",
-    ].filter(Boolean).join(", ");
     return NextResponse.json({
-      error: `Exotel not configured — missing: ${missing || "unknown"}`,
-      debug: { hasSid: !!sid, hasKey: !!key, hasToken: !!token },
+      error: "Exotel not configured",
+      debug: {
+        hasSid:   !!sidRaw.trim(),
+        hasKey:   !!keyRaw.trim(),
+        hasToken: !!tokenRaw.trim(),
+        // Show first 4 chars so you can verify the right value is there
+        sidHint:   sidRaw   ? sidRaw.trim().slice(0, 4)   : null,
+        keyHint:   keyRaw   ? keyRaw.trim().slice(0, 4)   : null,
+        tokenHint: tokenRaw ? tokenRaw.trim().slice(0, 4) : null,
+      },
     }, { status: 503 });
   }
 

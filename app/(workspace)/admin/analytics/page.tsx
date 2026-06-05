@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { titleCase } from "@/lib/title-case";
 import { DateRangePicker, rangeEndingToday, type DateRange } from "@/components/DateRangePicker";
-import { Phone, MessageSquare, Mail, Zap, IndianRupee, TrendingDown, PhoneIncoming, PhoneOutgoing } from "lucide-react";
+import { Phone, MessageSquare, Mail, Zap, TrendingDown, PhoneIncoming, PhoneOutgoing } from "lucide-react";
 
 type DayPoint = {
   date: string;

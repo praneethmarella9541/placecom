@@ -49,7 +49,6 @@ async function assertExotelNotTaken(
   const { data: peers, error } = await svc
     .from("profiles")
     .select("id, exotel_virtual_number")
-    .eq("mailbox_owner_id", adminId)
     .not("exotel_virtual_number", "is", null);
   if (error) {
     if (/exotel_virtual_number/i.test(error.message ?? "")) {

@@ -121,13 +121,23 @@ function extractCalledNumber(params: URLSearchParams | FormData): string {
   return "";
 }
 
+/** Team members (mailbox_owner_id set) beat admin accounts sharing the same DID. */
+function assigneePriority(row: {
+  role?: string | null;
+  mailbox_owner_id?: string | null;
+}): number {
+  if (row.mailbox_owner_id) return 0;
+  if (row.role === "staff" || row.role === "committee") return 1;
+  return 2;
+}
+
 async function findAssigneeByExotelNumber(calledNumber: string): Promise<TelephonyAssignee | null> {
   const calledNorm = normalizePhone(calledNumber);
   if (!calledNorm) return null;
 
   const { data, error } = await supabaseAdmin
     .from("profiles")
-    .select("id, mobile_phone, exotel_virtual_number")
+    .select("id, mobile_phone, exotel_virtual_number, role, mailbox_owner_id")
     .not("exotel_virtual_number", "is", null)
     .not("mobile_phone", "is", null);
 
@@ -138,12 +148,33 @@ async function findAssigneeByExotelNumber(calledNumber: string): Promise<Telepho
     return null;
   }
 
-  const row = (data ?? []).find(
+  const matches = (data ?? []).filter(
     (p) =>
       p.exotel_virtual_number &&
       p.mobile_phone &&
       phoneMatches(p.exotel_virtual_number as string, calledNorm)
   );
+
+  if (!matches.length) return null;
+
+  if (matches.length > 1) {
+    console.warn(
+      "[calls/connect] multiple profiles share DID",
+      calledNorm,
+      "—",
+      matches.map((p) => ({
+        id: p.id,
+        role: p.role,
+        mobile: p.mobile_phone,
+        team: Boolean(p.mailbox_owner_id),
+      }))
+    );
+  }
+
+  const row = [...matches].sort(
+    (a, b) => assigneePriority(a) - assigneePriority(b)
+  )[0];
+
   if (!row?.mobile_phone) return null;
   return { id: row.id as string, mobile_phone: row.mobile_phone as string };
 }
@@ -216,7 +247,17 @@ async function resolveDestination(
   let logUserId = assignee?.id ?? defaultUserId;
 
   if (!incomingAgent) {
-    incomingAgent = process.env.INCOMING_AGENT_NUMBER?.trim() ?? "";
+    const envFallback = process.env.INCOMING_AGENT_NUMBER?.trim() ?? "";
+    if (envFallback) {
+      console.warn(
+        "[calls/connect] no Team assignee for DID",
+        calledNumber,
+        "— using INCOMING_AGENT_NUMBER env:",
+        envFallback,
+        "(remove from Vercel once Team Exotel + mobile are set)"
+      );
+      incomingAgent = envFallback;
+    }
     if (!logUserId) logUserId = defaultUserId;
   }
 

@@ -101,6 +101,26 @@ type TelephonyAssignee = {
   mobile_phone: string;
 };
 
+function paramValue(params: URLSearchParams | FormData, key: string): string {
+  const raw = params.get(key);
+  if (raw == null) return "";
+  return String(raw).trim();
+}
+
+/** Exotel: for incoming calls `To` is the ExoPhone; `CallTo` can differ on some flows. */
+function extractCalledNumber(params: URLSearchParams | FormData): string {
+  const direction = paramValue(params, "Direction").toLowerCase();
+  const preferToFirst = direction === "incoming" || direction === "";
+  const candidates = preferToFirst
+    ? ["To", "CallTo", "DialWhomNumber", "ForwardedFrom"]
+    : ["CallTo", "To", "DialWhomNumber"];
+  for (const key of candidates) {
+    const v = paramValue(params, key);
+    if (v) return v;
+  }
+  return "";
+}
+
 async function findAssigneeByExotelNumber(calledNumber: string): Promise<TelephonyAssignee | null> {
   const calledNorm = normalizePhone(calledNumber);
   if (!calledNorm) return null;
@@ -211,12 +231,17 @@ async function resolveDestination(
 
   if (!incomingAgent) {
     console.error(
-      "[calls/connect] no pending row and no route for called number. caller:",
+      "[calls/connect] INCOMING but no agent mobile found. caller:",
       callerPhone,
-      "| called:",
+      "| called DID:",
       calledNumber,
       "| direction:",
-      direction
+      direction,
+      "| assignee:",
+      assignee?.id ?? "none",
+      "— check Admin → Team: assign Exotel line",
+      calledNumber,
+      "and set personal mobile_phone; add number to EXOTEL_VIRTUAL_NUMBERS on Vercel"
     );
     return { destination: "", isIncoming: true };
   }
@@ -293,7 +318,7 @@ export async function GET(request: Request) {
   const exotelCallSid = url.searchParams.get("CallSid") ?? "";
   const callType      = url.searchParams.get("CallType") ?? "";
   const direction     = url.searchParams.get("Direction") ?? "";
-  const calledNumber  = url.searchParams.get("CallTo") ?? url.searchParams.get("To") ?? "";
+  const calledNumber  = extractCalledNumber(url.searchParams);
 
   // Trace every Exotel hit so we can debug from Vercel logs
   const allParams: Record<string, string> = {};
@@ -337,7 +362,7 @@ export async function POST(request: Request) {
   const exotelCallSid = params.get("CallSid") ?? "";
   const callType      = params.get("CallType") ?? "";
   const direction     = params.get("Direction") ?? "";
-  const calledNumber  = params.get("CallTo") ?? params.get("To") ?? "";
+  const calledNumber  = extractCalledNumber(params);
 
   if (exotelCallSid && TERMINAL_CALL_TYPES.has(callType)) {
     await handleEndOfCall(params, exotelCallSid);

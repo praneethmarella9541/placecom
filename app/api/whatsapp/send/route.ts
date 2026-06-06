@@ -3,10 +3,8 @@ import { getUserOr401 } from "@/lib/request-auth";
 import { isExotelWhatsAppConfigured } from "@/lib/exotel-whatsapp";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 import { hasOpenWhatsAppSessionForPeer } from "@/lib/whatsapp-session";
-import {
-  formatTemplatePreview,
-  resolveWhatsAppTemplate,
-} from "@/lib/whatsapp-template";
+import { formatTemplatePreview } from "@/lib/whatsapp-template";
+import { resolveWhatsAppTemplateAsync } from "@/lib/whatsapp-template-resolve";
 import { dispatchExotelWhatsAppOutbound } from "@/lib/whatsapp-outbound-content";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
@@ -81,10 +79,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const templateConfig = resolveWhatsAppTemplate(body?.templateName);
-  const templateName = body?.templateName?.trim() || templateConfig.name;
-  const templateLanguage =
-    body?.templateLanguage?.trim() || templateConfig.languageCode;
+  const templateConfig = await resolveWhatsAppTemplateAsync(body?.templateName);
+  const templateName = templateConfig.name;
+  const templateLanguage = templateConfig.languageCode;
 
   let templateVariables = Array.isArray(body?.templateVariables)
     ? body.templateVariables.map((v) => String(v).trim()).filter(Boolean)

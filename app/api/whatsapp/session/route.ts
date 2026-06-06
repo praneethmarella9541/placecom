@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 import { hasOpenWhatsAppSessionForPeer } from "@/lib/whatsapp-session";
+import { formatTemplatePreview } from "@/lib/whatsapp-template";
 import {
-  resolveWhatsAppTemplate,
-  formatTemplatePreview,
-  serializeTemplatesForClient,
-} from "@/lib/whatsapp-template";
+  getWhatsAppTemplatesResolved,
+  resolveWhatsAppTemplateAsync,
+} from "@/lib/whatsapp-template-resolve";
 import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 
 export const runtime = "nodejs";
@@ -36,12 +36,13 @@ export async function GET(request: Request) {
     lineResult.data.line
   );
   const templateName = new URL(request.url).searchParams.get("template")?.trim();
-  const template = resolveWhatsAppTemplate(templateName);
+  const templates = await getWhatsAppTemplatesResolved();
+  const template = await resolveWhatsAppTemplateAsync(templateName);
 
   return NextResponse.json({
     sessionOpen,
     requiresTemplate: !sessionOpen,
-    templates: serializeTemplatesForClient(),
+    templates,
     template: {
       name: template.name,
       languageCode: template.languageCode,

@@ -54,6 +54,14 @@ export function getDeliveryFailureAdvice(deliveryStatus: string | null | undefin
     return "Session expired. Send your approved template again (with both name fields), then wait for a reply before free text.";
   }
 
+  if (s.includes("does not exist") && s.includes("template")) {
+    return (
+      "The template API name or language does not match Exotel/Meta. Open Exotel → WhatsApp → Templates, copy the exact template name and language, " +
+      "set EXOTEL_WABA_ID on the server (auto-resolve), or update config/whatsapp-templates.json. " +
+      "GET /api/whatsapp/templates shows config vs Exotel names when signed in."
+    );
+  }
+
   if (s.includes("131048") || s.includes("spam rate")) {
     return "Your business line hit a spam/rate limit. Slow down outbound volume and check quality in Meta Business Manager.";
   }

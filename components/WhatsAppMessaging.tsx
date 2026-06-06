@@ -274,9 +274,12 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
             : [];
         if (list.length > 0) {
           const saved = getSelectedWhatsAppTemplateName();
+          const legacyName =
+            saved === "xlri_recruiter_schedules" ? "utility" : saved;
           const pick =
-            (saved && list.some((t) => t.name === saved) ? saved : null) ??
+            (legacyName && list.some((t) => t.name === legacyName) ? legacyName : null) ??
             list[0]!.name;
+          if (pick !== saved) setSelectedWhatsAppTemplateName(pick);
           setSelectedTemplateName(pick);
           setTemplateVariables((prev) => {
             const count = list.find((t) => t.name === pick)?.bodyParamCount ?? 2;

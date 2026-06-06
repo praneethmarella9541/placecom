@@ -90,27 +90,29 @@ function loadTemplatesFromFile(): WhatsAppTemplateConfig[] | null {
 
 let _cachedTemplates: WhatsAppTemplateConfig[] | null = null;
 
-/** All approved templates configured for this deployment. */
-export function getWhatsAppTemplates(): WhatsAppTemplateConfig[] {
-  if (_cachedTemplates) return _cachedTemplates;
-
+/** Load template definitions from env / config file (not Exotel-resolved). */
+export function loadWhatsAppTemplatesFromConfig(): WhatsAppTemplateConfig[] {
   const jsonRaw = process.env.EXOTEL_WHATSAPP_TEMPLATES?.trim();
   if (jsonRaw) {
     const parsed = parseTemplatesJson(jsonRaw);
-    if (parsed) {
-      _cachedTemplates = parsed;
-      return parsed;
-    }
+    if (parsed) return parsed;
   }
 
   const fromFile = loadTemplatesFromFile();
-  if (fromFile) {
-    _cachedTemplates = fromFile;
-    return fromFile;
-  }
+  if (fromFile) return fromFile;
 
-  _cachedTemplates = [singleTemplateFromEnv()];
+  return [singleTemplateFromEnv()];
+}
+
+/** All approved templates configured for this deployment (config only). */
+export function getWhatsAppTemplates(): WhatsAppTemplateConfig[] {
+  if (_cachedTemplates) return _cachedTemplates;
+  _cachedTemplates = loadWhatsAppTemplatesFromConfig();
   return _cachedTemplates;
+}
+
+export function clearWhatsAppTemplateConfigCache(): void {
+  _cachedTemplates = null;
 }
 
 export function getDefaultWhatsAppTemplate(): WhatsAppTemplateConfig {

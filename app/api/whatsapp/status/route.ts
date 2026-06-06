@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getWebhookBaseUrl } from "@/lib/call-recording-url";
 import { getExotelApiHost } from "@/lib/exotel-config";
-import {
-  getDefaultWhatsAppTemplate,
-  formatTemplatePreview,
-  serializeTemplatesForClient,
-} from "@/lib/whatsapp-template";
+import { formatTemplatePreview } from "@/lib/whatsapp-template";
+import { getWhatsAppTemplatesResolved } from "@/lib/whatsapp-template-resolve";
 import {
   getExotelWhatsAppWebhookUrl,
   isExotelWhatsAppConfigured,
@@ -29,7 +26,8 @@ export async function GET(request: Request) {
 
   const base = getWebhookBaseUrl();
   const suggestedWebhook = getExotelWhatsAppWebhookUrl() ?? (base ? `${base}/api/exotel/whatsapp` : null);
-  const template = getDefaultWhatsAppTemplate();
+  const templates = await getWhatsAppTemplatesResolved();
+  const template = templates[0]!;
 
   return NextResponse.json({
     provider: "exotel",
@@ -39,13 +37,14 @@ export async function GET(request: Request) {
     lineError,
     fromPreview: businessLine ? businessLine : null,
     suggestedInboundWebhookUrl: suggestedWebhook,
-    templates: serializeTemplatesForClient().map((t) => ({
+    templates: templates.map((t) => ({
       ...t,
       previewExample: formatTemplatePreview(t, Array.from(
         { length: t.bodyParamCount },
         (_, i) => (i === 0 ? "Customer" : i === 1 ? "Your name" : `Value ${i + 1}`)
       )),
     })),
+    exotelTemplateSync: Boolean(process.env.EXOTEL_API_KEY?.trim() && process.env.EXOTEL_API_TOKEN?.trim()),
     defaultTemplate: {
       name: template.name,
       languageCode: template.languageCode,

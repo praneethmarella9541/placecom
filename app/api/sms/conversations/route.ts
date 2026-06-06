@@ -1,22 +1,27 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getUserOr401 } from "@/lib/request-auth";
+import { getUserSmsLine } from "@/lib/sms-telephony";
 
 export const runtime = "nodejs";
 
-export async function GET() {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: authErr,
-  } = await supabase.auth.getUser();
-
-  if (authErr || !user) {
+export async function GET(request: Request) {
+  const { supabase, user } = await getUserOr401(request);
+  if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
+  // Each staff member only sees threads on the Exotel line the admin assigned.
+  const lineResult = await getUserSmsLine(supabase, user.id);
+  if (!lineResult.ok) {
+    return NextResponse.json({ error: lineResult.error, conversations: [] }, { status: lineResult.status });
+  }
+  const businessLine = lineResult.line;
+
+  // Match this user's line; include legacy rows with no business_e164 set yet.
   const { data: rows, error } = await supabase
     .from("sms_messages")
-    .select("peer_e164, body, created_at, direction")
+    .select("peer_e164, body, created_at, direction, business_e164")
+    .or(`business_e164.eq.${businessLine},business_e164.is.null`)
     .order("created_at", { ascending: false })
     .limit(600);
 

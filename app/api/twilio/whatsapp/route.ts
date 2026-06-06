@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import twilio from "twilio";
-import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
+import { getWebhookBaseUrl } from "@/lib/call-recording-url";
 import { getWhatsAppFromAddress } from "@/lib/whatsapp";
 import { peerFromInboundWebhook, stripWhatsAppPrefix } from "@/lib/whatsapp-address";
 import { normalizePhone } from "@/lib/phone";
@@ -26,7 +26,7 @@ function validateTwilioSignature(
   signature: string,
 ): boolean {
   if (twilio.validateRequest(authToken, signature, requestUrl, params)) return true;
-  const base = getTwilioWebhookBaseUrl()?.replace(/\/+$/, "");
+  const base = getWebhookBaseUrl()?.replace(/\/+$/, "");
   if (base) {
     const path = new URL(requestUrl).pathname + new URL(requestUrl).search;
     const alt = `${base}${path}`;

@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { getTwilioClient, getTwilioFromNumber, isTwilioConfigured } from "@/lib/twilio";
+import { getUserOr401 } from "@/lib/request-auth";
+import { isExotelSmsConfigured, sendExotelSms } from "@/lib/exotel-sms";
+import { getUserSmsLine } from "@/lib/sms-telephony";
 import { normalizeToE164 } from "@/lib/broadcast-phones";
 import { peerForOutbound } from "@/lib/whatsapp-address";
+import { createServiceSupabase } from "@/lib/supabase-service";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const MAX_RECIPIENTS = 50;
 const MS_BETWEEN_SENDS = 550;
-const MAX_BODY_CHARS = 1600;
+const MAX_BODY_CHARS = 2000;
 
 type Body = {
   recipients: string[];
@@ -17,33 +19,27 @@ type Body = {
 };
 
 export async function POST(request: Request) {
-  if (!isTwilioConfigured()) {
+  if (!isExotelSmsConfigured()) {
     return NextResponse.json(
       {
         error:
-          "Twilio SMS is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER (E.164 SMS-capable number).",
+          "Exotel SMS is not configured. Set EXOTEL_SID, EXOTEL_API_KEY, and EXOTEL_API_TOKEN on the server.",
       },
       { status: 503 },
     );
   }
 
-  const from = getTwilioFromNumber();
-  if (!from.startsWith("+")) {
-    return NextResponse.json(
-      { error: "TWILIO_PHONE_NUMBER must be E.164 (e.g. +15551234567) for outbound SMS." },
-      { status: 503 },
-    );
-  }
-
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: authErr,
-  } = await supabase.auth.getUser();
-
-  if (authErr || !user) {
+  const { supabase, user } = await getUserOr401(request);
+  if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
+
+  // Broadcast goes out from the sender's own admin-assigned Exotel number.
+  const lineResult = await getUserSmsLine(supabase, user.id);
+  if (!lineResult.ok) {
+    return NextResponse.json({ error: lineResult.error }, { status: lineResult.status });
+  }
+  const from = lineResult.line;
 
   let body: Body;
   try {
@@ -63,7 +59,7 @@ export async function POST(request: Request) {
 
   const text = (body.text ?? "").trim();
   if (recipients.length === 0) {
-    return NextResponse.json({ error: "Add at least one valid phone in E.164 format (e.g. +14155552671)" }, { status: 400 });
+    return NextResponse.json({ error: "Add at least one valid phone with country code (e.g. +919876543210)" }, { status: 400 });
   }
   if (recipients.length > MAX_RECIPIENTS) {
     return NextResponse.json({ error: `Too many recipients (max ${MAX_RECIPIENTS} per batch)` }, { status: 400 });
@@ -72,12 +68,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Message body is required" }, { status: 400 });
   }
   if (text.length > MAX_BODY_CHARS) {
-    return NextResponse.json({ error: `Message too long (max ${MAX_BODY_CHARS} characters for this batch sender)` }, { status: 400 });
+    return NextResponse.json({ error: `Message too long (max ${MAX_BODY_CHARS} characters)` }, { status: 400 });
   }
 
-  const client = getTwilioClient();
-  if (!client) {
-    return NextResponse.json({ error: "Twilio client unavailable" }, { status: 503 });
+  let svc: ReturnType<typeof createServiceSupabase> | null = null;
+  try {
+    svc = createServiceSupabase();
+  } catch {
+    svc = null;
   }
 
   const failed: { phone: string; error: string }[] = [];
@@ -86,20 +84,21 @@ export async function POST(request: Request) {
   for (let i = 0; i < recipients.length; i++) {
     const to = recipients[i];
     try {
-      const msg = await client.messages.create({
-        from,
-        to,
-        body: text,
-      });
-      const { error: logErr } = await supabase.from("sms_messages").insert({
+      const result = await sendExotelSms({ from, to, body: text });
+      const logRow = {
         user_id: user.id,
-        direction: "outbound",
+        direction: "outbound" as const,
         peer_e164: peerForOutbound(to),
+        business_e164: from,
         from_addr: from,
         to_addr: to,
         body: text,
-        message_sid: msg.sid,
-      });
+        message_sid: result.sid,
+        delivery_status: result.status,
+      };
+      const { error: logErr } = svc
+        ? await svc.from("sms_messages").insert(logRow)
+        : await supabase.from("sms_messages").insert(logRow);
       if (logErr && !String(logErr.message).includes("does not exist")) {
         console.warn("[broadcast/sms] sms_messages log:", logErr.message);
       }

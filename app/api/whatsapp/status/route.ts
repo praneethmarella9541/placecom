@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
-import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
+import { getWebhookBaseUrl } from "@/lib/call-recording-url";
 import { getExotelApiHost } from "@/lib/exotel-config";
 import { getDefaultWhatsAppTemplate, formatTemplatePreview } from "@/lib/whatsapp-template";
 import {
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   const businessLine = lineResult.ok ? lineResult.data.line : null;
   const lineError = lineResult.ok ? null : lineResult.error;
 
-  const base = getTwilioWebhookBaseUrl();
+  const base = getWebhookBaseUrl();
   const suggestedWebhook = getExotelWhatsAppWebhookUrl() ?? (base ? `${base}/api/exotel/whatsapp` : null);
   const template = getDefaultWhatsAppTemplate();
 

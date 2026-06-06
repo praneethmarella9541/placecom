@@ -1,8 +1,8 @@
 import "server-only";
 
-import { isTwilioConfigured } from "@/lib/twilio";
+import { isExotelSmsConfigured } from "@/lib/exotel-sms";
 
-/** SMS send + inbox when Twilio + from number are set. */
+/** SMS send + inbox available when Exotel API credentials are set. */
 export function isSmsSendConfigured(): boolean {
-  return isTwilioConfigured();
+  return isExotelSmsConfigured();
 }

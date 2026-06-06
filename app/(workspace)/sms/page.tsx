@@ -12,7 +12,7 @@ export default function SmsPage() {
           {titleCase("SMS")}
         </h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          {titleCase("Two-way SMS threads via Twilio.")}
+          {titleCase("Two-way SMS threads via Exotel, sent from your assigned number.")}
         </p>
       </div>
       <SmsMessaging embedded />

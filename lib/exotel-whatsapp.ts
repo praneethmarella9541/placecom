@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getTwilioWebhookBaseUrl } from "@/lib/call-recording-url";
+import { getWebhookBaseUrl } from "@/lib/call-recording-url";
 import {
   getExotelApiHost,
   getExotelApiHostCandidates,
@@ -40,7 +40,7 @@ function extractMessageSidFromSendResponse(json: Record<string, unknown>): strin
 }
 
 export function getExotelWhatsAppWebhookUrl(): string | null {
-  const base = getTwilioWebhookBaseUrl();
+  const base = getWebhookBaseUrl();
   return base ? `${base.replace(/\/+$/, "")}/api/exotel/whatsapp` : null;
 }
 

@@ -17,12 +17,20 @@ type Msg = {
 
 type StatusPayload = {
   sendConfigured?: boolean;
+  businessLine?: string | null;
+  lineError?: string | null;
   fromPreview?: string | null;
   suggestedInboundWebhookUrl?: string | null;
+  suggestedStatusWebhookUrl?: string | null;
   migrationHint?: string;
 };
 
-function peerInitials(peer: string): string {
+function peerInitials(peer: string, name?: string): string {
+  if (name?.trim()) {
+    const parts = name.trim().split(/\s+/);
+    const initials = parts.slice(0, 2).map((p) => p[0]).join("");
+    if (initials) return initials.toUpperCase();
+  }
   const digits = peer.replace(/\D/g, "");
   if (digits.length >= 2) return digits.slice(-2);
   return peer.slice(0, 2).toUpperCase() || "?";
@@ -62,6 +70,61 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
   const [mobileShowThread, setMobileShowThread] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
   const scrollThreadRef = useRef<HTMLDivElement>(null);
+  // Contact names — shared with WhatsApp (same wa_contacts book per user).
+  const [contacts, setContacts] = useState<Record<string, string>>({});
+  const [editingName, setEditingName] = useState<string | null>(null);
+  const [nameInput, setNameInput] = useState("");
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/whatsapp/contacts");
+        const data = (await res.json()) as { contacts?: { peer_e164: string; name: string }[] };
+        if (res.ok && data.contacts) {
+          const map: Record<string, string> = {};
+          for (const c of data.contacts) {
+            if (c.peer_e164) map[c.peer_e164] = c.name;
+          }
+          setContacts(map);
+        }
+      } catch {
+        // ignore — names just won't show
+      }
+    })();
+  }, []);
+
+  const displayName = useCallback(
+    (peer: string): string => contacts[peer] || peer,
+    [contacts],
+  );
+
+  async function saveName(peer: string, name: string) {
+    const trimmed = name.trim();
+    setContacts((prev) =>
+      trimmed
+        ? { ...prev, [peer]: trimmed }
+        : Object.fromEntries(Object.entries(prev).filter(([k]) => k !== peer)),
+    );
+    setEditingName(null);
+    setNameInput("");
+    try {
+      if (trimmed) {
+        await fetch("/api/whatsapp/contacts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ peer_e164: peer, name: trimmed }),
+        });
+      } else {
+        await fetch("/api/whatsapp/contacts", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ peer_e164: peer }),
+        });
+      }
+    } catch {
+      // optimistic state already applied
+    }
+  }
 
   const loadStatus = useCallback(async () => {
     try {
@@ -144,8 +207,8 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
   async function sendMessage() {
     const to = (peer || newPhone).trim();
     const text = draft.trim();
-    if (!to.startsWith("+") || to.length < 8) {
-      setError("Recipient must be E.164 with country code, e.g. +14155552671");
+    if (to.replace(/\D/g, "").length < 8) {
+      setError("Recipient must include country code, e.g. +919876543210");
       return;
     }
     if (!text) return;
@@ -197,7 +260,11 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">{titleCase("SMS")}</p>
             <p className="truncate text-[11px] text-sky-100/90">
-              {status?.sendConfigured ? titleCase("Twilio connected") : titleCase("Check configuration")}
+              {status?.businessLine
+                ? `${titleCase("Exotel")} · ${status.businessLine}`
+                : status?.sendConfigured
+                  ? titleCase("Exotel connected")
+                  : titleCase("Check configuration")}
             </p>
           </div>
         </div>
@@ -225,7 +292,7 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
       {setupOpen ? (
         <div className="shrink-0 border-b border-zinc-200 bg-amber-50/95 px-4 py-3 text-sm text-amber-950 dark:border-zinc-800 dark:bg-amber-950/30 dark:text-amber-50">
           <div className="mb-2 flex items-start justify-between gap-2">
-            <p className="font-semibold">{titleCase("Twilio & Supabase setup")}</p>
+            <p className="font-semibold">{titleCase("Exotel & Supabase setup")}</p>
             <button
               type="button"
               onClick={() => setSetupOpen(false)}
@@ -235,23 +302,42 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
               <IconX className="h-4 w-4" />
             </button>
           </div>
+          {status?.lineError ? (
+            <p className="mb-2 rounded bg-red-100 px-2 py-1 text-[11px] text-red-900 dark:bg-red-950/50 dark:text-red-100">
+              {status.lineError}
+            </p>
+          ) : null}
           <ol className="list-decimal space-y-1.5 pl-4 text-xs leading-relaxed">
             <li>
-              Twilio phone number → <strong>A message comes in</strong> (SMS): POST to{" "}
+              Exotel Dashboard → ExoPhone → <strong>Incoming SMS</strong> webhook: POST to{" "}
               <code className="break-all rounded bg-white/80 px-1 dark:bg-zinc-900">
-                {status?.suggestedInboundWebhookUrl || "https://YOUR_HOST/api/twilio/sms"}
+                {status?.suggestedInboundWebhookUrl || "https://YOUR_HOST/api/exotel/sms"}
               </code>
               .
             </li>
             <li>
-              Supabase: apply{" "}
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0018_sms_messages.sql</code> and set{" "}
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">SUPABASE_SERVICE_ROLE_KEY</code> on the server for inbound
-              logging.
+              Set the outbound <strong>StatusCallback</strong> to{" "}
+              <code className="break-all rounded bg-white/80 px-1 dark:bg-zinc-900">
+                {status?.suggestedStatusWebhookUrl || "https://YOUR_HOST/api/exotel/sms/status"}
+              </code>{" "}
+              for delivery reports.
             </li>
             <li>
-              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">TWILIO_WEBHOOK_BASE_URL</code> must match the public URL Twilio
-              calls (signature validation).
+              Admin → Team: assign each member an Exotel number. SMS is sent from your assigned line
+              {status?.businessLine ? (
+                <>
+                  {" "}(
+                  <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">{status.businessLine}</code>)
+                </>
+              ) : null}
+              .
+            </li>
+            <li>
+              Supabase: apply{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0018_sms_messages.sql</code>,{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0023_profile_telephony.sql</code> and{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">0031_sms_business_line.sql</code>; set{" "}
+              <code className="rounded bg-white/80 px-1 dark:bg-zinc-900">SUPABASE_SERVICE_ROLE_KEY</code> for inbound logging.
             </li>
           </ol>
           {status?.migrationHint ? <p className="mt-2 text-[11px] opacity-90">{status.migrationHint}</p> : null}
@@ -291,11 +377,11 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
                   )}
                 >
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-bold text-white">
-                    {peerInitials(c.peer_e164)}
+                    {peerInitials(c.peer_e164, contacts[c.peer_e164])}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline justify-between gap-2">
-                      <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">{c.peer_e164}</span>
+                      <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">{displayName(c.peer_e164)}</span>
                       <span className="shrink-0 text-[10px] text-zinc-400">{formatListTime(c.last_at)}</span>
                     </span>
                     <span className="line-clamp-1 text-xs text-zinc-500">{c.last_body || "—"}</span>
@@ -309,7 +395,7 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
             <div className="flex gap-2">
               <input
                 className="input-field min-w-0 flex-1 text-sm"
-                placeholder="+15551234567"
+                placeholder="+919876543210"
                 value={newPhone}
                 onChange={(e) => setNewPhone(e.target.value)}
               />
@@ -318,7 +404,7 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
                 className="btn-secondary shrink-0 px-3 py-2 text-xs"
                 onClick={() => {
                   const t = newPhone.trim();
-                  if (t.startsWith("+")) selectPeer(t);
+                  if (t.replace(/\D/g, "").length >= 8) selectPeer(t);
                 }}
               >
                 {titleCase("Open")}
@@ -342,9 +428,46 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
             >
               ←
             </button>
-            <span className="min-w-0 flex-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-              {peer || titleCase("Select a chat")}
-            </span>
+            {peer && editingName === peer ? (
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <input
+                  autoFocus
+                  className="input-field min-w-0 flex-1 text-sm"
+                  placeholder={titleCase("Contact name")}
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveName(peer, nameInput);
+                    if (e.key === "Escape") { setEditingName(null); setNameInput(""); }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn-primary shrink-0 px-3 py-1.5 text-xs"
+                  onClick={() => void saveName(peer, nameInput)}
+                >
+                  {titleCase("Save")}
+                </button>
+              </div>
+            ) : (
+              <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                  {peer ? displayName(peer) : titleCase("Select a chat")}
+                </span>
+                {peer && contacts[peer] ? (
+                  <span className="truncate text-[11px] text-zinc-400">{peer}</span>
+                ) : null}
+              </div>
+            )}
+            {peer && editingName !== peer ? (
+              <button
+                type="button"
+                className="shrink-0 rounded-lg px-2 py-1 text-xs text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/50"
+                onClick={() => { setEditingName(peer); setNameInput(contacts[peer] || ""); }}
+              >
+                {contacts[peer] ? titleCase("Edit name") : titleCase("Save name")}
+              </button>
+            ) : null}
           </div>
 
           <div

@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getWebhookBaseUrl } from "@/lib/call-recording-url";
 import { getExotelApiHost } from "@/lib/exotel-config";
-import { getDefaultWhatsAppTemplate, formatTemplatePreview } from "@/lib/whatsapp-template";
+import {
+  getDefaultWhatsAppTemplate,
+  formatTemplatePreview,
+  serializeTemplatesForClient,
+} from "@/lib/whatsapp-template";
 import {
   getExotelWhatsAppWebhookUrl,
   isExotelWhatsAppConfigured,
@@ -35,10 +39,18 @@ export async function GET(request: Request) {
     lineError,
     fromPreview: businessLine ? businessLine : null,
     suggestedInboundWebhookUrl: suggestedWebhook,
+    templates: serializeTemplatesForClient().map((t) => ({
+      ...t,
+      previewExample: formatTemplatePreview(t, Array.from(
+        { length: t.bodyParamCount },
+        (_, i) => (i === 0 ? "Customer" : i === 1 ? "Your name" : `Value ${i + 1}`)
+      )),
+    })),
     defaultTemplate: {
       name: template.name,
       languageCode: template.languageCode,
       bodyParamCount: template.bodyParamCount,
+      label: template.label,
       previewExample: formatTemplatePreview(template, ["Customer", "Your name"]),
     },
     features: listWhatsAppFeatures(),

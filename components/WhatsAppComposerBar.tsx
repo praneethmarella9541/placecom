@@ -3,6 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
+import {
+  applyTemplatePreview,
+  templateVariableLabels,
+  type WhatsAppTemplateMeta,
+} from "@/lib/whatsapp-template-shared";
 import { IconSend, IconX } from "@/components/Icons";
 import { WhatsAppEmojiPicker } from "@/components/WhatsAppEmojiPicker";
 
@@ -18,14 +23,13 @@ type Props = {
   needsTemplate: boolean;
   draft: string;
   onDraftChange: (v: string) => void;
-  templateVar1: string;
-  templateVar2: string;
-  onTemplateVar1Change: (v: string) => void;
-  onTemplateVar2Change: (v: string) => void;
+  templates: WhatsAppTemplateMeta[];
+  selectedTemplateName: string;
+  onTemplateChange: (name: string) => void;
+  templateVariables: string[];
+  onTemplateVariablesChange: (vars: string[]) => void;
   forceTemplate: boolean;
   onForceTemplateChange: (v: boolean) => void;
-  templateName?: string;
-  templatePreview?: string;
   uploading: boolean;
   onUploadingChange?: (uploading: boolean) => void;
   recipientValid: boolean;
@@ -42,14 +46,13 @@ export function WhatsAppComposerBar({
   needsTemplate,
   draft,
   onDraftChange,
-  templateVar1,
-  templateVar2,
-  onTemplateVar1Change,
-  onTemplateVar2Change,
+  templates,
+  selectedTemplateName,
+  onTemplateChange,
+  templateVariables,
+  onTemplateVariablesChange,
   forceTemplate,
   onForceTemplateChange,
-  templateName,
-  templatePreview,
   uploading,
   onUploadingChange,
   recipientValid,
@@ -72,6 +75,16 @@ export function WhatsAppComposerBar({
     kind: string;
     filename: string;
   } | null>(null);
+
+  const selectedTemplate =
+    templates.find((t) => t.name === selectedTemplateName) ?? templates[0];
+
+  const templatePreview =
+    selectedTemplate && templateVariables.some((v) => v.trim())
+      ? applyTemplatePreview(selectedTemplate, templateVariables)
+      : selectedTemplate?.preview.replace(/\{\{\d+\}\}/g, "…") ?? "";
+
+  const varLabels = templateVariableLabels(selectedTemplate?.bodyParamCount ?? 2);
 
   useEffect(() => {
     if (!emojiOpen && !attachMenuOpen) return;
@@ -97,7 +110,6 @@ export function WhatsAppComposerBar({
     };
   }, [emojiOpen, attachMenuOpen, wrapperRef]);
 
-  // Auto-resize textarea to fit content, up to ~6 lines
   useEffect(() => {
     const el = resolvedTextareaRef.current;
     if (!el) return;
@@ -127,9 +139,15 @@ export function WhatsAppComposerBar({
     }
   }
 
+  function templateFieldsFilled(): boolean {
+    const count = selectedTemplate?.bodyParamCount ?? 2;
+    const vars = templateVariables.slice(0, count);
+    return vars.length >= count && vars.every((v) => v.trim().length > 0);
+  }
+
   function canSend(): boolean {
     if (!recipientValid || uploading) return false;
-    if (needsTemplate) return Boolean(templateVar1.trim() && templateVar2.trim());
+    if (needsTemplate) return templateFieldsFilled();
     if (pendingMedia) return true;
     return Boolean(draft.trim());
   }
@@ -160,18 +178,48 @@ export function WhatsAppComposerBar({
       {needsTemplate ? (
         <div className="mb-2 space-y-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
           <p className="font-semibold">{titleCase("Opening message uses approved template")}</p>
-          <p className="leading-relaxed opacity-90">
-            Template: <span className="font-mono">{templateName ?? "initial_conversation"}</span> — {templatePreview}
-          </p>
-          <div className="grid gap-2 sm:grid-cols-2">
+          {templates.length > 1 ? (
             <label className="block">
-              <span className="text-[11px] font-medium">{titleCase("{{1}} Recipient name")}</span>
-              <input className="input-field mt-1 w-full text-sm" value={templateVar1} onChange={(e) => onTemplateVar1Change(e.target.value)} />
+              <span className="text-[11px] font-medium">{titleCase("Template")}</span>
+              <select
+                className="input-field mt-1 w-full text-sm"
+                value={selectedTemplateName}
+                onChange={(e) => onTemplateChange(e.target.value)}
+              >
+                {templates.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.label} ({t.name})
+                  </option>
+                ))}
+              </select>
             </label>
-            <label className="block">
-              <span className="text-[11px] font-medium">{titleCase("{{2}} Your name")}</span>
-              <input className="input-field mt-1 w-full text-sm" value={templateVar2} onChange={(e) => onTemplateVar2Change(e.target.value)} />
-            </label>
+          ) : (
+            <p className="leading-relaxed opacity-90">
+              Template:{" "}
+              <span className="font-mono">{selectedTemplate?.name ?? "initial_conversation"}</span>
+            </p>
+          )}
+          <p className="leading-relaxed opacity-90">{templatePreview}</p>
+          <div
+            className={cn(
+              "grid gap-2",
+              varLabels.length > 2 ? "sm:grid-cols-2" : "sm:grid-cols-2"
+            )}
+          >
+            {varLabels.map((label, i) => (
+              <label key={label} className="block">
+                <span className="text-[11px] font-medium">{titleCase(label)}</span>
+                <input
+                  className="input-field mt-1 w-full text-sm"
+                  value={templateVariables[i] ?? ""}
+                  onChange={(e) => {
+                    const next = [...templateVariables];
+                    next[i] = e.target.value;
+                    onTemplateVariablesChange(next);
+                  }}
+                />
+              </label>
+            ))}
           </div>
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={forceTemplate} onChange={(e) => onForceTemplateChange(e.target.checked)} />
@@ -179,10 +227,28 @@ export function WhatsAppComposerBar({
           </label>
         </div>
       ) : (
-        <label className="mb-1.5 flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
-          <input type="checkbox" checked={forceTemplate} onChange={(e) => onForceTemplateChange(e.target.checked)} />
-          <span>{titleCase("Send as template")}</span>
-        </label>
+        <div className="mb-1.5 space-y-1.5">
+          {templates.length > 1 ? (
+            <label className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+              <span>{titleCase("Template if needed")}:</span>
+              <select
+                className="input-field max-w-[220px] py-1 text-xs"
+                value={selectedTemplateName}
+                onChange={(e) => onTemplateChange(e.target.value)}
+              >
+                {templates.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <label className="flex items-center gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+            <input type="checkbox" checked={forceTemplate} onChange={(e) => onForceTemplateChange(e.target.checked)} />
+            <span>{titleCase("Send as template")}</span>
+          </label>
+        </div>
       )}
 
       {pendingMedia ? (
@@ -210,7 +276,6 @@ export function WhatsAppComposerBar({
         }}
       />
 
-      {/* WhatsApp-style: emoji + attach | rounded input | send */}
       <div className="flex items-end gap-1">
         {sessionMode ? (
           <>
@@ -290,7 +355,6 @@ export function WhatsAppComposerBar({
               if (e.key === "Enter" && !e.shiftKey && canSend()) {
                 e.preventDefault();
                 handleSendClick();
-                // Reset height after send
                 const el = resolvedTextareaRef.current;
                 if (el) { el.style.height = "auto"; }
               }

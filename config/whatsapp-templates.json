@@ -1,0 +1,16 @@
+[
+  {
+    "name": "xlri_recruiter_schedules",
+    "languageCode": "en",
+    "bodyParamCount": 2,
+    "label": "XLRI recruiter time slots",
+    "preview": "Hi {{1}}, this is {{2}} from the XLRI Placecom team. We are currently finalizing the recruiter schedules for the upcoming cycle. Action is required on your account: please confirm your preferred time slots by replying to this message"
+  },
+  {
+    "name": "initial_conversation",
+    "languageCode": "en",
+    "bodyParamCount": 2,
+    "label": "Short intro (PlaceCom)",
+    "preview": "Hi {{1}}, this is {{2}} from PlaceCom"
+  }
+]

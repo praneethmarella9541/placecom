@@ -12,6 +12,14 @@ import {
   isWhatsAppDeliveryFailed,
 } from "@/lib/whatsapp-delivery";
 import { WhatsAppComposerBar, type WhatsAppSendPayload } from "@/components/WhatsAppComposerBar";
+import {
+  applyTemplatePreview,
+  type WhatsAppTemplateMeta,
+} from "@/lib/whatsapp-template-shared";
+import {
+  getSelectedWhatsAppTemplateName,
+  setSelectedWhatsAppTemplateName,
+} from "@/lib/whatsapp-template-preference";
 import { showWhatsAppFailureDetail, WhatsAppTicks } from "@/components/WhatsAppTicks";
 import { titleCase } from "@/lib/title-case";
 import {
@@ -61,11 +69,13 @@ function hasNewMessages(prev: Msg[], incoming: Msg[]): boolean {
 function previewOutboundBody(
   payload: WhatsAppSendPayload,
   needsTemplate: boolean,
-  templateVar1: string,
-  templateVar2: string,
+  template: WhatsAppTemplateMeta | undefined,
+  templateVariables: string[],
   draft: string
 ): string {
-  if (needsTemplate) return `Hi ${templateVar1}, this is ${templateVar2} from PlaceCom`;
+  if (needsTemplate && template) {
+    return applyTemplatePreview(template, templateVariables);
+  }
   if (payload.messageType === "text") return payload.text?.trim() || draft.trim();
   // For media messages, only store the caption — never a [type] placeholder
   if (payload.mediaCaption?.trim()) return payload.mediaCaption.trim();
@@ -137,10 +147,12 @@ type StatusPayload = {
   apiHost?: string;
   businessLine?: string | null;
   lineError?: string | null;
+  templates?: WhatsAppTemplateMeta[];
   defaultTemplate?: {
     name: string;
     languageCode: string;
     bodyParamCount: number;
+    label?: string;
     previewExample?: string;
   };
   sandbox?: boolean;
@@ -172,8 +184,8 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
   const [draft, setDraft] = useState("");
   const [sessionOpen, setSessionOpen] = useState<boolean | null>(null);
   const [forceTemplate, setForceTemplate] = useState(false);
-  const [templateVar1, setTemplateVar1] = useState("");
-  const [templateVar2, setTemplateVar2] = useState("");
+  const [selectedTemplateName, setSelectedTemplateName] = useState("");
+  const [templateVariables, setTemplateVariables] = useState(["", ""]);
   const [mobileShowThread, setMobileShowThread] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
   const scrollThreadRef = useRef<HTMLDivElement>(null);
@@ -247,9 +259,60 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
     try {
       const res = await fetch("/api/whatsapp/status");
       const body = (await res.json()) as StatusPayload & { error?: string };
-      if (res.ok) setStatus(body);
+      if (res.ok) {
+        setStatus(body);
+        const list = body.templates?.length
+          ? body.templates
+          : body.defaultTemplate
+            ? [{
+                name: body.defaultTemplate.name,
+                languageCode: body.defaultTemplate.languageCode,
+                bodyParamCount: body.defaultTemplate.bodyParamCount,
+                label: body.defaultTemplate.label ?? body.defaultTemplate.name,
+                preview: body.defaultTemplate.previewExample ?? "",
+              }]
+            : [];
+        if (list.length > 0) {
+          const saved = getSelectedWhatsAppTemplateName();
+          const pick =
+            (saved && list.some((t) => t.name === saved) ? saved : null) ??
+            list[0]!.name;
+          setSelectedTemplateName(pick);
+          setTemplateVariables((prev) => {
+            const count = list.find((t) => t.name === pick)?.bodyParamCount ?? 2;
+            return Array.from({ length: count }, (_, i) => prev[i] ?? "");
+          });
+        }
+      }
     } catch { /* ignore */ }
   }, []);
+
+  const availableTemplates: WhatsAppTemplateMeta[] =
+    status?.templates?.length
+      ? status.templates
+      : status?.defaultTemplate
+        ? [{
+            name: status.defaultTemplate.name,
+            languageCode: status.defaultTemplate.languageCode,
+            bodyParamCount: status.defaultTemplate.bodyParamCount,
+            label: status.defaultTemplate.label ?? status.defaultTemplate.name,
+            preview: status.defaultTemplate.previewExample ?? "",
+          }]
+        : [];
+
+  const selectedTemplate =
+    availableTemplates.find((t) => t.name === selectedTemplateName) ??
+    availableTemplates[0];
+
+  function handleTemplateChange(name: string) {
+    setSelectedTemplateName(name);
+    setSelectedWhatsAppTemplateName(name);
+    const tpl = availableTemplates.find((t) => t.name === name);
+    const count = tpl?.bodyParamCount ?? 2;
+    setTemplateVariables((prev) =>
+      Array.from({ length: count }, (_, i) => prev[i] ?? "")
+    );
+  }
 
   const loadConversations = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent ?? false;
@@ -400,12 +463,18 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
   async function sendMessage(payload: WhatsAppSendPayload) {
     const to = recipientE164(peer || newPhone);
     if (!isValidE164(to)) { setError("Enter a valid mobile with country code, e.g. +918489431508"); return; }
-    if (needsTemplate && (!templateVar1.trim() || !templateVar2.trim())) {
-      setError("Fill in both template fields (recipient name and your name)."); return;
+    const tpl = selectedTemplate;
+    const varsForSend = (tpl ? templateVariables.slice(0, tpl.bodyParamCount) : templateVariables)
+      .map((v) => v.trim());
+    if (needsTemplate) {
+      if (!tpl || varsForSend.length < tpl.bodyParamCount || varsForSend.some((v) => !v)) {
+        setError("Fill in all template fields for the selected template.");
+        return;
+      }
     }
 
     const tempId = `optimistic-${crypto.randomUUID()}`;
-    const previewBody = previewOutboundBody(payload, needsTemplate, templateVar1, templateVar2, draft);
+    const previewBody = previewOutboundBody(payload, needsTemplate, tpl, varsForSend, draft);
     const optimisticMsg: Msg = {
       id: tempId, direction: "outbound", peer_e164: to, body: previewBody,
       created_at: new Date().toISOString(), delivery_status: "sent", message_sid: null,
@@ -427,7 +496,13 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
           to, useTemplate: needsTemplate,
           messageType: needsTemplate ? "template" : payload.messageType,
           text: payload.text ?? draft.trim(),
-          ...(needsTemplate ? { templateVariables: [templateVar1.trim(), templateVar2.trim()] } : {}),
+          ...(needsTemplate && tpl
+            ? {
+                templateName: tpl.name,
+                templateLanguage: tpl.languageCode,
+                templateVariables: varsForSend,
+              }
+            : {}),
           mediaUrl: payload.mediaUrl, mediaCaption: payload.mediaCaption,
           mediaFilename: payload.mediaFilename,
           ...(replyTo?.id ? { replyToId: replyTo.id } : {}),
@@ -1000,14 +1075,13 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
           needsTemplate={needsTemplate}
           draft={draft}
           onDraftChange={setDraft}
-          templateVar1={templateVar1}
-          templateVar2={templateVar2}
-          onTemplateVar1Change={setTemplateVar1}
-          onTemplateVar2Change={setTemplateVar2}
+          templates={availableTemplates}
+          selectedTemplateName={selectedTemplate?.name ?? ""}
+          onTemplateChange={handleTemplateChange}
+          templateVariables={templateVariables}
+          onTemplateVariablesChange={setTemplateVariables}
           forceTemplate={forceTemplate}
           onForceTemplateChange={setForceTemplate}
-          templateName={status?.defaultTemplate?.name}
-          templatePreview={status?.defaultTemplate?.previewExample}
           uploading={uploading}
           onUploadingChange={setUploading}
           recipientValid={isValidE164(recipientE164(peer || newPhone))}

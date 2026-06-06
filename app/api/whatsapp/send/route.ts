@@ -5,7 +5,7 @@ import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 import { hasOpenWhatsAppSessionForPeer } from "@/lib/whatsapp-session";
 import {
   formatTemplatePreview,
-  getDefaultWhatsAppTemplate,
+  resolveWhatsAppTemplate,
 } from "@/lib/whatsapp-template";
 import { dispatchExotelWhatsAppOutbound } from "@/lib/whatsapp-outbound-content";
 import { createServiceSupabase } from "@/lib/supabase-service";
@@ -69,7 +69,6 @@ export async function POST(request: Request) {
   const sessionOpen = await hasOpenWhatsAppSessionForPeer(supabase, peerNorm, businessLine);
   const mustUseTemplate = forceTemplate || (!forceSession && !sessionOpen);
 
-  const templateConfig = getDefaultWhatsAppTemplate();
   const messageTypeRaw = body?.messageType?.trim().toLowerCase() || (mustUseTemplate ? "template" : "text");
 
   if (mustUseTemplate && messageTypeRaw !== "template") {
@@ -82,8 +81,10 @@ export async function POST(request: Request) {
     );
   }
 
+  const templateConfig = resolveWhatsAppTemplate(body?.templateName);
   const templateName = body?.templateName?.trim() || templateConfig.name;
-  const templateLanguage = body?.templateLanguage?.trim() || templateConfig.languageCode;
+  const templateLanguage =
+    body?.templateLanguage?.trim() || templateConfig.languageCode;
 
   let templateVariables = Array.isArray(body?.templateVariables)
     ? body.templateVariables.map((v) => String(v).trim()).filter(Boolean)

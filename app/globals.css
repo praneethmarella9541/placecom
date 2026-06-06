@@ -11,51 +11,55 @@
 
 @layer base {
   :root {
-    /* ── Brand tokens (kept for component references) ─────────── */
-    --nucleus-bright: #1a73e8;
-    --nucleus-core: #1557b0;
-    --nucleus-deep: #001d35;
-    --nucleus-mist: #d3e3fd;
-    --nucleus-aurora: #1a73e8;
-    --nucleus-soft: #4285f4;
-    --nucleus-glow: rgba(26, 115, 232, 0.30);
-    --nucleus-wordmark-from: #1557b0;
-    --nucleus-wordmark-to: #1a73e8;
-    --nucleus-wordmark-aurora: #0b57d0;
+    /* ── Brand tokens ─────────────────────────────────────────── */
+    --nucleus-bright: #2563eb;
+    --nucleus-core: #1d4ed8;
+    --nucleus-deep: #0c0b11;
+    --nucleus-mist: #dbeafe;
+    --nucleus-aurora: #2563eb;
+    --nucleus-soft: #3b82f6;
+    --nucleus-glow: rgba(37, 99, 235, 0.28);
+    --nucleus-wordmark-from: #1d4ed8;
+    --nucleus-wordmark-to: #2563eb;
+    --nucleus-wordmark-aurora: #1e40af;
 
     /* ── Typography ───────────────────────────────────────────── */
-    --font-display: "Google Sans", var(--font-space-grotesk, "Space Grotesk"), ui-sans-serif, system-ui, sans-serif;
-    --font-body: "Google Sans", var(--font-dm-sans, "DM Sans"), ui-sans-serif, system-ui, sans-serif;
+    --font-display: var(--font-sora, "Sora"), ui-sans-serif, system-ui, sans-serif;
+    --font-body: var(--font-plus-jakarta, "Plus Jakarta Sans"), ui-sans-serif, system-ui, sans-serif;
     --font-mono: var(--font-jetbrains-mono, "JetBrains Mono"), ui-monospace, "SF Mono", Menlo, monospace;
 
-    /* ── Surfaces ─────────────────────────────────────────────── */
-    --color-bg: #f6f8fc;             /* Gmail's page background */
-    --color-surface: #ffffff;
-    --color-surface-2: #f8f9fa;
-    --color-surface-offset: #f1f3f4; /* hover / muted fill */
-    --color-border: rgba(0, 0, 0, 0.12);
-    --color-border-strong: rgba(0, 0, 0, 0.18);
+    /* ── Surfaces — warm editorial ───────────────────────────── */
+    --color-bg: #F5F3EF;
+    --color-surface: #FFFFFF;
+    --color-surface-2: #EDE9E1;
+    --color-surface-offset: #E5DFD5;
+    --color-border: rgba(20, 18, 14, 0.09);
+    --color-border-strong: rgba(20, 18, 14, 0.17);
 
     /* ── Text ─────────────────────────────────────────────────── */
-    --color-text: #202124;
-    --color-text-muted: #444746;
-    --color-text-faint: #80868b;
+    --color-text: #1A1612;
+    --color-text-muted: #4A443C;
+    --color-text-faint: #8C857B;
 
     /* ── Brand semantic ───────────────────────────────────────── */
-    --color-primary: #1a73e8;
-    --color-primary-hover: #1557b0;
-    --color-primary-light: #d3e3fd;   /* Gmail active nav pill */
-    --color-primary-tint: #e8f0fe;
+    --color-primary: #2563EB;
+    --color-primary-hover: #1D4ED8;
+    --color-primary-light: #DBEAFE;
+    --color-primary-tint: #EFF6FF;
 
     /* ── Status ───────────────────────────────────────────────── */
-    --color-danger: #d93025;
-    --color-danger-light: #fce8e6;
-    --color-success: #188038;
-    --color-success-light: #e6f4ea;
-    --color-warning: #f29900;
-    --color-warning-light: #fef7e0;
-    --color-blue: #1a73e8;
-    --color-gold: #f29900;
+    --color-danger: #DC2626;
+    --color-danger-light: #FEF2F2;
+    --color-success: #166534;
+    --color-success-light: #DCFCE7;
+    --color-warning: #D97706;
+    --color-warning-light: #FFFBEB;
+    --color-blue: #2563EB;
+    --color-gold: #D97706;
+
+    /* ── Sidebar (always dark regardless of theme) ───────────── */
+    --sidebar-bg: #0F0E14;
+    --sidebar-border: rgba(255, 255, 255, 0.07);
 
     /* ── Radii ───────────────────────────────────────────────── */
     --radius-sm: 4px;
@@ -64,15 +68,15 @@
     --radius-xl: 16px;
     --radius-2xl: 24px;
 
-    /* ── Shadows ─────────────────────────────────────────────── */
-    --shadow-sm: 0 1px 2px rgba(60, 64, 67, 0.10),
-                 0 1px 3px rgba(60, 64, 67, 0.08);
-    --shadow-md: 0 1px 3px rgba(60, 64, 67, 0.12),
-                 0 4px 12px rgba(60, 64, 67, 0.10);
-    --shadow-lg: 0 2px 6px rgba(60, 64, 67, 0.12),
-                 0 8px 24px rgba(60, 64, 67, 0.14);
-    --shadow-glow: 0 0 0 1px rgba(26, 115, 232, 0.20),
-                   0 4px 16px rgba(26, 115, 232, 0.16);
+    /* ── Shadows — warm undertone ────────────────────────────── */
+    --shadow-sm: 0 1px 2px rgba(20, 18, 14, 0.06),
+                 0 1px 3px rgba(20, 18, 14, 0.04);
+    --shadow-md: 0 2px 4px rgba(20, 18, 14, 0.08),
+                 0 6px 16px rgba(20, 18, 14, 0.07);
+    --shadow-lg: 0 4px 8px rgba(20, 18, 14, 0.09),
+                 0 12px 32px rgba(20, 18, 14, 0.10);
+    --shadow-glow: 0 0 0 1px rgba(37, 99, 235, 0.18),
+                   0 4px 16px rgba(37, 99, 235, 0.14);
 
     /* ── Layout ──────────────────────────────────────────────── */
     --sidebar-width: 220px;
@@ -91,33 +95,34 @@
   }
 
   [data-theme="dark"] {
-    /* ── Dark mode — Gmail dark approximation ─────────────────── */
-    --color-bg: #202124;
-    --color-surface: #2d2e30;
-    --color-surface-2: #35363a;
-    --color-surface-offset: #3c3d40;
-    --color-border: rgba(255, 255, 255, 0.10);
-    --color-border-strong: rgba(255, 255, 255, 0.16);
+    /* ── Dark mode ───────────────────────────────────────────── */
+    --color-bg: #0F0E12;
+    --color-surface: #1A1820;
+    --color-surface-2: #221F2A;
+    --color-surface-offset: #2C2836;
+    --color-border: rgba(255, 255, 255, 0.09);
+    --color-border-strong: rgba(255, 255, 255, 0.14);
 
-    --color-text: #e8eaed;
-    --color-text-muted: #9aa0a6;
-    --color-text-faint: #5f6368;
+    --color-text: #F0EDE8;
+    --color-text-muted: #A89F96;
+    --color-text-faint: #5F5850;
 
-    --color-primary: #8ab4f8;
-    --color-primary-hover: #aecbfa;
-    --color-primary-light: rgba(138, 180, 248, 0.16);
-    --color-primary-tint: rgba(138, 180, 248, 0.24);
+    --color-primary: #60A5FA;
+    --color-primary-hover: #93C5FD;
+    --color-primary-light: rgba(96, 165, 250, 0.15);
+    --color-primary-tint: rgba(96, 165, 250, 0.22);
 
-    --color-danger: #f28b82;
-    --color-danger-light: rgba(242, 139, 130, 0.14);
-    --color-success: #81c995;
-    --color-success-light: rgba(129, 201, 149, 0.14);
-    --color-warning: #fdd663;
-    --color-warning-light: rgba(253, 214, 99, 0.14);
+    --color-danger: #F87171;
+    --color-danger-light: rgba(248, 113, 113, 0.13);
+    --color-success: #4ADE80;
+    --color-success-light: rgba(74, 222, 128, 0.13);
+    --color-warning: #FCD34D;
+    --color-warning-light: rgba(252, 211, 77, 0.13);
+    --color-gold: #FCD34D;
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.40);
-    --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.45);
-    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.35), 0 20px 48px rgba(0, 0, 0, 0.55);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+    --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.40), 0 8px 24px rgba(0, 0, 0, 0.50);
+    --shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.40), 0 20px 48px rgba(0, 0, 0, 0.60);
 
     --background: var(--color-bg);
     --foreground: var(--color-text);
@@ -129,65 +134,65 @@
     --accent-soft: var(--color-primary-light);
   }
 
-  /* /inbox mail UI — Gmail web tokens (light + dark via data-theme) */
+  /* /inbox mail UI tokens (light + dark via data-theme) */
   [data-gmail-mail] {
-    --gmail-border-light: #e8eaed;
-    --gmail-border-row: #f1f3f4;
-    --gmail-compose-pill: #c2e7ff;
-    --gmail-compose-pill-text: #001d35;
-    --gmail-nav-active-text: #001d35;
-    --gmail-search-bg: #eaf1fb;
-    --gmail-row-hover: #f2f6fc;
-    --gmail-row-selected: #c2e3ff;
-    --color-bg: #f6f8fc;
-    --color-surface: #ffffff;
-    --color-surface-2: #f8f9fa;
-    --color-surface-offset: #f1f3f4;
-    --color-border: rgba(0, 0, 0, 0.12);
-    --color-border-strong: rgba(0, 0, 0, 0.18);
-    --color-text: #202124;
-    --color-text-muted: #444746;
-    --color-text-faint: #70757a;
-    --color-primary: #0b57d0;
-    --color-primary-hover: #1765cc;
-    --color-primary-light: #d3e3fd;
-    --color-primary-tint: #e8f0fe;
-    --color-blue: #1a73e8;
-    --color-success: #188038;
-    --color-success-light: #e6f4ea;
-    --color-danger: #d93025;
-    --color-danger-light: #fce8e6;
-    --shadow-glow: 0 0 0 1px rgba(11, 87, 208, 0.2), 0 4px 16px rgba(11, 87, 208, 0.12);
+    --gmail-border-light: rgba(20, 18, 14, 0.09);
+    --gmail-border-row: rgba(20, 18, 14, 0.06);
+    --gmail-compose-pill: #DBEAFE;
+    --gmail-compose-pill-text: #1E3A8A;
+    --gmail-nav-active-text: #1E3A8A;
+    --gmail-search-bg: #EFF6FF;
+    --gmail-row-hover: #F0EDE8;
+    --gmail-row-selected: #DBEAFE;
+    --color-bg: #F5F3EF;
+    --color-surface: #FFFFFF;
+    --color-surface-2: #EDE9E1;
+    --color-surface-offset: #E5DFD5;
+    --color-border: rgba(20, 18, 14, 0.09);
+    --color-border-strong: rgba(20, 18, 14, 0.17);
+    --color-text: #1A1612;
+    --color-text-muted: #4A443C;
+    --color-text-faint: #8C857B;
+    --color-primary: #2563EB;
+    --color-primary-hover: #1D4ED8;
+    --color-primary-light: #DBEAFE;
+    --color-primary-tint: #EFF6FF;
+    --color-blue: #2563EB;
+    --color-success: #166534;
+    --color-success-light: #DCFCE7;
+    --color-danger: #DC2626;
+    --color-danger-light: #FEF2F2;
+    --shadow-glow: 0 0 0 1px rgba(37, 99, 235, 0.18), 0 4px 16px rgba(37, 99, 235, 0.12);
   }
 
   [data-theme="dark"] [data-gmail-mail] {
     --gmail-border-light: rgba(255, 255, 255, 0.08);
-    --gmail-border-row: rgba(255, 255, 255, 0.06);
-    --gmail-compose-pill: rgba(138, 180, 248, 0.22);
-    --gmail-compose-pill-text: #e8eaed;
-    --gmail-nav-active-text: #8ab4f8;
-    --gmail-search-bg: #3c4043;
+    --gmail-border-row: rgba(255, 255, 255, 0.05);
+    --gmail-compose-pill: rgba(96, 165, 250, 0.20);
+    --gmail-compose-pill-text: #F0EDE8;
+    --gmail-nav-active-text: #60A5FA;
+    --gmail-search-bg: #2C2836;
     --gmail-row-hover: rgba(255, 255, 255, 0.04);
-    --gmail-row-selected: rgba(138, 180, 248, 0.14);
-    --color-bg: #202124;
-    --color-surface: #2d2e30;
-    --color-surface-2: #35363a;
-    --color-surface-offset: #3c3d40;
-    --color-border: rgba(255, 255, 255, 0.10);
-    --color-border-strong: rgba(255, 255, 255, 0.16);
-    --color-text: #e8eaed;
-    --color-text-muted: #9aa0a6;
-    --color-text-faint: #5f6368;
-    --color-primary: #8ab4f8;
-    --color-primary-hover: #aecbfa;
-    --color-primary-light: rgba(138, 180, 248, 0.16);
-    --color-primary-tint: rgba(138, 180, 248, 0.24);
-    --color-blue: #8ab4f8;
-    --color-success: #81c995;
-    --color-success-light: rgba(129, 201, 149, 0.14);
-    --color-danger: #f28b82;
-    --color-danger-light: rgba(242, 139, 130, 0.14);
-    --shadow-glow: 0 0 0 1px rgba(138, 180, 248, 0.2), 0 4px 16px rgba(0, 0, 0, 0.35);
+    --gmail-row-selected: rgba(96, 165, 250, 0.13);
+    --color-bg: #0F0E12;
+    --color-surface: #1A1820;
+    --color-surface-2: #221F2A;
+    --color-surface-offset: #2C2836;
+    --color-border: rgba(255, 255, 255, 0.09);
+    --color-border-strong: rgba(255, 255, 255, 0.14);
+    --color-text: #F0EDE8;
+    --color-text-muted: #A89F96;
+    --color-text-faint: #5F5850;
+    --color-primary: #60A5FA;
+    --color-primary-hover: #93C5FD;
+    --color-primary-light: rgba(96, 165, 250, 0.15);
+    --color-primary-tint: rgba(96, 165, 250, 0.22);
+    --color-blue: #60A5FA;
+    --color-success: #4ADE80;
+    --color-success-light: rgba(74, 222, 128, 0.13);
+    --color-danger: #F87171;
+    --color-danger-light: rgba(248, 113, 113, 0.13);
+    --shadow-glow: 0 0 0 1px rgba(96, 165, 250, 0.18), 0 4px 16px rgba(0, 0, 0, 0.40);
   }
 
   *,
@@ -253,7 +258,7 @@
 @layer components {
   .font-display {
     font-family: var(--font-display);
-    letter-spacing: -0.015em;
+    letter-spacing: -0.02em;
   }
 
   .font-mono {
@@ -293,29 +298,31 @@
     transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
   }
 
-  /* ── Buttons — Google Material You style ──────────────────── */
+  /* ── Buttons ──────────────────────────────────────────────── */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50;
     height: 36px;
     padding-left: 1.25rem;
     padding-right: 1.25rem;
     border-radius: var(--radius-xl);
     background: var(--color-primary);
-    font-size: 14px;
+    font-size: 13.5px;
     letter-spacing: 0.01em;
-    transition: background 0.15s ease, box-shadow 0.15s ease;
+    transition: background 0.13s ease, box-shadow 0.13s ease, transform 0.12s ease;
   }
   .btn-primary:hover:not(:disabled) {
     background: var(--color-primary-hover);
-    box-shadow: 0 1px 3px rgba(60, 64, 67, 0.20), 0 4px 8px rgba(60, 64, 67, 0.15);
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.30), 0 1px 2px rgba(37, 99, 235, 0.20);
+    transform: translateY(-0.5px);
   }
   .btn-primary:active:not(:disabled) {
     background: var(--color-primary-hover);
     box-shadow: none;
+    transform: translateY(0);
   }
 
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 font-medium disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 font-semibold disabled:opacity-50;
     height: 36px;
     padding-left: 1rem;
     padding-right: 1rem;
@@ -323,12 +330,13 @@
     border: 1px solid var(--color-border-strong);
     background: var(--color-surface);
     color: var(--color-primary);
-    font-size: 14px;
-    transition: background 0.15s ease, box-shadow 0.15s ease;
+    font-size: 13.5px;
+    transition: background 0.13s ease, box-shadow 0.13s ease, border-color 0.13s ease;
   }
   .btn-secondary:hover:not(:disabled) {
     background: var(--color-primary-tint);
-    box-shadow: 0 1px 3px rgba(60, 64, 67, 0.12);
+    border-color: rgba(37, 99, 235, 0.30);
+    box-shadow: 0 1px 4px rgba(37, 99, 235, 0.12);
   }
   .btn-secondary:active:not(:disabled) {
     background: var(--color-primary-light);
@@ -338,10 +346,10 @@
     @apply inline-flex items-center justify-center gap-2 font-medium disabled:opacity-50;
     border-radius: var(--radius-md);
     padding: 0.5rem 0.75rem;
-    font-size: 14px;
+    font-size: 13.5px;
     color: var(--color-text-muted);
     background: transparent;
-    transition: background 0.15s ease, color 0.15s ease;
+    transition: background 0.13s ease, color 0.13s ease;
   }
   .btn-ghost:hover:not(:disabled) {
     background: var(--color-surface-offset);
@@ -352,17 +360,17 @@
   }
 
   .btn-danger {
-    @apply inline-flex items-center justify-center gap-2 font-medium disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 font-semibold disabled:opacity-50;
     border-radius: var(--radius-xl);
-    border: 1px solid rgba(217, 48, 37, 0.30);
+    border: 1px solid rgba(220, 38, 38, 0.25);
     background: var(--color-danger-light);
     color: var(--color-danger);
     padding: 0.5rem 1rem;
-    font-size: 14px;
-    transition: background 0.15s ease;
+    font-size: 13.5px;
+    transition: background 0.13s ease;
   }
   .btn-danger:hover:not(:disabled) {
-    background: rgba(217, 48, 37, 0.12);
+    background: rgba(220, 38, 38, 0.10);
   }
 
   /* ── Inputs ────────────────────────────────────────────────── */
@@ -370,20 +378,22 @@
     @apply w-full outline-none placeholder:text-[var(--color-text-faint)];
     height: 40px;
     border-radius: var(--radius-md);
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-border-strong);
     background: var(--color-surface);
     padding-left: 14px;
     padding-right: 14px;
     font-size: 14px;
     color: var(--color-text);
-    transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
   }
   .input-field:hover:not(:focus) {
-    border-color: var(--color-border-strong);
+    border-color: rgba(37, 99, 235, 0.35);
+    background: var(--color-bg);
   }
   .input-field:focus {
     border-color: var(--color-primary);
-    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.20);
+    background: var(--color-surface);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
   }
 
   /* ── Badges (status pills) ─────────────────────────────────── */

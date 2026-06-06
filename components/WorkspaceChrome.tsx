@@ -87,21 +87,21 @@ function NavItem({
         "group relative flex items-center gap-3 rounded-lg px-3 transition-all duration-150",
         size === "md" ? "py-2.5 text-[13.5px]" : "py-2 text-[13px]",
         active
-          ? "bg-[#d3e3fd] font-semibold text-[#001d35]"
-          : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]",
+          ? "bg-white/[0.11] font-semibold text-white"
+          : "font-medium text-white/50 hover:bg-white/[0.07] hover:text-white/80",
       )}
     >
       {/* Active indicator bar */}
       {active && (
-        <span className="absolute left-0 top-1/2 h-[52%] w-[3px] -translate-y-1/2 rounded-r-full bg-[#1a73e8]" />
+        <span className="absolute left-0 top-1/2 h-[52%] w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--color-primary)]" />
       )}
       <Icon
         className={cn(
           "shrink-0 transition-colors duration-150",
           size === "md" ? "h-[17px] w-[17px]" : "h-[16px] w-[16px]",
           active
-            ? "text-[#001d35]"
-            : "text-[var(--color-text-faint)] group-hover:text-[var(--color-text-muted)]",
+            ? "text-white"
+            : "text-white/35 group-hover:text-white/65",
         )}
         strokeWidth={active ? 2.5 : 2}
       />
@@ -143,26 +143,26 @@ function UserProfile({
         className={cn(
           "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-all duration-150",
           open
-            ? "bg-[var(--color-surface-offset)]"
-            : "hover:bg-[var(--color-surface-offset)]",
+            ? "bg-white/[0.08]"
+            : "hover:bg-white/[0.06]",
         )}
       >
         {/* Avatar */}
-        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#1a73e8] text-[11px] font-bold uppercase text-white shadow-sm">
+        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[11px] font-bold uppercase text-white shadow-sm">
           {initials}
-          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--color-surface)] bg-[var(--color-success)]" />
+          <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-[1.5px] border-[#0F0E14] bg-emerald-400" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-semibold leading-tight text-[var(--color-text)]">
+          <p className="truncate text-[13px] font-semibold leading-tight text-white/90">
             {displayName}
           </p>
-          <p className="truncate text-[11px] leading-tight text-[var(--color-text-faint)]" title={email}>
+          <p className="truncate text-[11px] leading-tight text-white/40" title={email}>
             {email}
           </p>
         </div>
         <ChevronDown
           className={cn(
-            "h-3.5 w-3.5 shrink-0 text-[var(--color-text-faint)] transition-transform duration-200",
+            "h-3.5 w-3.5 shrink-0 text-white/30 transition-transform duration-200",
             open && "rotate-180",
           )}
         />
@@ -170,15 +170,15 @@ function UserProfile({
 
       {/* Dropdown */}
       {open && (
-        <div className="animate-slide-down absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)]">
-          <div className="border-b border-[var(--color-border)] px-4 py-3">
-            <p className="truncate text-[12px] font-semibold text-[var(--color-text)]">{displayName}</p>
-            <p className="truncate text-[11px] text-[var(--color-text-muted)]">{email}</p>
+        <div className="animate-slide-down absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-xl border border-white/[0.10] bg-[#1C1B23] shadow-[0_8px_32px_rgba(0,0,0,0.55)]">
+          <div className="border-b border-white/[0.08] px-4 py-3">
+            <p className="truncate text-[12px] font-semibold text-white/90">{displayName}</p>
+            <p className="truncate text-[11px] text-white/40">{email}</p>
           </div>
           <button
             type="button"
             onClick={() => { setOpen(false); onSignOut(); }}
-            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-[13px] font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-danger-light)]"
+            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-[13px] font-medium text-red-400 transition-colors hover:bg-red-500/10"
           >
             <LogOut className="h-3.5 w-3.5" />
             Sign out
@@ -214,7 +214,7 @@ function Sidebar({
       {/* Logo */}
       <div className="flex h-14 shrink-0 items-center px-4">
         <Link href="/inbox" aria-label="The Nucleus — home">
-          <PlacecomLogo />
+          <PlacecomLogo inverted />
         </Link>
       </div>
 
@@ -236,7 +236,7 @@ function Sidebar({
 
         {/* Divider */}
         <div className="my-3 px-2">
-          <div className="h-px bg-[var(--color-border)]" />
+          <div className="h-px bg-white/[0.08]" />
         </div>
 
         {/* Secondary */}
@@ -268,13 +268,13 @@ function Sidebar({
 
         {/* Theme toggle row */}
         <div className="mb-2 flex items-center justify-between rounded-lg px-3 py-2">
-          <span className="text-[12px] font-medium text-[var(--color-text-faint)]">Appearance</span>
+          <span className="text-[11px] font-medium tracking-wide text-white/30 uppercase">Theme</span>
           <ThemeToggle />
         </div>
       </nav>
 
       {/* User profile footer */}
-      <div className="shrink-0 border-t border-[var(--color-border)] px-2 py-2">
+      <div className="shrink-0 border-t border-white/[0.08] px-2 py-2">
         <UserProfile
           displayName={displayName}
           email={email}
@@ -349,7 +349,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
 
       {/* ── Desktop sidebar ──────────────────────────────────── */}
       <aside
-        className="fixed inset-y-0 left-0 z-40 hidden w-[220px] border-r border-[var(--color-border)] bg-[var(--color-surface)] md:block"
+        className="fixed inset-y-0 left-0 z-40 hidden w-[220px] border-r border-white/[0.07] bg-[#0F0E14] md:block"
         aria-label="Main navigation"
       >
         <Sidebar {...sidebarProps} />
@@ -383,7 +383,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
           />
           {/* Drawer */}
           <div
-            className="animate-drawer-in absolute inset-y-0 left-0 w-[280px] border-r border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl"
+            className="animate-drawer-in absolute inset-y-0 left-0 w-[280px] border-r border-white/[0.07] bg-[#0F0E14] shadow-2xl"
             role="dialog"
             aria-modal="true"
           >
@@ -392,7 +392,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
               type="button"
               aria-label="Close navigation"
               onClick={() => setMobileOpen(false)}
-              className="absolute right-3 top-3.5 flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] transition-all hover:bg-[var(--color-surface-offset)] active:scale-90"
+              className="absolute right-3 top-3.5 flex h-8 w-8 items-center justify-center rounded-lg text-white/50 transition-all hover:bg-white/[0.08] hover:text-white/80 active:scale-90"
             >
               <X className="h-4 w-4" strokeWidth={2} />
             </button>
@@ -426,7 +426,7 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
     <Suspense
       fallback={
         <div className="flex min-h-screen bg-[var(--color-bg)]">
-          <div className="hidden w-[220px] shrink-0 border-r border-[var(--color-border)] bg-[var(--color-surface)] md:block" />
+          <div className="hidden w-[220px] shrink-0 border-r border-white/[0.07] bg-[#0F0E14] md:block" />
           <div className="flex-1" />
         </div>
       }

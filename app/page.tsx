@@ -231,89 +231,84 @@ export default function HomePage() {
       </div>
 
       <div className="flex min-h-screen flex-col md:flex-row">
-        {/* Left hero — deep indigo with orbital glow */}
+        {/* Left hero — deep editorial dark */}
         <div
-          className="relative flex flex-col overflow-hidden bg-[var(--nucleus-deep)] px-8 pb-10 pt-16 text-white md:min-h-screen md:w-1/2 md:justify-between md:p-12"
+          className="relative flex flex-col overflow-hidden px-8 pb-10 pt-16 text-white md:min-h-screen md:w-1/2 md:justify-between md:p-12"
           style={{
-            backgroundImage:
-              "radial-gradient(circle at 20% 30%, rgba(99,102,241,0.30), transparent 55%), radial-gradient(circle at 80% 80%, rgba(14,165,233,0.18), transparent 50%)",
+            backgroundColor: "#0C0B11",
+            backgroundImage: [
+              "radial-gradient(ellipse at 15% 20%, rgba(37,99,235,0.18) 0%, transparent 50%)",
+              "radial-gradient(ellipse at 85% 80%, rgba(217,119,6,0.10) 0%, transparent 50%)",
+              "radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1px)",
+            ].join(", "),
+            backgroundSize: "100% 100%, 100% 100%, 32px 32px",
           }}
         >
-          {/* Decorative orbital rings — animated */}
-          <svg
-            aria-hidden
-            className="pointer-events-none absolute -right-32 -top-32 h-[520px] w-[520px] animate-float-orb opacity-25"
-            viewBox="0 0 400 400"
-          >
-            <circle cx="200" cy="200" r="180" stroke="white" strokeOpacity="0.15" strokeWidth="1" strokeDasharray="3 6" fill="none" />
-            <circle cx="200" cy="200" r="140" stroke="white" strokeOpacity="0.18" strokeWidth="1" fill="none" />
-            <circle cx="200" cy="200" r="100" stroke="white" strokeOpacity="0.22" strokeWidth="1" fill="none" />
-            <circle cx="200" cy="200" r="55" fill="url(#nucleusGlow)" opacity="0.5" />
-            <defs>
-              <radialGradient id="nucleusGlow" cx="0.5" cy="0.5" r="0.5">
-                <stop offset="0%" stopColor="#a5b4fc" stopOpacity="1" />
-                <stop offset="100%" stopColor="#4f46e5" stopOpacity="0" />
-              </radialGradient>
-            </defs>
-          </svg>
-          {/* Floating accent orb — bottom left */}
+          {/* Decorative accent line */}
           <div
             aria-hidden
-            className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full opacity-20"
-            style={{
-              background: "radial-gradient(circle, rgba(14,165,233,0.6) 0%, transparent 70%)",
-              animation: "float-orb 8s ease-in-out infinite reverse",
-            }}
+            className="pointer-events-none absolute left-0 top-0 h-[1px] w-full opacity-60"
+            style={{ background: "linear-gradient(90deg, transparent, rgba(37,99,235,0.6) 40%, rgba(217,119,6,0.4) 70%, transparent)" }}
           />
+          {/* Large background numeral — editorial accent */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute -right-8 bottom-16 select-none text-[220px] font-extrabold leading-none text-white/[0.025] md:text-[280px]"
+            style={{ fontFamily: "var(--font-display)", letterSpacing: "-0.05em" }}
+          >
+            01
+          </div>
 
           <div className="relative z-10">
             <div className="animate-fade-up" style={{ animationDelay: "0ms" }}>
               <PlacecomLogo inverted />
             </div>
             <h2
-              className="font-display mt-14 max-w-xl text-[44px] font-extrabold leading-[1.05] tracking-tight md:text-[52px] animate-fade-up"
+              className="font-display mt-14 max-w-xl text-[40px] font-extrabold leading-[1.08] tracking-tight md:text-[50px] animate-fade-up"
               style={{ animationDelay: "80ms" }}
             >
-              The placement team&apos;s{" "}
-              <span className="bg-gradient-to-r from-[#c7d2fe] via-white to-[#a5b4fc] bg-clip-text text-transparent animate-gradient-x">
-                command center
+              Your placement team&apos;s{" "}
+              <span
+                className="animate-gradient-x bg-clip-text text-transparent"
+                style={{ backgroundImage: "linear-gradient(135deg, #93C5FD, #FFFFFF 45%, #FCD34D)", backgroundSize: "200% 100%" }}
+              >
+                command center.
               </span>
-              .
             </h2>
             <p
-              className="mt-5 max-w-[420px] text-base leading-relaxed text-white/75 animate-fade-up"
+              className="mt-5 max-w-[400px] text-[15px] leading-relaxed text-white/60 animate-fade-up"
               style={{ animationDelay: "160ms" }}
             >
-              Mail, extraction, CRM, calendar, and meeting notes — every tool the team needs, gathered around one nucleus.
+              Mail, extraction, CRM, calendar, and meeting notes — every tool the team needs, in one workspace.
             </p>
-            <ul className="mt-10 flex flex-col gap-3.5 text-[15px]">
+            <ul className="mt-10 flex flex-col gap-3 text-[14px]">
               {checklist.map((line, i) => (
                 <li
                   key={line}
-                  className="flex items-start gap-3 text-white/90 animate-fade-up"
-                  style={{ animationDelay: `${240 + i * 60}ms` }}
+                  className="flex items-start gap-3 text-white/80 animate-fade-up"
+                  style={{ animationDelay: `${240 + i * 55}ms` }}
                 >
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/10 backdrop-blur-sm">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-[#a5b4fc]" strokeWidth={2.5} />
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/[0.07]">
+                    <CheckCircle2 className="h-3 w-3 text-blue-300" strokeWidth={2.5} />
                   </span>
                   <span>{line}</span>
                 </li>
               ))}
             </ul>
           </div>
-          <p className="relative z-10 mt-12 animate-fade-in text-xs uppercase tracking-[0.15em] text-white/45 md:mt-auto" style={{ animationDelay: "700ms" }}>
-            Powered by Next.js · Supabase · Google Workspace
+          <p className="relative z-10 mt-12 animate-fade-in text-[11px] uppercase tracking-[0.18em] text-white/30 md:mt-auto" style={{ animationDelay: "700ms" }}>
+            Next.js · Supabase · Google Workspace
           </p>
         </div>
 
         {/* Right auth */}
-        <div className="flex flex-1 flex-col items-center justify-center px-4 py-12 md:py-16">
-          <div className="w-full max-w-[420px] animate-slide-in-right rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-[var(--shadow-md)] md:p-10" style={{ animationDelay: "120ms" }}>
-            <h1 className="font-display text-center text-2xl font-extrabold tracking-tight text-[var(--color-text)]">
-              Welcome back
+        <div className="flex flex-1 flex-col items-center justify-center bg-[var(--color-bg)] px-4 py-12 md:py-16">
+          <div className="w-full max-w-[400px] animate-slide-in-right rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-[var(--shadow-lg)] md:p-10" style={{ animationDelay: "120ms" }}>
+            <h1 className="font-display text-center text-[22px] font-bold tracking-tight text-[var(--color-text)]">
+              Sign in
             </h1>
-            <p className="mt-2 text-center text-sm text-[var(--color-text-muted)]">
-              Sign in to your workspace.
+            <p className="mt-1.5 text-center text-[13px] text-[var(--color-text-muted)]">
+              Access your workspace.
             </p>
 
             {authErrorBanner ? (
@@ -454,45 +449,45 @@ export default function HomePage() {
 function PostSigninInboxSkeleton() {
   return (
     <div className="flex min-h-screen bg-[var(--color-bg)]">
-      {/* Left nav sidebar (matches WorkspaceChrome aside — 220px, no top header) */}
-      <aside className="hidden w-[220px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] md:flex">
+      {/* Left nav sidebar */}
+      <aside className="hidden w-[220px] shrink-0 flex-col border-r border-white/[0.07] bg-[#0F0E14] md:flex">
         {/* Logo */}
         <div className="flex h-14 items-center gap-2.5 px-4">
-          <Skeleton className="skeleton-shimmer h-7 w-7 rounded-lg" />
-          <Skeleton className="skeleton-shimmer h-4 w-24 rounded" />
+          <div className="h-7 w-7 rounded-lg bg-white/[0.08]" />
+          <div className="h-4 w-24 rounded bg-white/[0.07]" />
         </div>
         {/* Primary nav links */}
         <div className="flex flex-col gap-0.5 px-2 pt-1">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2.5">
-              <Skeleton className="skeleton-shimmer h-[17px] w-[17px] rounded" />
-              <Skeleton
-                className="skeleton-shimmer h-3 rounded"
+              <div className="h-[17px] w-[17px] rounded bg-white/[0.07]" />
+              <div
+                className="h-3 rounded bg-white/[0.07]"
                 style={{ width: `${[55, 65, 40, 60, 55][i]}%` }}
               />
             </div>
           ))}
         </div>
-        <div className="mx-4 my-3 h-px bg-[var(--color-border)]" />
+        <div className="mx-4 my-3 h-px bg-white/[0.08]" />
         {/* Secondary nav links */}
         <div className="flex flex-col gap-0.5 px-2">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2">
-              <Skeleton className="skeleton-shimmer h-[16px] w-[16px] rounded" />
-              <Skeleton
-                className="skeleton-shimmer h-3 rounded"
+              <div className="h-[16px] w-[16px] rounded bg-white/[0.07]" />
+              <div
+                className="h-3 rounded bg-white/[0.07]"
                 style={{ width: `${[45, 38, 70, 42][i]}%` }}
               />
             </div>
           ))}
         </div>
         {/* User profile footer */}
-        <div className="mt-auto border-t border-[var(--color-border)] px-2 py-2">
+        <div className="mt-auto border-t border-white/[0.08] px-2 py-2">
           <div className="flex items-center gap-3 rounded-lg px-3 py-2.5">
-            <Skeleton className="skeleton-shimmer h-8 w-8 shrink-0 rounded-full" />
+            <div className="h-8 w-8 shrink-0 rounded-full bg-white/[0.10]" />
             <div className="flex flex-1 flex-col gap-1.5">
-              <Skeleton className="skeleton-shimmer h-3 w-20 rounded" />
-              <Skeleton className="skeleton-shimmer h-2.5 w-28 rounded" />
+              <div className="h-3 w-20 rounded bg-white/[0.07]" />
+              <div className="h-2.5 w-28 rounded bg-white/[0.07]" />
             </div>
           </div>
         </div>

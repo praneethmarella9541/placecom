@@ -36,3 +36,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 skills/
+
+# agent skills + generated design-system docs (local only, not part of the app)
+.agents/
+.claude/skills/
+skills-lock.json
+design-system/
+DESIGN_SYSTEM_DELIVERY.md

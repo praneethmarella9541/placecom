@@ -128,6 +128,19 @@ export default function CRMPage() {
     void loadLeads();
   }, [loadLeads]);
 
+  // Close open modal / slide-over on Escape.
+  useEffect(() => {
+    if (!isAddLeadOpen && !activeLead) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setIsAddLeadOpen(false);
+        setActiveLead(null);
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isAddLeadOpen, activeLead]);
+
   const allStaffNames = useMemo(() => {
     const names = new Set(leads.map(l => l.staff_name));
     return Array.from(names).sort();
@@ -352,7 +365,7 @@ export default function CRMPage() {
       </div>
 
       {error ? (
-        <div className="rounded-[var(--radius-lg)] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+        <div className="rounded-[var(--radius-lg)] border border-[var(--color-danger)]/30 bg-[var(--color-danger-light)] px-4 py-3 text-sm text-[var(--color-danger)]" role="alert">
           {error}
         </div>
       ) : null}
@@ -417,7 +430,7 @@ export default function CRMPage() {
                             <div className="flex flex-wrap items-center gap-2">
                               <h4 className="truncate text-[14px] font-bold text-[var(--color-text)]">{lead.company_name}</h4>
                               {lead.score === "Hot" ? (
-                                <span className="shrink-0 rounded-full bg-[#fef3c7] px-2 py-0.5 text-[11px] font-bold uppercase text-[#92400e]">
+                                <span className="shrink-0 rounded-full bg-[var(--color-warning-light)] px-2 py-0.5 text-[11px] font-bold uppercase text-[var(--color-warning)]">
                                   HOT
                                 </span>
                               ) : null}
@@ -515,17 +528,27 @@ export default function CRMPage() {
 
       {/* Add Lead Modal */}
       {isAddLeadOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="card w-full max-w-lg bg-white dark:bg-zinc-950 p-6 shadow-2xl">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100 mb-4">
+        <div
+          className="animate-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-[var(--nucleus-deep)]/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-lead-title"
+          onClick={() => setIsAddLeadOpen(false)}
+        >
+          <div
+            className="card animate-scale-in w-full max-w-lg bg-[var(--color-surface)] p-6 shadow-[var(--shadow-lg)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="add-lead-title" className="font-display mb-4 text-lg font-bold text-[var(--color-text)]">
               {titleCase("Add corporate lead")}
             </h2>
             <form onSubmit={handleAddLead} className="space-y-4">
               <div>
-                <label className="block text-xs font-medium text-zinc-500 mb-1">
+                <label htmlFor="lead-company" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
                   {titleCase("Company name *")}
                 </label>
                 <input
+                  id="lead-company"
                   required
                   value={newCompany}
                   onChange={(e) => setNewCompany(e.target.value)}
@@ -535,10 +558,11 @@ export default function CRMPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                  <label htmlFor="lead-type" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
                     {titleCase("Lead type")}
                   </label>
                   <select
+                    id="lead-type"
                     value={newLeadType}
                     onChange={(e) => setNewLeadType(e.target.value as LeadType)}
                     className="input-field"
@@ -548,10 +572,11 @@ export default function CRMPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                  <label htmlFor="lead-staff" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
                     {titleCase("Staff member")}
                   </label>
                   <input
+                    id="lead-staff"
                     value={newStaff}
                     onChange={(e) => setNewStaff(e.target.value)}
                     className="input-field"
@@ -559,10 +584,11 @@ export default function CRMPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                  <label htmlFor="lead-contact" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
                     {titleCase("Contact person")}
                   </label>
                   <input
+                    id="lead-contact"
                     value={newContact}
                     onChange={(e) => setNewContact(e.target.value)}
                     className="input-field"
@@ -570,8 +596,9 @@ export default function CRMPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">{titleCase("Email")}</label>
+                  <label htmlFor="lead-email" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">{titleCase("Email")}</label>
                   <input
+                    id="lead-email"
                     type="email"
                     value={newEmail}
                     onChange={(e) => setNewEmail(e.target.value)}
@@ -582,8 +609,10 @@ export default function CRMPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">{titleCase("Phone")}</label>
+                  <label htmlFor="lead-phone" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">{titleCase("Phone")}</label>
                   <input
+                    id="lead-phone"
+                    type="tel"
                     value={newPhone}
                     onChange={(e) => setNewPhone(e.target.value)}
                     className="input-field"
@@ -591,10 +620,11 @@ export default function CRMPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-zinc-500 mb-1">
+                  <label htmlFor="lead-score" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
                     {titleCase("Initial lead score")}
                   </label>
                   <select
+                    id="lead-score"
                     value={newScore}
                     onChange={(e) => setNewScore(e.target.value as LeadScore)}
                     className="input-field"
@@ -605,7 +635,7 @@ export default function CRMPage() {
                   </select>
                 </div>
               </div>
-              <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+              <div className="mt-6 flex justify-end gap-3 border-t border-[var(--color-border)] pt-4">
                 <button type="button" onClick={() => setIsAddLeadOpen(false)} className="btn-ghost">
                   {titleCase("Cancel")}
                 </button>
@@ -620,29 +650,39 @@ export default function CRMPage() {
 
       {/* Interactions Slide-over */}
       {activeLead && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm transition-opacity">
-          <div className="w-full max-w-md bg-white dark:bg-zinc-950 h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
-            <div className="p-5 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-900/50">
-              <div>
-                <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">{activeLead.company_name}</h2>
-                <p className="text-sm text-zinc-500">
+        <div
+          className="animate-backdrop-in fixed inset-0 z-50 flex justify-end bg-[var(--nucleus-deep)]/45 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="lead-panel-title"
+          onClick={() => setActiveLead(null)}
+        >
+          <div
+            className="flex h-full w-full max-w-md flex-col bg-[var(--color-surface)] shadow-[var(--shadow-lg)] animate-slide-in-right"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-2)] p-5">
+              <div className="min-w-0">
+                <h2 id="lead-panel-title" className="font-display truncate text-lg font-bold text-[var(--color-text)]">{activeLead.company_name}</h2>
+                <p className="truncate text-sm text-[var(--color-text-muted)]">
                   {activeLead.contact_name || titleCase("No contact person")}
                 </p>
-                {activeLead.email && <p className="text-xs text-indigo-600 dark:text-indigo-400 font-medium mt-0.5">{activeLead.email}</p>}
+                {activeLead.email && <p className="mt-0.5 truncate text-xs font-medium text-[var(--color-primary)]">{activeLead.email}</p>}
               </div>
-              <button onClick={() => setActiveLead(null)} className="btn-ghost p-2 rounded-full"><IconX className="h-5 w-5" /></button>
+              <button onClick={() => setActiveLead(null)} aria-label={titleCase("Close")} className="btn-ghost shrink-0 rounded-full p-2"><IconX className="h-5 w-5" /></button>
             </div>
-            
-            <div className="flex-1 overflow-y-auto p-5 space-y-6">
+
+            <div className="flex-1 space-y-6 overflow-y-auto p-5">
               {/* Interaction Form */}
-              <div className="bg-zinc-50 dark:bg-zinc-900/30 rounded-xl p-4 border border-zinc-200 dark:border-zinc-800">
-                <h3 className="text-sm font-semibold mb-3">{titleCase("Log interaction")}</h3>
+              <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+                <h3 className="mb-3 text-sm font-semibold text-[var(--color-text)]">{titleCase("Log interaction")}</h3>
                 <form onSubmit={handleAddInteraction} className="space-y-3">
-                  <select 
-                    value={interactionType} 
+                  <select
+                    aria-label={titleCase("Interaction type")}
+                    value={interactionType}
                     onChange={(e) =>
                       setInteractionType(e.target.value as InteractionRow["interaction_type"])
-                    } 
+                    }
                     className="input-field py-1.5 text-sm"
                   >
                     <option value="Note">{titleCase("Note / update")}</option>
@@ -650,15 +690,15 @@ export default function CRMPage() {
                     <option value="Email">{titleCase("Email sent")}</option>
                     <option value="Meeting">{titleCase("Meeting (e.g. Meet/Zoom)")}</option>
                   </select>
-                  <textarea 
+                  <textarea
                     required
-                    rows={3} 
+                    rows={3}
                     value={interactionNotes}
                     onChange={e => setInteractionNotes(e.target.value)}
-                    placeholder={titleCase("Enter details...")} 
-                    className="input-field text-sm resize-none"
+                    placeholder={titleCase("Enter details...")}
+                    className="input-field h-auto resize-none py-2 text-sm"
                   ></textarea>
-                  <button type="submit" className="btn-primary w-full py-2 text-sm justify-center">
+                  <button type="submit" className="btn-primary w-full justify-center py-2 text-sm">
                     {titleCase("Log activity")}
                   </button>
                 </form>
@@ -666,14 +706,14 @@ export default function CRMPage() {
 
               {/* History / Meetings Toggle */}
               <div>
-                <div className="relative mb-4 flex flex-wrap gap-x-1 border-b border-zinc-200 dark:border-zinc-800">
+                <div className="relative mb-4 flex flex-wrap gap-x-1 border-b border-[var(--color-border)]">
                   <button
                     type="button"
                     onClick={() => setActivePanelTab("History")}
                     className={`relative px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
                       activePanelTab === "History"
-                        ? "z-[1] -mb-px border-b-2 border-indigo-500 text-zinc-900 dark:text-white"
-                        : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                        ? "z-[1] -mb-px border-b-2 border-[var(--color-primary)] text-[var(--color-text)]"
+                        : "border-b-2 border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                     }`}
                   >
                     {titleCase(`History (${interactions.length})`)}
@@ -683,8 +723,8 @@ export default function CRMPage() {
                     onClick={() => setActivePanelTab("Meetings")}
                     className={`relative flex items-center gap-1.5 px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
                       activePanelTab === "Meetings"
-                        ? "z-[1] -mb-px border-b-2 border-indigo-500 text-zinc-900 dark:text-white"
-                        : "border-b-2 border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                        ? "z-[1] -mb-px border-b-2 border-[var(--color-primary)] text-[var(--color-text)]"
+                        : "border-b-2 border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                     }`}
                   >
                     <IconCalendar className="h-3.5 w-3.5 shrink-0" />
@@ -693,28 +733,28 @@ export default function CRMPage() {
                 </div>
 
                 {loadingInteractions ? (
-                  <p className="text-sm text-zinc-500">{titleCase("Loading...")}</p>
+                  <p className="text-sm text-[var(--color-text-muted)]">{titleCase("Loading...")}</p>
                 ) : activePanelTab === "History" ? (
                   interactions.length === 0 ? (
-                    <p className="text-sm text-zinc-500 italic">{titleCase("No interactions recorded.")}</p>
+                    <p className="text-sm italic text-[var(--color-text-muted)]">{titleCase("No interactions recorded.")}</p>
                   ) : (
-                    <div className="space-y-4 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-300 before:to-transparent">
+                    <div className="relative space-y-4 before:absolute before:inset-0 before:ml-5 before:h-full before:w-0.5 before:-translate-x-px before:bg-gradient-to-b before:from-transparent before:via-[var(--color-border-strong)] before:to-transparent md:before:mx-auto md:before:translate-x-0">
                       {interactions.map((i) => (
-                        <div key={i.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
-                          <div className="flex items-center justify-center w-10 h-10 rounded-full border border-white bg-slate-100 text-slate-500 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-950">
+                        <div key={i.id} className="group is-active relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--color-surface)] bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] shadow-[var(--shadow-sm)] md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
                             {i.interaction_type === "Call" && <IconPhone className="h-4 w-4" />}
                             {i.interaction_type === "Email" && <IconMail className="h-4 w-4" />}
                             {i.interaction_type === "Meeting" && <IconUser className="h-4 w-4" />}
                             {i.interaction_type === "Note" && <IconMenu className="h-4 w-4" />}
                           </div>
-                          <div className="w-[calc(100%-4rem)] md:w-[calc(50%-2.5rem)] p-4 rounded border border-slate-200 bg-white shadow-sm dark:bg-zinc-900 dark:border-zinc-800">
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="font-bold text-slate-900 dark:text-white text-sm">
+                          <div className="w-[calc(100%-4rem)] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-sm)] md:w-[calc(50%-2.5rem)]">
+                            <div className="mb-1 flex items-center justify-between">
+                              <span className="text-sm font-bold text-[var(--color-text)]">
                                 {titleCase(i.interaction_type)}
                               </span>
-                              <time className="font-caveat font-medium text-indigo-600 dark:text-indigo-400 text-xs">{new Date(i.created_at).toLocaleDateString()}</time>
+                              <time className="text-xs font-medium text-[var(--color-primary)]">{new Date(i.created_at).toLocaleDateString()}</time>
                             </div>
-                            <div className="text-slate-500 dark:text-slate-400 text-xs whitespace-pre-wrap">{i.notes}</div>
+                            <div className="whitespace-pre-wrap text-xs text-[var(--color-text-muted)]">{i.notes}</div>
                           </div>
                         </div>
                       ))}
@@ -722,15 +762,15 @@ export default function CRMPage() {
                   )
                 ) : (
                   meetings.length === 0 ? (
-                    <div className="text-center p-6 bg-zinc-50 dark:bg-zinc-900/50 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700">
-                      <p className="text-sm text-zinc-500">
+                    <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 text-center">
+                      <p className="text-sm text-[var(--color-text-muted)]">
                         {titleCase("No Google Meet summaries found for")}{" "}
-                        <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                        <span className="font-medium text-[var(--color-text)]">
                           {activeLead.email || titleCase("this lead")}
                         </span>
                         .
                       </p>
-                      <p className="text-xs text-zinc-400 mt-2">
+                      <p className="mt-2 text-xs text-[var(--color-text-faint)]">
                         {titleCase(
                           "Make sure your meeting notetaker joins the meeting and you have added their exact email address above."
                         )}
@@ -739,21 +779,21 @@ export default function CRMPage() {
                   ) : (
                     <div className="space-y-4">
                       {meetings.map((m) => (
-                        <div key={m.id} className="p-4 rounded-xl border border-zinc-200 bg-white dark:bg-zinc-900 dark:border-zinc-800 shadow-sm">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-1.5">
-                              <IconCalendar className="h-4 w-4 text-indigo-600" /> {titleCase("Meeting notes")}
+                        <div key={m.id} className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-sm)]">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5 text-sm font-bold text-[var(--color-text)]">
+                              <IconCalendar className="h-4 w-4 text-[var(--color-primary)]" /> {titleCase("Meeting notes")}
                             </span>
-                            <time className="text-xs font-medium text-zinc-500">{new Date(m.created_at).toLocaleDateString()}</time>
+                            <time className="text-xs font-medium text-[var(--color-text-muted)]">{new Date(m.created_at).toLocaleDateString()}</time>
                           </div>
-                          <div className="mt-2 p-3 bg-zinc-50 dark:bg-zinc-950 rounded-lg text-xs text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap leading-relaxed border border-zinc-100 dark:border-zinc-800">
+                          <div className="mt-2 whitespace-pre-wrap rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-xs leading-relaxed text-[var(--color-text-muted)]">
                             {m.summary ? (
                               m.summary
                             ) : (
-                              <span className="italic text-zinc-400">{titleCase("Processing summary...")}</span>
+                              <span className="italic text-[var(--color-text-faint)]">{titleCase("Processing summary...")}</span>
                             )}
                           </div>
-                          <a href={m.meeting_url} target="_blank" rel="noreferrer" className="mt-3 text-xs text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-1">
+                          <a href={m.meeting_url} target="_blank" rel="noreferrer" className="mt-3 flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]">
                             {titleCase("View transcript →")}
                           </a>
                         </div>

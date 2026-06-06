@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   File,
   FileImage,
@@ -182,13 +183,26 @@ export function DriveMimeIcon({
 }: Props) {
   const isFolder = mimeType === "application/vnd.google-apps.folder";
 
-  // Thumbnails for non-folder files
-  if (!isFolder && thumbnailLink) {
+  // Google Drive thumbnailLink URLs are auth-gated — loading them directly in
+  // an <img> often 403s cross-origin and renders a broken-image icon. Track
+  // load failure and fall back to the colored type icon when that happens.
+  const [thumbFailed, setThumbFailed] = useState(false);
+
+  // Only bother attempting a thumbnail where a visual preview actually helps
+  // (images/videos). PDFs, docs, etc. have clear colored type icons and never
+  // produce a useful list thumbnail, so skip the doomed network request.
+  const wantsThumbnail =
+    mimeType.startsWith("image/") || mimeType.startsWith("video/");
+
+  if (!isFolder && thumbnailLink && wantsThumbnail && !thumbFailed) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={thumbnailLink}
         alt=""
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setThumbFailed(true)}
         className={cn("shrink-0 rounded-lg object-cover", className ?? "h-8 w-8")}
       />
     );

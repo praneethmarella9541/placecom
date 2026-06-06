@@ -328,9 +328,9 @@ export default function DrivePage() {
       setCurrentSharedDrive(null);
     }
     setPathStack([]);
+    beginFolderNavigation();
     setDriveSearchInput("");
     setDriveSearch("");
-    setDriveNextPageToken(undefined);
     // `drive` param only relevant when caller is selecting a shared drive
     // via switchSharedDrive — switchView itself just handles my-drive /
     // shared-with-me / starred.
@@ -343,16 +343,16 @@ export default function DrivePage() {
     setView("shared-drive");
     setCurrentSharedDrive(drive);
     setPathStack([]);
+    beginFolderNavigation();
     setDriveSearchInput("");
     setDriveSearch("");
-    setDriveNextPageToken(undefined);
   }
 
   /** Open the folder that contains a Recent item (Google Drive Location column). */
   function openFileLocation(loc: NonNullable<DriveFileRow["location"]>) {
     setDriveSearchInput("");
     setDriveSearch("");
-    setDriveNextPageToken(undefined);
+    beginFolderNavigation();
     setPreviewFile(null);
     if (loc.view === "shared-drive" && loc.sharedDriveId) {
       const drive =
@@ -636,14 +636,27 @@ export default function DrivePage() {
     [driveFiles, mimeFilter, driveSearch]
   );
 
-  function enterFolder(id: string, name: string) {
-    // Guard: don't push if this folder is already the current parent
-    // (prevents double-entry when the user clicks while the list is loading).
-    setPathStack((prev) => {
-      if (prev.length > 0 && prev[prev.length - 1].id === id) return prev;
-      return [...prev, { id, name }];
-    });
+  /** Clear the visible list and cancel in-flight loads when changing folders. */
+  function beginFolderNavigation() {
+    activeDriveListLoadRef.current = `nav-${Date.now()}`;
+    setDriveFiles([]);
+    setLoadingDrive(true);
+    setRefreshingDrive(false);
     setDriveNextPageToken(undefined);
+    setDriveListError(null);
+  }
+
+  function enterFolder(id: string, name: string) {
+    const alreadyHere =
+      pathStack.length > 0 && pathStack[pathStack.length - 1].id === id;
+    if (!alreadyHere) {
+      setPathStack((prev) => [...prev, { id, name }]);
+      beginFolderNavigation();
+    } else {
+      // Same folder id (double-click) — refresh contents instead of no-op.
+      beginFolderNavigation();
+      void loadDriveFiles({ append: false, bust: true });
+    }
     // Match Google Drive: opening a folder exits search mode and shows
     // the folder's normal contents.
     setDriveSearchInput("");
@@ -651,8 +664,9 @@ export default function DrivePage() {
   }
 
   function navigateToDepth(endIndexExclusive: number) {
+    if (endIndexExclusive === pathStack.length) return;
     setPathStack((prev) => prev.slice(0, endIndexExclusive));
-    setDriveNextPageToken(undefined);
+    beginFolderNavigation();
     setDriveSearchInput("");
     setDriveSearch("");
   }
@@ -1514,13 +1528,17 @@ export default function DrivePage() {
             ))}
           </div>
         ) : driveListError ? (
-          <div className="flex flex-1 items-start overflow-hidden p-6 text-sm text-red-600 dark:text-red-400">
+          <div className="flex flex-1 items-start overflow-hidden p-6 text-sm text-[var(--color-danger)]" role="alert">
             {driveListError}
           </div>
         ) : displayFiles.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 overflow-hidden p-10">
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--color-surface-offset)]">
-              <IconFolder className="h-7 w-7 text-[var(--color-text-faint)]" />
+              {driveSearch ? (
+                <IconSearch className="h-7 w-7 text-[var(--color-text-faint)]" />
+              ) : (
+                <IconFolder className="h-7 w-7 text-[var(--color-text-faint)]" />
+              )}
             </div>
             <p className="text-center text-sm text-[var(--color-text-muted)]">
               {titleCase(
@@ -1531,6 +1549,12 @@ export default function DrivePage() {
                     : "This folder is empty"
               )}
             </p>
+            {!driveSearch && mimeFilter === "all" && (
+              <p className="flex items-center gap-1.5 text-center text-[12px] text-[var(--color-text-faint)]">
+                <Upload className="h-3.5 w-3.5" strokeWidth={2} />
+                {titleCase("Drop files here or use the Upload button")}
+              </p>
+            )}
           </div>
         ) : (
           <div className={cn("flex min-h-0 flex-1 overflow-hidden", refreshingDrive && "opacity-70")}>
@@ -1573,7 +1597,7 @@ export default function DrivePage() {
               className={cn(
                 "scrollbar-thin min-h-0 flex-1 overflow-y-auto",
                 viewMode === "list"
-                  ? "divide-y divide-zinc-100 dark:divide-zinc-800/60"
+                  ? "divide-y divide-[var(--color-border)]"
                   : "grid grid-cols-2 content-start gap-3 p-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
               )}
             >
@@ -1693,7 +1717,7 @@ export default function DrivePage() {
                 );
 
                 const rowOnClick = () => {
-                  if (isRenaming || loadingDrive) return;
+                  if (isRenaming) return;
                   if (isFolder) enterFolder(file.id, file.name);
                   else setPreviewFile(file);
                 };
@@ -1736,7 +1760,7 @@ export default function DrivePage() {
                             e.stopPropagation();
                             openFileLocation(file.location!);
                           }}
-                          className="max-w-full truncate px-1 text-center text-[11px] text-indigo-700 hover:underline dark:text-indigo-400"
+                          className="max-w-full truncate px-1 text-center text-[11px] text-[var(--color-primary)] hover:underline"
                           title={titleCase("Open folder")}
                         >
                           {file.location.label}
@@ -1787,14 +1811,14 @@ export default function DrivePage() {
                               e.stopPropagation();
                               openFileLocation(file.location!);
                             }}
-                            className="flex max-w-full items-center gap-1 truncate text-left text-[13px] text-[#1a73e8] hover:underline"
+                            className="flex max-w-full items-center gap-1 truncate text-left text-[13px] text-[var(--color-primary)] hover:underline"
                             title={`Open folder: ${file.location.label}`}
                           >
-                            <IconFolder className="h-3.5 w-3.5 shrink-0 text-[#f6b000]" />
+                            <IconFolder className="h-3.5 w-3.5 shrink-0 text-[var(--color-gold)]" />
                             <span className="truncate">{file.location.label}</span>
                           </button>
                         ) : (
-                          <span className="text-[13px] text-zinc-400">—</span>
+                          <span className="text-[13px] text-[var(--color-text-faint)]">—</span>
                         )}
                       </span>
                     )}
@@ -1986,9 +2010,9 @@ export default function DrivePage() {
                   />
                 </>
               ) : (
-                <div className="flex h-full min-h-[40vh] flex-col items-center justify-center gap-2 p-6 text-center text-sm text-zinc-500">
+                <div className="flex h-full min-h-[40vh] flex-col items-center justify-center gap-2 p-6 text-center text-sm text-[var(--color-text-muted)]">
                   <p>{titleCase("No in-app preview for this file type.")}</p>
-                  <p className="text-xs">{titleCase("You can still download it below.")}</p>
+                  <p className="text-xs text-[var(--color-text-faint)]">{titleCase("You can still download it below.")}</p>
                 </div>
               )}
             </div>
@@ -2045,13 +2069,13 @@ export default function DrivePage() {
       {/* Download-in-progress toast — bottom-right, styled like Google Drive's
           own "Preparing download" bar. Sits above the upload queue when open. */}
       {downloadingIds.size > 0 && (
-        <div className={`fixed right-4 z-50 flex w-72 items-center gap-3 rounded-lg bg-zinc-800 px-5 py-4 shadow-2xl dark:bg-zinc-950 transition-all ${uploadQueue.length > 0 ? "bottom-[352px]" : "bottom-6"}`}>
+        <div className={`fixed right-4 z-50 flex w-72 items-center gap-3 rounded-lg bg-[#1A1612] px-5 py-4 shadow-2xl dark:bg-[#2C2836] transition-all ${uploadQueue.length > 0 ? "bottom-[352px]" : "bottom-6"}`}>
           <Loader2 className="h-5 w-5 animate-spin text-white shrink-0" />
           <div className="flex flex-col min-w-0">
             <span className="text-[14px] font-medium text-white leading-tight">
               {downloadingIds.size === 1 ? "Preparing download…" : `Preparing ${downloadingIds.size} downloads…`}
             </span>
-            <span className="text-[12px] text-zinc-400 leading-tight mt-0.5">This may take a moment</span>
+            <span className="text-[12px] text-white/60 leading-tight mt-0.5">This may take a moment</span>
           </div>
         </div>
       )}

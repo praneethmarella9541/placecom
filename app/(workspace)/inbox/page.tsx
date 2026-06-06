@@ -3919,14 +3919,27 @@ export default function InboxPage() {
                         !isActiveThread && "hover:bg-[var(--gmail-row-hover)] hover:shadow-sm",
                       )}
                     >
-                      {/* Checkbox — fixed 40px slot */}
-                      <span className="flex w-10 shrink-0 items-center justify-center">
+                      {/* Checkbox — fixed 40px slot. An unread dot shows by
+                          default for at-a-glance scanning; on row hover (or once
+                          selected) it yields to the checkbox for bulk actions. */}
+                      <span className="relative flex w-10 shrink-0 items-center justify-center">
+                        {isUnread && !isSelected && (
+                          <span
+                            aria-hidden
+                            className="pointer-events-none absolute h-2 w-2 rounded-full bg-[var(--color-primary)] transition-opacity group-hover:opacity-0"
+                          />
+                        )}
                         <input
                           type="checkbox"
                           checked={isSelected}
                           onChange={() => toggleRowSelection(t.id)}
                           onClick={(e) => e.stopPropagation()}
-                          className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-primary)]"
+                          className={cn(
+                            "h-3.5 w-3.5 cursor-pointer accent-[var(--color-primary)] transition-opacity",
+                            isUnread && !isSelected
+                              ? "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                              : "opacity-100",
+                          )}
                           aria-label="Select"
                         />
                       </span>
@@ -4266,7 +4279,7 @@ export default function InboxPage() {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
                   {titleCase("Back")}
                 </button>
-                <p className="text-sm text-zinc-500">{titleCase("No messages in thread.")}</p>
+                <p className="text-sm text-[var(--color-text-muted)]">{titleCase("No messages in thread.")}</p>
               </div>
             )}
           </div>
@@ -4279,10 +4292,10 @@ export default function InboxPage() {
       {sendSnack && typeof document !== "undefined" && createPortal(
         <div
           className={cn(
-            "fixed bottom-6 left-6 z-[1100] flex items-center gap-3 rounded-lg px-4 py-3 text-[13px] font-medium shadow-xl transition-all",
+            "fixed bottom-6 left-6 z-[1100] flex items-center gap-3 rounded-lg px-4 py-3 text-[13px] font-medium text-white shadow-xl transition-all",
             sendSnack.phase === "error"
-              ? "bg-zinc-800 text-white"
-              : "bg-zinc-800 text-white"
+              ? "bg-[var(--color-danger)]"
+              : "bg-[#1A1612] dark:bg-[#2C2836]"
           )}
           role="status"
           aria-live="polite"

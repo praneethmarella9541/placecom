@@ -1,6 +1,32 @@
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
+import {
+  DRIVE_INSUFFICIENT_SCOPE,
+  DRIVE_INSUFFICIENT_SCOPE_MESSAGE,
+  isDriveInsufficientScopeResponse,
+} from "@/lib/drive-scope-error";
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
+
+function throwDriveApiError(status: number, text: string, label: string): never {
+  const err = new Error(`${label} ${status}: ${text}`) as Error & { code?: string };
+  if (status === 401) {
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+  if (isDriveInsufficientScopeResponse(status, text)) {
+    err.code = DRIVE_INSUFFICIENT_SCOPE;
+    err.message = DRIVE_INSUFFICIENT_SCOPE_MESSAGE;
+    throw err;
+  }
+  try {
+    const data = JSON.parse(text) as { error?: { message?: string } };
+    const msg = data.error?.message?.trim();
+    if (msg) err.message = msg;
+  } catch {
+    /* keep default */
+  }
+  throw err;
+}
 
 export type DriveFileLocation = {
   /** Folder to open — `"root"` for My Drive top level. */
@@ -716,10 +742,7 @@ export async function setDriveFileStarred(
   }
   if (!res.ok) {
     const text = await res.text();
-    const err = new Error(`Drive star ${res.status}: ${text}`) as Error & { code?: string };
-    if (res.status === 401) err.code = "UNAUTHORIZED";
-    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-    throw err;
+    throwDriveApiError(res.status, text, "Drive star");
   }
   return (await res.json()) as DriveFileRow;
 }
@@ -754,10 +777,7 @@ export async function copyDriveFile(
   }
   if (!res.ok) {
     const text = await res.text();
-    const err = new Error(`Drive copy ${res.status}: ${text}`) as Error & { code?: string };
-    if (res.status === 401) err.code = "UNAUTHORIZED";
-    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-    throw err;
+    throwDriveApiError(res.status, text, "Drive copy");
   }
   return (await res.json()) as DriveFileRow;
 }
@@ -789,10 +809,7 @@ export async function renameDriveFile(
   }
   if (!res.ok) {
     const text = await res.text();
-    const err = new Error(`Drive rename ${res.status}: ${text}`) as Error & { code?: string };
-    if (res.status === 401) err.code = "UNAUTHORIZED";
-    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-    throw err;
+    throwDriveApiError(res.status, text, "Drive rename");
   }
   return (await res.json()) as DriveFileRow;
 }
@@ -834,10 +851,7 @@ export async function moveDriveFile(
   }
   if (!res.ok) {
     const text = await res.text();
-    const err = new Error(`Drive move ${res.status}: ${text}`) as Error & { code?: string };
-    if (res.status === 401) err.code = "UNAUTHORIZED";
-    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-    throw err;
+    throwDriveApiError(res.status, text, "Drive move");
   }
   return (await res.json()) as DriveFileRow;
 }
@@ -874,10 +888,7 @@ export async function createDriveFolder(
   }
   if (!res.ok) {
     const text = await res.text();
-    const err = new Error(`Drive create-folder ${res.status}: ${text}`) as Error & { code?: string };
-    if (res.status === 401) err.code = "UNAUTHORIZED";
-    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-    throw err;
+    throwDriveApiError(res.status, text, "Drive create-folder");
   }
   return (await res.json()) as DriveFileRow;
 }
@@ -906,10 +917,7 @@ export async function getDriveFileParent(
   }
   if (!res.ok) {
     const text = await res.text();
-    const err = new Error(`Drive parent ${res.status}: ${text}`) as Error & { code?: string };
-    if (res.status === 401) err.code = "UNAUTHORIZED";
-    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-    throw err;
+    throwDriveApiError(res.status, text, "Drive parent");
   }
   const data = (await res.json()) as { parents?: string[] };
   return data.parents?.[0] ?? null;
@@ -936,10 +944,7 @@ export async function getDriveFileDetails(
   }
   if (!res.ok) {
     const text = await res.text();
-    const err = new Error(`Drive details ${res.status}: ${text}`) as Error & { code?: string };
-    if (res.status === 401) err.code = "UNAUTHORIZED";
-    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-    throw err;
+    throwDriveApiError(res.status, text, "Drive details");
   }
   return (await res.json()) as DriveFileDetails;
 }
@@ -964,10 +969,7 @@ export async function getDriveFileMeta(
   }
   if (!res.ok) {
     const text = await res.text();
-    const err = new Error(`Drive meta ${res.status}: ${text}`) as Error & { code?: string };
-    if (res.status === 401) err.code = "UNAUTHORIZED";
-    else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-    throw err;
+    throwDriveApiError(res.status, text, "Drive meta");
   }
   return (await res.json()) as { id: string; name: string; mimeType: string };
 }
@@ -1002,10 +1004,7 @@ export async function listFolderChildren(
     }
     if (!res.ok) {
       const text = await res.text();
-      const err = new Error(`Drive children ${res.status}: ${text}`) as Error & { code?: string };
-      if (res.status === 401) err.code = "UNAUTHORIZED";
-      else if (res.status === 403) err.code = "DRIVE_INSUFFICIENT_SCOPE";
-      throw err;
+      throwDriveApiError(res.status, text, "Drive children");
     }
     const data = (await res.json()) as {
       nextPageToken?: string;

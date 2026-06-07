@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { startMailListPrefetchWarm } from "@/lib/inbox-list-prefetch";
+import { runLoginPrefetchChain } from "@/lib/workspace-feature-prefetch";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
@@ -310,14 +310,23 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
-  /* Warm Gmail folder/tab lists in the background once mailbox is linked (incl. browser reload). */
+  /* Warm mail + drive, then WhatsApp → Calendar → Forms once mailbox is linked. */
   useEffect(() => {
     if (!me?.hasStoredMailbox) return;
+    const ac = new AbortController();
     const t = window.setTimeout(() => {
-      startMailListPrefetchWarm({ concurrency: 3 });
+      void runLoginPrefetchChain({
+        restrictedFeatures: me.restrictedFeatures,
+        signal: ac.signal,
+        mailConcurrency: 3,
+        driveConcurrency: 2,
+      });
     }, 800);
-    return () => clearTimeout(t);
-  }, [me?.hasStoredMailbox]);
+    return () => {
+      clearTimeout(t);
+      ac.abort();
+    };
+  }, [me?.hasStoredMailbox, me?.restrictedFeatures]);
 
   /* close mobile drawer on navigation */
   useEffect(() => { setMobileOpen(false); }, [pathname]);

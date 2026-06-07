@@ -23,7 +23,7 @@ function sanitizeExtractedStyles(css: string): string {
 
 function prepareEmailFragment(html: string): { styles: string; body: string } {
   const styles: string[] = [];
-  let fragment = sanitizeEmailHtml(html);
+  let fragment = html;
 
   fragment = fragment.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_, css: string) => {
     styles.push(sanitizeExtractedStyles(css));
@@ -49,15 +49,10 @@ function isHiddenForHeight(el: Element, doc: Document): boolean {
   if (parseFloat(style.opacity) === 0) return true;
   const rect = el.getBoundingClientRect();
   if (rect.width <= 0 && rect.height <= 0) return true;
-  // 1×1 tracking pixels
   if (rect.width <= 1 && rect.height <= 1) return true;
   return false;
 }
 
-/**
- * Gmail-style height: bound to visible painted content, not inflated scrollHeight
- * from min-height chains / empty table spacers inside a sized iframe.
- */
 function measureVisibleEmailHeight(doc: Document): number {
   const html = doc.documentElement;
   const body = doc.body;
@@ -83,9 +78,32 @@ function measureVisibleEmailHeight(doc: Document): number {
   const visible = Math.ceil(maxBottom - bodyTop);
   const scroll = body.scrollHeight;
 
-  // Prefer visible bounds when scrollHeight is inflated by layout quirks.
   if (scroll > visible + 80) return Math.max(visible, 40);
   return Math.max(visible, scroll, 40);
+}
+
+/** Fetch authenticated attachment URLs and swap to blob: (iframe img cookies can fail). */
+async function hydrateAttachmentImages(
+  doc: Document,
+  onUpdate: () => void,
+): Promise<void> {
+  const imgs = Array.from(doc.querySelectorAll<HTMLImageElement>("img"));
+  await Promise.all(
+    imgs.map(async (img) => {
+      const src = img.getAttribute("src") ?? "";
+      if (!src.includes("/api/gmail/attachment") || img.dataset.hydrated === "1") return;
+      try {
+        const res = await fetch(src, { credentials: "include", cache: "no-store" });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        img.src = URL.createObjectURL(blob);
+        img.dataset.hydrated = "1";
+        onUpdate();
+      } catch {
+        /* ignore */
+      }
+    }),
+  );
 }
 
 export function EmailHtmlBody({
@@ -104,12 +122,11 @@ export function EmailHtmlBody({
 
   const prepared = useMemo(() => {
     if (!html) return null;
-    const { styles, body: rawBody } = prepareEmailFragment(html);
-    const body =
-      messageId && attachments?.length
-        ? rewriteCidImageUrls(rawBody, messageId, attachments)
-        : rawBody;
-    return { styles, body };
+    let fragment = sanitizeEmailHtml(html);
+    if (messageId && attachments?.length) {
+      fragment = rewriteCidImageUrls(fragment, messageId, attachments);
+    }
+    return prepareEmailFragment(fragment);
   }, [html, messageId, attachments]);
 
   useEffect(() => {
@@ -120,7 +137,6 @@ export function EmailHtmlBody({
     if (!doc) return;
 
     doc.open();
-    // Preserve sender HTML/CSS; only add minimal safety + anti-loop locks after.
     doc.write(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -161,13 +177,14 @@ export function EmailHtmlBody({
     let lastMeasured = 0;
     let stablePasses = 0;
     let updatePasses = 0;
-    const MAX_UPDATES = 12;
+    const MAX_UPDATES = 16;
     let rafId = 0;
+    let cancelled = false;
 
     const applyHeight = () => {
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        if (updatePasses >= MAX_UPDATES) return;
+        if (cancelled || updatePasses >= MAX_UPDATES) return;
         updatePasses += 1;
 
         const h = measureVisibleEmailHeight(doc);
@@ -192,11 +209,14 @@ export function EmailHtmlBody({
       }
     }
 
+    void hydrateAttachmentImages(doc, applyHeight);
+
     const t1 = window.setTimeout(applyHeight, 150);
     const t2 = window.setTimeout(applyHeight, 600);
     const t3 = window.setTimeout(applyHeight, 1500);
 
     return () => {
+      cancelled = true;
       clearTimeout(t1);
       clearTimeout(t2);
       clearTimeout(t3);

@@ -56,7 +56,10 @@ import { isSelfSentEmail } from "@/lib/email-self-sent";
 import { isInlinePartReferencedInHtml } from "@/lib/email-html-inline-images";
 import { GmailDatePicker } from "@/components/GmailDatePicker";
 import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
-import { formatMessageRecipientsLine } from "@/lib/message-recipients-display";
+import {
+  formatFromHeader,
+  formatMessageRecipientsLine,
+} from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
 import {
   buildMailListCacheKey,
@@ -237,6 +240,7 @@ type AttachmentView = {
   mimeType: string;
   size: number;
   contentId?: string;
+  inlineDataUri?: string;
 };
 
 type MsgView = {
@@ -316,7 +320,7 @@ function MessageBubble({
           (a) =>
             !/invite\.ics$/i.test(a.filename) &&
             !/^text\/calendar/i.test(a.mimeType) &&
-            !isInlinePartReferencedInHtml(m.bodyHtml, a.contentId)
+            !isInlinePartReferencedInHtml(m.bodyHtml, a.contentId, a.filename)
         );
         if (files.length === 0) return null;
         return (
@@ -359,7 +363,7 @@ function MessageBubble({
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
               <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
-                {fromName || fromEmail}
+                {formatFromHeader(m.from || "")}
               </p>
               <div className="flex shrink-0 items-center gap-1.5">
                 {trackingRow && !isSelfSentEmail(m.from, m.to, m.cc, myEmail) && (
@@ -425,7 +429,7 @@ function MessageBubble({
             <GmailAvatar seed={fromEmail} name={fromName} size={32} className="shrink-0" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
-                {fromName || fromEmail}
+                {formatFromHeader(m.from || "")}
               </p>
               {recipientLine}
             </div>

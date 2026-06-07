@@ -24,6 +24,25 @@ import {
   uploadFileToDriveFolder,
 } from "@/lib/upload-file-to-drive-folder";
 import {
+  buildDriveListCacheKey,
+  buildDriveOrderBy,
+  bumpDriveListMutationEpoch,
+  clearDriveListSessionCache,
+  getDriveListMutationEpoch,
+  getDriveListSessionCache,
+  getSharedDrivesSessionCache,
+  setSharedDrivesSessionCache,
+  startDriveListPrefetchWarm,
+} from "@/lib/drive-list-prefetch";
+import {
+  patchDriveMoveInSessionCache,
+  revertDriveMoveInSessionCache,
+} from "@/lib/drive-move-session-sync";
+import { mergeDriveFileInListOrder } from "@/lib/drive-list-sort";
+import { driveApiErrorMessage } from "@/lib/drive-scope-error";
+import { pickFolderForUpload } from "@/lib/pick-folder-for-upload";
+import { patchDriveStarInSessionCache } from "@/lib/drive-star-session-sync";
+import {
   Share2,
   HardDrive,
   Users,
@@ -48,6 +67,7 @@ import {
 } from "lucide-react";
 
 const DRIVE_SIMPLE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+const LIST_MUTATION_OVERRIDE_TTL_MS = 8_000;
 
 type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
 type SharedDrive = { id: string; name: string };
@@ -117,48 +137,7 @@ function formatBytes(bytes: number): string {
 
 type DriveListCacheEntry = { files: DriveFileRow[]; nextPageToken?: string };
 
-function driveListCacheKey(parts: {
-  parent: string;
-  view: string;
-  search: string;
-  mimeFilter: MimeFilter;
-  pathDepth: number;
-  sharedDriveId: string | null;
-  sortKey: string;
-  sortDir: string;
-}): string {
-  return [
-    parts.parent,
-    parts.view,
-    parts.search,
-    parts.mimeFilter,
-    String(parts.pathDepth),
-    parts.sharedDriveId ?? "",
-    parts.sortKey,
-    parts.sortDir,
-  ].join("\0");
-}
-
 type SortKey = "name" | "modifiedTime" | "size";
-
-/** Maps UI sort to Drive API orderBy (folders first where applicable). */
-function buildDriveOrderBy(
-  sortKey: SortKey,
-  sortDir: "asc" | "desc",
-  view: DriveView | "shared-drive",
-  pathDepth: number
-): string {
-  if (pathDepth === 0 && view === "recent") return "viewedByMeTime desc";
-  const dir = sortDir === "desc" ? " desc" : "";
-  switch (sortKey) {
-    case "modifiedTime":
-      return `folder,modifiedTime${dir}`;
-    case "size":
-      return `folder,quotaBytesUsed${dir}`;
-    default:
-      return `folder,name_natural${dir}`;
-  }
-}
 
 export default function DrivePage() {
   /** Top-level sidebar selection. "shared-drive" is internal — the actual
@@ -191,7 +170,14 @@ export default function DrivePage() {
   const loadingMoreRef = useRef(false); // stable for the IntersectionObserver
   const listScrollRef = useRef<HTMLUListElement>(null);
   const loadMoreSentinelRef = useRef<HTMLLIElement>(null);
-  const driveListCacheRef = useRef<Map<string, DriveListCacheEntry>>(new Map());
+  const driveListCacheRef = useRef(getDriveListSessionCache());
+  const driveListPrefetchBoostRef = useRef(false);
+  const starOverridesRef = useRef<Map<string, boolean>>(new Map());
+  const starOverrideTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const moveOverridesRef = useRef<
+    Map<string, { file: DriveFileRow; sourceParentId: string; destParentId: string }>
+  >(new Map());
+  const moveOverrideTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const driveListInflightRef = useRef<Map<string, Promise<DriveListCacheEntry>>>(new Map());
   const activeDriveListLoadRef = useRef<string | null>(null);
   const [driveListError, setDriveListError] = useState<string | null>(null);
@@ -304,6 +290,9 @@ export default function DrivePage() {
   // Load the user's shared drives once on mount so the sidebar can list
   // them. Non-fatal on error (some accounts simply have none).
   useEffect(() => {
+    const cached = getSharedDrivesSessionCache();
+    if (cached?.length) setSharedDrives(cached);
+
     let cancelled = false;
     // no-store: shared drives appear immediately when the user first lands on
     // the page — avoids the 60s browser cache hiding a newly-shared drive.
@@ -312,6 +301,7 @@ export default function DrivePage() {
       .then((j: { drives?: SharedDrive[] } | null) => {
         if (cancelled || !j?.drives) return;
         setSharedDrives(j.drives);
+        setSharedDrivesSessionCache(j.drives);
       })
       .catch(() => {/* no shared drives is fine */});
     return () => { cancelled = true; };
@@ -382,7 +372,7 @@ export default function DrivePage() {
 
   const driveListContextKey = useMemo(
     () =>
-      driveListCacheKey({
+      buildDriveListCacheKey({
         parent: currentParentId,
         view,
         search: driveSearch,
@@ -418,6 +408,188 @@ export default function DrivePage() {
       });
     },
     [driveListContextKey]
+  );
+
+  const applyStarOverrides = useCallback((files: DriveFileRow[]): DriveFileRow[] => {
+    const overrides = starOverridesRef.current;
+    if (overrides.size === 0) return files;
+    return files.map((f) => {
+      const override = overrides.get(f.id);
+      return override !== undefined ? { ...f, starred: override } : f;
+    });
+  }, []);
+
+  const setStarOverride = useCallback((fileId: string, starred: boolean) => {
+    starOverridesRef.current.set(fileId, starred);
+    bumpDriveListMutationEpoch();
+    const existing = starOverrideTimersRef.current.get(fileId);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      starOverridesRef.current.delete(fileId);
+      starOverrideTimersRef.current.delete(fileId);
+    }, LIST_MUTATION_OVERRIDE_TTL_MS);
+    starOverrideTimersRef.current.set(fileId, t);
+  }, []);
+
+  const clearStarOverride = useCallback((fileId: string) => {
+    starOverridesRef.current.delete(fileId);
+    const t = starOverrideTimersRef.current.get(fileId);
+    if (t) clearTimeout(t);
+    starOverrideTimersRef.current.delete(fileId);
+  }, []);
+
+  const applyMoveOverrides = useCallback(
+    (files: DriveFileRow[], parentId: string): DriveFileRow[] => {
+      const overrides = moveOverridesRef.current;
+      if (overrides.size === 0) return files;
+
+      // Starred / Recent / Shared-with-me use parent `root` but are not folder listings.
+      if (view === "starred") {
+        return files.filter((f) => {
+          const override = overrides.get(f.id);
+          return !(override && !override.file.starred);
+        });
+      }
+      if (view !== "my-drive" && view !== "shared-drive") {
+        return files;
+      }
+
+      let result = files.filter((f) => {
+        const override = overrides.get(f.id);
+        return !(override && override.sourceParentId === parentId);
+      });
+
+      for (const override of Array.from(overrides.values())) {
+        if (override.destParentId === parentId) {
+          result = mergeDriveFileInListOrder(
+            result,
+            override.file,
+            sortKey,
+            sortDir
+          );
+        }
+      }
+
+      return result;
+    },
+    [sortKey, sortDir, view]
+  );
+
+  const applyListMutationOverrides = useCallback(
+    (files: DriveFileRow[], parentId: string): DriveFileRow[] =>
+      applyStarOverrides(applyMoveOverrides(files, parentId)),
+    [applyStarOverrides, applyMoveOverrides]
+  );
+
+  const setMoveOverride = useCallback(
+    (file: DriveFileRow, sourceParentId: string, destParentId: string) => {
+      moveOverridesRef.current.set(file.id, { file, sourceParentId, destParentId });
+      bumpDriveListMutationEpoch();
+      const existing = moveOverrideTimersRef.current.get(file.id);
+      if (existing) clearTimeout(existing);
+      const t = setTimeout(() => {
+        moveOverridesRef.current.delete(file.id);
+        moveOverrideTimersRef.current.delete(file.id);
+      }, LIST_MUTATION_OVERRIDE_TTL_MS);
+      moveOverrideTimersRef.current.set(file.id, t);
+    },
+    []
+  );
+
+  const clearMoveOverride = useCallback((fileId: string) => {
+    moveOverridesRef.current.delete(fileId);
+    const t = moveOverrideTimersRef.current.get(fileId);
+    if (t) clearTimeout(t);
+    moveOverrideTimersRef.current.delete(fileId);
+  }, []);
+
+  const applyLocalMoveState = useCallback(
+    (file: DriveFileRow, sourceParentId: string, destParentId: string, trackOverride: boolean) => {
+      if (trackOverride) setMoveOverride(file, sourceParentId, destParentId);
+      else bumpDriveListMutationEpoch();
+
+      const isFolderListing =
+        view === "my-drive" || view === "shared-drive";
+
+      if (isFolderListing && currentParentId === sourceParentId) {
+        syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
+      } else if (isFolderListing && currentParentId === destParentId) {
+        syncDriveListCache((rows) =>
+          mergeDriveFileInListOrder(rows, file, sortKey, sortDir)
+        );
+      } else if (view === "starred" && !file.starred) {
+        syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
+      }
+
+      patchDriveMoveInSessionCache(
+        driveListCacheRef.current,
+        file,
+        sourceParentId,
+        destParentId
+      );
+    },
+    [currentParentId, syncDriveListCache, setMoveOverride, sortKey, sortDir, view]
+  );
+
+  const revertLocalMoveState = useCallback(
+    (file: DriveFileRow, sourceParentId: string, destParentId: string) => {
+      clearMoveOverride(file.id);
+      bumpDriveListMutationEpoch();
+
+      const isFolderListing =
+        view === "my-drive" || view === "shared-drive";
+
+      if (isFolderListing && currentParentId === destParentId) {
+        syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
+      } else if (isFolderListing && currentParentId === sourceParentId) {
+        syncDriveListCache((rows) =>
+          mergeDriveFileInListOrder(rows, file, sortKey, sortDir)
+        );
+      }
+
+      revertDriveMoveInSessionCache(
+        driveListCacheRef.current,
+        file,
+        sourceParentId,
+        destParentId
+      );
+    },
+    [currentParentId, clearMoveOverride, syncDriveListCache, sortKey, sortDir, view]
+  );
+
+  const applyLocalStarState = useCallback(
+    (file: DriveFileRow, starred: boolean, trackOverride: boolean) => {
+      const row = { ...file, starred };
+      if (trackOverride) setStarOverride(file.id, starred);
+      else bumpDriveListMutationEpoch();
+
+      syncDriveListCache((rows) => {
+        if (view === "starred" && !starred) {
+          return rows.filter((r) => r.id !== file.id);
+        }
+        return rows.map((r) => (r.id === file.id ? row : r));
+      });
+
+      if (starred) {
+        const starredKey = buildDriveListCacheKey({
+          parent: "root",
+          view: "starred",
+          search: "",
+          mimeFilter,
+          pathDepth: 0,
+          sharedDriveId: null,
+          sortKey,
+          sortDir,
+        });
+        const starredEntry = driveListCacheRef.current.get(starredKey);
+        if (!starredEntry) {
+          driveListCacheRef.current.set(starredKey, { files: [row] });
+        }
+      }
+
+      patchDriveStarInSessionCache(driveListCacheRef.current, row, starred);
+    },
+    [syncDriveListCache, view, setStarOverride, mimeFilter, sortKey, sortDir]
   );
 
   const buildFilesListParams = useCallback(
@@ -459,7 +631,7 @@ export default function DrivePage() {
       pageToken?: string,
       bust?: boolean
     ): Promise<DriveListCacheEntry> => {
-      const cacheKey = driveListCacheKey({
+      const cacheKey = buildDriveListCacheKey({
         parent,
         view,
         search: driveSearch,
@@ -472,12 +644,18 @@ export default function DrivePage() {
       const inflightKey = `${cacheKey}\0${pageToken ?? ""}`;
       if (!bust) {
         const cached = driveListCacheRef.current.get(cacheKey);
-        if (cached && !pageToken) return cached;
+        if (cached && !pageToken) {
+          return {
+            files: cached.files as DriveFileRow[],
+            nextPageToken: cached.nextPageToken,
+          };
+        }
         const inflight = driveListInflightRef.current.get(inflightKey);
         if (inflight) return inflight;
       }
 
       const params = buildFilesListParams(parent, pathDepth, pageToken);
+      const mutationEpochAtFetch = getDriveListMutationEpoch();
       const promise = fetch(
         `/api/drive/files?${params.toString()}`,
         bust || driveSearch ? { cache: "no-store" } : undefined
@@ -498,7 +676,12 @@ export default function DrivePage() {
           files: data.files || [],
           nextPageToken: data.nextPageToken,
         };
-        if (!pageToken) driveListCacheRef.current.set(cacheKey, entry);
+        if (
+          !pageToken &&
+          mutationEpochAtFetch === getDriveListMutationEpoch()
+        ) {
+          driveListCacheRef.current.set(cacheKey, entry);
+        }
         return entry;
       });
 
@@ -523,7 +706,7 @@ export default function DrivePage() {
   const prefetchDriveFolder = useCallback(
     (folderId: string) => {
       const pathDepth = pathStack.length + 1;
-      const cacheKey = driveListCacheKey({
+      const cacheKey = buildDriveListCacheKey({
         parent: folderId,
         view,
         search: "",
@@ -558,18 +741,17 @@ export default function DrivePage() {
         if (opts.bust) driveListCacheRef.current.delete(driveListContextKey);
         const cached = !opts.bust ? driveListCacheRef.current.get(driveListContextKey) : undefined;
         if (cached) {
-          setDriveFiles(cached.files);
+          setDriveFiles(
+            applyListMutationOverrides(cached.files as DriveFileRow[], currentParentId)
+          );
           setDriveNextPageToken(cached.nextPageToken);
           setLoadingDrive(false);
           setRefreshingDrive(true);
         } else {
-          const hadList = driveFilesRef.current.length > 0;
-          if (!hadList) {
-            setDriveFiles([]);
-            setLoadingDrive(true);
-          } else {
-            setRefreshingDrive(true);
-          }
+          // New context (filter/sort/view) with no cache — don't show the previous list.
+          setDriveFiles([]);
+          setLoadingDrive(true);
+          setRefreshingDrive(false);
         }
       } else {
         setLoadingMore(true);
@@ -584,17 +766,17 @@ export default function DrivePage() {
         );
         if (!opts.append && activeDriveListLoadRef.current !== loadId) return;
         setDriveFiles((prev) => {
+          const serverFiles = applyListMutationOverrides(data.files, currentParentId);
           const next = opts.append
-            ? [...prev, ...data.files]
+            ? [...prev, ...serverFiles]
             : (() => {
-                // In search mode always replace — merging browse-mode files
-                // into search results would show irrelevant local entries.
-                if (driveSearch) return data.files;
-                // In browse mode, keep any locally-added files (e.g. fresh
-                // uploads) that the server hasn't indexed yet.
-                const serverIds = new Set(data.files.map((f) => f.id));
+                // Search / mime filters: replace entirely — merging an unfiltered
+                // list (e.g. after switching to Folders) would show wrong types.
+                if (driveSearch || mimeFilter !== "all") return serverFiles;
+                // Browse + All types: keep local-only rows (fresh uploads).
+                const serverIds = new Set(serverFiles.map((f) => f.id));
                 const localOnly = prev.filter((f) => !serverIds.has(f.id));
-                return [...localOnly, ...data.files];
+                return [...localOnly, ...serverFiles];
               })();
           driveListCacheRef.current.set(driveListContextKey, {
             files: next,
@@ -624,17 +806,16 @@ export default function DrivePage() {
       driveSearch,
       fetchDriveListPage,
       prefetchVisibleFolders,
+      applyListMutationOverrides,
+      mimeFilter,
     ]
   );
 
   /** Drive API orderBy — list order matches Google Drive (no client re-sort). */
-  const displayFiles = useMemo(
-    () =>
-      driveSearch || mimeFilter === "all" || mimeFilter === "folders"
-        ? driveFiles
-        : driveFiles.filter((f) => matchesMimeFilter(f, mimeFilter)),
-    [driveFiles, mimeFilter, driveSearch]
-  );
+  const displayFiles = useMemo(() => {
+    if (driveSearch || mimeFilter === "all") return driveFiles;
+    return driveFiles.filter((f) => matchesMimeFilter(f, mimeFilter));
+  }, [driveFiles, mimeFilter, driveSearch]);
 
   /** Clear the visible list and cancel in-flight loads when changing folders. */
   function beginFolderNavigation() {
@@ -675,6 +856,31 @@ export default function DrivePage() {
     void loadDriveFiles({ append: false });
   }, [loadDriveFiles]);
 
+  // After the active view loads, warm remaining sidebar tab caches in the background.
+  useEffect(() => {
+    if (loadingDrive || driveListPrefetchBoostRef.current) return;
+    driveListPrefetchBoostRef.current = true;
+    const skip = new Set<string>([driveListContextKey]);
+    const t = window.setTimeout(() => {
+      startDriveListPrefetchWarm({ skipKeys: skip, concurrency: 2 });
+    }, 400);
+    return () => {
+      clearTimeout(t);
+      driveListPrefetchBoostRef.current = false;
+    };
+  }, [loadingDrive, driveListContextKey]);
+
+  const warmDriveListCachesAfterRefresh = useCallback(() => {
+    const skip = new Set<string>([driveListContextKey]);
+    startDriveListPrefetchWarm({ skipKeys: skip, concurrency: 2 });
+  }, [driveListContextKey]);
+
+  const handleDriveRefresh = useCallback(async () => {
+    clearDriveListSessionCache();
+    await loadDriveFiles({ append: false, bust: true });
+    warmDriveListCachesAfterRefresh();
+  }, [loadDriveFiles, warmDriveListCachesAfterRefresh]);
+
   // Auto-load more: observe the sentinel <li> inside the scrollable list.
   // Re-subscribes whenever driveNextPageToken changes so the new token is captured.
   useEffect(() => {
@@ -699,11 +905,6 @@ export default function DrivePage() {
   const triggerFileUpload = useCallback(() => {
     setUploadMenuOpen(false);
     fileInputRef.current?.click();
-  }, []);
-
-  const triggerFolderUpload = useCallback(() => {
-    setUploadMenuOpen(false);
-    folderInputRef.current?.click();
   }, []);
 
   /** Upload a single File blob to {parentId}. Returns the created Drive
@@ -753,7 +954,7 @@ export default function DrivePage() {
       body: JSON.stringify({ name, parentId }),
     });
     const j = (await res.json()) as { file?: { id?: string }; error?: string };
-    if (!res.ok) throw new Error(j.error || "Failed to create folder");
+    if (!res.ok) throw new Error(driveApiErrorMessage(j, "Failed to create folder"));
     if (!j.file?.id) throw new Error("Folder creation returned no id");
     return j.file.id;
   }
@@ -925,6 +1126,18 @@ export default function DrivePage() {
     }
   }
 
+  async function triggerFolderUpload() {
+    setUploadMenuOpen(false);
+    const picked = await pickFolderForUpload();
+    if (picked.ok) {
+      await onUploadFolder(picked.files);
+      return;
+    }
+    if (picked.reason === "unsupported") {
+      folderInputRef.current?.click();
+    }
+  }
+
   /* ── Rename / Move / New-folder handlers ──────────────────── */
 
   /** Begin renaming a row — replaces its label with an input. */
@@ -948,7 +1161,7 @@ export default function DrivePage() {
         body: JSON.stringify({ name: next }),
       });
       const j = (await res.json()) as { file?: DriveFileRow; error?: string };
-      if (!res.ok) throw new Error(j.error || "Rename failed");
+      if (!res.ok) throw new Error(driveApiErrorMessage(j, "Rename failed"));
       syncDriveListCache((rows) =>
         rows.map((r) => (r.id === file.id ? { ...r, name: next } : r))
       );
@@ -961,8 +1174,12 @@ export default function DrivePage() {
 
   async function toggleStar(file: DriveFileRow) {
     const next = !file.starred;
+    const prevStarred = !!file.starred;
     setMenuOpenId(null);
     setContextMenu(null);
+
+    applyLocalStarState(file, next, true);
+
     try {
       const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}`, {
         method: "PATCH",
@@ -970,14 +1187,10 @@ export default function DrivePage() {
         body: JSON.stringify({ starred: next }),
       });
       const j = (await res.json()) as { error?: string };
-      if (!res.ok) throw new Error(j.error || "Could not update star");
-      syncDriveListCache((rows) => {
-        if (view === "starred" && !next) {
-          return rows.filter((r) => r.id !== file.id);
-        }
-        return rows.map((r) => (r.id === file.id ? { ...r, starred: next } : r));
-      });
+      if (!res.ok) throw new Error(driveApiErrorMessage(j, "Could not update star"));
     } catch (e) {
+      clearStarOverride(file.id);
+      applyLocalStarState(file, prevStarred, false);
       alert(e instanceof Error ? e.message : "Could not update star");
     }
   }
@@ -991,8 +1204,12 @@ export default function DrivePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ parentId: currentParentId }),
       });
-      const j = (await res.json()) as { file?: DriveFileRow; error?: string };
-      if (!res.ok) throw new Error(j.error || "Copy failed");
+      const j = (await res.json()) as {
+        file?: DriveFileRow;
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok) throw new Error(driveApiErrorMessage(j, "Copy failed"));
       if (j.file) {
         syncDriveListCache((prev) => {
           if (prev.some((r) => r.id === j.file!.id)) return prev;
@@ -1028,16 +1245,27 @@ export default function DrivePage() {
     }
   }
 
-  /** Issue a Drive move PATCH and refresh the list. */
+  /** Move a file/folder — optimistic UI, cross-cache sync, API confirmation. */
   async function performMove(file: DriveFileRow, newParentId: string) {
-    const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ parentId: newParentId }),
-    });
-    const j = (await res.json()) as { error?: string };
-    if (!res.ok) throw new Error(j.error || "Move failed");
-    syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
+    if (newParentId === currentParentId) return;
+
+    const sourceParentId = currentParentId;
+    applyLocalMoveState(file, sourceParentId, newParentId, true);
+    setMoveTarget(null);
+
+    try {
+      const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parentId: newParentId }),
+      });
+      const j = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(driveApiErrorMessage(j, "Move failed"));
+    } catch (e) {
+      revertLocalMoveState(file, sourceParentId, newParentId);
+      alert(e instanceof Error ? e.message : "Move failed");
+      throw e;
+    }
   }
 
   /** Download a file or folder, showing a spinner while the server streams
@@ -1093,7 +1321,7 @@ export default function DrivePage() {
         body: JSON.stringify({ name, parentId: currentParentId }),
       });
       const j = (await res.json()) as { file?: DriveFileRow; error?: string };
-      if (!res.ok) throw new Error(j.error || "Failed to create folder");
+      if (!res.ok) throw new Error(driveApiErrorMessage(j, "Failed to create folder"));
       setNewFolderOpen(false);
       setNewFolderName("");
       if (j.file) {
@@ -1191,7 +1419,8 @@ export default function DrivePage() {
     const used = parseInt(storageQuota.usage ?? "0", 10);
     const limit = parseInt(storageQuota.limit ?? "0", 10);
     if (!limit) return null;
-    const pct = Math.min(100, Math.round((used / limit) * 100));
+    const pct = Math.min(100, (used / limit) * 100);
+    const pctLabel = pct.toFixed(2);
     const isHigh = pct >= 90;
     const isMedium = pct >= 75;
     const barColor = isHigh ? "bg-red-500" : isMedium ? "bg-yellow-400" : "bg-[var(--color-primary)]";
@@ -1206,7 +1435,7 @@ export default function DrivePage() {
             "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
             isHigh ? "bg-red-100 text-red-600" : isMedium ? "bg-yellow-100 text-yellow-700" : "bg-[var(--color-primary-tint)] text-[var(--color-primary)]"
           )}>
-            {pct}%
+            {pctLabel}%
           </span>
         </div>
         <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--color-border)]">
@@ -1508,7 +1737,7 @@ export default function DrivePage() {
           </button>
           <button
             type="button"
-            onClick={() => void loadDriveFiles({ append: false, bust: true })}
+            onClick={() => void handleDriveRefresh()}
             className="btn-ghost shrink-0 rounded-lg p-2"
             title={titleCase("Refresh")}
           >

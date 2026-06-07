@@ -490,6 +490,8 @@ export type AttachmentInfo = {
   size: number;
   /** Content-ID for inline MIME parts (`cid:` in HTML). */
   contentId?: string;
+  /** Inline image bytes from Gmail `body.data` when no attachmentId. */
+  inlineDataUri?: string;
 };
 
 export type ThreadMessageView = {
@@ -509,12 +511,17 @@ export type ThreadMessageView = {
 
 function collectAttachments(payload: Record<string, unknown>, messageId: string): AttachmentInfo[] {
   const attachments: AttachmentInfo[] = [];
-  const body = payload.body as { attachmentId?: string; size?: number } | undefined;
+  const body = payload.body as { attachmentId?: string; size?: number; data?: string } | undefined;
   const filename = String(payload.filename || "");
   const mimeType = String(payload.mimeType || "application/octet-stream");
   const headers = (payload.headers as GmailHeader[]) || [];
   const contentIdRaw = getHeader(headers, "Content-ID");
-  const contentId = contentIdRaw ? contentIdRaw.replace(/^<|>$/g, "").trim() : undefined;
+  const contentLocationRaw = getHeader(headers, "Content-Location");
+  const contentId = contentIdRaw
+    ? contentIdRaw.replace(/^<|>$/g, "").trim()
+    : contentLocationRaw
+      ? contentLocationRaw.replace(/^<|>$/g, "").trim()
+      : undefined;
   const parts = payload.parts as Record<string, unknown>[] | undefined;
 
   if (body?.attachmentId) {
@@ -524,6 +531,16 @@ function collectAttachments(payload: Record<string, unknown>, messageId: string)
       mimeType,
       size: body.size || 0,
       contentId: contentId || undefined,
+    });
+  } else if (body?.data && mimeType.startsWith("image/")) {
+    const b64 = body.data.replace(/-/g, "+").replace(/_/g, "/");
+    attachments.push({
+      attachmentId: `inline-data:${contentId || filename || messageId}`,
+      filename: filename || "inline",
+      mimeType,
+      size: body.size || 0,
+      contentId: contentId || undefined,
+      inlineDataUri: `data:${mimeType};base64,${b64}`,
     });
   }
 

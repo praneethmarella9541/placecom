@@ -29,6 +29,11 @@ import {
 } from "@/lib/calendar-recurrence";
 import { CalendarFreeBusyPanel } from "@/components/CalendarFreeBusyPanel";
 import { CalendarRsvpButtons, type RsvpStatus } from "@/components/CalendarRsvpButtons";
+import {
+  defaultCalendarRangeIso,
+  getCalendarPrefetchCache,
+  patchCalendarPrefetchCache,
+} from "@/lib/workspace-feature-prefetch";
 
 /* ─── Types ─────────────────────────────────────────────────── */
 type Attendee = {
@@ -398,12 +403,20 @@ export default function CalendarPage() {
 
   /* ── Data loading ────────────────────────────────────── */
   const loadRecruiters = useCallback(async () => {
-    setLoadingRecruiters(true);
+    const cached = getCalendarPrefetchCache();
+    if (cached?.recruiters.length) {
+      setRecruiters(cached.recruiters as RecruiterRow[]);
+      setLoadingRecruiters(false);
+    } else {
+      setLoadingRecruiters(true);
+    }
     try {
       const res = await fetch("/api/recruiters");
       const json = (await res.json()) as { recruiters?: RecruiterRow[]; error?: string };
       if (!res.ok) throw new Error(json.error || "Failed to load recruiters");
-      setRecruiters(json.recruiters || []);
+      const list = json.recruiters || [];
+      setRecruiters(list);
+      patchCalendarPrefetchCache({ recruiters: list });
     } catch {
       // Non-fatal — contacts still power suggestions.
     } finally {
@@ -412,17 +425,33 @@ export default function CalendarPage() {
   }, []);
 
   const loadEvents = useCallback(async (timeMin?: string, timeMax?: string) => {
-    setLoadingEvents(true);
+    const defaults = defaultCalendarRangeIso();
+    const usingDefaultRange = !timeMin && !timeMax;
+    if (usingDefaultRange) {
+      const cached = getCalendarPrefetchCache();
+      if (cached?.events.length) {
+        setEvents(cached.events as EventRow[]);
+        setLoadingEvents(false);
+      } else {
+        setLoadingEvents(true);
+      }
+    } else {
+      setLoadingEvents(true);
+    }
     setError(null);
     try {
-      const start = timeMin || new Date(Date.now() - 30 * 86400000).toISOString();
-      const end = timeMax || new Date(Date.now() + 90 * 86400000).toISOString();
+      const start = timeMin || defaults.timeMin;
+      const end = timeMax || defaults.timeMax;
       const res = await fetch(
         `/api/calendar/events?timeMin=${encodeURIComponent(start)}&timeMax=${encodeURIComponent(end)}&maxResults=500`
       );
       const body = (await res.json()) as { events?: EventRow[]; error?: string };
       if (!res.ok) throw new Error(body.error || "Failed to load events");
-      setEvents(body.events || []);
+      const list = body.events || [];
+      setEvents(list);
+      if (usingDefaultRange) {
+        patchCalendarPrefetchCache({ events: list });
+      }
     } catch (e) {
       setError(clientFetchFailedMessage(e));
     } finally {
@@ -485,13 +514,20 @@ export default function CalendarPage() {
   // Pull Google contacts once on mount — same source the Compose modal uses,
   // so the meeting recipient pickers feel consistent with the mail flow.
   useEffect(() => {
+    const cached = getCalendarPrefetchCache();
+    if (cached?.googleContacts.length) {
+      setGoogleContacts(cached.googleContacts as RecipientSuggestion[]);
+    }
     let cancelled = false;
     fetch("/api/gmail/contacts")
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         if (cancelled) return;
         const contacts = (j as { contacts?: RecipientSuggestion[] } | null)?.contacts;
-        if (Array.isArray(contacts)) setGoogleContacts(contacts);
+        if (Array.isArray(contacts)) {
+          setGoogleContacts(contacts);
+          patchCalendarPrefetchCache({ googleContacts: contacts });
+        }
       })
       .catch(() => {/* non-fatal — recruiters still work */});
     return () => { cancelled = true; };

@@ -1,39 +1,59 @@
-/** Parse a raw RFC 2822 address list into display names (or bare emails). */
-function parseAddressList(raw: string): string[] {
+import { extractEmailAddress } from "@/lib/email-parse";
+
+function splitAddressEntries(raw: string): string[] {
   if (!raw?.trim()) return [];
-  const results: string[] = [];
-  // Split on commas that are outside angle brackets
-  const entries = raw.split(/,(?![^<]*>)/);
-  for (const entry of entries) {
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    // "Display Name" <email> or Display Name <email>
-    const named = trimmed.match(/^"?([^"<]+?)"?\s*<[^>]+>$/);
-    if (named) {
-      const name = named[1].trim();
-      if (name) { results.push(name); continue; }
-    }
-    // Bare email
-    const bare = trimmed.match(/^<([^>]+)>$/) ?? trimmed.match(/^([^\s@]+@[^\s,]+)$/);
-    if (bare) { results.push(bare[1].trim()); continue; }
-    // Fallback: use as-is but trim quotes
-    results.push(trimmed.replace(/^"|"$/g, "").trim());
-  }
-  return results.filter(Boolean);
+  return raw
+    .split(/,(?![^<]*>)/)
+    .map((e) => e.trim())
+    .filter(Boolean);
 }
 
-/** One compact line for message headers, like Gmail: "to name1, name2 · cc name3" */
+function emailFromEntry(trimmed: string): string {
+  const named = trimmed.match(/^"?([^"<]*)"?\s*<([^>]+)>$/);
+  if (named) return named[2].trim();
+  const angle = trimmed.match(/^<([^>]+)>$/);
+  if (angle) return angle[1].trim();
+  if (/^[^\s@]+@[^\s,]+$/.test(trimmed)) return trimmed.trim();
+  return "";
+}
+
+/** Gmail-style From: `Name <email@domain.com>` */
+export function formatFromHeader(from: string): string {
+  if (!from?.trim()) return "Unknown";
+  const email = extractEmailAddress(from);
+  const match = from.match(/^"?([^"<]+)"?\s*</);
+  const name = match ? match[1].trim() : "";
+  if (name && email && name.toLowerCase() !== email.toLowerCase()) {
+    return `${name} <${email}>`;
+  }
+  return email || from.trim();
+}
+
+/** To line: local part only (text before @). */
+function formatToAddressEntry(trimmed: string): string {
+  const email = emailFromEntry(trimmed);
+  if (email.includes("@")) return email.split("@")[0] ?? email;
+  return trimmed.replace(/^"|"$/g, "").trim();
+}
+
+function formatCcBccAddressEntry(trimmed: string): string {
+  const email = emailFromEntry(trimmed);
+  if (email.includes("@")) return email.split("@")[0] ?? email;
+  return trimmed.replace(/^"|"$/g, "").trim();
+}
+
+/** One compact line for message headers: "to alice · cc bob" */
 export function formatMessageRecipientsLine(msg: {
   to?: string;
   cc?: string;
   bcc?: string;
 }): { label: string; value: string }[] {
   const parts: { label: string; value: string }[] = [];
-  const toNames  = parseAddressList(msg.to  ?? "");
-  const ccNames  = parseAddressList(msg.cc  ?? "");
-  const bccNames = parseAddressList(msg.bcc ?? "");
-  if (toNames.length)  parts.push({ label: "to",  value: toNames.join(", ") });
-  if (ccNames.length)  parts.push({ label: "cc",  value: ccNames.join(", ") });
-  if (bccNames.length) parts.push({ label: "bcc", value: bccNames.join(", ") });
+  const to = splitAddressEntries(msg.to ?? "").map(formatToAddressEntry);
+  const cc = splitAddressEntries(msg.cc ?? "").map(formatCcBccAddressEntry);
+  const bcc = splitAddressEntries(msg.bcc ?? "").map(formatCcBccAddressEntry);
+  if (to.length) parts.push({ label: "to", value: to.join(", ") });
+  if (cc.length) parts.push({ label: "cc", value: cc.join(", ") });
+  if (bcc.length) parts.push({ label: "bcc", value: bcc.join(", ") });
   return parts;
 }

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import {
-  File,
   FileImage,
   FileSpreadsheet,
   FileText,
@@ -12,6 +11,32 @@ import {
   Archive,
   Code,
 } from "lucide-react";
+
+const ARCHIVE_EXTENSIONS = new Set([
+  "zip",
+  "tar",
+  "gz",
+  "tgz",
+  "rar",
+  "7z",
+  "bz2",
+  "xz",
+  "zipx",
+  "cab",
+]);
+
+function isArchiveMime(mimeType: string, ext: string): boolean {
+  if (ARCHIVE_EXTENSIONS.has(ext)) return true;
+  if (ext) return false;
+  return (
+    mimeType.includes("zip") ||
+    mimeType.includes("tar") ||
+    mimeType.includes("rar") ||
+    mimeType === "application/gzip" ||
+    mimeType === "application/x-gzip" ||
+    mimeType === "application/x-7z-compressed"
+  );
+}
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -117,10 +142,7 @@ function getConfig(mimeType: string, name?: string, iconSize = "h-4 w-4"): IconC
     };
   }
 
-  if (
-    mimeType.includes("zip") || mimeType.includes("tar") || mimeType.includes("rar") ||
-    ext === "zip" || ext === "tar" || ext === "gz" || ext === "rar"
-  ) {
+  if (isArchiveMime(mimeType, ext)) {
     return {
       icon: <Archive className={iconSize} />,
       bg: "bg-yellow-50 dark:bg-yellow-950/30",
@@ -142,10 +164,30 @@ function getConfig(mimeType: string, name?: string, iconSize = "h-4 w-4"): IconC
   }
 
   return {
-    icon: <File className={iconSize} />,
+    icon: <UnknownFileShape className={iconSize} />,
     bg: "bg-[var(--color-surface-offset)]",
-    iconColor: "text-[var(--color-text-faint)]",
+    iconColor: "text-[var(--color-text-muted)]",
   };
+}
+
+/** Google Drive–style generic file (folded-corner page, not an archive box). */
+function UnknownFileShape({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden
+    >
+      <path
+        d="M6 2h8l6 6v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"
+        fill="currentColor"
+        opacity="0.85"
+      />
+      <path d="M14 2v6h6" fill="currentColor" opacity="0.45" />
+    </svg>
+  );
 }
 
 /** Google Drive-style folder shape rendered as inline SVG for richness. */

@@ -22,6 +22,10 @@ import {
   getSelectedWhatsAppTemplateName,
   setSelectedWhatsAppTemplateName,
 } from "@/lib/whatsapp-template-preference";
+import {
+  getWhatsAppPrefetchCache,
+  patchWhatsAppPrefetchCache,
+} from "@/lib/workspace-feature-prefetch";
 import { showWhatsAppFailureDetail, WhatsAppTicks } from "@/components/WhatsAppTicks";
 import { titleCase } from "@/lib/title-case";
 import {
@@ -224,6 +228,7 @@ export function WhatsAppMessaging({
       const body = (await res.json()) as StatusPayload & { error?: string };
       if (res.ok) {
         setStatus(body);
+        patchWhatsAppPrefetchCache({ status: body });
         const list = body.templates?.length
           ? body.templates
           : body.defaultTemplate
@@ -282,12 +287,23 @@ export function WhatsAppMessaging({
 
   const loadConversations = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent ?? false;
-    if (!silent) { setLoadingList(true); setError(null); }
+    if (!silent) {
+      const cached = getWhatsAppPrefetchCache();
+      if (cached?.conversations.length) {
+        setConversations(cached.conversations);
+        setLoadingList(false);
+      } else {
+        setLoadingList(true);
+      }
+      setError(null);
+    }
     try {
       const res = await fetch("/api/whatsapp/conversations");
       const body = (await res.json()) as { conversations?: Conv[]; error?: string };
       if (!res.ok) throw new Error(body.error || "Failed to load conversations");
-      setConversations(body.conversations || []);
+      const list = body.conversations || [];
+      setConversations(list);
+      patchWhatsAppPrefetchCache({ conversations: list });
     } catch (e) {
       if (!silent) setError(clientFetchFailedMessage(e));
     } finally {
@@ -347,6 +363,8 @@ export function WhatsAppMessaging({
   }, [contactList, contactSearch]);
 
   useEffect(() => {
+    const cached = getWhatsAppPrefetchCache();
+    if (cached?.status) setStatus(cached.status as StatusPayload);
     void loadStatus();
     void loadConversations();
     const t = window.setInterval(() => {

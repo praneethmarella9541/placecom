@@ -8,6 +8,10 @@ import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
+import {
+  getFormsPrefetchCache,
+  setFormsPrefetchCache,
+} from "@/lib/workspace-feature-prefetch";
 
 type FormRow = {
   id: string;
@@ -35,7 +39,18 @@ export default function FormsPage() {
 
   const load = useCallback(async (opts: { append: boolean; pageToken?: string }) => {
     if (!opts.append) {
-      setLoading(true);
+      if (!searchDebounced) {
+        const cached = getFormsPrefetchCache();
+        if (cached?.forms.length) {
+          setForms(cached.forms as FormRow[]);
+          setNextPageToken(cached.nextPageToken);
+          setLoading(false);
+        } else {
+          setLoading(true);
+        }
+      } else {
+        setLoading(true);
+      }
       setError(null);
     }
     const params = new URLSearchParams({ pageSize: "30" });
@@ -51,6 +66,12 @@ export default function FormsPage() {
       if (!res.ok) throw new Error(data.error || "Failed to load forms");
       setForms((prev) => (opts.append ? [...prev, ...(data.forms || [])] : data.forms || []));
       setNextPageToken(data.nextPageToken);
+      if (!opts.append && !searchDebounced) {
+        setFormsPrefetchCache({
+          forms: data.forms || [],
+          nextPageToken: data.nextPageToken,
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
       if (!opts.append) setForms([]);

@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { copyDriveFile } from "@/lib/drive";
+import {
+  DRIVE_INSUFFICIENT_SCOPE,
+  driveInsufficientScopePayload,
+} from "@/lib/drive-scope-error";
 
 export const runtime = "nodejs";
 
@@ -45,15 +49,8 @@ export async function POST(
         { status: 401 }
       );
     }
-    if (err.code === "DRIVE_INSUFFICIENT_SCOPE") {
-      return NextResponse.json(
-        {
-          error: "DRIVE_INSUFFICIENT_SCOPE",
-          message:
-            "Copying files requires the full Drive scope. Sign out and sign in again to grant it.",
-        },
-        { status: 403 }
-      );
+    if (err.code === DRIVE_INSUFFICIENT_SCOPE) {
+      return NextResponse.json(driveInsufficientScopePayload(), { status: 403 });
     }
     return NextResponse.json(
       { error: err.message || "Drive copy failed" },

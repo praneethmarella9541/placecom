@@ -29,14 +29,13 @@ export type MeProfileResponse = {
 /** GET /api/me/profile — signed-in user's portal profile */
 export async function GET(request: Request) {
   const authed = await getAuthedRequest(request);
-  let user = authed?.user ?? null;
-  const supabase = createServerSupabaseClient();
-  if (!user) {
-    const { data, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !data.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    user = data.user;
+  const supabase = authed?.supabase ?? createServerSupabaseClient();
+  const {
+    data: { user },
+    error: userErr,
+  } = await supabase.auth.getUser();
+  if (userErr || !user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let { data: profile, error: profileErr } = await supabase

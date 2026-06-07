@@ -20,7 +20,7 @@ type PatchBody = {
   mobilePhone?: string | null;
   exotelVirtualNumber?: string | null;
   groupId?: string | null;
-  openaiTokenLimit?: number | null;
+  openaiTokenLimit?: number | string | null;
   displayUsername?: string | null;
   jobTitle?: string | null;
   bio?: string | null;
@@ -135,7 +135,9 @@ export async function GET() {
     // Non-fatal: still return members without email if auth admin listing is unavailable.
   }
 
-  const groupIds = [...new Set((data ?? []).map((r) => r.group_id).filter(Boolean))] as string[];
+  const groupIds = Array.from(
+    new Set((data ?? []).map((r) => r.group_id).filter(Boolean))
+  ) as string[];
   const groupById = new Map<string, { name: string; restricted_features: unknown }>();
   if (groupIds.length) {
     const { data: groups } = await svc

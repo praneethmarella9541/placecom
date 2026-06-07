@@ -180,7 +180,7 @@ export async function POST(request: Request) {
   }
 
   let openaiTokenLimit: number | null = null;
-  if (body.openaiTokenLimit != null && body.openaiTokenLimit !== "") {
+  if (body.openaiTokenLimit != null) {
     const limit = Math.max(0, Math.floor(Number(body.openaiTokenLimit) || 0));
     openaiTokenLimit = limit > 0 ? limit : null;
   }

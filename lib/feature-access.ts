@@ -54,6 +54,7 @@ export function pathToFeature(pathname: string, search: URLSearchParams): Featur
   }
   if (pathname.startsWith("/sms")) return "sms";
   if (pathname.startsWith("/whatsapp")) return "whatsapp";
+  if (pathname.startsWith("/contacts")) return "whatsapp";
   return null;
 }
 
@@ -127,6 +128,7 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
     { path: "/calendar" },
     { path: "/sms" },
     { path: "/whatsapp" },
+    { path: "/contacts" },
     { path: "/meetings" },
   ];
   for (const { path, search = "" } of candidates) {

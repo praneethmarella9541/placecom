@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { isValidE164, normalizePhone } from "@/lib/phone";
+import { formatPhone, peerInitials } from "@/lib/wa-contacts-display";
+import { useWaContacts } from "@/hooks/useWaContacts";
 import {
   formatWhatsAppDeliveryLabel,
   getDeliveryFailureAdvice,
@@ -33,7 +35,6 @@ import {
   IconRefresh,
   IconReply,
   IconStar,
-  IconTrash,
   IconX,
 } from "@/components/Icons";
 
@@ -86,24 +87,6 @@ function previewOutboundBody(
 function isMediaPlaceholder(body: string | null): boolean {
   if (!body) return true;
   return /^\[(?:image|video|audio|document|sticker|location|template)(?::[^\]]+)?\]$/i.test(body.trim());
-}
-
-/** Format E.164 for display: +91 98494 31508 */
-function formatPhone(e164: string): string {
-  const digits = e164.replace(/\D/g, "");
-  if (e164.startsWith("+91") && digits.length === 12) {
-    return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
-  }
-  if (digits.length === 10) return `${digits.slice(0, 5)} ${digits.slice(5)}`;
-  return e164;
-}
-
-function peerInitials(peer: string, name?: string): string {
-  if (name?.trim()) return name.trim()[0].toUpperCase();
-  // Fallback to last 2 digits of the number
-  const digits = peer.replace(/\D/g, "");
-  if (digits.length >= 2) return digits.slice(-2);
-  return peer.slice(0, 2).toUpperCase() || "?";
 }
 
 function formatListTime(iso: string): string {
@@ -169,10 +152,16 @@ export type WhatsAppMessagingProps = {
   embedded?: boolean;
   /** Fill the parent container completely — used on the dedicated /whatsapp page */
   fullPage?: boolean;
+  /** Open a thread on load (e.g. from Contact book → WhatsApp link) */
+  initialPeer?: string | null;
 };
 
 /* ── component ────────────────────────────────────────────── */
-export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsAppMessagingProps) {
+export function WhatsAppMessaging({
+  embedded = false,
+  fullPage = false,
+  initialPeer = null,
+}: WhatsAppMessagingProps) {
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [conversations, setConversations] = useState<Conv[]>([]);
   const [peer, setPeer] = useState<string | null>(null);
@@ -199,60 +188,34 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
   const [menu, setMenu] = useState<{ msg: Msg; x: number; y: number } | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [actionBusy, setActionBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [newPhoneInput, setNewPhoneInput] = useState(false);
-  // Contact names — stored in localStorage keyed by E.164
-  const [contacts, setContacts] = useState<Record<string, string>>({});
-  const [editingName, setEditingName] = useState<string | null>(null); // peer E.164 being renamed
+  const [contactSearch, setContactSearch] = useState("");
+  const { contacts: contactList, saveContact, deleteContact, resolveName } = useWaContacts();
+  const [editingName, setEditingName] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
-
-  // Load contacts from Supabase on mount
-  useEffect(() => {
-    void (async () => {
-      try {
-        const res = await fetch("/api/whatsapp/contacts");
-        const data = (await res.json()) as { contacts?: { peer_e164: string; name: string }[] };
-        if (res.ok && data.contacts) {
-          const map: Record<string, string> = {};
-          for (const c of data.contacts) {
-            if (c.peer_e164) map[c.peer_e164] = c.name;
-          }
-          setContacts(map);
-        }
-      } catch { /* ignore — contacts just won't show names */ }
-    })();
-  }, []);
 
   async function saveName(peer: string, name: string) {
     const trimmed = name.trim();
-    // Optimistic update
-    setContacts((prev) =>
-      trimmed
-        ? { ...prev, [peer]: trimmed }
-        : Object.fromEntries(Object.entries(prev).filter(([k]) => k !== peer))
-    );
     setEditingName(null);
     setNameInput("");
     try {
       if (trimmed) {
-        await fetch("/api/whatsapp/contacts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ peer_e164: peer, name: trimmed }),
-        });
+        await saveContact(peer, trimmed);
       } else {
-        await fetch("/api/whatsapp/contacts", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ peer_e164: peer }),
-        });
+        await deleteContact(peer);
       }
-    } catch { /* ignore — optimistic state already applied */ }
+    } catch {
+      /* optimistic hook state already applied on save; ignore delete errors */
+    }
   }
 
   function displayName(peer: string): string {
-    return contacts[peer] || formatPhone(peer);
+    return resolveName(peer) || formatPhone(peer);
+  }
+
+  function savedContactName(peer: string): string | undefined {
+    return resolveName(peer);
   }
 
   const loadStatus = useCallback(async () => {
@@ -361,6 +324,27 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
   // access it without re-registering on every peer change.
   const peerRef = useRef<string | null>(null);
   useEffect(() => { peerRef.current = peer; }, [peer]);
+
+  useEffect(() => {
+    if (!initialPeer) return;
+    const normalized = recipientE164(initialPeer);
+    if (!isValidE164(normalized)) return;
+    setPeer(normalized);
+    setMobileShowThread(true);
+    setNewPhoneInput(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPeer]);
+
+  const filteredContactsForNewChat = useMemo(() => {
+    const q = contactSearch.trim().toLowerCase();
+    const list = q
+      ? contactList.filter((c) => {
+          const phone = formatPhone(c.peer_e164).toLowerCase();
+          return c.name.toLowerCase().includes(q) || c.peer_e164.includes(q) || phone.includes(q);
+        })
+      : contactList;
+    return list.slice(0, q ? 12 : 8);
+  }, [contactList, contactSearch]);
 
   useEffect(() => {
     void loadStatus();
@@ -591,6 +575,37 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
               {titleCase("Open")}
             </button>
           </div>
+          {contactList.length > 0 && (
+            <div className="mt-3 border-t border-[var(--color-border)] pt-3">
+              <input
+                className="input-field mb-2 w-full text-[12px]"
+                placeholder={titleCase("Search saved contacts")}
+                value={contactSearch}
+                onChange={(e) => setContactSearch(e.target.value)}
+              />
+              <div className="max-h-40 space-y-0.5 overflow-y-auto">
+                {filteredContactsForNewChat.map((c) => (
+                  <button
+                    key={c.peer_e164}
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-offset)]"
+                    onClick={() => { setError(null); selectPeer(c.peer_e164); setContactSearch(""); }}
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[11px] font-bold text-white">
+                      {peerInitials(c.peer_e164, c.name)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{c.name}</span>
+                      <span className="block truncate text-[11px] text-[var(--color-text-faint)]">{formatPhone(c.peer_e164)}</span>
+                    </span>
+                  </button>
+                ))}
+                {filteredContactsForNewChat.length === 0 && contactSearch.trim() && (
+                  <p className="px-2 py-1 text-[12px] text-[var(--color-text-faint)]">{titleCase("No matching contacts")}</p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -633,7 +648,7 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
                 "flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[13px] font-bold text-white",
                 peer === c.peer_e164 ? "bg-[var(--color-primary)]" : "bg-[#25d366]"
               )}>
-                {peerInitials(c.peer_e164, contacts[c.peer_e164])}
+                {peerInitials(c.peer_e164, savedContactName(c.peer_e164))}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline justify-between gap-2">
@@ -682,7 +697,7 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
         {peer ? (
           <>
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[13px] font-bold text-white">
-              {peerInitials(peer, contacts[peer])}
+              {peerInitials(peer, savedContactName(peer))}
             </span>
             <div className="min-w-0 flex-1">
               {editingName === peer ? (
@@ -703,13 +718,18 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
                 </form>
               ) : (
                 <div className="flex items-center gap-2">
-                  <p className="truncate text-[15px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
+                  <div className="min-w-0">
+                    <p className="truncate text-[15px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
+                    {savedContactName(peer) && (
+                      <p className="truncate text-[11px] text-[var(--color-text-faint)]">{formatPhone(peer)}</p>
+                    )}
+                  </div>
                   <button
                     type="button"
                     className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-faint)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
-                    onClick={() => { setEditingName(peer); setNameInput(contacts[peer] || ""); }}
+                    onClick={() => { setEditingName(peer); setNameInput(savedContactName(peer) || ""); }}
                   >
-                    {contacts[peer] ? "Edit name" : "Save name"}
+                    {savedContactName(peer) ? "Edit name" : "Save name"}
                   </button>
                 </div>
               )}
@@ -729,7 +749,7 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
             <span className="text-[12px] font-medium text-[var(--color-text-muted)]">{selectedIds.length} selected</span>
             <button
               type="button"
-              disabled={selectedIds.length === 0 || actionBusy}
+              disabled={selectedIds.length === 0}
               className="btn-ghost gap-1 px-2 py-1 text-[12px]"
               onClick={() => {
                 const parts = messages.filter((m) => selectedIds.includes(m.id)).map((m) => m.body || "");
@@ -737,27 +757,6 @@ export function WhatsAppMessaging({ embedded = false, fullPage = false }: WhatsA
               }}
             >
               <IconCopy className="h-3.5 w-3.5" /> Copy
-            </button>
-            <button
-              type="button"
-              disabled={selectedIds.length === 0 || actionBusy}
-              className="btn-ghost gap-1 px-2 py-1 text-[12px] text-[var(--color-danger)]"
-              onClick={() => {
-                if (!peer || selectedIds.length === 0) return;
-                if (!window.confirm(titleCase("Delete selected messages from this view?"))) return;
-                setActionBusy(true);
-                void (async () => {
-                  try {
-                    for (const id of selectedIds) await patchMessage(id, { soft_delete: true });
-                    setSelectMode(false); setSelectedIds([]);
-                    await loadMessages(peer, { silent: true });
-                    await loadConversations({ silent: true });
-                  } catch (e) { setError(clientFetchFailedMessage(e)); }
-                  finally { setActionBusy(false); }
-                })();
-              }}
-            >
-              <IconTrash className="h-3.5 w-3.5" /> Delete
             </button>
             <button type="button" className="btn-ghost px-2 py-1 text-[12px]" onClick={() => { setSelectMode(false); setSelectedIds([]); }}>
               Cancel

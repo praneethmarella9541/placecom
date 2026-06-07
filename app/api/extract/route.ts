@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getExtractHttpBatchSize } from "@/lib/extract-config";
 import { extractEmailsWithOpenAI } from "@/lib/openai-extract";
+import { assertUserWithinTokenLimit } from "@/lib/openai-token-limit";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 export const runtime = "nodejs";
@@ -96,6 +97,14 @@ export async function POST(request: Request) {
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const tokenCheck = await assertUserWithinTokenLimit(user.id);
+  if (!tokenCheck.ok) {
+    return NextResponse.json(
+      { error: tokenCheck.message, tokenLimit: tokenCheck.status },
+      { status: 429 }
+    );
   }
 
   const CHUNK = getExtractHttpBatchSize();

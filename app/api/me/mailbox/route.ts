@@ -3,7 +3,7 @@ import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
-import { normalizeRestrictedFeatures } from "@/lib/feature-access";
+import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import { getAuthedRequest } from "@/lib/api-auth";
 
 export const runtime = "nodejs";
@@ -23,11 +23,11 @@ export async function GET(request: Request) {
 
   let { data: profile, error: profileErr } = await supabase
     .from("profiles")
-    .select("role, mailbox_owner_id, display_username, restricted_features")
+    .select("role, mailbox_owner_id, display_username, restricted_features, group_id")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (profileErr && /restricted_features/i.test(profileErr.message ?? "")) {
+  if (profileErr && /restricted_features|group_id/i.test(profileErr.message ?? "")) {
     const fallback = await supabase
       .from("profiles")
       .select("role, mailbox_owner_id, display_username")
@@ -42,6 +42,7 @@ export async function GET(request: Request) {
       sessionEmail: user.email ?? null,
       displayUsername: null,
       role: "staff",
+      groupName: null,
       restrictedFeatures: [],
       mailboxOwnerId: null,
       mailboxEmail: null,
@@ -58,6 +59,7 @@ export async function GET(request: Request) {
       sessionEmail: user.email ?? null,
       displayUsername: null,
       role: "staff",
+      groupName: null,
       restrictedFeatures: [],
       mailboxOwnerId: null,
       mailboxEmail: null,
@@ -69,6 +71,21 @@ export async function GET(request: Request) {
   const role = profile.role as string;
   const mailboxOwnerId =
     role === "admin" ? user.id : (profile.mailbox_owner_id as string | null);
+
+  let group: { name: string; restricted_features: unknown } | null = null;
+  if (profile.group_id) {
+    try {
+      const svc = createServiceSupabase();
+      const { data: g } = await svc
+        .from("team_groups")
+        .select("name, restricted_features")
+        .eq("id", profile.group_id as string)
+        .maybeSingle();
+      if (g) group = g as { name: string; restricted_features: unknown };
+    } catch {
+      /* ignore */
+    }
+  }
 
   let mailboxEmail: string | null = null;
   let hasStoredMailbox = false;
@@ -93,7 +110,15 @@ export async function GET(request: Request) {
     sessionEmail: user.email ?? null,
     displayUsername: (profile.display_username as string | null) ?? null,
     role,
-    restrictedFeatures: normalizeRestrictedFeatures(profile.restricted_features),
+    restrictedFeatures: mergeRestrictedFeatures(
+      {
+        role,
+        restricted_features: profile.restricted_features,
+        group_id: profile.group_id as string | null,
+      },
+      group
+    ),
+    groupName: group?.name ?? null,
     mailboxOwnerId,
     mailboxEmail,
     hasStoredMailbox,

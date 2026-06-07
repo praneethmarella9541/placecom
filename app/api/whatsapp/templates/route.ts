@@ -28,6 +28,6 @@ export async function GET(request: Request) {
     config,
     resolved,
     exotel,
-    hint: "resolved.name should match exotel.name for each template (auto-synced from Exotel when credentials are set)",
+    hint: "config = whatsapp-templates.json; exotel = live approved templates; resolved = config merged with Exotel plus any extra approved Exotel templates not in config",
   });
 }

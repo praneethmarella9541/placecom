@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Rss,
   ScanText,
+  UserRound,
   Users,
   Video,
   X,
@@ -26,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { pathToFeature } from "@/lib/feature-access";
+import { titleCase } from "@/lib/title-case";
 import { ExtractionRunProvider } from "@/components/ExtractionRunProvider";
 import { ExtractionRunBanner } from "@/components/ExtractionRunBanner";
 
@@ -46,6 +48,7 @@ const secondaryNav = [
   { href: "/broadcasting",  label: "Broadcasting", Icon: Rss },
   { href: "/sms",           label: "SMS",          Icon: MessageSquare },
   { href: "/whatsapp",      label: "WhatsApp",     Icon: MessagesSquare },
+  { href: "/contacts",      label: "Contacts",     Icon: UserRound },
 ] as const;
 
 /* ─── helpers ─────────────────────────────────────────────── */
@@ -175,6 +178,14 @@ function UserProfile({
             <p className="truncate text-[12px] font-semibold text-white/90">{displayName}</p>
             <p className="truncate text-[11px] text-white/40">{email}</p>
           </div>
+          <Link
+            href="/profile"
+            onClick={() => setOpen(false)}
+            className="flex w-full items-center gap-2.5 px-4 py-2.5 text-[13px] font-medium text-white/80 transition-colors hover:bg-white/[0.06]"
+          >
+            <Contact className="h-3.5 w-3.5" />
+            {titleCase("My profile")}
+          </Link>
           <button
             type="button"
             onClick={() => { setOpen(false); onSignOut(); }}

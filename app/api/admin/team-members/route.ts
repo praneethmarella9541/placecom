@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
+import { mergeRestrictedFeatures } from "@/lib/profile-access";
+import { getUserOpenAITokenUsage } from "@/lib/openai-token-limit";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
@@ -17,6 +19,11 @@ type PatchBody = {
   restrictedFeatures?: string[];
   mobilePhone?: string | null;
   exotelVirtualNumber?: string | null;
+  groupId?: string | null;
+  openaiTokenLimit?: number | null;
+  displayUsername?: string | null;
+  jobTitle?: string | null;
+  bio?: string | null;
 };
 
 function normalizeOptionalPhone(
@@ -102,11 +109,11 @@ export async function GET() {
   let { data, error } = await svc
     .from("profiles")
     .select(
-      "id, role, display_username, mailbox_owner_id, restricted_features, mobile_phone, exotel_virtual_number, created_at"
+      "id, role, display_username, mailbox_owner_id, restricted_features, mobile_phone, exotel_virtual_number, group_id, openai_token_limit, job_title, bio, created_at"
     )
     .eq("mailbox_owner_id", auth.userId)
     .order("created_at", { ascending: true });
-  if (error && /restricted_features|mobile_phone|exotel_virtual_number/i.test(error.message ?? "")) {
+  if (error && /restricted_features|mobile_phone|exotel_virtual_number|group_id|openai_token_limit|job_title|bio/i.test(error.message ?? "")) {
     const fallback = await svc
       .from("profiles")
       .select("id, role, display_username, mailbox_owner_id, created_at")
@@ -128,15 +135,52 @@ export async function GET() {
     // Non-fatal: still return members without email if auth admin listing is unavailable.
   }
 
-  const members = (data ?? []).map((row) => ({
-    id: row.id as string,
-    email: emailById.get(row.id as string) ?? null,
-    role: row.role as string,
-    displayUsername: (row.display_username as string | null) ?? null,
-    restrictedFeatures: normalizeRestrictedFeatures(row.restricted_features),
-    mobilePhone: (row.mobile_phone as string | null) ?? null,
-    exotelVirtualNumber: (row.exotel_virtual_number as string | null) ?? null,
-  }));
+  const groupIds = [...new Set((data ?? []).map((r) => r.group_id).filter(Boolean))] as string[];
+  const groupById = new Map<string, { name: string; restricted_features: unknown }>();
+  if (groupIds.length) {
+    const { data: groups } = await svc
+      .from("team_groups")
+      .select("id, name, restricted_features")
+      .in("id", groupIds);
+    for (const g of groups ?? []) {
+      groupById.set(g.id as string, {
+        name: g.name as string,
+        restricted_features: g.restricted_features,
+      });
+    }
+  }
+
+  const members = await Promise.all(
+    (data ?? []).map(async (row) => {
+      const id = row.id as string;
+      const groupId = (row.group_id as string | null) ?? null;
+      const group = groupId ? groupById.get(groupId) ?? null : null;
+      const tokensUsed = await getUserOpenAITokenUsage(id);
+      const limitRaw = row.openai_token_limit;
+      const openaiTokenLimit =
+        limitRaw == null || limitRaw === "" ? null : Math.max(0, Number(limitRaw) || 0);
+
+      return {
+        id,
+        email: emailById.get(id) ?? null,
+        role: row.role as string,
+        displayUsername: (row.display_username as string | null) ?? null,
+        jobTitle: (row.job_title as string | null) ?? null,
+        bio: (row.bio as string | null) ?? null,
+        restrictedFeatures: mergeRestrictedFeatures(
+          { role: row.role as string, restricted_features: row.restricted_features },
+          group
+        ),
+        legacyRestrictedFeatures: normalizeRestrictedFeatures(row.restricted_features),
+        mobilePhone: (row.mobile_phone as string | null) ?? null,
+        exotelVirtualNumber: (row.exotel_virtual_number as string | null) ?? null,
+        groupId,
+        groupName: group?.name ?? null,
+        openaiTokenLimit,
+        tokensUsed,
+      };
+    })
+  );
 
   return NextResponse.json({ members });
 }
@@ -186,10 +230,32 @@ export async function PATCH(request: Request) {
     body.role === "committee" || body.role === "staff"
       ? body.role
       : ((existing.role as "staff" | "committee" | null) ?? "staff");
+
+  let groupId: string | null | undefined = undefined;
+  if (body.groupId !== undefined) {
+    if (body.groupId === null || body.groupId === "") {
+      groupId = null;
+    } else {
+      const gid = body.groupId.trim();
+      const { data: groupRow } = await svc
+        .from("team_groups")
+        .select("id")
+        .eq("id", gid)
+        .eq("mailbox_owner_id", auth.userId)
+        .maybeSingle();
+      if (!groupRow) {
+        return NextResponse.json({ error: "Group not found." }, { status: 404 });
+      }
+      groupId = gid;
+    }
+  }
+
+  const assignedGroup = body.groupId !== undefined && Boolean(body.groupId?.trim());
+  const effectiveRole = assignedGroup ? "staff" : role;
   const restrictedFeatures =
-    role === "committee"
-      ? normalizeRestrictedFeatures(body.restrictedFeatures ?? existing.restricted_features)
-      : [];
+    assignedGroup || effectiveRole !== "committee"
+      ? []
+      : normalizeRestrictedFeatures(body.restrictedFeatures ?? existing.restricted_features);
 
   const mobileParsed = normalizeOptionalPhone(body.mobilePhone, "Mobile phone");
   if (!mobileParsed.ok) {
@@ -209,7 +275,7 @@ export async function PATCH(request: Request) {
     if (takenErr) return NextResponse.json({ error: takenErr }, { status: 400 });
   }
 
-  if (role === "committee") {
+  if (effectiveRole === "committee" && !assignedGroup) {
     const { error: colErr } = await svc
       .from("profiles")
       .select("restricted_features")
@@ -223,10 +289,31 @@ export async function PATCH(request: Request) {
   }
 
   const profilePatch: Record<string, unknown> = {
-    role,
+    role: effectiveRole,
     restricted_features: restrictedFeatures,
     updated_at: new Date().toISOString(),
   };
+  if (body.groupId !== undefined) profilePatch.group_id = groupId;
+  if (body.openaiTokenLimit !== undefined) {
+    if (body.openaiTokenLimit === null || body.openaiTokenLimit === "") {
+      profilePatch.openai_token_limit = null;
+    } else {
+      const limit = Math.max(0, Math.floor(Number(body.openaiTokenLimit) || 0));
+      profilePatch.openai_token_limit = limit > 0 ? limit : null;
+    }
+  }
+  if (body.displayUsername !== undefined) {
+    const raw = body.displayUsername?.trim() ?? "";
+    profilePatch.display_username = raw.slice(0, 64) || null;
+  }
+  if (body.jobTitle !== undefined) {
+    const raw = body.jobTitle?.trim() ?? "";
+    profilePatch.job_title = raw.slice(0, 120) || null;
+  }
+  if (body.bio !== undefined) {
+    const raw = body.bio?.trim() ?? "";
+    profilePatch.bio = raw.slice(0, 500) || null;
+  }
   if (body.mobilePhone !== undefined) profilePatch.mobile_phone = mobileParsed.value;
   if (body.exotelVirtualNumber !== undefined) {
     profilePatch.exotel_virtual_number = exotelParsed.value;
@@ -237,8 +324,8 @@ export async function PATCH(request: Request) {
     .update(profilePatch)
     .eq("id", userId)
     .eq("mailbox_owner_id", auth.userId);
-  if (updErr && /restricted_features|mobile_phone|exotel_virtual_number/i.test(updErr.message ?? "")) {
-    if (role === "committee" && /restricted_features/i.test(updErr.message ?? "")) {
+  if (updErr && /restricted_features|mobile_phone|exotel_virtual_number|group_id|openai_token_limit|job_title|bio/i.test(updErr.message ?? "")) {
+    if (effectiveRole === "committee" && !assignedGroup && /restricted_features/i.test(updErr.message ?? "")) {
       return NextResponse.json(
         { error: "Database migration 0019_committee_feature_access.sql is required for committee access." },
         { status: 503 }
@@ -254,7 +341,7 @@ export async function PATCH(request: Request) {
       await svc
         .from("profiles")
         .update({
-          role,
+          role: effectiveRole,
           updated_at: new Date().toISOString(),
         })
         .eq("id", userId)
@@ -273,7 +360,7 @@ export async function PATCH(request: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, userId, role, restrictedFeatures, email: nextEmail ?? null });
+  return NextResponse.json({ ok: true, userId, role: effectiveRole, restrictedFeatures, email: nextEmail ?? null });
 }
 
 type DeleteBody = {

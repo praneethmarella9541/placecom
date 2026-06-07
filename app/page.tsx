@@ -288,9 +288,6 @@ export default function HomePage() {
               ))}
             </ul>
           </div>
-          <p className="relative z-10 mt-12 animate-fade-in text-[11px] uppercase tracking-[0.18em] text-white/30 md:mt-auto" style={{ animationDelay: "700ms" }}>
-            Next.js · Supabase · Google Workspace
-          </p>
         </div>
 
         {/* Right auth */}

@@ -19,6 +19,25 @@ function attachmentProxyUrl(messageId: string, att: InlineImageAttachment): stri
   return `/api/gmail/attachment?${params.toString()}`;
 }
 
+function resolveCidAttachment(
+  cid: string,
+  cidMap: Map<string, InlineImageAttachment>,
+): InlineImageAttachment | null {
+  const key = normalizeContentId(cid);
+  const direct = cidMap.get(key);
+  if (direct) return direct;
+
+  const keyBase = key.split("@")[0];
+  for (const [stored, att] of cidMap) {
+    if (stored === key) return att;
+    const storedBase = stored.split("@")[0];
+    if (keyBase && storedBase && (storedBase === keyBase || stored.endsWith(key) || key.endsWith(stored))) {
+      return att;
+    }
+  }
+  return null;
+}
+
 /**
  * Replace `cid:` image references with authenticated attachment URLs so
  * marketing / transactional HTML renders like Gmail (banner logos, etc.).
@@ -37,25 +56,50 @@ export function rewriteCidImageUrls(
   }
   if (cidMap.size === 0) return html;
 
-  const resolve = (cid: string): string | null => {
-    const att = cidMap.get(normalizeContentId(cid));
+  const toUrl = (cid: string): string | null => {
+    const att = resolveCidAttachment(cid, cidMap);
     return att ? attachmentProxyUrl(messageId, att) : null;
   };
 
   let out = html.replace(/\bsrc=(["'])cid:([^"']+)\1/gi, (match, _q, cid: string) => {
-    const url = resolve(cid);
+    const url = toUrl(cid);
     return url ? `src="${url}"` : match;
   });
 
+  out = out.replace(/\bsrc\s*=\s*cid:([^\s>"']+)/gi, (match, cid: string) => {
+    const url = toUrl(cid);
+    return url ? `src="${url}"` : match;
+  });
+
+  out = out.replace(/\bdata-src=(["'])cid:([^"']+)\1/gi, (match, _q, cid: string) => {
+    const url = toUrl(cid);
+    return url ? `data-src="${url}"` : match;
+  });
+
   out = out.replace(/\bbackground=(["'])cid:([^"']+)\1/gi, (match, _q, cid: string) => {
-    const url = resolve(cid);
+    const url = toUrl(cid);
     return url ? `background="${url}"` : match;
   });
 
   out = out.replace(/url\(\s*(["']?)cid:([^"')]+)\1\s*\)/gi, (match, _q, cid: string) => {
-    const url = resolve(cid);
+    const url = toUrl(cid);
     return url ? `url("${url}")` : match;
   });
 
   return out;
+}
+
+/** True when a MIME part is embedded in HTML via `cid:` (Gmail hides these from the strip). */
+export function isInlinePartReferencedInHtml(
+  bodyHtml: string | undefined,
+  contentId: string | undefined,
+): boolean {
+  if (!bodyHtml || !contentId) return false;
+  const cid = normalizeContentId(contentId);
+  const html = bodyHtml.toLowerCase();
+  const base = cid.split("@")[0];
+  return (
+    html.includes(`cid:${cid}`) ||
+    (base.length > 0 && html.includes(`cid:${base}`))
+  );
 }

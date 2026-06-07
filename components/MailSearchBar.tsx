@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconSearch, IconX } from "@/components/Icons";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { extractEmailAddress } from "@/lib/email-parse";
-import { gmailWebSearchUrl } from "@/lib/gmail-search-query";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 import { Loader2, Mail, Paperclip, SlidersHorizontal } from "lucide-react";
@@ -353,20 +352,6 @@ export function MailSearchBar({
           <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
         </button>
       </div>
-
-      {activeQuery && !showDropdown && !filterOpen ? (
-        <p className="mt-1.5 px-1 text-[11px] text-[var(--color-text-faint)]">
-          Results use the Gmail API with your exact query (same order as Gmail search).{" "}
-          <a
-            href={gmailWebSearchUrl(activeQuery)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-[var(--color-primary)] hover:underline"
-          >
-            Compare in Gmail
-          </a>
-        </p>
-      ) : null}
 
       {showDropdown ? (
         <div

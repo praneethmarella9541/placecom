@@ -53,6 +53,7 @@ import {
   type GmailFilterFields,
 } from "@/lib/gmail-search-query";
 import { isSelfSentEmail } from "@/lib/email-self-sent";
+import { isInlinePartReferencedInHtml } from "@/lib/email-html-inline-images";
 import { GmailDatePicker } from "@/components/GmailDatePicker";
 import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
 import { formatMessageRecipientsLine } from "@/lib/message-recipients-display";
@@ -314,7 +315,8 @@ function MessageBubble({
         const files = (m.attachments ?? []).filter(
           (a) =>
             !/invite\.ics$/i.test(a.filename) &&
-            !/^text\/calendar/i.test(a.mimeType)
+            !/^text\/calendar/i.test(a.mimeType) &&
+            !isInlinePartReferencedInHtml(m.bodyHtml, a.contentId)
         );
         if (files.length === 0) return null;
         return (

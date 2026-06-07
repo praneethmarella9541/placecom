@@ -7,8 +7,6 @@ import {
   type InlineImageAttachment,
 } from "@/lib/email-html-inline-images";
 
-const MEASURE_ROOT_ID = "email-measure-root";
-
 function sanitizeEmailHtml(html: string): string {
   return html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
@@ -16,15 +14,11 @@ function sanitizeEmailHtml(html: string): string {
     .replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
 }
 
-/** Strip html/body height rules and viewport min-heights that grow with the iframe. */
+/** Neutralize only viewport-height rules that couple to iframe size (feedback loops). */
 function sanitizeExtractedStyles(css: string): string {
-  let out = css.replace(/min-height\s*:\s*100vh(\s*!important)?/gi, "min-height:auto$1");
-  out = out.replace(/height\s*:\s*100vh(\s*!important)?/gi, "height:auto$1");
-  out = out.replace(
-    /(?:^|})\s*(?:html|body)(?:\s*,\s*(?:html|body))?\s*\{[^}]*\}/gi,
-    ""
-  );
-  return out;
+  return css
+    .replace(/min-height\s*:\s*100vh(\s*!important)?/gi, "min-height:auto$1")
+    .replace(/height\s*:\s*100vh(\s*!important)?/gi, "height:auto$1");
 }
 
 function prepareEmailFragment(html: string): { styles: string; body: string } {
@@ -47,22 +41,51 @@ function prepareEmailFragment(html: string): { styles: string; body: string } {
   return { styles: styles.join("\n"), body: fragment.trim() };
 }
 
-function measureContentRoot(doc: Document): number {
-  const root = doc.getElementById(MEASURE_ROOT_ID);
+function isHiddenForHeight(el: Element, doc: Document): boolean {
+  const view = doc.defaultView;
+  if (!view) return false;
+  const style = view.getComputedStyle(el);
+  if (style.display === "none" || style.visibility === "hidden") return true;
+  if (parseFloat(style.opacity) === 0) return true;
+  const rect = el.getBoundingClientRect();
+  if (rect.width <= 0 && rect.height <= 0) return true;
+  // 1×1 tracking pixels
+  if (rect.width <= 1 && rect.height <= 1) return true;
+  return false;
+}
+
+/**
+ * Gmail-style height: bound to visible painted content, not inflated scrollHeight
+ * from min-height chains / empty table spacers inside a sized iframe.
+ */
+function measureVisibleEmailHeight(doc: Document): number {
   const html = doc.documentElement;
   const body = doc.body;
-  if (!root || !body) return 40;
+  if (!body) return 40;
 
-  // Keep the iframe document from stretching with the outer iframe height.
   html.style.height = "auto";
+  html.style.minHeight = "0";
   body.style.height = "auto";
+  body.style.minHeight = "0";
 
-  return Math.max(
-    root.scrollHeight,
-    root.offsetHeight,
-    root.getBoundingClientRect().height,
-    40
-  );
+  const bodyTop = body.getBoundingClientRect().top;
+  let maxBottom = bodyTop;
+
+  for (const el of body.querySelectorAll("*")) {
+    if (isHiddenForHeight(el, doc)) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.bottom > maxBottom) maxBottom = rect.bottom;
+  }
+
+  const bodyRect = body.getBoundingClientRect();
+  if (bodyRect.bottom > maxBottom) maxBottom = bodyRect.bottom;
+
+  const visible = Math.ceil(maxBottom - bodyTop);
+  const scroll = body.scrollHeight;
+
+  // Prefer visible bounds when scrollHeight is inflated by layout quirks.
+  if (scroll > visible + 80) return Math.max(visible, 40);
+  return Math.max(visible, scroll, 40);
 }
 
 export function EmailHtmlBody({
@@ -97,6 +120,7 @@ export function EmailHtmlBody({
     if (!doc) return;
 
     doc.open();
+    // Preserve sender HTML/CSS; only add minimal safety + anti-loop locks after.
     doc.write(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -104,29 +128,19 @@ export function EmailHtmlBody({
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base target="_blank">
   <style>
-    html, body {
-      margin: 0; padding: 0;
-      overflow: hidden;
-    }
-    body {
-      overflow-wrap: break-word;
-      word-wrap: break-word;
-    }
-    img { max-width: 100%; }
-    #${MEASURE_ROOT_ID} { display: block; }
+    html, body { margin: 0; padding: 0; }
+    body { overflow-wrap: break-word; word-wrap: break-word; }
+    img { max-width: 100%; height: auto; }
     ${prepared.styles}
   </style>
   <style>
-    /* After sender styles — prevent iframe height feedback loops */
     html, body {
       height: auto !important;
       min-height: 0 !important;
-      max-height: none !important;
-      overflow: hidden !important;
     }
   </style>
 </head>
-<body><div id="${MEASURE_ROOT_ID}">${prepared.body}</div></body>
+<body>${prepared.body}</body>
 </html>`);
     doc.close();
 
@@ -145,27 +159,30 @@ export function EmailHtmlBody({
     doc.addEventListener("click", onLinkClick, true);
 
     let lastMeasured = 0;
-    let resizePasses = 0;
-    const MAX_RESIZE_PASSES = 24;
+    let stablePasses = 0;
+    let updatePasses = 0;
+    const MAX_UPDATES = 12;
+    let rafId = 0;
 
     const applyHeight = () => {
-      if (resizePasses >= MAX_RESIZE_PASSES) return;
-      resizePasses += 1;
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        if (updatePasses >= MAX_UPDATES) return;
+        updatePasses += 1;
 
-      const h = Math.ceil(measureContentRoot(doc));
-      if (Math.abs(h - lastMeasured) < 2) return;
-      lastMeasured = h;
-      setHeight(h);
+        const h = measureVisibleEmailHeight(doc);
+        if (Math.abs(h - lastMeasured) <= 2) {
+          stablePasses += 1;
+          if (stablePasses >= 2) return;
+        } else {
+          stablePasses = 0;
+          lastMeasured = h;
+          setHeight(h);
+        }
+      });
     };
 
     applyHeight();
-
-    const root = doc.getElementById(MEASURE_ROOT_ID);
-    let mo: MutationObserver | null = null;
-    if (root && typeof MutationObserver !== "undefined") {
-      mo = new MutationObserver(() => applyHeight());
-      mo.observe(root, { childList: true, subtree: true });
-    }
 
     const imgs = Array.from(doc.querySelectorAll<HTMLImageElement>("img"));
     for (const img of imgs) {
@@ -175,13 +192,15 @@ export function EmailHtmlBody({
       }
     }
 
-    const t1 = window.setTimeout(applyHeight, 200);
-    const t2 = window.setTimeout(applyHeight, 800);
+    const t1 = window.setTimeout(applyHeight, 150);
+    const t2 = window.setTimeout(applyHeight, 600);
+    const t3 = window.setTimeout(applyHeight, 1500);
 
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
-      mo?.disconnect();
+      clearTimeout(t3);
+      cancelAnimationFrame(rafId);
       doc.removeEventListener("click", onLinkClick, true);
     };
   }, [prepared]);
@@ -198,6 +217,7 @@ export function EmailHtmlBody({
     <iframe
       ref={iframeRef}
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      scrolling="no"
       className="mt-1 w-full border-0 bg-transparent"
       style={{ height: `${height}px`, minHeight: 40 }}
       title={titleCase("Email body")}

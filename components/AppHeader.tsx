@@ -6,7 +6,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { pathToFeature } from "@/lib/feature-access";
@@ -155,7 +154,6 @@ function AppHeaderInner() {
             </Link>
           </div>
           <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-            <ThemeToggle />
             {me?.sessionEmail ? (
               <div ref={userMenuRef} className="relative">
                 <button

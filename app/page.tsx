@@ -5,7 +5,6 @@ import Link from "next/link";
 import { CheckCircle2 } from "lucide-react";
 import { GOOGLE_OAUTH_SCOPES } from "@/lib/google-config";
 import { createClient } from "@/lib/supabase";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { Skeleton } from "@/components/Skeleton";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { titleCase } from "@/lib/title-case";
@@ -188,9 +187,6 @@ export default function HomePage() {
     }
     return (
       <div className="relative flex min-h-screen flex-col items-center justify-center gap-8 overflow-hidden bg-[var(--color-bg)] px-4">
-        <div className="absolute right-4 top-4 z-10">
-          <ThemeToggle />
-        </div>
         <div className="surface-card-xl flex h-20 w-20 items-center justify-center rounded-[var(--radius-xl)]">
           <IconMail className="h-10 w-10 text-[var(--color-primary)]" />
         </div>
@@ -226,10 +222,6 @@ export default function HomePage() {
 
   return (
     <div className="relative min-h-screen bg-[var(--color-bg)]">
-      <div className="absolute right-4 top-4 z-50 md:right-6 md:top-6">
-        <ThemeToggle />
-      </div>
-
       <div className="flex min-h-screen flex-col md:flex-row">
         {/* Left hero — deep editorial dark */}
         <div

@@ -32,8 +32,6 @@ export const metadata: Metadata = {
   },
 };
 
-const themeInitScript = `(function(){try{var t=localStorage.getItem('nucleus-theme')||localStorage.getItem('placecom-theme')||localStorage.getItem('theme');var dark=t==='dark'||(t!=='light'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.setAttribute('data-theme',dark?'dark':'light');if(dark)document.documentElement.classList.add('dark');else document.documentElement.classList.remove('dark')}catch(e){}})()`;
-
 const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();
 
 export default function RootLayout({
@@ -44,11 +42,10 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      suppressHydrationWarning
+      data-theme="light"
       className={`${sora.variable} ${plusJakartaSans.variable} ${jetbrainsMono.variable}`}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         {googleClientId ? (
           <>
             <link rel="preconnect" href="https://accounts.google.com" />

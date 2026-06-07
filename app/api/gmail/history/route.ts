@@ -27,22 +27,39 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const since = searchParams.get("since")?.trim();
+
+  // Bootstrap: return current mailbox historyId (no change scan).
   if (!since) {
-    return NextResponse.json({ error: "Missing since parameter" }, { status: 400 });
+    try {
+      const profileRes = await fetch(`${GMAIL_API}/profile`, {
+        headers: { Authorization: `Bearer ${auth.accessToken}` },
+        cache: "no-store",
+      });
+      if (!profileRes.ok) {
+        return NextResponse.json({ error: "Failed to fetch Gmail profile" }, { status: 502 });
+      }
+      const profile = (await profileRes.json()) as { historyId?: string };
+      const historyId = profile.historyId?.trim() || null;
+      return NextResponse.json(
+        { hasChanges: false, historyId, latestHistoryId: historyId },
+        { headers: { "Cache-Control": "no-store" } }
+      );
+    } catch {
+      return NextResponse.json({ error: "Failed to fetch Gmail profile" }, { status: 502 });
+    }
   }
 
-  const labelId = searchParams.get("labelId") || "INBOX";
+  const labelId = searchParams.get("labelId")?.trim();
 
   const params = new URLSearchParams({
     startHistoryId: since,
-    labelId,
-    maxResults: "10",
+    maxResults: "100",
     historyTypes: "labelAdded",
   });
-  // Request all four event types so we catch new mail, label changes, and deletions.
   params.append("historyTypes", "labelRemoved");
   params.append("historyTypes", "messageAdded");
-  params.append("historyTypes", "messagePurged");
+  params.append("historyTypes", "messageDeleted");
+  if (labelId) params.set("labelId", labelId);
 
   let res: Response;
   try {
@@ -66,7 +83,9 @@ export async function GET(request: Request) {
   }
 
   if (!res.ok) {
-    return NextResponse.json({ hasChanges: false });
+    const text = await res.text().catch(() => "");
+    console.warn("[gmail/history] list failed:", res.status, text.slice(0, 200));
+    return NextResponse.json({ hasChanges: false, error: `Gmail history ${res.status}` });
   }
 
   const data = (await res.json()) as {

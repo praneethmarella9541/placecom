@@ -21,8 +21,8 @@ import {
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { startMailListPrefetchWarm } from "@/lib/inbox-list-prefetch";
 import { cn } from "@/lib/utils";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { pathToFeature } from "@/lib/feature-access";
@@ -265,12 +265,6 @@ function Sidebar({
         </div>
 
         <div className="flex-1" />
-
-        {/* Theme toggle row */}
-        <div className="mb-2 flex items-center justify-between rounded-lg px-3 py-2">
-          <span className="text-[11px] font-medium tracking-wide text-white/30 uppercase">Theme</span>
-          <ThemeToggle />
-        </div>
       </nav>
 
       {/* User profile footer */}
@@ -304,6 +298,15 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
       .catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  /* Warm Gmail folder/tab lists in the background once mailbox is linked (incl. browser reload). */
+  useEffect(() => {
+    if (!me?.hasStoredMailbox) return;
+    const t = window.setTimeout(() => {
+      startMailListPrefetchWarm({ concurrency: 3 });
+    }, 800);
+    return () => clearTimeout(t);
+  }, [me?.hasStoredMailbox]);
 
   /* close mobile drawer on navigation */
   useEffect(() => { setMobileOpen(false); }, [pathname]);
@@ -368,7 +371,6 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
         <Link href="/inbox" className="flex-1">
           <PlacecomLogo />
         </Link>
-        <ThemeToggle />
       </header>
 
       {/* ── Mobile drawer overlay ─────────────────────────────── */}

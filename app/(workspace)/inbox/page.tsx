@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LabelChip, labelAccentStyle, buildLabelColorMap } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { LabelSidebarItem } from "@/components/LabelSidebarItem";
@@ -57,6 +57,12 @@ import { GmailDatePicker } from "@/components/GmailDatePicker";
 import { searchHighlightTerms, SearchHighlight } from "@/lib/search-highlight";
 import { formatMessageRecipientsLine } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
+import {
+  buildMailListCacheKey,
+  clearMailListSessionCache,
+  getMailListSessionCache,
+  startMailListPrefetchWarm,
+} from "@/lib/inbox-list-prefetch";
 import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon } from "lucide-react";
 import {
   IconInbox,
@@ -96,6 +102,29 @@ type ThreadRow = {
   hasCalendarInvite?: boolean;
   historyId?: string;
 };
+
+function pickHigherHistoryId(
+  current: string | null,
+  next: string | null | undefined
+): string | null {
+  const n = next?.trim();
+  if (!n) return current;
+  if (!current) return n;
+  try {
+    return BigInt(n) > BigInt(current) ? n : current;
+  } catch {
+    return current;
+  }
+}
+
+function bumpHistoryAnchorFromThreads(
+  ref: { current: string | null },
+  rows: readonly ThreadRow[]
+): void {
+  for (const t of rows) {
+    ref.current = pickHigherHistoryId(ref.current, t.historyId);
+  }
+}
 
 /** Merge label ids for thread UI — keeps optimistic user labels across stale API/cache. */
 function mergeThreadLabelIds(...sources: (string[] | undefined)[]): string[] {
@@ -183,9 +212,11 @@ function makePendingLabel(name: string): GmailLabel {
  */
 function FilterRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[110px_minmax(0,1fr)] items-center gap-3">
-      <label className="text-[13px] text-[var(--color-text-muted)]">{label}</label>
-      <div className="min-w-0">{children}</div>
+    <div className="grid grid-cols-[108px_minmax(0,1fr)] items-center gap-x-4">
+      <label className="text-[13px] text-[#5f6368]">{label}</label>
+      <div className="min-w-0 [&_.input-field]:rounded [&_.input-field]:border-[#dadce0] [&_.input-field]:shadow-none [&_.input-field]:focus:border-[#0b57d0] [&_.input-field]:focus:shadow-none [&_.input-field]:focus:ring-1 [&_.input-field]:focus:ring-[#0b57d0] [&_[role=group]]:rounded [&_[role=group]]:border-[#dadce0] [&_[role=group]]:focus-within:border-[#0b57d0] [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-1 [&_[role=group]]:focus-within:ring-[#0b57d0]">
+        {children}
+      </div>
     </div>
   );
 }
@@ -384,7 +415,7 @@ function MessageBubble({
       {/* Fullscreen overlay — rendered via portal so it escapes the reading pane */}
       {fullscreen && typeof document !== "undefined" && createPortal(
         <div
-          className="fixed inset-0 z-[200] flex flex-col bg-white dark:bg-[#202124] animate-fade-in"
+          className="fixed inset-0 z-[200] flex flex-col bg-white animate-fade-in"
           style={{ animationDuration: "0.15s" }}
         >
           {/* Fullscreen header */}
@@ -519,6 +550,8 @@ export default function InboxPage() {
   const loadingMoreRef = useRef(false); // stable ref so the observer doesn't re-subscribe on every render
   const loadMoreSentinelRef = useRef<HTMLLIElement>(null);
   const [loadingList, setLoadingList] = useState(true);
+  /** Gmail-style top bar while manually refreshing an already-visible list. */
+  const [listRefreshing, setListRefreshing] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [mailSearchInput, setMailSearchInput] = useState("");
   const [mailSearch, setMailSearch] = useState("");
@@ -840,7 +873,11 @@ export default function InboxPage() {
   // paint instantly from memory while a fresh fetch runs in the background.
   // Cleared on the Refresh button click; pruned by mutation paths when the
   // affected entries become stale.
-  const listCacheRef = useRef<Map<string, { threads: ThreadRow[]; nextPageToken?: string }>>(new Map());
+  const listCacheRef = useRef(getMailListSessionCache());
+  const listPrefetchBoostRef = useRef(false);
+  /** Which folder/label/search view the UI is showing — stale fetches must not overwrite. */
+  const activeListCacheKeyRef = useRef<string | null>(null);
+  const listFetchAbortRef = useRef<AbortController | null>(null);
 
   // Timestamp of the most recent local mutation. We use this to skip the
   // SWR background revalidation for ~5 s afterwards — Gmail's API lags a
@@ -1376,7 +1413,12 @@ export default function InboxPage() {
    * can cause divergence, which the background refetch then corrects.
    */
   const loadThreads = useCallback(
-    async (opts: { append: boolean; pageToken?: string; forceRefresh?: boolean }) => {
+    async (opts: {
+      append: boolean;
+      pageToken?: string;
+      forceRefresh?: boolean;
+      indicateRefresh?: boolean;
+    }) => {
       // "starred" and "important" are virtual folders — pass inbox to the API
       // and use labelId=STARRED / labelId=IMPORTANT to filter.
       const apiFolder =
@@ -1396,15 +1438,25 @@ export default function InboxPage() {
       // match all mail — exactly like Gmail's own search bar behaviour.
       if (effectiveLabelId && !mailSearch) params.set("labelId", effectiveLabelId);
 
-      const cacheKey = `${apiFolder}|${effectiveLabelId ?? ""}|${mailSearch}`;
+      const cacheKey = buildMailListCacheKey(apiFolder, effectiveLabelId, mailSearch);
+      const isActiveListView = () => activeListCacheKeyRef.current === cacheKey;
 
       // Track whether the list is already visible (cached) BEFORE the fetch
       // so we know whether to preserve scroll when fresh data arrives.
       let listWasVisible = false;
 
+      if (!opts.append) {
+        activeListCacheKeyRef.current = cacheKey;
+        listFetchAbortRef.current?.abort();
+        listFetchAbortRef.current = new AbortController();
+      }
+
+      const fetchSignal = listFetchAbortRef.current?.signal;
+
       if (opts.append) {
         setLoadingMore(true); loadingMoreRef.current = true;
       } else {
+        if (opts.indicateRefresh) setListRefreshing(true);
         setListError(null);
         // SWR: if we have a cached snapshot for this view, paint it
         // immediately so the user never sees a spinner on tab-switch.
@@ -1412,6 +1464,7 @@ export default function InboxPage() {
         if (cached) {
           setThreads(cached.threads);
           setNextPageToken(cached.nextPageToken);
+          bumpHistoryAnchorFromThreads(latestHistoryIdRef, cached.threads);
           setLoadingList(false);
           listWasVisible = true; // list is on screen — preserve scroll on refresh
           // If we just made a local mutation, skip the background refetch.
@@ -1421,30 +1474,28 @@ export default function InboxPage() {
           if (!opts.forceRefresh && sinceMutation < MUTATION_COOLDOWN_MS) {
             return;
           }
+        } else if (opts.forceRefresh) {
+          // Background poll / silent refresh — keep the list visible, no spinner.
+          listWasVisible = true;
         } else {
-          // No cache — spinner is showing; forceRefresh also counts as visible
-          // if threads are already rendered (e.g. Sent refresh after compose).
-          listWasVisible = opts.forceRefresh === true && (listScrollRef.current?.scrollTop ?? 0) > 0;
           setLoadingList(true);
         }
       }
 
       try {
         const fetchStartedAt = Date.now();
-        const res = await fetch(`/api/gmail/threads?${params.toString()}`, { cache: "no-store" });
+        const res = await fetch(`/api/gmail/threads?${params.toString()}`, {
+          cache: "no-store",
+          signal: fetchSignal,
+        });
         const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
         if (!res.ok) throw new Error(data.error || "Failed to load inbox");
         const incoming = data.threads || [];
 
-        // Track the highest historyId across loaded threads so the poll can
-        // ask Gmail "did anything change since this point?" instead of blindly
-        // reloading the full list every N seconds.
-        const maxHid = incoming.reduce<string | null>((best, t) => {
-          if (!t.historyId) return best;
-          if (!best) return t.historyId;
-          return BigInt(t.historyId) > BigInt(best) ? t.historyId : best;
-        }, latestHistoryIdRef.current);
-        if (maxHid) latestHistoryIdRef.current = maxHid;
+        // User switched tabs while this request was in flight — discard result.
+        if (!isActiveListView()) return;
+
+        bumpHistoryAnchorFromThreads(latestHistoryIdRef, incoming);
 
         if (opts.append) {
           setThreads((prev) => {
@@ -1476,25 +1527,51 @@ export default function InboxPage() {
             });
           }
         }
-        setNextPageToken(data.nextPageToken);
+        if (isActiveListView()) {
+          setNextPageToken(data.nextPageToken);
+        }
       } catch (e) {
+        if (e instanceof Error && e.name === "AbortError") return;
         // Only surface the error if we have nothing on screen — otherwise the
         // cached snapshot is still useful and a transient blip shouldn't blank it.
-        if (!opts.append && !listCacheRef.current.has(cacheKey)) {
+        if (!opts.append && isActiveListView() && !listCacheRef.current.has(cacheKey)) {
           setListError(e instanceof Error ? e.message : "Failed to load");
           setThreads([]);
         }
       } finally {
-        setLoadingList(false);
-        setLoadingMore(false);
-        loadingMoreRef.current = false;
+        if (opts.indicateRefresh) setListRefreshing(false);
+        if (opts.append) {
+          if (isActiveListView()) {
+            setLoadingMore(false);
+            loadingMoreRef.current = false;
+          }
+        } else if (isActiveListView()) {
+          setLoadingList(false);
+        }
       }
     },     [folder, mailSearch, effectiveLabelId]
   );
 
-  useEffect(() => {
+  // useLayoutEffect so cached folder/tab content paints before the browser
+  // draws — avoids one frame of the previous folder when switching fast.
+  useLayoutEffect(() => {
     void loadThreads({ append: false });
   }, [loadThreads]);
+
+  // After the active view loads, warm any remaining folder/tab caches in the background.
+  useEffect(() => {
+    if (loadingList || listPrefetchBoostRef.current) return;
+    listPrefetchBoostRef.current = true;
+    const skip = new Set<string>();
+    if (activeListCacheKeyRef.current) skip.add(activeListCacheKeyRef.current);
+    const t = window.setTimeout(() => {
+      startMailListPrefetchWarm({ skipKeys: skip, concurrency: 3 });
+    }, 400);
+    return () => {
+      clearTimeout(t);
+      listPrefetchBoostRef.current = false;
+    };
+  }, [loadingList]);
 
   // Fetch the user's labels once on mount; rare-change data, so we don't
   // poll. Refreshed only after a successful "create label" action.
@@ -1717,6 +1794,19 @@ export default function InboxPage() {
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [loadCounts]);
 
+  const warmMailListCachesAfterRefresh = useCallback(() => {
+    const skip = new Set<string>();
+    if (activeListCacheKeyRef.current) skip.add(activeListCacheKeyRef.current);
+    startMailListPrefetchWarm({ skipKeys: skip, concurrency: 3 });
+  }, []);
+
+  const handleMailListRefresh = useCallback(async () => {
+    clearMailListSessionCache();
+    await loadThreads({ append: false, forceRefresh: true, indicateRefresh: true });
+    scheduleCountRefresh();
+    warmMailListCachesAfterRefresh();
+  }, [loadThreads, scheduleCountRefresh, warmMailListCachesAfterRefresh]);
+
   /**
    * Called when the user closes the compose window without sending. Saves
    * the current contents as a draft (matches Gmail behaviour — close = save,
@@ -1786,30 +1876,36 @@ export default function InboxPage() {
     pollRef.current = { loadCounts, loadThreads };
   }, [loadCounts, loadThreads]);
 
-  // History-based live refresh — mirrors how Gmail avoids full page reloads:
-  //
-  //   1. Every 30 s ask Gmail's History API "did anything change in INBOX
-  //      since historyId X?" — this is a single lightweight call.
-  //   2. Only if Gmail says YES: refresh the thread list (background SWR,
-  //      preserves scroll) and counts.
-  //   3. If the historyId has expired (>30 days), do a full refresh once to
-  //      re-anchor.
-  //
-  // Net effect: the list NEVER reloads unless real mail events occurred.
-  // The user sees no flash for new tabs/app switches, only for actual
-  // new mail or label changes.
+  // History-based live refresh:
+  //   1. Bootstrap mailbox historyId from Gmail profile on mount.
+  //   2. Every 30 s (and when tab becomes visible) ask History API if anything changed.
+  //   3. On change: silently refresh thread list + counts (no spinner).
   useEffect(() => {
-    const id = setInterval(async () => {
+    const runHistoryPoll = async () => {
       if (document.hidden) return;
-      const since = latestHistoryIdRef.current;
+
+      let since = latestHistoryIdRef.current;
       if (!since) {
-        // No historyId yet — just refresh counts quietly.
-        void pollRef.current.loadCounts();
-        return;
+        try {
+          const boot = await fetch("/api/gmail/history", { cache: "no-store" });
+          if (boot.ok) {
+            const j = (await boot.json()) as { historyId?: string; latestHistoryId?: string };
+            const hid = j.latestHistoryId ?? j.historyId;
+            if (hid) latestHistoryIdRef.current = hid;
+            since = hid ?? null;
+          }
+        } catch {
+          /* ignore */
+        }
+        if (!since) {
+          void pollRef.current.loadCounts();
+          return;
+        }
       }
+
       try {
         const res = await fetch(
-          `/api/gmail/history?since=${encodeURIComponent(since)}&labelId=INBOX`,
+          `/api/gmail/history?since=${encodeURIComponent(since)}`,
           { cache: "no-store" }
         );
         if (!res.ok) return;
@@ -1818,20 +1914,32 @@ export default function InboxPage() {
           expired?: boolean;
           latestHistoryId?: string;
         };
-        // Update our anchor even when there are no changes, so the next tick
-        // doesn't re-scan already-processed history.
-        if (data.latestHistoryId) latestHistoryIdRef.current = data.latestHistoryId;
-        if (data.hasChanges) {
+        if (data.latestHistoryId) {
+          latestHistoryIdRef.current = pickHigherHistoryId(
+            latestHistoryIdRef.current,
+            data.latestHistoryId
+          );
+        }
+        if (data.hasChanges || data.expired) {
           void pollRef.current.loadCounts();
-          if (Date.now() - lastMutationAtRef.current >= MUTATION_COOLDOWN_MS) {
-            void pollRef.current.loadThreads({ append: false, forceRefresh: true });
-          }
+          // Poll-detected changes always refresh — don't block on mutation cooldown.
+          void pollRef.current.loadThreads({ append: false, forceRefresh: true });
         }
       } catch {
-        // Network blip — skip tick silently.
+        /* network blip */
       }
-    }, 30_000);
-    return () => clearInterval(id);
+    };
+
+    void runHistoryPoll();
+    const id = setInterval(() => void runHistoryPoll(), 30_000);
+    const onVisible = () => {
+      if (!document.hidden) void runHistoryPoll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   useEffect(() => {
@@ -1990,41 +2098,77 @@ export default function InboxPage() {
     }
   }, [markDraftSaved]);
 
-  const fetchThreadData = useCallback((threadId: string): Promise<ThreadCacheData> => {
-    const existing = threadDataCache.current.get(threadId);
-    if (existing) return existing;
-    const promise = fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`, {
-      cache: "no-store",
-    }).then(async (res) => {
-      const data = (await res.json()) as {
-        error?: string;
-        messages?: MsgView[];
-        labelIds?: string[];
-      };
-      if (!res.ok) throw new Error(data.error || "Failed to open thread");
-      return {
-        messages: data.messages || [],
-        labelIds: (data.labelIds ?? []).filter((id) => id !== "UNREAD"),
-      };
-    });
-    threadDataCache.current.set(threadId, promise);
-    promise.catch(() => {
-      threadDataCache.current.delete(threadId);
-    });
-    setTimeout(() => threadDataCache.current.delete(threadId), 120_000);
-    return promise;
-  }, []);
+  const threadCacheKey = useCallback(
+    (threadId: string, prefetch?: boolean) =>
+      prefetch ? `prefetch:${threadId}` : `open:${threadId}`,
+    []
+  );
+
+  const fetchThreadData = useCallback(
+    (threadId: string, opts?: { prefetch?: boolean }): Promise<ThreadCacheData> => {
+      const prefetch = opts?.prefetch === true;
+      const cacheKey = threadCacheKey(threadId, prefetch);
+      const existing = threadDataCache.current.get(cacheKey);
+      if (existing) return existing;
+
+      const url = `/api/gmail/threads/${encodeURIComponent(threadId)}${
+        prefetch ? "?prefetch=1" : ""
+      }`;
+      const promise = fetch(url, { cache: "no-store" }).then(async (res) => {
+        const data = (await res.json()) as {
+          error?: string;
+          messages?: MsgView[];
+          labelIds?: string[];
+        };
+        if (!res.ok) throw new Error(data.error || "Failed to open thread");
+        return {
+          messages: data.messages || [],
+          labelIds: (data.labelIds ?? []).filter((id) => id !== "UNREAD"),
+        };
+      });
+      threadDataCache.current.set(cacheKey, promise);
+      promise.catch(() => {
+        threadDataCache.current.delete(cacheKey);
+      });
+      setTimeout(() => threadDataCache.current.delete(cacheKey), 120_000);
+      return promise;
+    },
+    [threadCacheKey]
+  );
+
+  /** Open path: reuse hover prefetch when available; otherwise fetch + mark read. */
+  const loadThreadForOpen = useCallback(
+    async (threadId: string): Promise<ThreadCacheData> => {
+      const openKey = threadCacheKey(threadId, false);
+      const cachedOpen = threadDataCache.current.get(openKey);
+      if (cachedOpen) return cachedOpen;
+
+      const prefetchKey = threadCacheKey(threadId, true);
+      const cachedPrefetch = threadDataCache.current.get(prefetchKey);
+      if (cachedPrefetch) {
+        threadDataCache.current.set(openKey, cachedPrefetch);
+        return cachedPrefetch;
+      }
+
+      return fetchThreadData(threadId);
+    },
+    [fetchThreadData, threadCacheKey]
+  );
 
   const prefetchThread = useCallback(
     (threadId: string) => {
-      void fetchThreadData(threadId);
+      void fetchThreadData(threadId, { prefetch: true });
     },
     [fetchThreadData]
   );
 
-  const invalidateThreadCache = useCallback((threadId: string) => {
-    threadDataCache.current.delete(threadId);
-  }, []);
+  const invalidateThreadCache = useCallback(
+    (threadId: string) => {
+      threadDataCache.current.delete(threadCacheKey(threadId, false));
+      threadDataCache.current.delete(threadCacheKey(threadId, true));
+    },
+    [threadCacheKey]
+  );
 
   /** Drop rows that no longer match the active label bucket (sidebar / Starred / Important). */
   const shouldFilterCurrentList = useCallback(() => {
@@ -2042,14 +2186,28 @@ export default function InboxPage() {
     [shouldFilterCurrentList, effectiveLabelId]
   );
 
+  /** Cache key for Starred / Important virtual folders (`inbox|STARRED|search`). */
+  const virtualLabelBucketCacheKey = useCallback(
+    (labelId: string, search: string) => {
+      if (labelId === "STARRED" || labelId === "IMPORTANT") {
+        return buildMailListCacheKey("inbox", labelId, search);
+      }
+      return null;
+    },
+    []
+  );
+
   /** Keep cached label-bucket snapshots in sync when labels are added or removed. */
   const syncLabelBucketCache = useCallback(
     (
       labelId: string,
       threadIds: string[],
       rowsById: Map<string, ThreadRow>,
-      action: "add" | "remove"
+      action: "add" | "remove",
+      search: string
     ) => {
+      const bucketKey = virtualLabelBucketCacheKey(labelId, search);
+
       listCacheRef.current.forEach((entry, cacheKey) => {
         if (listCacheLabelId(cacheKey) !== labelId) return;
         if (action === "remove") {
@@ -2062,7 +2220,10 @@ export default function InboxPage() {
           const existing = new Set(entry.threads.map((t) => t.id));
           const toAdd = threadIds
             .map((id) => rowsById.get(id))
-            .filter((r): r is ThreadRow => !!r && !existing.has(r.id));
+            .filter(
+              (r): r is ThreadRow =>
+                !!r && threadMatchesLabelView(r, labelId) && !existing.has(r.id)
+            );
           if (toAdd.length > 0) {
             listCacheRef.current.set(cacheKey, {
               ...entry,
@@ -2071,8 +2232,31 @@ export default function InboxPage() {
           }
         }
       });
+
+      // Starred/Important may never have been opened — seed cache so the next
+      // sidebar click shows the row without waiting on Gmail API propagation.
+      if (action === "add" && bucketKey && !listCacheRef.current.has(bucketKey)) {
+        const toAdd = threadIds
+          .map((id) => rowsById.get(id))
+          .filter((r): r is ThreadRow => !!r && threadMatchesLabelView(r, labelId));
+        if (toAdd.length > 0) {
+          listCacheRef.current.set(bucketKey, {
+            threads: mergeThreadsByDate([], toAdd),
+            nextPageToken: undefined,
+          });
+        }
+      }
+
+      // Already viewing Starred/Important — paint the updated bucket immediately.
+      if (action === "add" && bucketKey && activeListCacheKeyRef.current === bucketKey) {
+        const entry = listCacheRef.current.get(bucketKey);
+        if (entry) {
+          setThreads(entry.threads);
+          setNextPageToken(entry.nextPageToken);
+        }
+      }
     },
-    []
+    [virtualLabelBucketCacheKey]
   );
 
   const closeThreadIfMissingFromList = useCallback((rows: ThreadRow[]) => {
@@ -2102,12 +2286,29 @@ export default function InboxPage() {
       // Patch every cached view in-place (preserve order); never apply the
       // active-view filter to other buckets — that was causing list jumps.
       patchAllThreadCaches(transform);
-      const rowsById = new Map(updatedRows.map((r) => [r.id, r]));
+
+      const rowsById = new Map<string, ThreadRow>();
+      for (const id of opts.threadIds) {
+        const fromVisible = updatedRows.find((r) => r.id === id);
+        if (fromVisible) {
+          rowsById.set(id, fromVisible);
+          continue;
+        }
+        for (const entry of Array.from(listCacheRef.current.values())) {
+          const hit = entry.threads.find((t: ThreadRow) => t.id === id);
+          if (hit) {
+            rowsById.set(id, hit);
+            break;
+          }
+        }
+      }
+
       syncLabelBucketCache(
         opts.labelId,
         opts.threadIds,
         rowsById,
-        opts.added ? "add" : "remove"
+        opts.added ? "add" : "remove",
+        mailSearch
       );
     },
     [
@@ -2115,6 +2316,7 @@ export default function InboxPage() {
       closeThreadIfMissingFromList,
       patchAllThreadCaches,
       syncLabelBucketCache,
+      mailSearch,
     ]
   );
 
@@ -2180,7 +2382,7 @@ export default function InboxPage() {
     }
 
     try {
-      const data = await fetchThreadData(threadId);
+      const data = await loadThreadForOpen(threadId);
       if (activeThreadLoadRef.current !== threadId) return;
       setMessages(data.messages);
       setThreadLabelIds((prev) => mergeThreadLabelIds(prev, data.labelIds, rowLabelIds));
@@ -2200,7 +2402,7 @@ export default function InboxPage() {
     mutateThreads,
     adjustInboxUnread,
     adjustUserLabelUnread,
-    fetchThreadData,
+    loadThreadForOpen,
     composeOpen,
     composeKind,
   ]);
@@ -2446,12 +2648,14 @@ export default function InboxPage() {
           )
         );
       } else if (action === "star") {
-        mutateThreads((rows) =>
-          rows.map((r) => (idSet.has(r.id) ? { ...r, starred: true } : r))
-        );
         const newlyStarred = ids.filter(
           (id) => !threads.find((t) => t.id === id)?.starred
         ).length;
+        applyLabelListUpdate(
+          (rows) =>
+            rows.map((r) => (idSet.has(r.id) ? { ...r, starred: true } : r)),
+          { labelId: "STARRED", added: true, threadIds: ids }
+        );
         if (newlyStarred > 0) {
           setLabelCounts((prev) => {
             const cur = prev["STARRED"] ?? { total: 0, unread: 0 };
@@ -2459,16 +2663,22 @@ export default function InboxPage() {
           });
         }
       } else if (action === "important") {
-        mutateThreads((rows) =>
-          rows.map((r) =>
-            idSet.has(r.id)
-              ? { ...r, labelIds: Array.from(new Set([...(r.labelIds ?? []), "IMPORTANT"])) }
-              : r
-          )
-        );
         const newlyImportant = ids.filter(
           (id) => !(threads.find((t) => t.id === id)?.labelIds ?? []).includes("IMPORTANT")
         ).length;
+        applyLabelListUpdate(
+          (rows) =>
+            rows.map((r) =>
+              idSet.has(r.id)
+                ? {
+                    ...r,
+                    important: true,
+                    labelIds: Array.from(new Set([...(r.labelIds ?? []), "IMPORTANT"])),
+                  }
+                : r
+            ),
+          { labelId: "IMPORTANT", added: true, threadIds: ids }
+        );
         if (newlyImportant > 0) {
           setLabelCounts((prev) => {
             const cur = prev["IMPORTANT"] ?? { total: 0, unread: 0 };
@@ -2538,7 +2748,17 @@ export default function InboxPage() {
         })
         .catch(rollback);
     },
-    [threads, selectedId, folder, scheduleCountRefresh, mutateThreads, loadThreads, adjustInboxUnread, adjustUserLabelUnread]
+    [
+      threads,
+      selectedId,
+      folder,
+      scheduleCountRefresh,
+      mutateThreads,
+      loadThreads,
+      adjustInboxUnread,
+      adjustUserLabelUnread,
+      applyLabelListUpdate,
+    ]
   );
 
   const performBulkAction = useCallback(
@@ -3321,15 +3541,11 @@ export default function InboxPage() {
           </button>
           <button
             type="button"
-            onClick={() => {
-              listCacheRef.current.clear();
-              void loadThreads({ append: false, forceRefresh: true });
-              scheduleCountRefresh();
-            }}
+            onClick={() => void handleMailListRefresh()}
             className="btn-ghost flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full p-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             title={titleCase("Refresh")}
           >
-            <IconRefresh className="h-[18px] w-[18px]" />
+            <IconRefresh className={cn("h-[18px] w-[18px]", listRefreshing && "animate-spin")} />
           </button>
         </div>
 
@@ -3522,15 +3738,11 @@ export default function InboxPage() {
             </button>
             <button
               type="button"
-              onClick={() => {
-              listCacheRef.current.clear();
-              void loadThreads({ append: false, forceRefresh: true });
-              scheduleCountRefresh();
-            }}
+              onClick={() => void handleMailListRefresh()}
               className="btn-ghost h-9 w-9 justify-center p-0"
               title={titleCase("Refresh")}
             >
-              <IconRefresh className="h-4 w-4" />
+              <IconRefresh className={cn("h-4 w-4", listRefreshing && "animate-spin")} />
             </button>
           </div>
         </div>
@@ -3571,7 +3783,7 @@ export default function InboxPage() {
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <div
             className={cn(
-                "relative flex min-h-0 flex-col overflow-hidden bg-[var(--color-surface)] md:bg-[var(--color-bg)]",
+                "relative flex min-h-0 flex-col overflow-hidden bg-[var(--color-surface)]",
               selectedId
                 ? "hidden w-full shrink-0 border-[var(--gmail-border-light)] md:flex md:border-r"
                 : "flex flex-1",
@@ -3579,40 +3791,54 @@ export default function InboxPage() {
             style={selectedId ? { width: listPaneWidth } : undefined}
           >
 
-            {/* Slim progress bar at top — visible only while loading more pages */}
+            {/* Gmail-style top bar — manual refresh + load-more */}
             <div
               className={cn(
-                "absolute inset-x-0 top-0 z-10 h-[2px] origin-left bg-[var(--color-primary)] transition-all duration-300",
-                loadingMore ? "animate-progress-bar opacity-100" : "w-0 opacity-0"
+                "pointer-events-none absolute inset-x-0 top-0 z-20 h-[3px] overflow-hidden transition-opacity duration-200",
+                listRefreshing || loadingMore ? "opacity-100" : "opacity-0"
               )}
-              aria-hidden
-            />
+              aria-hidden={!listRefreshing && !loadingMore}
+              aria-live="polite"
+              aria-busy={listRefreshing || loadingMore}
+            >
+              {listRefreshing ? (
+                <div className="h-full w-1/4 animate-gmail-refresh-indeterminate bg-[var(--color-primary)]" />
+              ) : loadingMore ? (
+                <div className="h-full w-full origin-left animate-progress-bar bg-[var(--color-primary)]" />
+              ) : null}
+            </div>
 
             {/* Search bar + advanced filter popover trigger — fixed; only the list scrolls */}
             <div
               ref={filterPanelRef}
               className={cn(
-                "relative shrink-0 border-b border-[var(--gmail-border-light)] bg-[var(--color-bg)] px-3 pt-2",
-                filterOpen ? "pb-0" : "pb-2",
+                "relative shrink-0 bg-[var(--color-surface)] px-3 pt-2",
+                filterOpen ? "pb-3" : "border-b border-[var(--gmail-border-light)] pb-2",
               )}
             >
-              <MailSearchBar
-                inputValue={mailSearchInput}
-                onInputChange={setMailSearchInput}
-                activeQuery={mailSearch}
-                onSearch={handleMailSearch}
-                onReset={resetMailSearch}
-                filterOpen={filterOpen}
-                onFilterOpenChange={handleFilterOpenChange}
-                localContacts={composeRecipientSuggestions}
-                onOpenThread={(threadId) => void openThread(threadId)}
-                onSuggestingChange={setMailSearchSuggesting}
-              />
+              <div
+                className={cn(
+                  filterOpen &&
+                    "overflow-hidden rounded-lg border border-[#dadce0] bg-white shadow-[0_1px_2px_rgba(60,64,67,0.1),0_2px_6px_rgba(60,64,67,0.08)]",
+                )}
+              >
+                <MailSearchBar
+                  inputValue={mailSearchInput}
+                  onInputChange={setMailSearchInput}
+                  activeQuery={mailSearch}
+                  onSearch={handleMailSearch}
+                  onReset={resetMailSearch}
+                  filterOpen={filterOpen}
+                  onFilterOpenChange={handleFilterOpenChange}
+                  localContacts={composeRecipientSuggestions}
+                  onOpenThread={(threadId) => void openThread(threadId)}
+                  onSuggestingChange={setMailSearchSuggesting}
+                />
 
-              {/* Advanced filter popover — opens beneath the search input */}
-              {filterOpen && (
-                <div className="rounded-b-lg border border-t-0 border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
-                  <div className="grid gap-3 p-4">
+                {/* Advanced filter panel — one card with the search bar (Gmail-style) */}
+                {filterOpen && (
+                  <div>
+                    <div className="grid gap-3.5 px-4 py-4">
                     {/* From / To use the same RecipientField as Compose so the
                         typeahead behaviour is identical — narrows the dropdown
                         as the user types instead of dumping the whole list. */}
@@ -3675,17 +3901,17 @@ export default function InboxPage() {
                         />
                       </div>
                     </FilterRow>
-                    <label className="flex cursor-pointer items-center gap-2 pl-2 pt-1 text-[13px] text-[var(--color-text)]">
+                    <label className="flex cursor-pointer items-center gap-2 pl-[108px] text-[13px] text-[#202124]">
                       <input
                         type="checkbox"
                         checked={filterHasAttachment}
                         onChange={(e) => setFilterHasAttachment(e.target.checked)}
-                        className="h-4 w-4 accent-[var(--color-primary)]"
+                        className="h-4 w-4 accent-[#0b57d0]"
                       />
                       Has attachment
                     </label>
                   </div>
-                  <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-4 py-3">
+                  <div className="flex items-center justify-end gap-2 border-t border-[#dadce0] bg-[#f8f9fa] px-4 py-3">
                     <button
                       type="button"
                       onClick={clearFilter}
@@ -3703,13 +3929,14 @@ export default function InboxPage() {
                     <button
                       type="button"
                       onClick={applyFilter}
-                      className="btn-primary h-9 px-5 text-[13px]"
+                      className="h-9 rounded bg-[#0b57d0] px-5 text-[13px] font-medium text-white transition hover:bg-[#0842a0]"
                     >
                       Search
                     </button>
                   </div>
                 </div>
-              )}
+                )}
+              </div>
             </div>
 
             {/* Bulk-action / select-all toolbar */}
@@ -4295,7 +4522,7 @@ export default function InboxPage() {
             "fixed bottom-6 left-6 z-[1100] flex items-center gap-3 rounded-lg px-4 py-3 text-[13px] font-medium text-white shadow-xl transition-all",
             sendSnack.phase === "error"
               ? "bg-[var(--color-danger)]"
-              : "bg-[#1A1612] dark:bg-[#2C2836]"
+              : "bg-[#202124]"
           )}
           role="status"
           aria-live="polite"

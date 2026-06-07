@@ -319,10 +319,10 @@ export function MailSearchBar({
           onKeyDown={onKeyDown}
           placeholder={titleCase("Search mail")}
           className={cn(
-            "relative z-[11] h-[46px] w-full border border-transparent bg-[var(--gmail-search-bg)] pl-10 text-[16px] text-[var(--color-text)] outline-none transition focus:border-[var(--color-primary)] focus:bg-[var(--color-surface)] focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)] md:text-[14px]",
+            "relative z-[11] w-full pl-10 text-[16px] text-[var(--color-text)] outline-none transition md:text-[14px]",
             filterOpen
-              ? "rounded-t-full rounded-b-none border-b-[var(--color-border)]"
-              : "rounded-full",
+              ? "h-11 rounded-none border-0 border-b border-[#dadce0] bg-white shadow-none focus:border-b-[#dadce0] focus:bg-white focus:shadow-none"
+              : "h-[46px] rounded-full border border-transparent bg-[var(--gmail-search-bg)] focus:border-[var(--color-primary)] focus:bg-[var(--color-surface)] focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)]",
             inputValue.trim() ? "pr-[4.5rem]" : "pr-10",
           )}
           autoComplete="off"

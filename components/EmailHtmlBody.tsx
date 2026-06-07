@@ -7,6 +7,8 @@ import {
   type InlineImageAttachment,
 } from "@/lib/email-html-inline-images";
 
+const MEASURE_ROOT_ID = "email-measure-root";
+
 function sanitizeEmailHtml(html: string): string {
   return html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
@@ -14,12 +16,23 @@ function sanitizeEmailHtml(html: string): string {
     .replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
 }
 
+/** Strip html/body height rules and viewport min-heights that grow with the iframe. */
+function sanitizeExtractedStyles(css: string): string {
+  let out = css.replace(/min-height\s*:\s*100vh(\s*!important)?/gi, "min-height:auto$1");
+  out = out.replace(/height\s*:\s*100vh(\s*!important)?/gi, "height:auto$1");
+  out = out.replace(
+    /(?:^|})\s*(?:html|body)(?:\s*,\s*(?:html|body))?\s*\{[^}]*\}/gi,
+    ""
+  );
+  return out;
+}
+
 function prepareEmailFragment(html: string): { styles: string; body: string } {
   const styles: string[] = [];
   let fragment = sanitizeEmailHtml(html);
 
   fragment = fragment.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_, css: string) => {
-    styles.push(css);
+    styles.push(sanitizeExtractedStyles(css));
     return "";
   });
 
@@ -34,19 +47,22 @@ function prepareEmailFragment(html: string): { styles: string; body: string } {
   return { styles: styles.join("\n"), body: fragment.trim() };
 }
 
-function measureDoc(doc: Document): number {
-  // Temporarily clear height constraints so scrollHeight reflects true content
-  const body = doc.body;
+function measureContentRoot(doc: Document): number {
+  const root = doc.getElementById(MEASURE_ROOT_ID);
   const html = doc.documentElement;
-  if (!body) return 80;
-  const prevBodyH = body.style.height;
-  const prevHtmlH = html.style.height;
-  body.style.height = "auto";
+  const body = doc.body;
+  if (!root || !body) return 40;
+
+  // Keep the iframe document from stretching with the outer iframe height.
   html.style.height = "auto";
-  const h = Math.max(body.scrollHeight, html.scrollHeight, 40);
-  body.style.height = prevBodyH;
-  html.style.height = prevHtmlH;
-  return h;
+  body.style.height = "auto";
+
+  return Math.max(
+    root.scrollHeight,
+    root.offsetHeight,
+    root.getBoundingClientRect().height,
+    40
+  );
 }
 
 export function EmailHtmlBody({
@@ -80,7 +96,6 @@ export function EmailHtmlBody({
     const doc = iframe.contentDocument;
     if (!doc) return;
 
-    // Write the full document
     doc.open();
     doc.write(`<!DOCTYPE html>
 <html lang="en">
@@ -89,45 +104,32 @@ export function EmailHtmlBody({
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <base target="_blank">
   <style>
-    html { color-scheme: light only; }
     html, body {
       margin: 0; padding: 0;
-      background: #ffffff !important;
+      overflow: hidden;
+    }
+    body {
+      overflow-wrap: break-word;
+      word-wrap: break-word;
+    }
+    img { max-width: 100%; }
+    #${MEASURE_ROOT_ID} { display: block; }
+    ${prepared.styles}
+  </style>
+  <style>
+    /* After sender styles — prevent iframe height feedback loops */
+    html, body {
       height: auto !important;
       min-height: 0 !important;
       max-height: none !important;
-      overflow: visible;
+      overflow: hidden !important;
     }
-    body {
-      font-family: "Roboto", "Helvetica Neue", Helvetica, Arial, sans-serif;
-      font-size: 14px;
-      line-height: 1.6;
-      color: #202124;
-      word-wrap: break-word;
-      overflow-wrap: break-word;
-      -webkit-text-size-adjust: 100%;
-    }
-    .email_message_body { display: block; }
-    .gmail_quote, blockquote {
-      margin: 8px 0 8px 0.8ex;
-      padding-left: 1ex;
-      border-left: 2px #dadce0 solid;
-      color: #5f6368;
-    }
-    a { color: #1a73e8; text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    img { max-width: 100%; border: 0; vertical-align: top; }
-    pre { white-space: pre-wrap; overflow-x: auto; font-family: "Roboto Mono", monospace; font-size: 13px; }
-    table { border-collapse: collapse; }
-    td, th { vertical-align: top; }
-    ${prepared.styles}
   </style>
 </head>
-<body><div class="email_message_body">${prepared.body}</div></body>
+<body><div id="${MEASURE_ROOT_ID}">${prepared.body}</div></body>
 </html>`);
     doc.close();
 
-    // Handle link clicks — open externally
     const onLinkClick = (e: Event) => {
       const anchor = (e.target as HTMLElement).closest("a[href]") as HTMLAnchorElement | null;
       if (!anchor) return;
@@ -142,24 +144,29 @@ export function EmailHtmlBody({
     };
     doc.addEventListener("click", onLinkClick, true);
 
-    // Measure height using ResizeObserver on the body element — fires
-    // whenever content reflows (images load, fonts render, etc.)
+    let lastMeasured = 0;
+    let resizePasses = 0;
+    const MAX_RESIZE_PASSES = 24;
+
     const applyHeight = () => {
-      const h = measureDoc(doc);
-      setHeight(h + 4);
+      if (resizePasses >= MAX_RESIZE_PASSES) return;
+      resizePasses += 1;
+
+      const h = Math.ceil(measureContentRoot(doc));
+      if (Math.abs(h - lastMeasured) < 2) return;
+      lastMeasured = h;
+      setHeight(h);
     };
 
-    // Initial measure
     applyHeight();
 
-    // Watch for size changes via ResizeObserver (much better than setTimeout polling)
-    let ro: ResizeObserver | null = null;
-    if (typeof ResizeObserver !== "undefined" && doc.body) {
-      ro = new ResizeObserver(applyHeight);
-      ro.observe(doc.body);
+    const root = doc.getElementById(MEASURE_ROOT_ID);
+    let mo: MutationObserver | null = null;
+    if (root && typeof MutationObserver !== "undefined") {
+      mo = new MutationObserver(() => applyHeight());
+      mo.observe(root, { childList: true, subtree: true });
     }
 
-    // Also watch image loads in case ResizeObserver misses them
     const imgs = Array.from(doc.querySelectorAll<HTMLImageElement>("img"));
     for (const img of imgs) {
       if (!img.complete) {
@@ -168,21 +175,20 @@ export function EmailHtmlBody({
       }
     }
 
-    // Fallback timeouts for web fonts / late-loading content
-    const t1 = setTimeout(applyHeight, 200);
-    const t2 = setTimeout(applyHeight, 800);
+    const t1 = window.setTimeout(applyHeight, 200);
+    const t2 = window.setTimeout(applyHeight, 800);
 
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
-      ro?.disconnect();
+      mo?.disconnect();
       doc.removeEventListener("click", onLinkClick, true);
     };
   }, [prepared]);
 
   if (!html || !prepared) {
     return (
-      <div className="mt-3 max-w-[680px] whitespace-pre-wrap break-words font-sans text-[14px] leading-relaxed text-[var(--color-text)]">
+      <div className="mt-3 max-w-[680px] whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[#202124]">
         {plain || "(empty body)"}
       </div>
     );
@@ -192,7 +198,7 @@ export function EmailHtmlBody({
     <iframe
       ref={iframeRef}
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-      className="mt-1 w-full border-0 bg-white"
+      className="mt-1 w-full border-0 bg-transparent"
       style={{ height: `${height}px`, minHeight: 40 }}
       title={titleCase("Email body")}
     />

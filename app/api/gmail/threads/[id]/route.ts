@@ -19,15 +19,20 @@ export async function GET(
     return NextResponse.json({ error: "Missing thread id" }, { status: 400 });
   }
 
+  const prefetchOnly =
+    new URL(request.url).searchParams.get("prefetch") === "1";
+
   try {
     // Single Gmail round-trip: format=full already contains labelIds on each
     // message, so getThreadMessages extracts them — no second API call needed.
     const { messages, labelIds } = await getThreadMessages(auth.accessToken, threadId);
 
-    // Best-effort mark-read — fire-and-forget, doesn't block the response.
-    markThreadRead(auth.accessToken, threadId).catch((e) => {
-      console.warn("[gmail] mark-read failed:", e?.message ?? e);
-    });
+    // Hover prefetch must not mark unread mail as read — only explicit opens do.
+    if (!prefetchOnly) {
+      markThreadRead(auth.accessToken, threadId).catch((e) => {
+        console.warn("[gmail] mark-read failed:", e?.message ?? e);
+      });
+    }
 
     return NextResponse.json(
       { threadId, messages, labelIds },

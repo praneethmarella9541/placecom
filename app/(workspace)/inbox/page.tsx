@@ -3827,7 +3827,6 @@ export default function InboxPage() {
                 <MailSearchBar
                   inputValue={mailSearchInput}
                   onInputChange={setMailSearchInput}
-                  activeQuery={mailSearch}
                   onSearch={handleMailSearch}
                   onReset={resetMailSearch}
                   filterOpen={filterOpen}

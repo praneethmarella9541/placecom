@@ -32,7 +32,6 @@ const QUICK_FILTERS = [
 type Props = {
   inputValue: string;
   onInputChange: (value: string) => void;
-  activeQuery: string;
   onSearch: (query: string) => void;
   onReset: () => void;
   filterOpen: boolean;
@@ -94,7 +93,6 @@ function HighlightMatch({ text, query }: { text: string; query: string }) {
 export function MailSearchBar({
   inputValue,
   onInputChange,
-  activeQuery,
   onSearch,
   onReset,
   filterOpen,

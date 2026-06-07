@@ -28,7 +28,7 @@ function resolveCidAttachment(
   if (direct) return direct;
 
   const keyBase = key.split("@")[0];
-  for (const [stored, att] of cidMap) {
+  for (const [stored, att] of Array.from(cidMap.entries())) {
     if (stored === key) return att;
     const storedBase = stored.split("@")[0];
     if (keyBase && storedBase && (storedBase === keyBase || stored.endsWith(key) || key.endsWith(stored))) {

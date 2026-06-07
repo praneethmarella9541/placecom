@@ -71,7 +71,7 @@ function measureVisibleEmailHeight(doc: Document): number {
   const bodyTop = body.getBoundingClientRect().top;
   let maxBottom = bodyTop;
 
-  for (const el of body.querySelectorAll("*")) {
+  for (const el of Array.from(body.querySelectorAll("*"))) {
     if (isHiddenForHeight(el, doc)) continue;
     const rect = el.getBoundingClientRect();
     if (rect.bottom > maxBottom) maxBottom = rect.bottom;

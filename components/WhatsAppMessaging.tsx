@@ -35,7 +35,6 @@ import {
   IconRefresh,
   IconReply,
   IconStar,
-  IconTrash,
   IconX,
 } from "@/components/Icons";
 
@@ -189,7 +188,6 @@ export function WhatsAppMessaging({
   const [menu, setMenu] = useState<{ msg: Msg; x: number; y: number } | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [actionBusy, setActionBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [newPhoneInput, setNewPhoneInput] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
@@ -751,7 +749,7 @@ export function WhatsAppMessaging({
             <span className="text-[12px] font-medium text-[var(--color-text-muted)]">{selectedIds.length} selected</span>
             <button
               type="button"
-              disabled={selectedIds.length === 0 || actionBusy}
+              disabled={selectedIds.length === 0}
               className="btn-ghost gap-1 px-2 py-1 text-[12px]"
               onClick={() => {
                 const parts = messages.filter((m) => selectedIds.includes(m.id)).map((m) => m.body || "");
@@ -759,27 +757,6 @@ export function WhatsAppMessaging({
               }}
             >
               <IconCopy className="h-3.5 w-3.5" /> Copy
-            </button>
-            <button
-              type="button"
-              disabled={selectedIds.length === 0 || actionBusy}
-              className="btn-ghost gap-1 px-2 py-1 text-[12px] text-[var(--color-danger)]"
-              onClick={() => {
-                if (!peer || selectedIds.length === 0) return;
-                if (!window.confirm(titleCase("Delete selected messages from this view?"))) return;
-                setActionBusy(true);
-                void (async () => {
-                  try {
-                    for (const id of selectedIds) await patchMessage(id, { soft_delete: true });
-                    setSelectMode(false); setSelectedIds([]);
-                    await loadMessages(peer, { silent: true });
-                    await loadConversations({ silent: true });
-                  } catch (e) { setError(clientFetchFailedMessage(e)); }
-                  finally { setActionBusy(false); }
-                })();
-              }}
-            >
-              <IconTrash className="h-3.5 w-3.5" /> Delete
             </button>
             <button type="button" className="btn-ghost px-2 py-1 text-[12px]" onClick={() => { setSelectMode(false); setSelectedIds([]); }}>
               Cancel

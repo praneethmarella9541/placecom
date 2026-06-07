@@ -1,7 +1,8 @@
 import "server-only";
 
 import { phoneMatches } from "@/lib/phone";
-import { normalizeRestrictedFeatures, type FeatureKey } from "@/lib/feature-access";
+import { mergeRestrictedFeatures } from "@/lib/profile-access";
+import { type FeatureKey } from "@/lib/feature-access";
 import { sendExpoPush } from "@/lib/expo-push";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
@@ -24,13 +25,31 @@ async function userHasFeature(userId: string, feature: FeatureKey): Promise<bool
     const svc = createServiceSupabase();
     const { data } = await svc
       .from("profiles")
-      .select("role, restricted_features")
+      .select("role, restricted_features, group_id")
       .eq("id", userId)
       .maybeSingle();
     if (!data) return true;
-    const role = data.role as string;
-    if (role === "admin" || role === "staff") return true;
-    return !normalizeRestrictedFeatures(data.restricted_features).includes(feature);
+    if ((data.role as string) === "admin") return true;
+
+    let group: { restricted_features: unknown } | null = null;
+    if (data.group_id) {
+      const { data: g } = await svc
+        .from("team_groups")
+        .select("restricted_features")
+        .eq("id", data.group_id as string)
+        .maybeSingle();
+      if (g) group = g as { restricted_features: unknown };
+    }
+
+    const restricted = mergeRestrictedFeatures(
+      {
+        role: data.role as string,
+        restricted_features: data.restricted_features,
+        group_id: data.group_id as string | null,
+      },
+      group
+    );
+    return !restricted.includes(feature);
   } catch {
     return true;
   }

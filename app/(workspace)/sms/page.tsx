@@ -1,7 +1,18 @@
 "use client";
 
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { SmsMessaging } from "@/components/SmsMessaging";
 import { titleCase } from "@/lib/title-case";
+import { isValidE164, normalizePhone } from "@/lib/phone";
+
+function SmsPageContent() {
+  const searchParams = useSearchParams();
+  const rawPeer = searchParams.get("peer");
+  const initialPeer = rawPeer && isValidE164(normalizePhone(rawPeer)) ? normalizePhone(rawPeer) : null;
+
+  return <SmsMessaging embedded initialPeer={initialPeer} />;
+}
 
 /** SMS conversations; bulk SMS broadcast lives under Broadcasting → SMS. */
 export default function SmsPage() {
@@ -15,7 +26,9 @@ export default function SmsPage() {
           {titleCase("Two-way SMS threads via Exotel, sent from your assigned number.")}
         </p>
       </div>
-      <SmsMessaging embedded />
+      <Suspense fallback={null}>
+        <SmsPageContent />
+      </Suspense>
     </div>
   );
 }

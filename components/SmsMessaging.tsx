@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
+import { formatPhone, peerInitials } from "@/lib/wa-contacts-display";
+import { useWaContacts } from "@/hooks/useWaContacts";
 import { IconRefresh, IconSend, IconSettings, IconSms, IconX } from "@/components/Icons";
 
 type Conv = { peer_e164: string; last_body: string | null; last_at: string; last_dir: string };
@@ -25,17 +27,6 @@ type StatusPayload = {
   migrationHint?: string;
 };
 
-function peerInitials(peer: string, name?: string): string {
-  if (name?.trim()) {
-    const parts = name.trim().split(/\s+/);
-    const initials = parts.slice(0, 2).map((p) => p[0]).join("");
-    if (initials) return initials.toUpperCase();
-  }
-  const digits = peer.replace(/\D/g, "");
-  if (digits.length >= 2) return digits.slice(-2);
-  return peer.slice(0, 2).toUpperCase() || "?";
-}
-
 function formatListTime(iso: string): string {
   try {
     const d = new Date(iso);
@@ -53,9 +44,10 @@ function formatListTime(iso: string): string {
 
 export type SmsMessagingProps = {
   embedded?: boolean;
+  initialPeer?: string | null;
 };
 
-export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
+export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessagingProps) {
   const [setupOpen, setSetupOpen] = useState(false);
   const [status, setStatus] = useState<StatusPayload | null>(null);
   const [conversations, setConversations] = useState<Conv[]>([]);
@@ -70,61 +62,34 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
   const [mobileShowThread, setMobileShowThread] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
   const scrollThreadRef = useRef<HTMLDivElement>(null);
-  // Contact names — shared with WhatsApp (same wa_contacts book per user).
-  const [contacts, setContacts] = useState<Record<string, string>>({});
+  const { saveContact, deleteContact, resolveName } = useWaContacts();
   const [editingName, setEditingName] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const res = await fetch("/api/whatsapp/contacts");
-        const data = (await res.json()) as { contacts?: { peer_e164: string; name: string }[] };
-        if (res.ok && data.contacts) {
-          const map: Record<string, string> = {};
-          for (const c of data.contacts) {
-            if (c.peer_e164) map[c.peer_e164] = c.name;
-          }
-          setContacts(map);
-        }
-      } catch {
-        // ignore — names just won't show
-      }
-    })();
-  }, []);
-
-  const displayName = useCallback(
-    (peer: string): string => contacts[peer] || peer,
-    [contacts],
-  );
-
   async function saveName(peer: string, name: string) {
     const trimmed = name.trim();
-    setContacts((prev) =>
-      trimmed
-        ? { ...prev, [peer]: trimmed }
-        : Object.fromEntries(Object.entries(prev).filter(([k]) => k !== peer)),
-    );
     setEditingName(null);
     setNameInput("");
     try {
       if (trimmed) {
-        await fetch("/api/whatsapp/contacts", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ peer_e164: peer, name: trimmed }),
-        });
+        await saveContact(peer, trimmed);
       } else {
-        await fetch("/api/whatsapp/contacts", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ peer_e164: peer }),
-        });
+        await deleteContact(peer);
       }
     } catch {
-      // optimistic state already applied
+      // ignore
     }
   }
+
+  const displayName = useCallback(
+    (peer: string): string => resolveName(peer) || formatPhone(peer),
+    [resolveName],
+  );
+
+  const savedContactName = useCallback(
+    (peer: string) => resolveName(peer),
+    [resolveName],
+  );
 
   const loadStatus = useCallback(async () => {
     try {
@@ -176,6 +141,12 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
     void loadStatus();
     void loadConversations();
   }, [loadStatus, loadConversations]);
+
+  useEffect(() => {
+    if (!initialPeer) return;
+    setPeer(initialPeer);
+    setMobileShowThread(true);
+  }, [initialPeer]);
 
   useEffect(() => {
     setStickToBottom(true);
@@ -377,7 +348,7 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
                   )}
                 >
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sky-600 text-xs font-bold text-white">
-                    {peerInitials(c.peer_e164, contacts[c.peer_e164])}
+                    {peerInitials(c.peer_e164, savedContactName(c.peer_e164))}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline justify-between gap-2">
@@ -454,8 +425,8 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
                 <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
                   {peer ? displayName(peer) : titleCase("Select a chat")}
                 </span>
-                {peer && contacts[peer] ? (
-                  <span className="truncate text-[11px] text-zinc-400">{peer}</span>
+                {peer && savedContactName(peer) ? (
+                  <span className="truncate text-[11px] text-zinc-400">{formatPhone(peer)}</span>
                 ) : null}
               </div>
             )}
@@ -463,9 +434,9 @@ export function SmsMessaging({ embedded = false }: SmsMessagingProps) {
               <button
                 type="button"
                 className="shrink-0 rounded-lg px-2 py-1 text-xs text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/50"
-                onClick={() => { setEditingName(peer); setNameInput(contacts[peer] || ""); }}
+                onClick={() => { setEditingName(peer); setNameInput(savedContactName(peer) || ""); }}
               >
-                {contacts[peer] ? titleCase("Edit name") : titleCase("Save name")}
+                {savedContactName(peer) ? titleCase("Edit name") : titleCase("Save name")}
               </button>
             ) : null}
           </div>

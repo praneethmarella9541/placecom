@@ -3,25 +3,35 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { IconChevronDown } from "@/components/Icons";
+import { AdminGroupsPanel, type TeamGroup } from "@/components/AdminGroupsPanel";
 import { titleCase } from "@/lib/title-case";
-import { FEATURE_KEYS, FEATURE_LABELS, type FeatureKey } from "@/lib/feature-access";
+import type { FeatureKey } from "@/lib/feature-access";
 
 type TeamMember = {
   id: string;
   email: string | null;
   displayUsername: string | null;
-  role: "staff" | "committee";
+  jobTitle: string | null;
+  bio: string | null;
+  role: "staff" | "committee" | string;
   restrictedFeatures: FeatureKey[];
   mobilePhone: string | null;
   exotelVirtualNumber: string | null;
+  groupId: string | null;
+  groupName: string | null;
+  openaiTokenLimit: number | null;
+  tokensUsed: number;
   newPassword?: string;
 };
 
 export default function AdminTeamPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"staff" | "committee">("staff");
-  const [restricted, setRestricted] = useState<FeatureKey[]>([]);
+  const [newDisplayUsername, setNewDisplayUsername] = useState("");
+  const [newJobTitle, setNewJobTitle] = useState("");
+  const [newGroupId, setNewGroupId] = useState("");
+  const [newTokenLimit, setNewTokenLimit] = useState("");
+  const [groups, setGroups] = useState<TeamGroup[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -38,17 +48,12 @@ export default function AdminTeamPage() {
     if (
       m.includes("created") ||
       m.includes("member updated") ||
-      m.includes("team member removed")
+      m.includes("team member removed") ||
+      m.includes("group")
     ) {
       return "text-indigo-700 dark:text-indigo-400";
     }
     return "text-red-600 dark:text-red-400";
-  }
-
-  function toggleRestricted(feature: FeatureKey) {
-    setRestricted((prev) =>
-      prev.includes(feature) ? prev.filter((f) => f !== feature) : [...prev, feature]
-    );
   }
 
   async function loadMembers() {
@@ -60,7 +65,7 @@ export default function AdminTeamPage() {
         setMsg(j.error || "Could not load team members.");
         return;
       }
-      setMembers((j.members ?? []).filter((m) => m.role === "staff" || m.role === "committee"));
+      setMembers(j.members ?? []);
     } catch {
       setMsg("Could not load team members.");
     } finally {
@@ -91,8 +96,10 @@ export default function AdminTeamPage() {
         body: JSON.stringify({
           email: email.trim().toLowerCase(),
           password,
-          role,
-          restrictedFeatures: role === "committee" ? restricted : [],
+          groupId: newGroupId || null,
+          displayUsername: newDisplayUsername.trim() || undefined,
+          jobTitle: newJobTitle.trim() || null,
+          openaiTokenLimit: newTokenLimit.trim() ? Number(newTokenLimit) : null,
           mobilePhone: newMobilePhone.trim() || null,
           exotelVirtualNumber: newExotelNumber.trim() || null,
         }),
@@ -107,12 +114,14 @@ export default function AdminTeamPage() {
         return;
       }
       setMsg(
-        `${titleCase(role)} account created for ${j.email ?? email.trim()}. They can sign in on the home page with this email and password.`
+        `Account created for ${j.email ?? email.trim()}. They can sign in on the home page with this email and password.`
       );
       setEmail("");
       setPassword("");
-      setRole("staff");
-      setRestricted([]);
+      setNewDisplayUsername("");
+      setNewJobTitle("");
+      setNewGroupId("");
+      setNewTokenLimit("");
       setNewMobilePhone("");
       setNewExotelNumber("");
       void loadMembers();
@@ -133,8 +142,11 @@ export default function AdminTeamPage() {
           userId: member.id,
           email: member.email?.trim().toLowerCase() ?? "",
           password: member.newPassword ?? "",
-          role: member.role,
-          restrictedFeatures: member.role === "committee" ? member.restrictedFeatures : [],
+          displayUsername: member.displayUsername,
+          jobTitle: member.jobTitle,
+          bio: member.bio,
+          groupId: member.groupId,
+          openaiTokenLimit: member.openaiTokenLimit,
           mobilePhone: member.mobilePhone,
           exotelVirtualNumber: member.exotelVirtualNumber,
         }),
@@ -186,6 +198,8 @@ export default function AdminTeamPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-6">
+      <AdminGroupsPanel onGroupsChange={setGroups} />
+
       <div>
         <div className="flex items-start justify-between gap-3">
           <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
@@ -237,38 +251,52 @@ export default function AdminTeamPage() {
           className="input-field w-full text-sm"
         />
         <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          {titleCase("Access type")}
+          {titleCase("Display name")}
+        </label>
+        <input
+          value={newDisplayUsername}
+          onChange={(e) => setNewDisplayUsername(e.target.value)}
+          placeholder="Optional — defaults from email"
+          className="input-field w-full text-sm"
+        />
+        <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          {titleCase("Job title")}
+        </label>
+        <input
+          value={newJobTitle}
+          onChange={(e) => setNewJobTitle(e.target.value)}
+          placeholder="Optional"
+          className="input-field w-full text-sm"
+        />
+        <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          {titleCase("Access group")}
         </label>
         <select
-          value={role}
-          onChange={(e) => setRole(e.target.value === "committee" ? "committee" : "staff")}
+          value={newGroupId}
+          onChange={(e) => setNewGroupId(e.target.value)}
           className="input-field w-full text-sm"
         >
-          <option value="staff">Staff (full access)</option>
-          <option value="committee">Committee (limited)</option>
+          <option value="">{titleCase("Full access (no group)")}</option>
+          {groups.map((g) => (
+            <option key={g.id} value={g.id}>
+              {g.name}
+            </option>
+          ))}
         </select>
-        {role === "committee" ? (
-          <div className="mt-2 space-y-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
-            <p className="text-xs font-medium text-zinc-600 dark:text-zinc-300">
-              {titleCase("Allow access to these features")}
-            </p>
-            <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-              {titleCase("Checked means this committee member can use the feature. Uncheck to block it.")}
-            </p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {FEATURE_KEYS.map((feature) => (
-                <label key={feature} className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
-                  <input
-                    type="checkbox"
-                    checked={!restricted.includes(feature)}
-                    onChange={() => toggleRestricted(feature)}
-                  />
-                  {titleCase(FEATURE_LABELS[feature])}
-                </label>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          {titleCase("OpenAI token limit")}
+        </label>
+        <input
+          type="number"
+          min={0}
+          value={newTokenLimit}
+          onChange={(e) => setNewTokenLimit(e.target.value)}
+          placeholder="Leave empty for unlimited"
+          className="input-field w-full text-sm"
+        />
+        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+          {titleCase("Total input + output tokens allowed for email extraction. User is blocked once exceeded.")}
+        </p>
         <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
           {titleCase("Personal mobile (for incoming call transfer)")}
         </label>
@@ -340,7 +368,10 @@ export default function AdminTeamPage() {
                       {member.displayUsername || member.email || member.id}
                     </p>
                     <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-                      {(member.email || "no-email")} • {titleCase(member.role)}
+                      {(member.email || "no-email")} • {member.groupName || titleCase("Full access")}
+                      {member.openaiTokenLimit != null
+                        ? ` • ${member.tokensUsed.toLocaleString()}/${member.openaiTokenLimit.toLocaleString()} tokens`
+                        : ""}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -364,6 +395,103 @@ export default function AdminTeamPage() {
                       }
                       className="input-field w-full text-sm"
                     />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                      {titleCase("Display name")}
+                    </label>
+                    <input
+                      value={member.displayUsername ?? ""}
+                      onChange={(e) =>
+                        setMembers((prev) =>
+                          prev.map((m) =>
+                            m.id === member.id ? { ...m, displayUsername: e.target.value || null } : m
+                          )
+                        )
+                      }
+                      className="input-field w-full text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                      {titleCase("Job title")}
+                    </label>
+                    <input
+                      value={member.jobTitle ?? ""}
+                      onChange={(e) =>
+                        setMembers((prev) =>
+                          prev.map((m) =>
+                            m.id === member.id ? { ...m, jobTitle: e.target.value || null } : m
+                          )
+                        )
+                      }
+                      className="input-field w-full text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                      {titleCase("Access group")}
+                    </label>
+                    <select
+                      value={member.groupId ?? ""}
+                      onChange={(e) =>
+                        setMembers((prev) =>
+                          prev.map((m) =>
+                            m.id === member.id
+                              ? {
+                                  ...m,
+                                  groupId: e.target.value || null,
+                                  groupName: groups.find((g) => g.id === e.target.value)?.name ?? null,
+                                }
+                              : m
+                          )
+                        )
+                      }
+                      className="input-field w-full text-sm"
+                    >
+                      <option value="">{titleCase("Full access (no group)")}</option>
+                      {groups.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                      {titleCase("OpenAI token limit")}
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={member.openaiTokenLimit ?? ""}
+                      onChange={(e) =>
+                        setMembers((prev) =>
+                          prev.map((m) =>
+                            m.id === member.id
+                              ? {
+                                  ...m,
+                                  openaiTokenLimit: e.target.value
+                                    ? Math.max(0, Number(e.target.value) || 0)
+                                    : null,
+                                }
+                              : m
+                          )
+                        )
+                      }
+                      placeholder="Unlimited"
+                      className="input-field w-full text-sm"
+                    />
+                    <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                      {titleCase("Used")}: {member.tokensUsed.toLocaleString()}
+                      {member.openaiTokenLimit != null
+                        ? ` / ${member.openaiTokenLimit.toLocaleString()}`
+                        : ""}
+                    </p>
                   </div>
 
                   <div>
@@ -451,73 +579,6 @@ export default function AdminTeamPage() {
                         "Leave blank to keep their current password. If you enter one and save, it replaces the old password and only the new one will work.",
                       )}
                     </p>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                      {titleCase("Role")}
-                    </label>
-                    <select
-                      value={member.role}
-                      onChange={(e) => {
-                        const nextRole = e.target.value === "committee" ? "committee" : "staff";
-                        setMembers((prev) =>
-                          prev.map((m) =>
-                            m.id === member.id
-                              ? {
-                                  ...m,
-                                  role: nextRole,
-                                  restrictedFeatures: nextRole === "committee" ? m.restrictedFeatures : [],
-                                }
-                              : m
-                          )
-                        );
-                      }}
-                      className="input-field w-full text-xs"
-                    >
-                      <option value="staff">Staff</option>
-                      <option value="committee">Committee</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <p className="mb-1 text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                      {titleCase("Allow access to these features")}
-                    </p>
-                    <p className="mb-2 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-                      {titleCase("Checked = can use. Uncheck = blocked for this member.")}
-                    </p>
-                    {member.role === "committee" ? (
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        {FEATURE_KEYS.map((feature) => (
-                          <label
-                            key={feature}
-                            className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={!member.restrictedFeatures.includes(feature)}
-                              onChange={() => {
-                                setMembers((prev) =>
-                                  prev.map((m) => {
-                                    if (m.id !== member.id) return m;
-                                    const nextRestricted = m.restrictedFeatures.includes(feature)
-                                      ? m.restrictedFeatures.filter((f) => f !== feature)
-                                      : [...m.restrictedFeatures, feature];
-                                    return { ...m, restrictedFeatures: nextRestricted };
-                                  })
-                                );
-                              }}
-                            />
-                            {titleCase(FEATURE_LABELS[feature])}
-                          </label>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                        {titleCase("Full access")}
-                      </p>
-                    )}
                   </div>
 
                   <div className="flex flex-col gap-2">

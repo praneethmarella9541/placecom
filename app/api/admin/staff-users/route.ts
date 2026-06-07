@@ -18,6 +18,10 @@ type Body = {
   restrictedFeatures?: string[];
   mobilePhone?: string | null;
   exotelVirtualNumber?: string | null;
+  groupId?: string | null;
+  openaiTokenLimit?: number | null;
+  displayUsername?: string | null;
+  jobTitle?: string | null;
 };
 
 /**
@@ -62,8 +66,13 @@ export async function POST(request: Request) {
   const email = body.email?.trim().toLowerCase() ?? "";
   const password = body.password ?? "";
   const role = body.role === "committee" ? "committee" : "staff";
+  const groupIdRaw = body.groupId?.trim() ?? "";
+  const hasGroup = Boolean(groupIdRaw);
   const restrictedFeatures =
-    role === "committee" ? normalizeRestrictedFeatures(body.restrictedFeatures) : [];
+    hasGroup || role !== "committee"
+      ? []
+      : normalizeRestrictedFeatures(body.restrictedFeatures);
+  const effectiveRole = hasGroup ? "staff" : role;
   if (!email || !isValidEmail(email)) {
     return NextResponse.json({ error: "A valid email is required." }, { status: 400 });
   }
@@ -119,7 +128,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (role === "committee") {
+  if (role === "committee" && !hasGroup) {
     const { error: colErr } = await svc
       .from("profiles")
       .select("restricted_features")
@@ -150,7 +159,33 @@ export async function POST(request: Request) {
   }
 
   const newId = created.user.id;
-  const displayUsername = email.split("@")[0]?.slice(0, 64) || "staff";
+  const displayUsername =
+    body.displayUsername?.trim().slice(0, 64) ||
+    email.split("@")[0]?.slice(0, 64) ||
+    "staff";
+
+  let groupId: string | null = null;
+  if (hasGroup) {
+    const { data: groupRow } = await svc
+      .from("team_groups")
+      .select("id")
+      .eq("id", groupIdRaw)
+      .eq("mailbox_owner_id", user.id)
+      .maybeSingle();
+    if (!groupRow) {
+      await svc.auth.admin.deleteUser(newId);
+      return NextResponse.json({ error: "Group not found." }, { status: 404 });
+    }
+    groupId = groupIdRaw;
+  }
+
+  let openaiTokenLimit: number | null = null;
+  if (body.openaiTokenLimit != null && body.openaiTokenLimit !== "") {
+    const limit = Math.max(0, Math.floor(Number(body.openaiTokenLimit) || 0));
+    openaiTokenLimit = limit > 0 ? limit : null;
+  }
+
+  const jobTitle = body.jobTitle?.trim().slice(0, 120) || null;
 
   if (exotelVirtualNumber) {
     const { data: peers, error: peerErr } = await svc
@@ -185,10 +220,13 @@ export async function POST(request: Request) {
   let { data: updated, error: profErr } = await svc
     .from("profiles")
     .update({
-      role,
+      role: effectiveRole,
       restricted_features: restrictedFeatures,
       mailbox_owner_id: user.id,
       display_username: displayUsername,
+      group_id: groupId,
+      openai_token_limit: openaiTokenLimit,
+      job_title: jobTitle,
       ...telephonyFields,
       updated_at: new Date().toISOString(),
     })
@@ -203,7 +241,7 @@ export async function POST(request: Request) {
     );
   }
   if (profErr && /restricted_features/i.test(profErr.message ?? "")) {
-    if (role === "committee") {
+    if (role === "committee" && !hasGroup) {
       await svc.auth.admin.deleteUser(newId);
       return NextResponse.json(
         { error: "Database migration 0019_committee_feature_access.sql is required for committee access." },
@@ -241,7 +279,7 @@ export async function POST(request: Request) {
       ...telephonyFields,
     });
     if (insErr && /restricted_features/i.test(insErr.message ?? "")) {
-      if (role === "committee") {
+      if (role === "committee" && !hasGroup) {
         await svc.auth.admin.deleteUser(newId);
         return NextResponse.json(
           { error: "Database migration 0019_committee_feature_access.sql is required for committee access." },
@@ -271,7 +309,8 @@ export async function POST(request: Request) {
     ok: true,
     userId: newId,
     email,
-    role,
+    role: effectiveRole,
     restrictedFeatures,
+    groupId,
   });
 }

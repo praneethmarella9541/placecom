@@ -68,7 +68,7 @@ import {
   getMailListSessionCache,
   startMailListPrefetchWarm,
 } from "@/lib/inbox-list-prefetch";
-import { PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon } from "lucide-react";
+import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -575,6 +575,8 @@ export default function InboxPage() {
   // syntax and stuff the result into mailSearchInput, so the regular search
   // pipeline handles the rest. Visible / editable in the input bar afterwards.
   const [filterOpen, setFilterOpen] = useState(false);
+  const [mobileFolderMenuOpen, setMobileFolderMenuOpen] = useState(false);
+  const mobileFolderMenuRef = useRef<HTMLDivElement>(null);
   const filterPanelRef = useRef<HTMLDivElement>(null);
   const [filterFrom, setFilterFrom] = useState("");
   const [filterTo, setFilterTo] = useState("");
@@ -722,6 +724,29 @@ export default function InboxPage() {
     clearFilter();
     setFilterOpen(false);
   }, [clearFilter]);
+
+  const switchMailFolder = useCallback(
+    (key: Folder) => {
+      setFolder(key);
+      setFilterLabelId(null);
+      setSelectedId(null);
+      setMessages(null);
+      resetMailSearch();
+      setMobileFolderMenuOpen(false);
+    },
+    [resetMailSearch],
+  );
+
+  useEffect(() => {
+    if (!mobileFolderMenuOpen) return;
+    function onDown(e: PointerEvent) {
+      if (mobileFolderMenuRef.current && !mobileFolderMenuRef.current.contains(e.target as Node)) {
+        setMobileFolderMenuOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [mobileFolderMenuOpen]);
 
   // Opening advanced search with no active query — do not show a stale form.
   useEffect(() => {
@@ -3522,6 +3547,11 @@ export default function InboxPage() {
     { key: "trash"     as const, label: "Trash",     Icon: Trash2,     countId: "TRASH",     unreadOnly: false },
   ] as const;
 
+  const MOBILE_PRIMARY_FOLDER_KEYS = new Set<Folder>(["inbox", "sent", "drafts", "starred"]);
+  const mobilePrimaryFolders = FOLDER_NAV.filter((f) => MOBILE_PRIMARY_FOLDER_KEYS.has(f.key));
+  const mobileMoreFolders = FOLDER_NAV.filter((f) => !MOBILE_PRIMARY_FOLDER_KEYS.has(f.key));
+  const mobileMoreFolderActive = mobileMoreFolders.some((f) => f.key === folder);
+
   return (
     <>
     {/* ── Gmail-style three-column layout ────────────────────────────────────
@@ -3532,8 +3562,8 @@ export default function InboxPage() {
       data-gmail-mail
       className={cn(
         "flex min-h-0 overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]",
-        /* Cancel WorkspaceChrome padding so the pane is exactly viewport-tall (no page scroll). */
-        "-mx-4 -mt-[calc(56px+16px)] -mb-6 h-[calc(100dvh-40px)]",
+        /* Mobile: stay below WorkspaceChrome header (no negative top margin). Desktop: full-bleed. */
+        "-mx-4 -mb-6 h-[calc(100dvh-56px-16px-24px-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))]",
         "md:-mx-6 md:-mt-6 md:-mb-6 md:h-[calc(100dvh-48px)]"
       )}
     >
@@ -3577,13 +3607,7 @@ export default function InboxPage() {
               <button
                 key={key}
                 type="button"
-                onClick={() => {
-                  setFolder(key);
-                  setFilterLabelId(null);
-                  setSelectedId(null);
-                  setMessages(null);
-                  resetMailSearch();
-                }}
+                onClick={() => switchMailFolder(key)}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-3 pr-3 text-[14px] transition-colors",
                   active
@@ -3700,10 +3724,28 @@ export default function InboxPage() {
       {/* ══ RIGHT CONTENT AREA ══ */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
 
-        {/* Mobile folder tabs (replaces left rail on small screens) */}
-        <div className="flex shrink-0 border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] md:hidden">
-          <div className="flex flex-1 overflow-x-auto">
-            {FOLDER_NAV.map(({ key, label, Icon, countId, unreadOnly }) => {
+        {/* Mobile mail nav — compose + primary folders (replaces left rail) */}
+        <div className="z-20 flex shrink-0 flex-col border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] md:hidden">
+          <div className="flex items-center gap-2 border-b border-[var(--gmail-border-light)] px-3 py-2">
+            <button
+              type="button"
+              onClick={() => openNewCompose()}
+              className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-2xl bg-[var(--gmail-compose-pill)] px-4 text-[14px] font-medium text-[var(--gmail-compose-pill-text)] shadow-sm"
+            >
+              <PencilLine className="h-4 w-4 shrink-0" strokeWidth={2} />
+              {titleCase("Compose")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleMailListRefresh()}
+              className="btn-ghost flex h-10 w-10 shrink-0 items-center justify-center rounded-full p-0"
+              title={titleCase("Refresh")}
+            >
+              <IconRefresh className={cn("h-4 w-4", listRefreshing && "animate-spin")} />
+            </button>
+          </div>
+          <div className="flex items-stretch overflow-x-auto scrollbar-thin">
+            {mobilePrimaryFolders.map(({ key, label, Icon, countId, unreadOnly }) => {
               const count = countId ? labelCounts[countId] : undefined;
               const badge = countId
                 ? unreadOnly
@@ -3715,49 +3757,69 @@ export default function InboxPage() {
                 <button
                   key={key}
                   type="button"
-                  onClick={() => {
-                    setFolder(key);
-                    setFilterLabelId(null);
-                    setSelectedId(null);
-                    setMessages(null);
-                    resetMailSearch();
-                  }}
+                  onClick={() => switchMailFolder(key)}
                   className={cn(
-                    "flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-3 text-[13px] font-medium transition-colors",
+                    "flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors",
                     active
                       ? "border-[var(--color-primary)] text-[var(--color-primary)]"
-                      : "border-transparent text-[var(--color-text-faint)]",
+                      : "border-transparent text-[var(--color-text-muted)]",
                   )}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-4 w-4 shrink-0" />
                   {titleCase(label)}
                   {badge !== null && (
-                    <span className="ml-0.5 text-[10px] tabular-nums opacity-70">
+                    <span className="text-[10px] tabular-nums opacity-80">
                       {badge > 999 ? `${Math.floor(badge / 1000)}k` : badge}
                     </span>
                   )}
                 </button>
               );
             })}
-          </div>
-          {/* Mobile compose + refresh */}
-          <div className="flex shrink-0 items-center gap-1 border-l border-[var(--color-border)] px-2">
-            <button
-              type="button"
-              onClick={() => openNewCompose()}
-              className="btn-ghost h-9 w-9 justify-center p-0"
-              title={titleCase("Compose")}
-            >
-              <PencilLine className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleMailListRefresh()}
-              className="btn-ghost h-9 w-9 justify-center p-0"
-              title={titleCase("Refresh")}
-            >
-              <IconRefresh className={cn("h-4 w-4", listRefreshing && "animate-spin")} />
-            </button>
+            <div ref={mobileFolderMenuRef} className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setMobileFolderMenuOpen((v) => !v)}
+                className={cn(
+                  "flex h-full items-center gap-1 border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors",
+                  mobileMoreFolderActive || mobileFolderMenuOpen
+                    ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                    : "border-transparent text-[var(--color-text-muted)]",
+                )}
+              >
+                {titleCase("More")}
+                <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", mobileFolderMenuOpen && "rotate-180")} />
+              </button>
+              {mobileFolderMenuOpen && (
+                <ul className="absolute left-0 top-full z-30 min-w-[11rem] overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-md)]">
+                  {mobileMoreFolders.map(({ key, label, Icon, countId, unreadOnly }) => {
+                    const count = countId ? labelCounts[countId] : undefined;
+                    const badge = countId
+                      ? unreadOnly
+                        ? (count?.unread && count.unread > 0 ? count.unread : null)
+                        : (count?.total && count.total > 0 ? count.total : null)
+                      : null;
+                    return (
+                      <li key={key}>
+                        <button
+                          type="button"
+                          onClick={() => switchMailFolder(key)}
+                          className={cn(
+                            "flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-[var(--color-surface-offset)]",
+                            folder === key && "bg-[var(--color-primary-light)] font-medium text-[var(--color-primary)]",
+                          )}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="flex-1">{titleCase(label)}</span>
+                          {badge !== null && (
+                            <span className="text-[10px] tabular-nums text-[var(--color-text-faint)]">{badge}</span>
+                          )}
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
         </div>
 

@@ -1,6 +1,12 @@
 import "server-only";
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
-export type ExpoPushPayload = { title: string; body: string; data?: Record<string, string> };
+export type ExpoPushPayload = {
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+  /** Android notification channel (e.g. `calls` for incoming call alerts). */
+  channelId?: string;
+};
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
@@ -19,7 +25,7 @@ export async function sendExpoPush(tokens: string[], payload: ExpoPushPayload): 
           to,
           sound: "default",
           priority: "high",
-          channelId: "default",
+          channelId: payload.channelId ?? "default",
           ...payload,
         }))
       ),

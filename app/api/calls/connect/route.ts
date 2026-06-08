@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
 import { normalizePhone, phoneLookupVariants, phoneMatches } from "@/lib/phone";
 import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
+import { notifyIncomingCall } from "@/lib/push-notifications";
 
 export const runtime = "nodejs";
 
@@ -201,7 +202,13 @@ async function resolveDestination(
   exotelCallSid: string,
   direction: string,
   calledNumber: string
-): Promise<{ destination: string; isIncoming: boolean }> {
+): Promise<{
+  destination: string;
+  isIncoming: boolean;
+  notifyUserId?: string;
+  callerPhone?: string;
+  shouldNotifyIncoming?: boolean;
+}> {
   const dtmfDigits = params.get("digits")?.toString() ?? params.get("Digits")?.toString() ?? "";
   const defaultUserId = process.env.INCOMING_DEFAULT_USER_ID?.trim() ?? "";
 
@@ -304,6 +311,7 @@ async function resolveDestination(
   }
 
   const from = normalizePhone(callerPhone);
+  let shouldNotifyIncoming = false;
   if (logUserId && exotelCallSid) {
     const { data: existing } = await supabaseAdmin
       .from("call_logs")
@@ -322,6 +330,7 @@ async function resolveDestination(
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
+      shouldNotifyIncoming = true;
     }
   }
   console.log(
@@ -336,7 +345,13 @@ async function resolveDestination(
     "| sid:",
     exotelCallSid
   );
-  return { destination: incomingAgent, isIncoming: true };
+  return {
+    destination: incomingAgent,
+    isIncoming: true,
+    notifyUserId: logUserId || undefined,
+    callerPhone: from,
+    shouldNotifyIncoming,
+  };
 }
 
 function buildResponse(destination: string, outgoingPhoneNumber?: string) {
@@ -394,9 +409,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const { destination } = await resolveDestination(url.searchParams, callerPhone, exotelCallSid, direction, calledNumber);
-  const resp = buildResponse(destination, calledNumber);
-  console.log("[calls/connect] returning destination:", destination || "(empty)", "| status:", resp.status);
+  const resolved = await resolveDestination(
+    url.searchParams,
+    callerPhone,
+    exotelCallSid,
+    direction,
+    calledNumber
+  );
+  if (resolved.shouldNotifyIncoming && resolved.notifyUserId && resolved.callerPhone) {
+    void notifyIncomingCall({
+      userId: resolved.notifyUserId,
+      callerE164: resolved.callerPhone,
+      callSid: exotelCallSid,
+    }).catch((e) => console.warn("[calls/connect] push:", e));
+  }
+  const resp = buildResponse(resolved.destination, calledNumber);
+  console.log("[calls/connect] returning destination:", resolved.destination || "(empty)", "| status:", resp.status);
   return resp;
 }
 
@@ -426,6 +454,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const { destination } = await resolveDestination(params, callerPhone, exotelCallSid, direction, calledNumber);
-  return buildResponse(destination, calledNumber);
+  const resolved = await resolveDestination(
+    params,
+    callerPhone,
+    exotelCallSid,
+    direction,
+    calledNumber
+  );
+  if (resolved.shouldNotifyIncoming && resolved.notifyUserId && resolved.callerPhone) {
+    void notifyIncomingCall({
+      userId: resolved.notifyUserId,
+      callerE164: resolved.callerPhone,
+      callSid: exotelCallSid,
+    }).catch((e) => console.warn("[calls/connect] push:", e));
+  }
+  return buildResponse(resolved.destination, calledNumber);
 }

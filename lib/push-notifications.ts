@@ -222,6 +222,66 @@ export async function notifyWhatsAppInbound(params: {
   }
 }
 
+/** Resolve saved WhatsApp/contact name for a phone number (shared contact book). */
+async function contactLabelForPhone(ownerUserId: string, peerE164: string): Promise<string> {
+  try {
+    const svc = createServiceSupabase();
+    const keys = peerKeysForQuery(peerE164);
+    if (!keys.length) return formatPeer(peerE164);
+    const { data } = await svc
+      .from("wa_contacts")
+      .select("name")
+      .eq("user_id", ownerUserId)
+      .in("peer_e164", keys)
+      .limit(1);
+    const name = (data?.[0]?.name as string | undefined)?.trim();
+    return name || formatPeer(peerE164);
+  } catch {
+    return formatPeer(peerE164);
+  }
+}
+
+/** Alert agent on device while Exotel rings their mobile (shows real caller, not virtual CLI). */
+export async function notifyIncomingCall(params: {
+  userId: string;
+  callerE164: string;
+  callSid?: string;
+}): Promise<void> {
+  const userId = params.userId?.trim();
+  const caller = params.callerE164?.trim();
+  if (!userId || !caller) return;
+
+  const tokens = await tokensForUser(userId);
+  if (!tokens.length) {
+    console.warn("[push] incoming call: no token for user", userId);
+    return;
+  }
+
+  const label = await contactLabelForPhone(userId, caller);
+  const payload = {
+    title: `Incoming call — ${label}`,
+    body: formatPeer(caller),
+    channelId: "calls",
+    data: {
+      type: "incoming_call",
+      peer: caller,
+      callSid: params.callSid?.trim() ?? "",
+    },
+  };
+
+  const invalid = await sendExpoPush(tokens, payload);
+  if (invalid.length) {
+    try {
+      const svc = createServiceSupabase();
+      await svc.from("push_device_tokens").delete().in("expo_push_token", invalid);
+    } catch {
+      /* ignore */
+    }
+  } else {
+    console.log("[push] incoming call notify | user:", userId, "| caller:", caller);
+  }
+}
+
 export async function sendTestPushToUser(userId: string): Promise<{ sent: number }> {
   const tokens = await tokensForUser(userId);
   if (!tokens.length) {

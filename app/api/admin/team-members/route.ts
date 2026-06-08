@@ -190,6 +190,7 @@ export async function GET() {
 export async function PATCH(request: Request) {
   const auth = await assertAdminUserId();
   if (!("userId" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const adminUserId = auth.userId;
 
   let body: PatchBody;
   try {
@@ -202,7 +203,7 @@ export async function PATCH(request: Request) {
   if (!userId) return NextResponse.json({ error: "userId is required." }, { status: 400 });
   const nextEmail = body.email?.trim().toLowerCase();
   const nextPassword = body.password?.trim();
-  if (nextEmail !== undefined && (!nextEmail || !isValidEmail(nextEmail))) {
+  if (nextEmail && !isValidEmail(nextEmail)) {
     return NextResponse.json({ error: "A valid email is required." }, { status: 400 });
   }
   if (nextPassword !== undefined && nextPassword.length > 0 && nextPassword.length < MIN_PASSWORD_LEN) {
@@ -223,7 +224,7 @@ export async function PATCH(request: Request) {
     .from("profiles")
     .select("id, role, restricted_features")
     .eq("id", userId)
-    .eq("mailbox_owner_id", auth.userId)
+    .eq("mailbox_owner_id", adminUserId)
     .maybeSingle();
   if (existsErr) return NextResponse.json({ error: existsErr.message }, { status: 500 });
   if (!existing) return NextResponse.json({ error: "Team member not found." }, { status: 404 });
@@ -243,7 +244,7 @@ export async function PATCH(request: Request) {
         .from("team_groups")
         .select("id")
         .eq("id", gid)
-        .eq("mailbox_owner_id", auth.userId)
+        .eq("mailbox_owner_id", adminUserId)
         .maybeSingle();
       if (!groupRow) {
         return NextResponse.json({ error: "Group not found." }, { status: 404 });
@@ -270,7 +271,7 @@ export async function PATCH(request: Request) {
   if (body.exotelVirtualNumber !== undefined) {
     const takenErr = await assertExotelNotTaken(
       svc,
-      auth.userId,
+      adminUserId,
       exotelParsed.value ?? null,
       userId
     );
@@ -290,67 +291,92 @@ export async function PATCH(request: Request) {
     }
   }
 
-  const profilePatch: Record<string, unknown> = {
+  const basePatch: Record<string, unknown> = {
     role: effectiveRole,
     restricted_features: restrictedFeatures,
     updated_at: new Date().toISOString(),
   };
-  if (body.groupId !== undefined) profilePatch.group_id = groupId;
-  if (body.openaiTokenLimit !== undefined) {
-    if (body.openaiTokenLimit === null || body.openaiTokenLimit === "") {
-      profilePatch.openai_token_limit = null;
-    } else {
-      const limit = Math.max(0, Math.floor(Number(body.openaiTokenLimit) || 0));
-      profilePatch.openai_token_limit = limit > 0 ? limit : null;
-    }
-  }
   if (body.displayUsername !== undefined) {
     const raw = body.displayUsername?.trim() ?? "";
-    profilePatch.display_username = raw.slice(0, 64) || null;
+    basePatch.display_username = raw.slice(0, 64) || null;
+  }
+  if (body.mobilePhone !== undefined) basePatch.mobile_phone = mobileParsed.value;
+  if (body.exotelVirtualNumber !== undefined) {
+    basePatch.exotel_virtual_number = exotelParsed.value;
+  }
+
+  const extendedPatch: Record<string, unknown> = { ...basePatch };
+  if (body.groupId !== undefined) extendedPatch.group_id = groupId;
+  if (body.openaiTokenLimit !== undefined) {
+    if (body.openaiTokenLimit === null || body.openaiTokenLimit === "") {
+      extendedPatch.openai_token_limit = null;
+    } else {
+      const limit = Math.max(0, Math.floor(Number(body.openaiTokenLimit) || 0));
+      extendedPatch.openai_token_limit = limit > 0 ? limit : null;
+    }
   }
   if (body.jobTitle !== undefined) {
     const raw = body.jobTitle?.trim() ?? "";
-    profilePatch.job_title = raw.slice(0, 120) || null;
+    extendedPatch.job_title = raw.slice(0, 120) || null;
   }
   if (body.bio !== undefined) {
     const raw = body.bio?.trim() ?? "";
-    profilePatch.bio = raw.slice(0, 500) || null;
-  }
-  if (body.mobilePhone !== undefined) profilePatch.mobile_phone = mobileParsed.value;
-  if (body.exotelVirtualNumber !== undefined) {
-    profilePatch.exotel_virtual_number = exotelParsed.value;
+    extendedPatch.bio = raw.slice(0, 500) || null;
   }
 
-  let { error: updErr } = await svc
-    .from("profiles")
-    .update(profilePatch)
-    .eq("id", userId)
-    .eq("mailbox_owner_id", auth.userId);
-  if (updErr && /restricted_features|mobile_phone|exotel_virtual_number|group_id|openai_token_limit|job_title|bio/i.test(updErr.message ?? "")) {
-    if (effectiveRole === "committee" && !assignedGroup && /restricted_features/i.test(updErr.message ?? "")) {
-      return NextResponse.json(
-        { error: "Database migration 0019_committee_feature_access.sql is required for committee access." },
-        { status: 503 }
-      );
+  function migrationErrorForColumn(errMsg: string): string | null {
+    if (/restricted_features/i.test(errMsg)) {
+      return "Database migration 0019_committee_feature_access.sql is required for committee access.";
     }
-    if (/mobile_phone|exotel_virtual_number/i.test(updErr.message ?? "")) {
-      return NextResponse.json(
-        { error: "Database migration 0023_profile_telephony.sql is required for call settings." },
-        { status: 503 }
-      );
+    if (/mobile_phone|exotel_virtual_number/i.test(errMsg)) {
+      return "Database migration 0023_profile_telephony.sql is required for call settings.";
     }
-    updErr = (
-      await svc
-        .from("profiles")
-        .update({
-          role: effectiveRole,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", userId)
-        .eq("mailbox_owner_id", auth.userId)
-    ).error;
+    if (/group_id|openai_token_limit|job_title|bio/i.test(errMsg)) {
+      return "Database migration 0032_team_groups_profile_tokens.sql is required for groups, token limits, and profile fields.";
+    }
+    return null;
+  }
+
+  async function applyProfilePatch(patch: Record<string, unknown>) {
+    return svc
+      .from("profiles")
+      .update(patch)
+      .eq("id", userId)
+      .eq("mailbox_owner_id", adminUserId)
+      .select("id")
+      .maybeSingle();
+  }
+
+  let { data: updatedRow, error: updErr } = await applyProfilePatch(extendedPatch);
+  if (
+    updErr &&
+    /restricted_features|mobile_phone|exotel_virtual_number|group_id|openai_token_limit|job_title|bio/i.test(
+      updErr.message ?? ""
+    )
+  ) {
+    const migrationMsg = migrationErrorForColumn(updErr.message ?? "");
+    if (
+      migrationMsg &&
+      (effectiveRole !== "committee" ||
+        assignedGroup ||
+        !/restricted_features/i.test(updErr.message ?? ""))
+    ) {
+      // Retry without newer columns (0032) so telephony + core fields still persist.
+      if (/group_id|openai_token_limit|job_title|bio/i.test(updErr.message ?? "")) {
+        const retry = await applyProfilePatch(basePatch);
+        updatedRow = retry.data;
+        updErr = retry.error;
+      } else {
+        return NextResponse.json({ error: migrationMsg }, { status: 503 });
+      }
+    } else if (migrationMsg) {
+      return NextResponse.json({ error: migrationMsg }, { status: 503 });
+    }
   }
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+  if (!updatedRow) {
+    return NextResponse.json({ error: "Team member not found or update did not apply." }, { status: 404 });
+  }
 
   if ((nextEmail && nextEmail.length > 0) || (nextPassword && nextPassword.length > 0)) {
     const updatePayload: { email?: string; password?: string } = {};

@@ -780,7 +780,58 @@ export async function setDriveFileStarred(
   return (await res.json()) as DriveFileRow;
 }
 
-/** Copy a file or folder into `parentId` (defaults to same parent as source). */
+const FOLDER_MIME = "application/vnd.google-apps.folder";
+
+/** Whether the user can create items inside this folder (copy/move/upload target). */
+async function folderCanAcceptChildren(
+  accessToken: string,
+  folderId: string,
+): Promise<boolean> {
+  const params = new URLSearchParams({
+    fields: "capabilities/canAddChildren,mimeType",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(folderId)}?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+  } catch {
+    return false;
+  }
+  if (!res.ok) return false;
+  const data = (await res.json()) as {
+    mimeType?: string;
+    capabilities?: { canAddChildren?: boolean };
+  };
+  if (data.mimeType === FOLDER_MIME) {
+    return data.capabilities?.canAddChildren === true;
+  }
+  // Shared-drive roots and other container ids still accept children.
+  return data.capabilities?.canAddChildren !== false;
+}
+
+/**
+ * Resolve where a copied item should land. Matches Google Drive: copies go into
+ * the current folder when the user can write there, otherwise My Drive root.
+ */
+export async function resolveCopyDestinationParent(
+  accessToken: string,
+  requestedParentId?: string,
+): Promise<string> {
+  const myDriveRoot = await getMyDriveRootIdCached(accessToken);
+  const normalized = requestedParentId?.trim();
+  if (!normalized || normalized === "root" || normalized === myDriveRoot) {
+    return myDriveRoot;
+  }
+  if (await folderCanAcceptChildren(accessToken, normalized)) {
+    return normalized;
+  }
+  return myDriveRoot;
+}
+
+/** Copy a single file into `parentId` via Drive files.copy (not folders). */
 export async function copyDriveFile(
   accessToken: string,
   fileId: string,
@@ -813,6 +864,20 @@ export async function copyDriveFile(
     throwDriveApiError(res.status, text, "Drive copy");
   }
   return (await res.json()) as DriveFileRow;
+}
+
+/** Copy a file into the resolved destination folder (folders are not supported). */
+export async function copyDriveItem(
+  accessToken: string,
+  fileId: string,
+  parentId?: string,
+): Promise<DriveFileRow> {
+  const meta = await getDriveFileMeta(accessToken, fileId);
+  if (meta.mimeType === FOLDER_MIME) {
+    throw new Error("Folders cannot be copied. Use Download to save a zip instead.");
+  }
+  const destParent = await resolveCopyDestinationParent(accessToken, parentId);
+  return copyDriveFile(accessToken, fileId, destParent);
 }
 
 export async function renameDriveFile(

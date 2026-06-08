@@ -1873,11 +1873,13 @@ export default function DrivePage() {
                           label="Rename"
                           onClick={() => startRename(file)}
                         />
-                        <RowMenuItem
-                          icon={<Copy className="h-3.5 w-3.5" />}
-                          label="Make a copy"
-                          onClick={() => void copyItem(file)}
-                        />
+                        {!isFolder ? (
+                          <RowMenuItem
+                            icon={<Copy className="h-3.5 w-3.5" />}
+                            label="Make a copy"
+                            onClick={() => void copyItem(file)}
+                          />
+                        ) : null}
                         <RowMenuItem
                           icon={<FolderInput className="h-3.5 w-3.5" />}
                           label="Move"
@@ -2187,11 +2189,13 @@ export default function DrivePage() {
                   label="Rename"
                   onClick={() => { setContextMenu(null); startRename(file); }}
                 />
-                <RowMenuItem
-                  icon={<Copy className="h-3.5 w-3.5" />}
-                  label="Make a copy"
-                  onClick={() => void copyItem(file)}
-                />
+                {!isFolder ? (
+                  <RowMenuItem
+                    icon={<Copy className="h-3.5 w-3.5" />}
+                    label="Make a copy"
+                    onClick={() => void copyItem(file)}
+                  />
+                ) : null}
                 <RowMenuItem
                   icon={<FolderInput className="h-3.5 w-3.5" />}
                   label="Move"

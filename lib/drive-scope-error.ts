@@ -28,8 +28,22 @@ export function driveApiErrorMessage(
   body: { error?: string; message?: string },
   fallback: string
 ): string {
-  if (body.message?.trim()) return body.message.trim();
-  const code = body.error?.trim();
-  if (code === DRIVE_INSUFFICIENT_SCOPE) return DRIVE_INSUFFICIENT_SCOPE_MESSAGE;
-  return code || fallback;
+  const raw = body.message?.trim() || body.error?.trim();
+  if (raw === DRIVE_INSUFFICIENT_SCOPE) return DRIVE_INSUFFICIENT_SCOPE_MESSAGE;
+  if (raw) return driveCopyErrorMessage(raw);
+  return fallback;
+}
+
+/** Map Google Drive copy failures to clearer guidance. */
+export function driveCopyErrorMessage(message: string): string {
+  const m = message.trim();
+  if (!m) return m;
+  if (
+    m.includes("cannot be copied") ||
+    m.includes("cannotCopyFile") ||
+    m.includes("insufficientFilePermissions")
+  ) {
+    return "You don't have permission to copy this item. Ask the owner for Editor access, or use Download instead.";
+  }
+  return m;
 }

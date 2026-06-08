@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { copyDriveFile } from "@/lib/drive";
+import { copyDriveItem } from "@/lib/drive";
 import {
   DRIVE_INSUFFICIENT_SCOPE,
+  driveCopyErrorMessage,
   driveInsufficientScopePayload,
 } from "@/lib/drive-scope-error";
 
@@ -39,7 +40,7 @@ export async function POST(
       : undefined;
 
   try {
-    const file = await copyDriveFile(auth.accessToken, fileId, parentId);
+    const file = await copyDriveItem(auth.accessToken, fileId, parentId);
     return NextResponse.json({ file });
   } catch (e) {
     const err = e as Error & { code?: string };
@@ -52,9 +53,14 @@ export async function POST(
     if (err.code === DRIVE_INSUFFICIENT_SCOPE) {
       return NextResponse.json(driveInsufficientScopePayload(), { status: 403 });
     }
+    const message = driveCopyErrorMessage(err.message || "Drive copy failed");
+    const isPermission =
+      message.includes("permission") ||
+      err.message?.includes("cannot be copied") ||
+      err.message?.includes("cannotCopyFile");
     return NextResponse.json(
-      { error: err.message || "Drive copy failed" },
-      { status: 500 }
+      { error: message, message },
+      { status: isPermission ? 403 : 500 }
     );
   }
 }

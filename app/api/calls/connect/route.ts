@@ -417,11 +417,15 @@ export async function GET(request: Request) {
     calledNumber
   );
   if (resolved.shouldNotifyIncoming && resolved.notifyUserId && resolved.callerPhone) {
-    void notifyIncomingCall({
-      userId: resolved.notifyUserId,
-      callerE164: resolved.callerPhone,
-      callSid: exotelCallSid,
-    }).catch((e) => console.warn("[calls/connect] push:", e));
+    try {
+      await notifyIncomingCall({
+        userId: resolved.notifyUserId,
+        callerE164: resolved.callerPhone,
+        callSid: exotelCallSid,
+      });
+    } catch (e) {
+      console.warn("[calls/connect] push:", e);
+    }
   }
   const resp = buildResponse(resolved.destination, calledNumber);
   console.log("[calls/connect] returning destination:", resolved.destination || "(empty)", "| status:", resp.status);
@@ -462,11 +466,15 @@ export async function POST(request: Request) {
     calledNumber
   );
   if (resolved.shouldNotifyIncoming && resolved.notifyUserId && resolved.callerPhone) {
-    void notifyIncomingCall({
-      userId: resolved.notifyUserId,
-      callerE164: resolved.callerPhone,
-      callSid: exotelCallSid,
-    }).catch((e) => console.warn("[calls/connect] push:", e));
+    try {
+      await notifyIncomingCall({
+        userId: resolved.notifyUserId,
+        callerE164: resolved.callerPhone,
+        callSid: exotelCallSid,
+      });
+    } catch (e) {
+      console.warn("[calls/connect] push:", e);
+    }
   }
   return buildResponse(resolved.destination, calledNumber);
 }

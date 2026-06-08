@@ -282,6 +282,22 @@ export async function notifyIncomingCall(params: {
   }
 }
 
+export async function sendTestIncomingCallPush(
+  userId: string,
+  callerE164 = "+919999999999"
+): Promise<{ sent: number }> {
+  const tokens = await tokensForUser(userId);
+  if (!tokens.length) {
+    throw new Error("No push tokens for this user. Open the app, allow notifications, sign in.");
+  }
+  await notifyIncomingCall({
+    userId,
+    callerE164,
+    callSid: `test_${Date.now()}`,
+  });
+  return { sent: tokens.length };
+}
+
 export async function sendTestPushToUser(userId: string): Promise<{ sent: number }> {
   const tokens = await tokensForUser(userId);
   if (!tokens.length) {

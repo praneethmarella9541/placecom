@@ -12,6 +12,7 @@ import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
 import { ThreadActionsMenu } from "@/components/ThreadActionsMenu";
 import { GmailAttachmentPreviews } from "@/components/GmailAttachmentPreviews";
+import { useResolveContactPhotos } from "@/components/ContactPhotoProvider";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
@@ -303,8 +304,9 @@ function MessageBubble({
     return () => window.removeEventListener("keydown", onKey);
   }, [fullscreen]);
   const isCollapsed = !expanded;
-  const fromEmail = extractEmailAddress(m.from || "");
+  const fromEmail = extractEmailAddress(m.from || "").trim().toLowerCase();
   const fromName = senderName(m.from || "");
+  useResolveContactPhotos(fromEmail ? [fromEmail] : []);
 
   const bodyContent = (
     <>
@@ -359,7 +361,7 @@ function MessageBubble({
       >
         {/* Always-visible header */}
         <div className="flex items-start gap-3 px-4 py-3 md:px-6">
-          <GmailAvatar seed={fromEmail} name={fromName} size={36} className="mt-0.5 shrink-0" />
+          <GmailAvatar seed={fromEmail || fromName} name={fromName} email={fromEmail || undefined} size={36} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
               <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
@@ -426,7 +428,7 @@ function MessageBubble({
         >
           {/* Fullscreen header */}
           <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3">
-            <GmailAvatar seed={fromEmail} name={fromName} size={32} className="shrink-0" />
+            <GmailAvatar seed={fromEmail || fromName} name={fromName} email={fromEmail || undefined} size={32} className="shrink-0" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
                 {formatFromHeader(m.from || "")}
@@ -884,6 +886,8 @@ export default function InboxPage() {
   /** Which folder/label/search view the UI is showing — stale fetches must not overwrite. */
   const activeListCacheKeyRef = useRef<string | null>(null);
   const listFetchAbortRef = useRef<AbortController | null>(null);
+  /** Bumps on each non-append fetch so aborted/superseded loads cannot clear the spinner. */
+  const listLoadGenRef = useRef(0);
 
   // Timestamp of the most recent local mutation. We use this to skip the
   // SWR background revalidation for ~5 s afterwards — Gmail's API lags a
@@ -1451,7 +1455,9 @@ export default function InboxPage() {
       // so we know whether to preserve scroll when fresh data arrives.
       let listWasVisible = false;
 
+      let loadGen = listLoadGenRef.current;
       if (!opts.append) {
+        loadGen = ++listLoadGenRef.current;
         activeListCacheKeyRef.current = cacheKey;
         listFetchAbortRef.current?.abort();
         listFetchAbortRef.current = new AbortController();
@@ -1464,24 +1470,20 @@ export default function InboxPage() {
       } else {
         if (opts.indicateRefresh) setListRefreshing(true);
         setListError(null);
-        // SWR: if we have a cached snapshot for this view, paint it
-        // immediately so the user never sees a spinner on tab-switch.
+        // SWR: paint cached rows instantly on tab-switch (never an empty placeholder).
         const cached = !opts.forceRefresh ? listCacheRef.current.get(cacheKey) : undefined;
-        if (cached) {
+        const hasCachedRows = Boolean(cached?.threads.length);
+        if (hasCachedRows && cached) {
           setThreads(cached.threads);
           setNextPageToken(cached.nextPageToken);
           bumpHistoryAnchorFromThreads(latestHistoryIdRef, cached.threads);
           setLoadingList(false);
-          listWasVisible = true; // list is on screen — preserve scroll on refresh
-          // If we just made a local mutation, skip the background refetch.
-          // Gmail's read-side lags our writes by a few seconds and would
-          // clobber our optimistic state. After the cooldown, fresh wins.
+          listWasVisible = true;
           const sinceMutation = Date.now() - lastMutationAtRef.current;
           if (!opts.forceRefresh && sinceMutation < MUTATION_COOLDOWN_MS) {
             return;
           }
         } else if (opts.forceRefresh) {
-          // Background poll / silent refresh — keep the list visible, no spinner.
           listWasVisible = true;
         } else {
           setLoadingList(true);
@@ -1538,24 +1540,30 @@ export default function InboxPage() {
         }
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;
-        // Only surface the error if we have nothing on screen — otherwise the
-        // cached snapshot is still useful and a transient blip shouldn't blank it.
-        if (!opts.append && isActiveListView() && !listCacheRef.current.has(cacheKey)) {
-          setListError(e instanceof Error ? e.message : "Failed to load");
-          setThreads([]);
+        if (!opts.append && isActiveListView() && loadGen === listLoadGenRef.current) {
+          const hasRows = listCacheRef.current.get(cacheKey)?.threads.length;
+          if (!hasRows) {
+            setListError(e instanceof Error ? e.message : "Failed to load");
+            setThreads([]);
+          }
         }
       } finally {
         if (opts.indicateRefresh) setListRefreshing(false);
+        const stillCurrent =
+          !opts.append &&
+          loadGen === listLoadGenRef.current &&
+          !fetchSignal?.aborted;
         if (opts.append) {
           if (isActiveListView()) {
             setLoadingMore(false);
             loadingMoreRef.current = false;
           }
-        } else if (isActiveListView()) {
+        } else if (isActiveListView() && stillCurrent) {
           setLoadingList(false);
         }
       }
-    },     [folder, mailSearch, effectiveLabelId]
+    },
+    [folder, mailSearch, effectiveLabelId]
   );
 
   // useLayoutEffect so cached folder/tab content paints before the browser
@@ -4140,7 +4148,7 @@ export default function InboxPage() {
                         else void openThread(t.id);
                       }}
                       className={cn(
-                        "group relative flex h-[40px] cursor-pointer items-center overflow-hidden border-b border-[var(--gmail-border-row)] text-[13px] transition-colors",
+                        "group relative cursor-pointer border-b border-[var(--gmail-border-row)] text-[13px] transition-colors",
                         isActiveThread
                           ? "bg-[var(--gmail-row-selected)] shadow-[inset_3px_0_0_0_var(--color-primary)]"
                           : isSelected
@@ -4151,6 +4159,73 @@ export default function InboxPage() {
                         !isActiveThread && "hover:bg-[var(--gmail-row-hover)] hover:shadow-sm",
                       )}
                     >
+                      {/* Mobile — compact two-line row (desktop layout unchanged below). */}
+                      <div className="flex flex-col gap-0.5 px-3 py-2.5 md:hidden">
+                        <div className="flex min-w-0 items-center gap-2">
+                          {isUnread && (
+                            <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-primary)]" />
+                          )}
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); void toggleThreadStar(t.id, !isStarred); }}
+                            disabled={isBusy}
+                            className={cn(
+                              "shrink-0 text-[15px] leading-none",
+                              isStarred ? "text-yellow-500" : "text-[var(--color-text-faint)]",
+                            )}
+                            aria-label={isStarred ? "Unstar" : "Star"}
+                          >
+                            {isStarred ? "★" : "☆"}
+                          </button>
+                          <span className={cn(
+                            "min-w-0 flex-1 truncate text-[14px]",
+                            isUnread ? "font-bold text-[var(--color-text)]" : "font-medium text-[var(--color-text)]",
+                          )}>
+                            {searchHighlight.length > 0 ? (
+                              <SearchHighlight text={name} terms={searchHighlight} />
+                            ) : (
+                              name
+                            )}
+                          </span>
+                          <span className="flex shrink-0 items-center gap-1">
+                            {(t.hasCalendarInvite ?? isCalendarInviteThread({ subject: t.subject, from: t.from, snippet: t.snippet })) && (
+                              <IconCalendar className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />
+                            )}
+                            {t.hasAttachments && !(t.hasCalendarInvite ?? isCalendarInviteThread({ subject: t.subject, from: t.from, snippet: t.snippet })) && (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-[var(--color-text-faint)]" aria-hidden>
+                                <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.49" />
+                              </svg>
+                            )}
+                            <time className={cn(
+                              "whitespace-nowrap text-[11px] tabular-nums",
+                              isUnread ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-faint)]",
+                            )}>
+                              {t.date ? formatDate(t.date) : ""}
+                            </time>
+                          </span>
+                        </div>
+                        <p className="min-w-0 truncate pl-5 text-[13px] text-[var(--color-text-muted)]">
+                          <span className={isUnread ? "font-semibold text-[var(--color-text)]" : undefined}>
+                            {searchHighlight.length > 0 ? (
+                              <SearchHighlight text={t.subject || "(no subject)"} terms={searchHighlight} />
+                            ) : (
+                              t.subject || "(no subject)"
+                            )}
+                          </span>
+                          {t.snippet ? (
+                            <span className="text-[var(--color-text-faint)]">
+                              {" — "}
+                              {searchHighlight.length > 0 ? (
+                                <SearchHighlight text={t.snippet} terms={searchHighlight} />
+                              ) : (
+                                t.snippet
+                              )}
+                            </span>
+                          ) : null}
+                        </p>
+                      </div>
+
+                      <div className="hidden h-[40px] w-full items-center overflow-hidden md:flex">
                       {/* Checkbox — fixed 40px slot. An unread dot shows by
                           default for at-a-glance scanning; on row hover (or once
                           selected) it yields to the checkbox for bulk actions. */}
@@ -4314,6 +4389,7 @@ export default function InboxPage() {
                           {t.date ? formatDate(t.date) : ""}
                         </time>
                       </span>
+                      </div>
                     </li>
                   );
                 })}

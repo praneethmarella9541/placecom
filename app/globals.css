@@ -142,6 +142,20 @@
     font-feature-settings: "ss01", "cv11";
   }
 
+  /* Mobile: notch safe areas + cleaner taps (desktop unchanged). */
+  @media (max-width: 767px) {
+    body {
+      padding-left: env(safe-area-inset-left, 0px);
+      padding-right: env(safe-area-inset-right, 0px);
+    }
+
+    button,
+    a,
+    [role="button"] {
+      -webkit-tap-highlight-color: transparent;
+    }
+  }
+
   /* Use display font for headings by default */
   h1, h2, h3, h4 {
     font-family: var(--font-display);

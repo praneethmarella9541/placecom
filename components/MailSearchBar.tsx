@@ -12,6 +12,7 @@ import type { RecipientSuggestion } from "@/components/RecipientField";
 export type SearchSuggestContact = {
   email: string;
   displayName?: string;
+  photoUrl?: string;
 };
 
 export type SearchSuggestThread = {
@@ -397,7 +398,13 @@ export function MailSearchBar({
                   submitSearch(c.email);
                 }}
               >
-                <GmailAvatar seed={c.email} name={c.displayName || c.email} size={36} />
+                <GmailAvatar
+                  seed={c.email}
+                  name={c.displayName || c.email}
+                  email={c.email}
+                  photoUrl={c.photoUrl}
+                  size={36}
+                />
                 <div className="min-w-0 flex-1">
                   {named ? (
                     <>

@@ -39,6 +39,12 @@ export type DriveFileLocation = {
   path: Array<{ id: string; name: string }>;
 };
 
+export type DriveFileOwner = {
+  displayName?: string;
+  emailAddress?: string;
+  me?: boolean;
+};
+
 export type DriveFileRow = {
   id: string;
   name: string;
@@ -49,9 +55,24 @@ export type DriveFileRow = {
   starred?: boolean;
   thumbnailLink?: string;
   iconLink?: string;
+  owners?: DriveFileOwner[];
   /** Populated for Recent-tab rows — parent folder navigation target. */
   location?: DriveFileLocation;
 };
+
+/** Primary owner for list rows — matches Google Drive ("me" or display name). */
+export function primaryDriveOwner(owners?: DriveFileOwner[] | null): DriveFileOwner | undefined {
+  if (!owners?.length) return undefined;
+  return owners.find((o) => o.me) ?? owners[0];
+}
+
+/** Primary owner label for list rows — matches Google Drive ("me" or display name). */
+export function formatDriveOwnerLabel(owners?: DriveFileOwner[] | null): string {
+  const primary = primaryDriveOwner(owners);
+  if (!primary) return "—";
+  if (primary.me) return "me";
+  return primary.displayName?.trim() || primary.emailAddress?.trim() || "—";
+}
 
 export type DriveFileDetails = DriveFileRow & {
   createdTime?: string;
@@ -118,7 +139,7 @@ function buildFilesListQ(
 }
 
 const LIST_FILE_FIELDS =
-  "id, name, mimeType, modifiedTime, size, webViewLink, starred, thumbnailLink, iconLink";
+  "id, name, mimeType, modifiedTime, size, webViewLink, starred, thumbnailLink, iconLink, owners(displayName,emailAddress,me)";
 
 const LIST_FILE_FIELDS_RECENT =
   `${LIST_FILE_FIELDS}, parents, driveId, sharedWithMeTime`;
@@ -382,7 +403,7 @@ export async function listDriveFilesPage(
   };
 
   const files: DriveFileRow[] = (data.files || []).map(
-    ({ id, name, mimeType, modifiedTime, size, webViewLink, starred, thumbnailLink, iconLink }) => ({
+    ({
       id,
       name,
       mimeType,
@@ -392,6 +413,18 @@ export async function listDriveFilesPage(
       starred,
       thumbnailLink,
       iconLink,
+      owners,
+    }) => ({
+      id,
+      name,
+      mimeType,
+      modifiedTime,
+      size,
+      webViewLink,
+      starred,
+      thumbnailLink,
+      iconLink,
+      owners,
     })
   );
 

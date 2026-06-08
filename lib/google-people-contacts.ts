@@ -1,15 +1,35 @@
 import "server-only";
 
+import { normalizeGooglePhotoUrl } from "@/lib/google-photo-url";
+
 type PersonLike = {
   names?: { displayName?: string }[];
   emailAddresses?: { value?: string; metadata?: { primary?: boolean } }[];
+  photos?: { url?: string; default?: boolean; metadata?: { primary?: boolean } }[];
+};
+
+type ContactEntry = {
+  displayName: string;
+  photoUrl?: string;
 };
 
 const PEOPLE_API = "https://people.googleapis.com/v1";
 const MAX_PAGES = 25;
 
-function mergePerson(map: Map<string, string>, p: PersonLike) {
+function extractPhotoUrl(p: PersonLike): string | undefined {
+  const photos = p.photos ?? [];
+  if (!photos.length) return undefined;
+  const primary =
+    photos.find((ph) => ph.metadata?.primary && ph.url && !ph.default) ??
+    photos.find((ph) => ph.url && !ph.default) ??
+    photos.find((ph) => ph.url);
+  const raw = primary?.url?.trim();
+  return raw ? normalizeGooglePhotoUrl(raw) : undefined;
+}
+
+function mergePerson(map: Map<string, ContactEntry>, p: PersonLike) {
   const name = p.names?.[0]?.displayName?.trim();
+  const photoUrl = extractPhotoUrl(p);
   const emails = p.emailAddresses ?? [];
   const sorted = [...emails].sort((a, b) => {
     if (a.metadata?.primary) return -1;
@@ -21,17 +41,21 @@ function mergePerson(map: Map<string, string>, p: PersonLike) {
     const raw = ea.value?.trim().toLowerCase();
     if (!raw?.includes("@")) continue;
     const label = name || raw;
-    if (!map.has(raw)) map.set(raw, label);
+    const existing = map.get(raw);
+    map.set(raw, {
+      displayName: label,
+      photoUrl: photoUrl ?? existing?.photoUrl,
+    });
   }
 }
 
-async function collectConnections(accessToken: string, map: Map<string, string>, warnings: string[]): Promise<void> {
+async function collectConnections(accessToken: string, map: Map<string, ContactEntry>, warnings: string[]): Promise<void> {
   let pageToken: string | undefined;
   let pages = 0;
   while (pages < MAX_PAGES) {
     pages++;
     const url = new URL(`${PEOPLE_API}/people/me/connections`);
-    url.searchParams.set("personFields", "names,emailAddresses");
+    url.searchParams.set("personFields", "names,emailAddresses,photos");
     url.searchParams.set("pageSize", "500");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
@@ -64,13 +88,13 @@ async function collectConnections(accessToken: string, map: Map<string, string>,
   }
 }
 
-async function collectOtherContacts(accessToken: string, map: Map<string, string>, warnings: string[]): Promise<void> {
+async function collectOtherContacts(accessToken: string, map: Map<string, ContactEntry>, warnings: string[]): Promise<void> {
   let pageToken: string | undefined;
   let pages = 0;
   while (pages < MAX_PAGES) {
     pages++;
     const url = new URL(`${PEOPLE_API}/otherContacts`);
-    url.searchParams.set("readMask", "emailAddresses,names");
+    url.searchParams.set("readMask", "emailAddresses,names,photos");
     url.searchParams.set("pageSize", "1000");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
 
@@ -103,8 +127,34 @@ async function collectOtherContacts(accessToken: string, map: Map<string, string
   }
 }
 
+async function fetchMePhotoUrl(accessToken: string): Promise<string | undefined> {
+  const url = new URL(`${PEOPLE_API}/people/me`);
+  url.searchParams.set("personFields", "photos");
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    return undefined;
+  }
+  if (!res.ok) return undefined;
+
+  const data = (await res.json()) as PersonLike;
+  return extractPhotoUrl(data);
+}
+
+export type GoogleComposeContact = {
+  email: string;
+  displayName?: string;
+  photoUrl?: string;
+};
+
 export type GoogleComposeContactsResult = {
-  contacts: Array<{ email: string; displayName?: string }>;
+  contacts: GoogleComposeContact[];
+  photoByEmail: Record<string, string>;
+  mePhotoUrl?: string;
   hint?: string;
 };
 
@@ -115,13 +165,13 @@ export type GoogleComposeContactsResult = {
 export async function searchContactsByQuery(
   accessToken: string,
   query: string,
-): Promise<Array<{ email: string; displayName?: string }>> {
+): Promise<GoogleComposeContact[]> {
   const q = query.trim();
   if (q.length < 1) return [];
 
   const url = new URL(`${PEOPLE_API}/people:searchContacts`);
   url.searchParams.set("query", q);
-  url.searchParams.set("readMask", "emailAddresses,names");
+  url.searchParams.set("readMask", "emailAddresses,names,photos");
   url.searchParams.set("pageSize", "15");
 
   let res: Response;
@@ -135,18 +185,21 @@ export async function searchContactsByQuery(
   if (!res.ok) return [];
 
   const data = (await res.json()) as { results?: { person?: PersonLike }[] };
-  const out: Array<{ email: string; displayName?: string }> = [];
+  const out: GoogleComposeContact[] = [];
   const seen = new Set<string>();
 
   for (const row of data.results ?? []) {
-    const name = row.person?.names?.[0]?.displayName?.trim();
-    for (const ea of row.person?.emailAddresses ?? []) {
+    const person = row.person;
+    const name = person?.names?.[0]?.displayName?.trim();
+    const photoUrl = person ? extractPhotoUrl(person) : undefined;
+    for (const ea of person?.emailAddresses ?? []) {
       const email = ea.value?.trim().toLowerCase();
       if (!email?.includes("@") || seen.has(email)) continue;
       seen.add(email);
       out.push({
         email,
         displayName: name && name.toLowerCase() !== email ? name : undefined,
+        photoUrl,
       });
     }
   }
@@ -154,19 +207,91 @@ export async function searchContactsByQuery(
 }
 
 export async function fetchGoogleContactsForCompose(accessToken: string): Promise<GoogleComposeContactsResult> {
-  const map = new Map<string, string>();
+  const map = new Map<string, ContactEntry>();
   const warnings: string[] = [];
 
+  const mePhotoUrl = await fetchMePhotoUrl(accessToken);
   await collectConnections(accessToken, map, warnings);
   await collectOtherContacts(accessToken, map, warnings);
 
-  const contacts = Array.from(map.entries()).map(([email, label]) => ({
-    email,
-    displayName: label !== email ? label : undefined,
-  }));
+  const photoByEmail: Record<string, string> = {};
+  const contacts = Array.from(map.entries()).map(([email, entry]) => {
+    if (entry.photoUrl) photoByEmail[email] = entry.photoUrl;
+    return {
+      email,
+      displayName: entry.displayName !== email ? entry.displayName : undefined,
+      photoUrl: entry.photoUrl,
+    };
+  });
 
   return {
     contacts,
+    photoByEmail,
+    mePhotoUrl: mePhotoUrl ? normalizeGooglePhotoUrl(mePhotoUrl) : undefined,
     hint: warnings.length ? warnings.join(" ") : undefined,
   };
+}
+
+/** Resolve profile photos for specific emails (on-demand when opening a thread). */
+export async function lookupContactPhotosByEmails(
+  accessToken: string,
+  emails: string[],
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  const pending = new Set(
+    emails.map((e) => e.trim().toLowerCase()).filter((e) => e.includes("@")),
+  );
+  if (!pending.size) return out;
+
+  for (const email of Array.from(pending)) {
+    const hits = await searchContactsByQuery(accessToken, email);
+    const match = hits.find((h) => h.email === email);
+    if (match?.photoUrl) {
+      out[email] = match.photoUrl;
+      pending.delete(email);
+    }
+  }
+
+  if (!pending.size) return out;
+
+  let pageToken: string | undefined;
+  let pages = 0;
+  while (pending.size > 0 && pages < MAX_PAGES) {
+    pages++;
+    const url = new URL(`${PEOPLE_API}/otherContacts`);
+    url.searchParams.set("readMask", "emailAddresses,photos");
+    url.searchParams.set("pageSize", "1000");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } catch {
+      break;
+    }
+    if (!res.ok) break;
+
+    const data = (await res.json()) as {
+      otherContacts?: PersonLike[];
+      nextPageToken?: string;
+    };
+
+    for (const person of data.otherContacts ?? []) {
+      const photoUrl = extractPhotoUrl(person);
+      if (!photoUrl) continue;
+      for (const ea of person.emailAddresses ?? []) {
+        const email = ea.value?.trim().toLowerCase();
+        if (!email || !pending.has(email)) continue;
+        out[email] = photoUrl;
+        pending.delete(email);
+      }
+    }
+
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+
+  return out;
 }

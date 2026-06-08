@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconX } from "@/components/Icons";
 
 /**
@@ -326,9 +327,13 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
                       key={p.id}
                       className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-[var(--color-surface-offset)]"
                     >
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[12px] font-semibold text-[var(--color-primary)]">
-                        {(p.displayName || p.emailAddress || "?").charAt(0).toUpperCase()}
-                      </div>
+                      <GmailAvatar
+                        seed={p.emailAddress || p.displayName || p.id}
+                        name={p.displayName || p.emailAddress || "?"}
+                        email={p.emailAddress}
+                        photoUrl={p.photoLink}
+                        size={32}
+                      />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[13px] font-medium text-[var(--color-text)]">
                           {p.displayName || p.emailAddress}

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Sora, Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -30,6 +30,12 @@ export const metadata: Metadata = {
   icons: {
     icon: "/favicon.png",
   },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID?.trim();

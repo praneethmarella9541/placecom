@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconX } from "@/components/Icons";
 import { extractEmailAddress } from "@/lib/email-parse";
 import {
@@ -14,6 +15,7 @@ import { cn } from "@/lib/utils";
 export type RecipientSuggestion = {
   email: string;
   displayName?: string;
+  photoUrl?: string;
 };
 
 type Props = {
@@ -27,12 +29,6 @@ type Props = {
 
 function chipLabel(chip: RecipientChipData): string {
   return chip.displayName?.trim() || chip.email;
-}
-
-function chipInitial(chip: RecipientChipData): string {
-  const label = chipLabel(chip);
-  const ch = label.charAt(0);
-  return ch ? ch.toUpperCase() : "?";
 }
 
 export function RecipientField({
@@ -222,12 +218,12 @@ export function RecipientField({
             key={`${chip.email}-${i}`}
             className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--color-border)] bg-[var(--color-surface-offset)] pl-1 pr-0.5 py-0.5 text-[13px]"
           >
-            <span
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[11px] font-semibold text-white"
-              aria-hidden
-            >
-              {chipInitial(chip)}
-            </span>
+            <GmailAvatar
+              seed={chip.email}
+              name={chipLabel(chip)}
+              email={chip.email}
+              size={24}
+            />
             <span className="max-w-[180px] truncate font-medium text-[var(--color-text)]">
               {chipLabel(chip)}
             </span>
@@ -275,7 +271,7 @@ export function RecipientField({
                 type="button"
                 data-idx={i}
                 className={cn(
-                  "flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm transition-colors",
+                  "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors",
                   i === highlight
                     ? "bg-[var(--color-primary-light)]"
                     : "hover:bg-[var(--color-surface-offset)]",
@@ -284,12 +280,21 @@ export function RecipientField({
                 onMouseDown={(ev) => ev.preventDefault()}
                 onClick={() => applySuggestion(s)}
               >
-                <span className="truncate font-medium text-[var(--color-text)]">
-                  {s.displayName?.trim() || s.email}
+                <GmailAvatar
+                  seed={s.email}
+                  name={s.displayName?.trim() || s.email}
+                  email={s.email}
+                  photoUrl={s.photoUrl}
+                  size={32}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium text-[var(--color-text)]">
+                    {s.displayName?.trim() || s.email}
+                  </span>
+                  {s.displayName?.trim() ? (
+                    <span className="block truncate text-xs text-[var(--color-text-muted)]">{s.email}</span>
+                  ) : null}
                 </span>
-                {s.displayName?.trim() ? (
-                  <span className="truncate text-xs text-[var(--color-text-muted)]">{s.email}</span>
-                ) : null}
               </button>
             </li>
           ))}

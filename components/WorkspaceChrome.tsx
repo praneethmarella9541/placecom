@@ -28,8 +28,10 @@ import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { pathToFeature } from "@/lib/feature-access";
 import { titleCase } from "@/lib/title-case";
+import { ContactPhotoProvider } from "@/components/ContactPhotoProvider";
 import { ExtractionRunProvider } from "@/components/ExtractionRunProvider";
 import { ExtractionRunBanner } from "@/components/ExtractionRunBanner";
+import { GmailAvatar } from "@/components/GmailAvatar";
 
 /* ─── nav config ──────────────────────────────────────────── */
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
@@ -117,12 +119,10 @@ function NavItem({
 function UserProfile({
   displayName,
   email,
-  initials,
   onSignOut,
 }: {
   displayName: string;
   email: string;
-  initials: string;
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -150,9 +150,8 @@ function UserProfile({
             : "hover:bg-white/[0.06]",
         )}
       >
-        {/* Avatar */}
-        <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[11px] font-bold uppercase text-white shadow-sm">
-          {initials}
+        <div className="relative shrink-0">
+          <GmailAvatar seed={email} name={displayName} email={email} isMe size={32} />
           <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-[1.5px] border-[#0F0E14] bg-emerald-400" />
         </div>
         <div className="min-w-0 flex-1">
@@ -207,7 +206,6 @@ function Sidebar({
   searchParams,
   displayName,
   email,
-  initials,
   onSignOut,
   onClick,
 }: {
@@ -216,7 +214,6 @@ function Sidebar({
   searchParams: URLSearchParams;
   displayName: string;
   email: string;
-  initials: string;
   onSignOut: () => void;
   onClick?: () => void;
 }) {
@@ -283,7 +280,6 @@ function Sidebar({
         <UserProfile
           displayName={displayName}
           email={email}
-          initials={initials}
           onSignOut={onSignOut}
         />
       </div>
@@ -321,7 +317,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
         mailConcurrency: 3,
         driveConcurrency: 2,
       });
-    }, 800);
+    }, 200);
     return () => {
       clearTimeout(t);
       ac.abort();
@@ -361,13 +357,11 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
 
   const displayName = me?.displayUsername || me?.sessionEmail?.split("@")[0] || "User";
   const email       = me?.sessionEmail || "";
-  const initials    = (displayName || email || "?")
-    .split(/\s+/).map((s) => s[0]).join("").slice(0, 2).toUpperCase();
-
-  const sidebarProps = { links, pathname, searchParams, displayName, email, initials, onSignOut: () => void signOut() };
+  const sidebarProps = { links, pathname, searchParams, displayName, email, onSignOut: () => void signOut() };
 
   return (
     <ExtractionRunProvider>
+    <ContactPhotoProvider>
     <div className="flex min-h-screen bg-[var(--color-bg)]">
 
       {/* ── Desktop sidebar ──────────────────────────────────── */}
@@ -379,7 +373,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
       </aside>
 
       {/* ── Mobile header bar ─────────────────────────────────── */}
-      <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-[var(--color-border)] nucleus-backdrop px-4 md:hidden">
+      <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-[var(--color-border)] nucleus-backdrop px-4 pt-[env(safe-area-inset-top,0px)] md:hidden">
         <button
           type="button"
           aria-label="Open navigation"
@@ -405,7 +399,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
           />
           {/* Drawer */}
           <div
-            className="animate-drawer-in absolute inset-y-0 left-0 w-[280px] border-r border-white/[0.07] bg-[#0F0E14] shadow-2xl"
+            className="animate-drawer-in absolute inset-y-0 left-0 w-[min(280px,85vw)] border-r border-white/[0.07] bg-[#0F0E14] shadow-2xl pb-[env(safe-area-inset-bottom,0px)]"
             role="dialog"
             aria-modal="true"
           >
@@ -431,7 +425,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
           // Desktop: push right of sidebar, with generous padding
           "md:ml-[220px] md:px-6 md:py-6",
           // Mobile: account for top header + side padding
-          "pt-[calc(56px+16px)] px-4 pb-6 md:pt-6",
+          "pt-[calc(56px+16px+env(safe-area-inset-top,0px))] px-4 pb-[calc(24px+env(safe-area-inset-bottom,0px))] md:pt-6 md:pb-6",
         )}
         style={{ animationDuration: "0.25s" }}
       >
@@ -439,6 +433,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
       </main>
       <ExtractionRunBanner />
     </div>
+    </ContactPhotoProvider>
     </ExtractionRunProvider>
   );
 }

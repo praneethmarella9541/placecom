@@ -31,8 +31,6 @@ export const DRIVE_ROOT_PREFETCH_SPECS: readonly DriveListPrefetchSpec[] = [
   { view: "recent", parent: "root", pathDepth: 0 },
 ] as const;
 
-const DEFAULT_SORT_KEY = "name";
-const DEFAULT_SORT_DIR = "asc";
 const DEFAULT_MIME_FILTER = "all";
 
 const SESSION_CACHE = new Map<string, DriveListCacheSnapshot>();
@@ -78,8 +76,6 @@ export function buildDriveListCacheKey(parts: {
   mimeFilter: string;
   pathDepth: number;
   sharedDriveId: string | null;
-  sortKey: string;
-  sortDir: string;
 }): string {
   return [
     parts.parent,
@@ -88,35 +84,20 @@ export function buildDriveListCacheKey(parts: {
     parts.mimeFilter,
     String(parts.pathDepth),
     parts.sharedDriveId ?? "",
-    parts.sortKey,
-    parts.sortDir,
   ].join("\0");
 }
 
-/** Maps UI sort to Drive API orderBy (folders first where applicable). */
-export function buildDriveOrderBy(
-  sortKey: string,
-  sortDir: "asc" | "desc",
-  view: string,
-  pathDepth: number
-): string {
+/** Stable fetch order for list API + pagination; UI sort is applied client-side. */
+export function buildDriveFetchOrderBy(view: string, pathDepth: number): string {
   if (pathDepth === 0 && view === "recent") return "viewedByMeTime desc";
-  const dir = sortDir === "desc" ? " desc" : "";
-  switch (sortKey) {
-    case "modifiedTime":
-      return `folder,modifiedTime${dir}`;
-    case "size":
-      return `folder,quotaBytesUsed${dir}`;
-    default:
-      return `folder,name_natural${dir}`;
-  }
+  return "folder,name_natural";
 }
 
 function buildPrefetchParams(spec: DriveListPrefetchSpec): URLSearchParams {
   const params = new URLSearchParams({
     pageSize: "100",
     parent: spec.parent,
-    orderBy: buildDriveOrderBy(DEFAULT_SORT_KEY, DEFAULT_SORT_DIR, spec.view, spec.pathDepth),
+    orderBy: buildDriveFetchOrderBy(spec.view, spec.pathDepth),
   });
   if (
     spec.pathDepth === 0 &&
@@ -138,8 +119,6 @@ function cacheKeyForSpec(spec: DriveListPrefetchSpec): string {
     mimeFilter: DEFAULT_MIME_FILTER,
     pathDepth: spec.pathDepth,
     sharedDriveId: spec.sharedDriveId ?? null,
-    sortKey: DEFAULT_SORT_KEY,
-    sortDir: DEFAULT_SORT_DIR,
   });
 }
 

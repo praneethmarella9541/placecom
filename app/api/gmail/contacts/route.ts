@@ -11,8 +11,13 @@ export async function GET(request: Request) {
   }
 
   try {
-    const { contacts, hint } = await fetchGoogleContactsForCompose(auth.accessToken);
-    return NextResponse.json({ contacts, ...(hint ? { hint } : {}) });
+    const { contacts, photoByEmail, mePhotoUrl, hint } = await fetchGoogleContactsForCompose(auth.accessToken);
+    return NextResponse.json({
+      contacts,
+      photoByEmail,
+      ...(mePhotoUrl ? { mePhotoUrl } : {}),
+      ...(hint ? { hint } : {}),
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load Google contacts";
     return NextResponse.json({ error: msg }, { status: 502 });

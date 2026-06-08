@@ -18,6 +18,8 @@ import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
 import { DriveDetailsPanel } from "@/components/DriveDetailsPanel";
 import { DriveUploadQueue, type UploadQueueItem } from "@/components/DriveUploadQueue";
+import { GmailAvatar } from "@/components/GmailAvatar";
+import { formatDriveOwnerLabel, primaryDriveOwner } from "@/lib/drive";
 import { DriveMimeIcon } from "@/lib/drive-mime-icon";
 import {
   driveUploadResultToRow,
@@ -25,7 +27,7 @@ import {
 } from "@/lib/upload-file-to-drive-folder";
 import {
   buildDriveListCacheKey,
-  buildDriveOrderBy,
+  buildDriveFetchOrderBy,
   bumpDriveListMutationEpoch,
   clearDriveListSessionCache,
   getDriveListMutationEpoch,
@@ -38,7 +40,11 @@ import {
   patchDriveMoveInSessionCache,
   revertDriveMoveInSessionCache,
 } from "@/lib/drive-move-session-sync";
-import { mergeDriveFileInListOrder } from "@/lib/drive-list-sort";
+import {
+  appendDriveListById,
+  dedupeDriveListById,
+  sortDriveListRows,
+} from "@/lib/drive-list-sort";
 import { driveApiErrorMessage } from "@/lib/drive-scope-error";
 import { pickFolderForUpload } from "@/lib/pick-folder-for-upload";
 import { patchDriveStarInSessionCache } from "@/lib/drive-star-session-sync";
@@ -90,6 +96,7 @@ type DriveFileRow = {
   starred?: boolean;
   thumbnailLink?: string;
   iconLink?: string;
+  owners?: Array<{ displayName?: string; emailAddress?: string; me?: boolean }>;
   location?: {
     folderId: string;
     label: string;
@@ -214,7 +221,7 @@ export default function DrivePage() {
   const [newFolderName, setNewFolderName] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
 
-  // Sort column + direction — passed to Drive API orderBy (not re-sorted client-side).
+  // Sort column + direction — applied client-side (no refetch on toggle).
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   useEffect(() => {
@@ -379,8 +386,6 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth: pathStack.length,
         sharedDriveId: sharedDriveIdForApi,
-        sortKey,
-        sortDir,
       }),
     [
       currentParentId,
@@ -389,8 +394,6 @@ export default function DrivePage() {
       mimeFilter,
       pathStack.length,
       sharedDriveIdForApi,
-      sortKey,
-      sortDir,
     ]
   );
 
@@ -460,19 +463,17 @@ export default function DrivePage() {
       });
 
       for (const override of Array.from(overrides.values())) {
-        if (override.destParentId === parentId) {
-          result = mergeDriveFileInListOrder(
-            result,
-            override.file,
-            sortKey,
-            sortDir
-          );
+        if (
+          override.destParentId === parentId &&
+          !result.some((f) => f.id === override.file.id)
+        ) {
+          result = [...result, override.file];
         }
       }
 
       return result;
     },
-    [sortKey, sortDir, view]
+    [view]
   );
 
   const applyListMutationOverrides = useCallback(
@@ -515,7 +516,7 @@ export default function DrivePage() {
         syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
       } else if (isFolderListing && currentParentId === destParentId) {
         syncDriveListCache((rows) =>
-          mergeDriveFileInListOrder(rows, file, sortKey, sortDir)
+          rows.some((r) => r.id === file.id) ? rows : [...rows, file]
         );
       } else if (view === "starred" && !file.starred) {
         syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
@@ -528,7 +529,7 @@ export default function DrivePage() {
         destParentId
       );
     },
-    [currentParentId, syncDriveListCache, setMoveOverride, sortKey, sortDir, view]
+    [currentParentId, syncDriveListCache, setMoveOverride, view]
   );
 
   const revertLocalMoveState = useCallback(
@@ -543,7 +544,7 @@ export default function DrivePage() {
         syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
       } else if (isFolderListing && currentParentId === sourceParentId) {
         syncDriveListCache((rows) =>
-          mergeDriveFileInListOrder(rows, file, sortKey, sortDir)
+          rows.some((r) => r.id === file.id) ? rows : [...rows, file]
         );
       }
 
@@ -554,7 +555,7 @@ export default function DrivePage() {
         destParentId
       );
     },
-    [currentParentId, clearMoveOverride, syncDriveListCache, sortKey, sortDir, view]
+    [currentParentId, clearMoveOverride, syncDriveListCache, view]
   );
 
   const applyLocalStarState = useCallback(
@@ -578,8 +579,6 @@ export default function DrivePage() {
           mimeFilter,
           pathDepth: 0,
           sharedDriveId: null,
-          sortKey,
-          sortDir,
         });
         const starredEntry = driveListCacheRef.current.get(starredKey);
         if (!starredEntry) {
@@ -589,7 +588,7 @@ export default function DrivePage() {
 
       patchDriveStarInSessionCache(driveListCacheRef.current, row, starred);
     },
-    [syncDriveListCache, view, setStarOverride, mimeFilter, sortKey, sortDir]
+    [syncDriveListCache, view, setStarOverride, mimeFilter]
   );
 
   const buildFilesListParams = useCallback(
@@ -601,10 +600,7 @@ export default function DrivePage() {
       if (pageToken) params.set("pageToken", pageToken);
       if (driveSearch) params.set("search", driveSearch);
       if (!driveSearch) {
-        params.set(
-          "orderBy",
-          buildDriveOrderBy(sortKey, sortDir, view, pathDepth)
-        );
+        params.set("orderBy", buildDriveFetchOrderBy(view, pathDepth));
       }
       if (
         !driveSearch &&
@@ -621,7 +617,7 @@ export default function DrivePage() {
       }
       return params;
     },
-    [driveSearch, view, mimeFilter, currentSharedDrive, sortKey, sortDir]
+    [driveSearch, view, mimeFilter, currentSharedDrive]
   );
 
   const fetchDriveListPage = useCallback(
@@ -638,8 +634,6 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth,
         sharedDriveId: sharedDriveIdForApi,
-        sortKey,
-        sortDir,
       });
       const inflightKey = `${cacheKey}\0${pageToken ?? ""}`;
       if (!bust) {
@@ -692,15 +686,7 @@ export default function DrivePage() {
       });
       return promise;
     },
-    [
-      view,
-      driveSearch,
-      mimeFilter,
-      sharedDriveIdForApi,
-      buildFilesListParams,
-      sortKey,
-      sortDir,
-    ]
+    [view, driveSearch, mimeFilter, sharedDriveIdForApi, buildFilesListParams]
   );
 
   const prefetchDriveFolder = useCallback(
@@ -713,13 +699,11 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth,
         sharedDriveId: sharedDriveIdForApi,
-        sortKey,
-        sortDir,
       });
       if (driveListCacheRef.current.has(cacheKey)) return;
       void fetchDriveListPage(folderId, pathDepth);
     },
-    [view, mimeFilter, pathStack.length, sharedDriveIdForApi, fetchDriveListPage, sortKey, sortDir]
+    [view, mimeFilter, pathStack.length, sharedDriveIdForApi, fetchDriveListPage]
   );
 
   const prefetchVisibleFolders = useCallback(
@@ -742,7 +726,10 @@ export default function DrivePage() {
         const cached = !opts.bust ? driveListCacheRef.current.get(driveListContextKey) : undefined;
         if (cached) {
           setDriveFiles(
-            applyListMutationOverrides(cached.files as DriveFileRow[], currentParentId)
+            applyListMutationOverrides(
+              dedupeDriveListById(cached.files as DriveFileRow[]),
+              currentParentId,
+            ),
           );
           setDriveNextPageToken(cached.nextPageToken);
           setLoadingDrive(false);
@@ -766,9 +753,11 @@ export default function DrivePage() {
         );
         if (!opts.append && activeDriveListLoadRef.current !== loadId) return;
         setDriveFiles((prev) => {
-          const serverFiles = applyListMutationOverrides(data.files, currentParentId);
+          const serverFiles = dedupeDriveListById(
+            applyListMutationOverrides(data.files, currentParentId),
+          );
           const next = opts.append
-            ? [...prev, ...serverFiles]
+            ? appendDriveListById(prev, serverFiles)
             : (() => {
                 // Search / mime filters: replace entirely — merging an unfiltered
                 // list (e.g. after switching to Folders) would show wrong types.
@@ -776,7 +765,7 @@ export default function DrivePage() {
                 // Browse + All types: keep local-only rows (fresh uploads).
                 const serverIds = new Set(serverFiles.map((f) => f.id));
                 const localOnly = prev.filter((f) => !serverIds.has(f.id));
-                return [...localOnly, ...serverFiles];
+                return dedupeDriveListById([...localOnly, ...serverFiles]);
               })();
           driveListCacheRef.current.set(driveListContextKey, {
             files: next,
@@ -811,11 +800,21 @@ export default function DrivePage() {
     ]
   );
 
-  /** Drive API orderBy — list order matches Google Drive (no client re-sort). */
+  /** Client sort — toggling columns reorders instantly without refetching. */
   const displayFiles = useMemo(() => {
-    if (driveSearch || mimeFilter === "all") return driveFiles;
-    return driveFiles.filter((f) => matchesMimeFilter(f, mimeFilter));
-  }, [driveFiles, mimeFilter, driveSearch]);
+    let rows = dedupeDriveListById(driveFiles);
+    if (!driveSearch && mimeFilter !== "all") {
+      rows = rows.filter((f) => matchesMimeFilter(f, mimeFilter));
+    }
+    if (driveSearch) return rows;
+    const keepRecentFetchOrder =
+      view === "recent" &&
+      pathStack.length === 0 &&
+      sortKey === "name" &&
+      sortDir === "asc";
+    if (keepRecentFetchOrder) return rows;
+    return sortDriveListRows(rows, sortKey, sortDir);
+  }, [driveFiles, mimeFilter, driveSearch, view, pathStack.length, sortKey, sortDir]);
 
   /** Clear the visible list and cancel in-flight loads when changing folders. */
   function beginFolderNavigation() {
@@ -1505,16 +1504,16 @@ export default function DrivePage() {
       {mobileNavOpen && (
         <button
           type="button"
-          className="fixed inset-0 z-40 bg-black/40 sm:hidden"
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
           aria-label="Close navigation"
           onClick={() => setMobileNavOpen(false)}
         />
       )}
       <aside
         className={cn(
-          "z-50 flex w-[208px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]",
-          "fixed inset-y-0 left-0 shadow-xl transition-transform sm:static sm:shadow-none",
-          mobileNavOpen ? "translate-x-0" : "-translate-x-full sm:translate-x-0"
+          "z-50 flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]",
+          "fixed inset-y-0 left-0 w-[min(208px,85vw)] shadow-xl transition-transform md:static md:w-[208px] md:shadow-none",
+          mobileNavOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         )}
       >
         <div className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
@@ -1619,11 +1618,12 @@ export default function DrivePage() {
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
+        <div className="flex flex-col gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
             onClick={() => setMobileNavOpen(true)}
-            className="btn-ghost shrink-0 rounded-lg p-2 sm:hidden"
+            className="btn-ghost shrink-0 rounded-lg p-2 md:hidden"
             aria-label={titleCase("Open navigation")}
           >
             <Menu className="h-4 w-4" />
@@ -1633,7 +1633,7 @@ export default function DrivePage() {
             <select
               value={mimeFilter}
               onChange={(e) => setMimeFilter(e.target.value as MimeFilter)}
-              className="input-field appearance-none py-2 pl-8 pr-8 text-[13px]"
+              className="input-field max-w-[9.5rem] appearance-none py-2 pl-8 pr-8 text-[13px] sm:max-w-none"
               aria-label={titleCase("Filter by type")}
             >
               <option value="all">All types</option>
@@ -1645,7 +1645,7 @@ export default function DrivePage() {
               <option value="pdfs">PDFs</option>
             </select>
           </div>
-          <div className="min-w-0 flex-1 px-2 py-1">
+          <div className="min-w-0 flex-1 py-0.5 md:px-2">
             <div className="relative">
               <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
               <input
@@ -1658,6 +1658,8 @@ export default function DrivePage() {
               />
             </div>
           </div>
+          </div>
+          <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-2">
           {/* Hidden inputs — one per upload mode. The folder input uses
               webkitdirectory which makes the OS picker show a folder
               chooser; the browser then expands it into a flat FileList
@@ -1686,11 +1688,11 @@ export default function DrivePage() {
             type="button"
             onClick={() => { setNewFolderOpen(true); setNewFolderName(""); }}
             disabled={!canUploadHere}
-            className="btn-ghost shrink-0 gap-2 px-3 py-2 text-[13px] disabled:opacity-40"
+            className="btn-ghost shrink-0 gap-2 px-2 py-2 text-[13px] disabled:opacity-40 sm:px-3"
             title="New folder"
           >
             <FolderPlus className="h-4 w-4 shrink-0" strokeWidth={2} />
-            {titleCase("New folder")}
+            <span className="hidden sm:inline">{titleCase("New folder")}</span>
           </button>
 
           {/* Upload dropdown — File upload vs Folder upload, matching Drive */}
@@ -1699,13 +1701,13 @@ export default function DrivePage() {
               type="button"
               onClick={() => setUploadMenuOpen((v) => !v)}
               disabled={uploadBusy || !canUploadHere}
-              className="btn-secondary shrink-0 gap-2 px-3 py-2 text-[13px] disabled:opacity-40"
+              className="btn-secondary shrink-0 gap-1.5 px-2 py-2 text-[13px] disabled:opacity-40 sm:gap-2 sm:px-3"
               title={titleCase("Upload to this folder")}
               aria-haspopup="menu"
               aria-expanded={uploadMenuOpen}
             >
               <Upload className="h-4 w-4 shrink-0" strokeWidth={2} />
-              {uploadBusy ? titleCase("Uploading…") : titleCase("Upload")}
+              <span className="hidden sm:inline">{uploadBusy ? titleCase("Uploading…") : titleCase("Upload")}</span>
               <ChevronDown className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2.5} />
             </button>
             {uploadMenuOpen && (
@@ -1743,6 +1745,7 @@ export default function DrivePage() {
           >
             <IconRefresh className="h-3.5 w-3.5" />
           </button>
+          </div>
         </div>
         </div>
 
@@ -1803,6 +1806,9 @@ export default function DrivePage() {
                   {titleCase("Location")}
                 </span>
               )}
+              <span className="hidden w-[140px] shrink-0 text-[12px] font-medium text-[var(--color-text-muted)] md:block">
+                {titleCase("Owner")}
+              </span>
               <SortHeader
                 label="Date modified"
                 active={sortKey === "modifiedTime"}
@@ -1836,6 +1842,11 @@ export default function DrivePage() {
                 const sizeLabel =
                   isFolder ? "—" : !Number.isNaN(sizeNum) ? formatBytes(sizeNum) : "—";
                 const dateLabel = file.modifiedTime ? formatDate(file.modifiedTime) : "—";
+                const ownerLabel = formatDriveOwnerLabel(file.owners);
+                const owner = primaryDriveOwner(file.owners);
+                const ownerEmail = owner?.emailAddress?.trim().toLowerCase();
+                const ownerName = owner?.me ? "me" : owner?.displayName?.trim() || ownerEmail || ownerLabel;
+                const ownerSeed = owner?.me ? "me" : ownerEmail || ownerName;
                 const isRenaming = renameTargetId === file.id;
 
                 const rowMenuActions = (
@@ -1995,6 +2006,18 @@ export default function DrivePage() {
                           {file.location.label}
                         </button>
                       )}
+                      <span className="flex items-center justify-center gap-1.5 truncate text-center text-[11px] text-[var(--color-text-muted)]">
+                        {owner && (
+                          <GmailAvatar
+                            seed={ownerSeed}
+                            name={ownerName}
+                            email={ownerEmail}
+                            isMe={Boolean(owner.me)}
+                            size={20}
+                          />
+                        )}
+                        <span className="truncate">{ownerLabel}</span>
+                      </span>
                       <span className="mt-auto truncate text-center text-[11px] text-[var(--color-text-faint)]">
                         {isFolder ? dateLabel : `${sizeLabel} · ${dateLabel}`}
                       </span>
@@ -2052,6 +2075,22 @@ export default function DrivePage() {
                       </span>
                     )}
 
+                    <span
+                      className="hidden w-[140px] shrink-0 items-center gap-2 text-[13px] text-[var(--color-text-muted)] md:flex"
+                      title={ownerLabel}
+                    >
+                      {owner && (
+                        <GmailAvatar
+                          seed={ownerSeed}
+                          name={ownerName}
+                          email={ownerEmail}
+                          isMe={Boolean(owner.me)}
+                          size={24}
+                        />
+                      )}
+                      <span className="min-w-0 truncate">{ownerLabel}</span>
+                    </span>
+
                     {/* Date modified */}
                     <span className="hidden w-[140px] shrink-0 text-[13px] text-[var(--color-text-muted)] sm:block">
                       {dateLabel}
@@ -2083,6 +2122,7 @@ export default function DrivePage() {
                       <Skeleton className="skeleton-shimmer h-6 w-6 shrink-0 rounded" />
                       <Skeleton className="skeleton-shimmer h-3.5 w-[55%] rounded" />
                     </div>
+                    <Skeleton className="skeleton-shimmer hidden h-3 w-[100px] shrink-0 rounded md:block" />
                     <Skeleton className="skeleton-shimmer hidden h-3 w-[100px] shrink-0 rounded sm:block" />
                     <Skeleton className="skeleton-shimmer hidden h-3 w-[60px] shrink-0 rounded sm:block" />
                     <Skeleton className="skeleton-shimmer h-4 w-4 shrink-0 rounded" />

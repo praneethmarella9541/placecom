@@ -9,6 +9,28 @@ export type DriveListSortableRow = {
 export type DriveListSortKey = "name" | "modifiedTime" | "size";
 export type DriveListSortDir = "asc" | "desc";
 
+/** Drop duplicate file ids — keeps first occurrence (stable list order). */
+export function dedupeDriveListById<T extends { id: string }>(files: readonly T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const f of files) {
+    if (seen.has(f.id)) continue;
+    seen.add(f.id);
+    out.push(f);
+  }
+  return out;
+}
+
+/** Append rows that are not already present (by id). */
+export function appendDriveListById<T extends { id: string }>(
+  existing: readonly T[],
+  incoming: readonly T[],
+): T[] {
+  const seen = new Set(existing.map((f) => f.id));
+  const added = incoming.filter((f) => !seen.has(f.id));
+  return [...existing, ...added];
+}
+
 function isFolderRow(row: DriveListSortableRow): boolean {
   return row.mimeType === "application/vnd.google-apps.folder";
 }
@@ -67,12 +89,3 @@ export function mergeDriveFileInListOrder<T extends DriveListSortableRow>(
   return sortDriveListRows([...without, file], sortKey, sortDir);
 }
 
-export function parseDriveListCacheSort(key: string): {
-  sortKey: DriveListSortKey | string;
-  sortDir: DriveListSortDir;
-} {
-  const parts = key.split("\0");
-  const sortKey = parts[6] || "name";
-  const sortDir: DriveListSortDir = parts[7] === "desc" ? "desc" : "asc";
-  return { sortKey, sortDir };
-}

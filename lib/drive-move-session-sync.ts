@@ -1,8 +1,4 @@
 import type { DriveListCacheSnapshot } from "@/lib/drive-list-prefetch";
-import {
-  mergeDriveFileInListOrder,
-  parseDriveListCacheSort,
-} from "@/lib/drive-list-sort";
 
 type MovePatchFile = {
   id: string;
@@ -75,9 +71,7 @@ export function patchDriveMoveInSessionCache(
     }
 
     if (parent === destParentId && !hasFile) {
-      const { sortKey, sortDir } = parseDriveListCacheSort(key);
-      const merged = mergeDriveFileInListOrder(files, file, sortKey, sortDir);
-      cache.set(key, { ...entry, files: merged });
+      cache.set(key, { ...entry, files: [...files, file] });
     }
   }
 }
@@ -110,9 +104,7 @@ export function revertDriveMoveInSessionCache(
     }
 
     if (parent === sourceParentId && !hasFile) {
-      const { sortKey, sortDir } = parseDriveListCacheSort(key);
-      const merged = mergeDriveFileInListOrder(files, file, sortKey, sortDir);
-      cache.set(key, { ...entry, files: merged });
+      cache.set(key, { ...entry, files: [...files, file] });
     }
   }
 }

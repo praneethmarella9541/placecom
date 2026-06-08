@@ -31,6 +31,7 @@ export type MailListPrefetchSpec = {
 
 /** Views to warm after sign-in (empty search — matches inbox default). */
 export const MAIL_LIST_PREFETCH_SPECS: readonly MailListPrefetchSpec[] = [
+  /** Default Primary tab on first paint after login. */
   { apiFolder: "inbox", labelId: "CATEGORY_PERSONAL" },
   { apiFolder: "inbox", labelId: "CATEGORY_PROMOTIONS" },
   { apiFolder: "inbox", labelId: "CATEGORY_SOCIAL" },

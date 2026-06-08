@@ -9,7 +9,7 @@ import { requireGmailAccessToken } from "@/lib/gmail-auth";
 
 export const runtime = "nodejs";
 
-type SuggestContact = { email: string; displayName?: string };
+type SuggestContact = { email: string; displayName?: string; photoUrl?: string };
 
 function mergeContacts(
   people: SuggestContact[],

@@ -1224,7 +1224,7 @@ export default function CalendarPage() {
         <div className="flex flex-1 flex-col min-w-0 bg-[var(--color-surface)]">
 
           {/* ── Custom Google-Calendar-style toolbar ── */}
-          <header className="flex h-14 shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4">
+          <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:gap-3 sm:px-4 md:h-14 md:flex-nowrap md:py-0">
             {/* Mobile: "Create" button */}
             <button
               onClick={() => openScheduleModal()}
@@ -1261,7 +1261,7 @@ export default function CalendarPage() {
             </h1>
 
             {/* Search — Google Calendar full-text via API */}
-            <div className="relative flex-1 sm:max-w-[260px]">
+            <div className="relative order-last min-w-[140px] flex-1 basis-full sm:order-none sm:max-w-[260px] sm:basis-auto">
               <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
               <input
                 type="search"
@@ -1282,7 +1282,7 @@ export default function CalendarPage() {
               ) : null}
             </div>
 
-            <h1 className="sm:hidden flex-1 text-base font-normal text-[var(--color-text)] truncate">
+            <h1 className="min-w-0 flex-1 truncate text-base font-normal text-[var(--color-text)] sm:hidden">
               {viewTitle}
             </h1>
 
@@ -1304,25 +1304,26 @@ export default function CalendarPage() {
             </button>
 
             {/* View switcher */}
-            <div className="flex rounded-lg border border-[var(--color-border)] overflow-hidden">
+            <div className="flex shrink-0 overflow-hidden rounded-lg border border-[var(--color-border)]">
               {(
                 [
-                  { v: "timeGridDay" as ViewType, label: "Day" },
-                  { v: "timeGridWeek" as ViewType, label: "Week" },
-                  { v: "dayGridMonth" as ViewType, label: "Month" },
+                  { v: "timeGridDay" as ViewType, label: "Day", short: "D" },
+                  { v: "timeGridWeek" as ViewType, label: "Week", short: "W" },
+                  { v: "dayGridMonth" as ViewType, label: "Month", short: "M" },
                 ] as const
-              ).map(({ v, label }) => (
+              ).map(({ v, label, short }) => (
                 <button
                   key={v}
                   onClick={() => goView(v)}
                   className={[
-                    "px-3 py-1 text-xs font-medium transition-colors",
+                    "px-2.5 py-1 text-xs font-medium transition-colors sm:px-3",
                     currentView === v
                       ? "bg-[var(--color-primary)] text-white"
                       : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
                   ].join(" ")}
                 >
-                  {label}
+                  <span className="sm:hidden">{short}</span>
+                  <span className="hidden sm:inline">{label}</span>
                 </button>
               ))}
             </div>

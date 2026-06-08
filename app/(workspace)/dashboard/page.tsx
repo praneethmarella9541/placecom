@@ -335,7 +335,7 @@ export default function DashboardPage() {
     <div className="mx-auto max-w-5xl space-y-5">
 
       {/* ── Page header ─────────────────────────────────────── */}
-      <div className="animate-fade-up flex items-end justify-between" style={{ animationDuration: "0.3s" }}>
+      <div className="animate-fade-up flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between" style={{ animationDuration: "0.3s" }}>
         <div>
           <h1 className="font-display text-[22px] font-bold tracking-tight text-[var(--color-text)]">
             {titleCase("Email Extraction")}
@@ -344,7 +344,7 @@ export default function DashboardPage() {
             {titleCase("Extract contacts and data from your Gmail inbox")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <ExportButton />
         </div>
       </div>

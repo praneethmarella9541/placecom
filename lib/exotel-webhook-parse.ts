@@ -2,7 +2,7 @@ import "server-only";
 
 import { extractExotelInboundBody } from "@/lib/exotel-whatsapp";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
-import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { normalizePeerE164 } from "@/lib/whatsapp-address";
 
@@ -46,7 +46,7 @@ export async function resolveBusinessE164FromWebhook(toRaw: string): Promise<str
   }
 
   const candidates = [
-    ...listConfiguredExotelNumbers(),
+    ...(await getExotelVirtualNumbers()),
     ...(await listProfileExotelLines()),
   ].filter((v, i, arr) => v && arr.indexOf(v) === i);
 
@@ -70,7 +70,7 @@ export async function resolveBusinessE164FromWebhook(toRaw: string): Promise<str
 }
 
 async function lineExists(line: string): Promise<boolean> {
-  const configured = listConfiguredExotelNumbers();
+  const configured = await getExotelVirtualNumbers();
   if (configured.some((n) => phoneMatches(n, line))) return true;
   const profiles = await listProfileExotelLines();
   return profiles.some((n) => phoneMatches(n, line));

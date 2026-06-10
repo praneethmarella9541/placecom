@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 import { normalizePhone, phoneLookupVariants, phoneMatches } from "@/lib/phone";
 import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
 import { notifyIncomingCall } from "@/lib/push-notifications";
@@ -74,7 +74,7 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
     .select("from_number")
     .eq("call_sid", callSid)
     .maybeSingle();
-  const virtuals = listConfiguredExotelNumbers().map((v) => normalizePhone(v));
+  const virtuals = (await getExotelVirtualNumbers()).map((v) => normalizePhone(v));
   const direction = deriveCallDirection(existing?.from_number, virtuals, phoneMatches);
 
   const mappedStatus = resolveCallStatus(
@@ -354,7 +354,7 @@ async function resolveDestination(
   };
 }
 
-function buildResponse(destination: string, outgoingPhoneNumber?: string) {
+async function buildResponse(destination: string, outgoingPhoneNumber?: string) {
   if (!destination) {
     return NextResponse.json(
       { destination: { numbers: [] } },
@@ -362,7 +362,7 @@ function buildResponse(destination: string, outgoingPhoneNumber?: string) {
     );
   }
 
-  const configured = listConfiguredExotelNumbers();
+  const configured = await getExotelVirtualNumbers();
   const virtualNumber =
     (outgoingPhoneNumber && normalizePhone(outgoingPhoneNumber)) ||
     configured[0] ||
@@ -427,7 +427,7 @@ export async function GET(request: Request) {
       console.warn("[calls/connect] push:", e);
     }
   }
-  const resp = buildResponse(resolved.destination, calledNumber);
+  const resp = await buildResponse(resolved.destination, calledNumber);
   console.log("[calls/connect] returning destination:", resolved.destination || "(empty)", "| status:", resp.status);
   return resp;
 }
@@ -476,5 +476,5 @@ export async function POST(request: Request) {
       console.warn("[calls/connect] push:", e);
     }
   }
-  return buildResponse(resolved.destination, calledNumber);
+  return await buildResponse(resolved.destination, calledNumber);
 }

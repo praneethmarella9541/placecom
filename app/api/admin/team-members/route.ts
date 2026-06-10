@@ -5,7 +5,7 @@ import { normalizeRestrictedFeatures } from "@/lib/feature-access";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import { getUserOpenAITokenUsage } from "@/lib/openai-token-limit";
 import { isValidEmail } from "@/lib/broadcast-recipients";
-import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
 
 export const runtime = "nodejs";
@@ -49,9 +49,9 @@ async function assertExotelNotTaken(
   excludeUserId: string
 ): Promise<string | null> {
   if (!exotel) return null;
-  const configured = listConfiguredExotelNumbers();
+  const configured = await getExotelVirtualNumbers();
   if (configured.length > 0 && !configured.some((n) => phoneMatches(n, exotel))) {
-    return "That Exotel number is not configured on the server. Add it to EXOTEL_VIRTUAL_NUMBERS.";
+    return "That number is not an Exotel line on your account (+91). Refresh the Team page and pick from the list.";
   }
   const { data: peers, error } = await svc
     .from("profiles")

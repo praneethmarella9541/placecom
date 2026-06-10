@@ -328,7 +328,7 @@ export default function AdminTeamPage() {
             type="tel"
             value={newExotelNumber}
             onChange={(e) => setNewExotelNumber(e.target.value)}
-            placeholder="+91… (set EXOTEL_VIRTUAL_NUMBERS on server)"
+            placeholder="+91… (loads from your Exotel account)"
             className="input-field w-full text-sm"
           />
         )}

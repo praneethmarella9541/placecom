@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
-import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET() {
   const supabase = createServerSupabaseClient();
@@ -24,5 +25,16 @@ export async function GET() {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
-  return NextResponse.json({ numbers: listConfiguredExotelNumbers() });
+  try {
+    const numbers = await getExotelVirtualNumbers();
+    return NextResponse.json(
+      { numbers, source: numbers.length > 0 ? "exotel" : "none" },
+      { headers: { "Cache-Control": "private, max-age=60" } }
+    );
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Failed to load Exotel numbers" },
+      { status: 502 }
+    );
+  }
 }

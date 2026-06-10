@@ -4,7 +4,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
-import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
+import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
 
 export const runtime = "nodejs";
@@ -102,10 +102,10 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    const configured = listConfiguredExotelNumbers();
+    const configured = await getExotelVirtualNumbers();
     if (configured.length > 0 && !configured.some((n) => phoneMatches(n, exotelVirtualNumber!))) {
       return NextResponse.json(
-        { error: "That Exotel number is not configured on the server." },
+        { error: "That number is not an Exotel line on your account (+91)." },
         { status: 400 }
       );
     }

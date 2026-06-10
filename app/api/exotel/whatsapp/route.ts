@@ -78,6 +78,9 @@ export async function POST(request: Request) {
     return ok();
   }
 
+  // DEBUG: log the full raw payload so we can see exactly what Exotel sends.
+  console.log("[exotel/whatsapp] RAW body:", JSON.stringify(body).slice(0, 2000));
+
   const inbound = parseExotelInboundWebhook(body);
   if (!inbound) {
     console.log(
@@ -88,6 +91,16 @@ export async function POST(request: Request) {
     );
     return ok();
   }
+
+  console.log("[exotel/whatsapp] parsed inbound:", JSON.stringify({
+    messageSid: inbound.messageSid,
+    peerE164: inbound.peerE164,
+    displayBody: inbound.displayBody,
+    numMedia: inbound.numMedia,
+    mediaId: inbound.mediaId,
+    mediaLink: inbound.mediaLink,
+    contentType: inbound.contentType,
+  }));
 
   const finalized = await finalizeInbound(inbound);
   if (!finalized) {
@@ -100,6 +113,7 @@ export async function POST(request: Request) {
   // can load it from a stable public URL without needing Exotel credentials.
   let mediaUrl: string | null = null;
   if (finalized.numMedia > 0) {
+    console.log("[exotel/whatsapp] fetching media | mediaId:", finalized.mediaId, "| mediaLink:", finalized.mediaLink, "| msgSid:", finalized.messageSid);
     mediaUrl = await fetchAndStoreExotelMedia({
       mediaLink: finalized.mediaLink,
       mediaId: finalized.mediaId,
@@ -107,6 +121,7 @@ export async function POST(request: Request) {
       contentType: finalized.contentType,
       businessE164: finalized.businessE164,
     });
+    console.log("[exotel/whatsapp] media upload result:", mediaUrl ?? "FAILED — media_url will be null");
   }
 
   const { error } = await supabase.from("whatsapp_messages").insert({

@@ -76,6 +76,33 @@ export async function uploadWhatsAppMedia(params: {
 }
 
 /**
+ * Walk the nested Exotel message JSON response to find a downloadable media URL.
+ * Exotel's message GET response wraps content differently across API versions.
+ */
+function extractMediaUrlFromExotelMessage(json: Record<string, unknown>): string | null {
+  // Helper: recursively search for a URL-like string at known field names.
+  function dig(obj: unknown, depth = 0): string | null {
+    if (!obj || typeof obj !== "object" || depth > 6) return null;
+    const o = obj as Record<string, unknown>;
+    // Direct URL fields.
+    for (const key of ["link", "url", "media_url", "download_url", "file_url", "media_link"]) {
+      const v = String(o[key] ?? "").trim();
+      if (v.startsWith("http")) return v;
+    }
+    // Recurse into nested objects / arrays.
+    for (const val of Object.values(o)) {
+      if (Array.isArray(val)) {
+        for (const item of val) { const r = dig(item, depth + 1); if (r) return r; }
+      } else if (val && typeof val === "object") {
+        const r = dig(val, depth + 1); if (r) return r;
+      }
+    }
+    return null;
+  }
+  return dig(json);
+}
+
+/**
  * Download inbound WhatsApp media from Exotel, then store it in Supabase Storage.
  * Returns the public Supabase URL on success, or null on failure (with a warning log).
  *
@@ -109,36 +136,74 @@ export async function fetchAndStoreExotelMedia(params: {
     }
   }
 
-  // ── 2. Exotel media API (try by mediaId then by messageSid) ────────────
-  if (!buffer) {
+  // ── 2. Exotel media API ─────────────────────────────────────────────────
+  // Exotel's webhook doesn't include the media URL/ID in the payload.
+  // Strategy:
+  //   a) GET the message record — Exotel returns the full message including
+  //      a media download URL in the content block.
+  //   b) Fall back to direct media sub-resource endpoints.
+  if (!buffer && messageSid) {
     const creds = getExotelCredentials();
     if (creds) {
       const auth = getExotelBasicAuthHeader(creds);
       const hosts = getExotelApiHostCandidates();
 
-      // Build candidate fetch URLs — try most-specific first.
-      const candidates: string[] = [];
-      if (mediaId) {
-        for (const h of hosts) {
-          candidates.push(`https://${h}/v2/accounts/${creds.sid}/media/${mediaId}`);
-        }
-      }
-      if (messageSid) {
-        for (const h of hosts) {
-          candidates.push(`https://${h}/v2/accounts/${creds.sid}/messages/${messageSid}/media/0`);
+      // a) Fetch the message record and extract the media URL from it.
+      for (const h of hosts) {
+        const msgUrl = `https://${h}/v2/accounts/${creds.sid}/messages/${messageSid}`;
+        try {
+          const res = await fetch(msgUrl, { headers: { Authorization: auth } });
+          if (res.ok) {
+            const json = await res.json() as Record<string, unknown>;
+            console.log("[fetchAndStoreExotelMedia] message record:", JSON.stringify(json).slice(0, 500));
+            // Extract the media link from wherever Exotel puts it in the response.
+            const mediaDownloadUrl = extractMediaUrlFromExotelMessage(json);
+            if (mediaDownloadUrl) {
+              try {
+                const dlRes = await fetch(mediaDownloadUrl, { headers: { Authorization: auth } });
+                if (dlRes.ok) {
+                  buffer = Buffer.from(await dlRes.arrayBuffer());
+                  break;
+                }
+                // Some Exotel CDN URLs are public — retry without auth.
+                const dlResNoAuth = await fetch(mediaDownloadUrl);
+                if (dlResNoAuth.ok) {
+                  buffer = Buffer.from(await dlResNoAuth.arrayBuffer());
+                  break;
+                }
+              } catch (e) {
+                console.warn("[fetchAndStoreExotelMedia] media download error:", e);
+              }
+            }
+            break; // Got a valid response from this host — don't retry with other region.
+          }
+          console.warn("[fetchAndStoreExotelMedia] GET message →", msgUrl, "→", res.status);
+        } catch (e) {
+          console.warn("[fetchAndStoreExotelMedia] fetch error:", msgUrl, e);
         }
       }
 
-      for (const url of candidates) {
-        try {
-          const res = await fetch(url, { headers: { Authorization: auth } });
-          if (res.ok) {
-            buffer = Buffer.from(await res.arrayBuffer());
-            break;
+      // b) Try direct sub-resource endpoints as a fallback.
+      if (!buffer) {
+        const candidates: string[] = [];
+        if (mediaId) {
+          for (const h of hosts) candidates.push(`https://${h}/v2/accounts/${creds.sid}/media/${mediaId}`);
+        }
+        for (const h of hosts) {
+          candidates.push(`https://${h}/v2/accounts/${creds.sid}/messages/${messageSid}/media`);
+          candidates.push(`https://${h}/v2/accounts/${creds.sid}/messages/${messageSid}/media/0`);
+        }
+        for (const url of candidates) {
+          try {
+            const res = await fetch(url, { headers: { Authorization: auth } });
+            if (res.ok) {
+              buffer = Buffer.from(await res.arrayBuffer());
+              break;
+            }
+            console.warn("[fetchAndStoreExotelMedia] sub-resource →", url, "→", res.status);
+          } catch (e) {
+            console.warn("[fetchAndStoreExotelMedia] fetch error:", url, e);
           }
-          console.warn("[fetchAndStoreExotelMedia] Exotel media fetch →", url, "→", res.status);
-        } catch (e) {
-          console.warn("[fetchAndStoreExotelMedia] fetch error:", url, e);
         }
       }
     }

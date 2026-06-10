@@ -14,6 +14,7 @@ export type WhatsAppPrefetchConversation = {
   last_body: string | null;
   last_at: string;
   last_dir: string;
+  unread_count?: number;
 };
 
 export type WhatsAppPrefetchStatus = {

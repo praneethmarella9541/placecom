@@ -109,7 +109,13 @@ function formatListTime(iso: string): string {
 }
 
 /* ── types ────────────────────────────────────────────────── */
-type Conv = { peer_e164: string; last_body: string | null; last_at: string; last_dir: string };
+type Conv = {
+  peer_e164: string;
+  last_body: string | null;
+  last_at: string;
+  last_dir: string;
+  unread_count?: number;
+};
 type Msg = {
   id: string;
   direction: string;
@@ -311,6 +317,24 @@ export function WhatsAppMessaging({
     }
   }, []);
 
+  const markThreadRead = useCallback(async (p: string) => {
+    try {
+      await fetch("/api/whatsapp/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ peer: p }),
+      });
+    } catch {
+      /* best-effort — list poll will reconcile */
+    }
+  }, []);
+
+  const clearUnreadForPeer = useCallback((p: string) => {
+    setConversations((prev) =>
+      prev.map((c) => (c.peer_e164 === p ? { ...c, unread_count: 0 } : c))
+    );
+  }, []);
+
   const loadMessages = useCallback(async (p: string, opts?: { silent?: boolean }) => {
     const silent = opts?.silent ?? false;
     if (!silent) { setLoadingThread(true); setError(null); }
@@ -329,12 +353,14 @@ export function WhatsAppMessaging({
         if (hasNewMessages(prev, incoming)) queueMicrotask(() => setStickToBottom(true));
         return mergeFetchedMessages(prev, incoming);
       });
+      clearUnreadForPeer(p);
+      void markThreadRead(p);
     } catch (e) {
       if (!silent) setError(clientFetchFailedMessage(e));
     } finally {
       if (!silent) setLoadingThread(false);
     }
-  }, []);
+  }, [clearUnreadForPeer, markThreadRead]);
 
   // Keep a ref to the current peer so the visibilitychange handler can
   // access it without re-registering on every peer change.
@@ -532,7 +558,12 @@ export function WhatsAppMessaging({
     }
   }
 
-  const selectPeer = (p: string) => { setPeer(p); setMobileShowThread(true); setNewPhoneInput(false); };
+  const selectPeer = (p: string) => {
+    setPeer(p);
+    setMobileShowThread(true);
+    setNewPhoneInput(false);
+    clearUnreadForPeer(p);
+  };
 
   /* ── Sidebar conversation list ─────────────────────────── */
   const sidebar = (
@@ -650,7 +681,10 @@ export function WhatsAppMessaging({
             <p className="mt-1 text-[12px] text-[var(--color-text-faint)]">{titleCase("Tap + to start a new conversation")}</p>
           </div>
         ) : (
-          conversations.map((c) => (
+          conversations.map((c) => {
+            const unread = c.unread_count ?? 0;
+            const hasUnread = unread > 0;
+            return (
             <button
               key={c.peer_e164}
               type="button"
@@ -672,18 +706,33 @@ export function WhatsAppMessaging({
                 <span className="flex items-baseline justify-between gap-2">
                   <span className={cn(
                     "truncate text-[14px]",
+                    hasUnread && "font-semibold",
                     peer === c.peer_e164 ? "font-semibold text-[var(--color-primary)]" : "font-medium text-[var(--color-text)]"
                   )}>
                     {displayName(c.peer_e164)}
                   </span>
-                  <span className="shrink-0 text-[12px] text-[var(--color-text-faint)]">{formatListTime(c.last_at)}</span>
+                  <span className={cn(
+                    "shrink-0 text-[12px]",
+                    hasUnread ? "font-semibold text-[#25d366]" : "text-[var(--color-text-faint)]"
+                  )}>
+                    {formatListTime(c.last_at)}
+                  </span>
                 </span>
-                <span className="mt-0.5 line-clamp-1 text-[13px] text-[var(--color-text-muted)]">
+                <span className={cn(
+                  "mt-0.5 line-clamp-1 text-[13px]",
+                  hasUnread ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"
+                )}>
                   {c.last_dir === "outbound" ? "You: " : ""}{c.last_body || "—"}
                 </span>
               </span>
+              {hasUnread ? (
+                <span className="flex h-[22px] min-w-[22px] shrink-0 items-center justify-center rounded-full bg-[#25d366] px-1.5 text-[11px] font-bold text-white">
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              ) : null}
             </button>
-          ))
+          );
+          })
         )}
       </div>
     </aside>

@@ -139,12 +139,26 @@ export async function POST(request: Request) {
   };
   if (replyToId) insertRow.reply_to_id = replyToId;
 
+  const messageType = contentType?.startsWith("image/")
+    ? "image"
+    : contentType?.startsWith("video/")
+      ? "video"
+      : contentType?.startsWith("audio/")
+        ? "audio"
+        : contentType?.startsWith("application/") || contentType?.includes("pdf")
+          ? "document"
+          : numMedia > 0
+            ? "image"
+            : null;
+
   const pushParams = {
     ownerUserId,
     peerE164: peer,
     bodyPreview: displayBody || null,
     contentType,
     numMedia,
+    messageType,
+    mediaUrl,
     businessE164: businessE164 || "",
   };
 

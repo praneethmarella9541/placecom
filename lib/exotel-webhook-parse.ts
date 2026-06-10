@@ -23,6 +23,7 @@ export type ParsedInbound = {
   /** Direct CDN link when Exotel provides one. */
   mediaLink: string | null;
   contentType: string | null;
+  messageType: string | null;
 };
 
 export type ParsedStatus = {
@@ -110,7 +111,8 @@ function parseInboundFromDataBlock(
   if (!toRaw && defaults?.toFallback) toRaw = defaults.toFallback;
 
   const content = asRecord(block.message) ?? asRecord(block.content) ?? block;
-  const { body, numMedia, mediaId, mediaLink, contentType } = extractExotelInboundBody(content);
+  const { body, numMedia, mediaId, mediaLink, contentType, messageType } =
+    extractExotelInboundBody(content);
 
   if (!messageSid || !fromRaw) return null;
 
@@ -120,12 +122,28 @@ function parseInboundFromDataBlock(
     toRaw,
     peerE164: safePeerE164(fromRaw),
     businessE164: "",
-    displayBody: body || (numMedia > 0 ? `[${numMedia} attachment(s)]` : ""),
+    displayBody: body || (numMedia > 0 ? mediaPlaceholderForType(messageType) : ""),
     numMedia,
     mediaId,
     mediaLink,
     contentType,
+    messageType,
   };
+}
+
+function mediaPlaceholderForType(messageType: string | null): string {
+  switch (messageType) {
+    case "video":
+      return "[Video]";
+    case "audio":
+      return "[Audio]";
+    case "document":
+      return "[Document]";
+    case "sticker":
+      return "[Sticker]";
+    default:
+      return "[Image]";
+  }
 }
 
 function safePeerE164(fromRaw: string): string {

@@ -6,6 +6,10 @@ export type ExpoPushPayload = {
   data?: Record<string, string>;
   /** Android notification channel (e.g. `calls` for incoming call alerts). */
   channelId?: string;
+  /** Image URL for rich notifications (Android out of the box; iOS needs a service extension). */
+  richContent?: { image: string };
+  /** Required on iOS for the notification service extension to attach images. */
+  mutableContent?: boolean;
 };
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];

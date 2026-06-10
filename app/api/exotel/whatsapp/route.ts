@@ -164,6 +164,8 @@ export async function POST(request: Request) {
     bodyPreview: finalized.displayBody,
     contentType: finalized.contentType,
     numMedia: finalized.numMedia,
+    messageType: finalized.messageType,
+    mediaUrl,
     businessE164: finalized.businessE164,
   };
 

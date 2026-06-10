@@ -4,7 +4,10 @@ import { phoneMatches } from "@/lib/phone";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import { type FeatureKey } from "@/lib/feature-access";
 import { sendExpoPush } from "@/lib/expo-push";
-import { formatWhatsAppPushPreview } from "@/lib/whatsapp-push-preview";
+import {
+  formatWhatsAppPushPreview,
+  whatsAppPushRichImageUrl,
+} from "@/lib/whatsapp-push-preview";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
 import { peerKeysForQuery } from "@/lib/whatsapp-peer";
@@ -155,6 +158,8 @@ export async function notifyWhatsAppInbound(params: {
   bodyPreview: string | null;
   contentType?: string | null;
   numMedia?: number | null;
+  messageType?: string | null;
+  mediaUrl?: string | null;
   businessE164?: string;
 }): Promise<void> {
   const businessE164 = params.businessE164 ?? "";
@@ -176,19 +181,29 @@ export async function notifyWhatsAppInbound(params: {
 
   const labelUserId = ownerUserId ?? recipients[0];
   const label = await waContactLabel(labelUserId, params.peerE164);
+  const richImage = whatsAppPushRichImageUrl({
+    mediaUrl: params.mediaUrl,
+    messageType: params.messageType,
+    contentType: params.contentType,
+  });
   const preview = truncate(
     formatWhatsAppPushPreview({
       body: params.bodyPreview,
       contentType: params.contentType,
       numMedia: params.numMedia,
+      messageType: params.messageType,
+      hasRichImage: !!richImage,
     }),
     120
   );
 
-  const payload = {
+  const payload: Parameters<typeof sendExpoPush>[1] = {
     title: label,
-    body: preview,
+    body: preview || (richImage ? " " : "New message"),
     data: { type: "whatsapp", peer: params.peerE164 },
+    ...(richImage
+      ? { richContent: { image: richImage }, mutableContent: true }
+      : {}),
   };
 
   let sentCount = 0;

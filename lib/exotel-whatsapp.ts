@@ -195,10 +195,19 @@ export type ExtractedBody = {
   /** Direct CDN link when Exotel provides one (less common for inbound). */
   mediaLink: string | null;
   contentType: string | null;
+  /** WhatsApp message type: image, video, audio, document, sticker, … */
+  messageType: string | null;
 };
 
 export function extractExotelInboundBody(message: Record<string, unknown> | undefined): ExtractedBody {
-  const none: ExtractedBody = { body: "", numMedia: 0, mediaId: null, mediaLink: null, contentType: null };
+  const none: ExtractedBody = {
+    body: "",
+    numMedia: 0,
+    mediaId: null,
+    mediaLink: null,
+    contentType: null,
+    messageType: null,
+  };
   if (!message || typeof message !== "object") return none;
 
   function pickMedia(block: MediaBlock | undefined): Pick<ExtractedBody, "mediaId" | "mediaLink" | "contentType"> {
@@ -214,13 +223,14 @@ export function extractExotelInboundBody(message: Record<string, unknown> | unde
   switch (type) {
     case "text": {
       const text = message.text as { body?: string } | undefined;
-      return { ...none, body: text?.body?.trim() ?? "" };
+      return { ...none, body: text?.body?.trim() ?? "", messageType: "text" };
     }
     case "image": {
       const image = message.image as MediaBlock | undefined;
       return {
         body: image?.caption?.trim() || "[Image]",
         numMedia: 1,
+        messageType: "image",
         ...pickMedia(image),
         contentType: image?.mime_type?.trim() || "image/jpeg",
       };
@@ -230,6 +240,7 @@ export function extractExotelInboundBody(message: Record<string, unknown> | unde
       return {
         body: video?.caption?.trim() || "[Video]",
         numMedia: 1,
+        messageType: "video",
         ...pickMedia(video),
         contentType: video?.mime_type?.trim() || "video/mp4",
       };
@@ -239,6 +250,7 @@ export function extractExotelInboundBody(message: Record<string, unknown> | unde
       return {
         body: doc?.filename?.trim() || "[Document]",
         numMedia: 1,
+        messageType: "document",
         ...pickMedia(doc),
         contentType: doc?.mime_type?.trim() || "application/octet-stream",
       };
@@ -248,6 +260,7 @@ export function extractExotelInboundBody(message: Record<string, unknown> | unde
       return {
         body: "[Audio]",
         numMedia: 1,
+        messageType: "audio",
         ...pickMedia(audio),
         contentType: audio?.mime_type?.trim() || "audio/ogg",
       };
@@ -257,28 +270,85 @@ export function extractExotelInboundBody(message: Record<string, unknown> | unde
       return {
         body: "[Sticker]",
         numMedia: 1,
+        messageType: "sticker",
         ...pickMedia(sticker),
         contentType: sticker?.mime_type?.trim() || "image/webp",
       };
     }
     case "reaction": {
       const reaction = message.reaction as { emoji?: string } | undefined;
-      return { ...none, body: reaction?.emoji?.trim() || "❤️" };
+      return { ...none, body: reaction?.emoji?.trim() || "❤️", messageType: "reaction" };
     }
     case "location":
-      return { ...none, body: "[Location]" };
+      return { ...none, body: "[Location]", messageType: "location" };
     case "button": {
       const button = message.button as { text?: string } | undefined;
-      return { ...none, body: button?.text?.trim() || "[Button reply]" };
+      return { ...none, body: button?.text?.trim() || "[Button reply]", messageType: "button" };
     }
     case "interactive": {
       const interactive = message.interactive as Record<string, unknown> | undefined;
       const btn = interactive?.button_reply as { title?: string } | undefined;
       const list = interactive?.list_reply as { title?: string } | undefined;
       const nfm = interactive?.nfm_reply as { body?: string } | undefined;
-      return { ...none, body: btn?.title || list?.title || nfm?.body || "[Interactive reply]" };
+      return {
+        ...none,
+        body: btn?.title || list?.title || nfm?.body || "[Interactive reply]",
+        messageType: "interactive",
+      };
     }
-    default:
-      return { ...none, body: type ? `[${type}]` : "" };
+    default: {
+      // Some Exotel payloads omit `type` but include a media block.
+      if (message.image) {
+        const image = message.image as MediaBlock;
+        return {
+          body: image.caption?.trim() || "[Image]",
+          numMedia: 1,
+          messageType: "image",
+          ...pickMedia(image),
+          contentType: image.mime_type?.trim() || "image/jpeg",
+        };
+      }
+      if (message.video) {
+        const video = message.video as MediaBlock;
+        return {
+          body: video.caption?.trim() || "[Video]",
+          numMedia: 1,
+          messageType: "video",
+          ...pickMedia(video),
+          contentType: video.mime_type?.trim() || "video/mp4",
+        };
+      }
+      if (message.document) {
+        const doc = message.document as MediaBlock;
+        return {
+          body: doc.filename?.trim() || "[Document]",
+          numMedia: 1,
+          messageType: "document",
+          ...pickMedia(doc),
+          contentType: doc.mime_type?.trim() || "application/octet-stream",
+        };
+      }
+      if (message.audio) {
+        const audio = message.audio as MediaBlock;
+        return {
+          body: "[Audio]",
+          numMedia: 1,
+          messageType: "audio",
+          ...pickMedia(audio),
+          contentType: audio.mime_type?.trim() || "audio/ogg",
+        };
+      }
+      if (message.sticker) {
+        const sticker = message.sticker as MediaBlock;
+        return {
+          body: "[Sticker]",
+          numMedia: 1,
+          messageType: "sticker",
+          ...pickMedia(sticker),
+          contentType: sticker.mime_type?.trim() || "image/webp",
+        };
+      }
+      return { ...none, body: type ? `[${type}]` : "", messageType: type || null };
+    }
   }
 }

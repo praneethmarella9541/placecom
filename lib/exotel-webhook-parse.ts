@@ -5,6 +5,10 @@ import { normalizePhone, phoneMatches } from "@/lib/phone";
 import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { normalizePeerE164 } from "@/lib/whatsapp-address";
+import {
+  deliveryStatusRank,
+  normalizeWhatsAppDeliveryStatus,
+} from "@/lib/whatsapp-tick-level";
 
 export type ParsedInbound = {
   messageSid: string;
@@ -218,12 +222,26 @@ function parseStatusErrors(block: Record<string, unknown>): string | undefined {
   return pickString(err.detail, err.title, err.message, err.code ? String(err.code) : "");
 }
 
+/** Prefer the more advanced delivery state (never downgrade read → sent). */
+export function mergeWhatsAppDeliveryStatus(
+  current: string | null | undefined,
+  incoming: string
+): string {
+  const next = formatDeliveryStatusForDb({ messageSid: "", status: incoming });
+  const cur = (current ?? "").trim();
+  if (!cur) return next;
+  if (deliveryStatusRank(next) >= deliveryStatusRank(cur)) return next;
+  return cur;
+}
+
+export { normalizeWhatsAppDeliveryStatus };
+
 /** Map Exotel/Meta status webhooks and DLR callbacks to a DB delivery_status value. */
 export function formatDeliveryStatusForDb(status: ParsedStatus): string {
   if (status.status === "failed" && status.errorDetail) {
     return `failed: ${status.errorDetail.slice(0, 240)}`;
   }
-  return status.status;
+  return normalizeWhatsAppDeliveryStatus(status.status);
 }
 
 export function parseExotelStatusWebhook(body: Record<string, unknown>): ParsedStatus | null {
@@ -247,10 +265,14 @@ export function parseExotelStatusWebhook(body: Record<string, unknown>): ParsedS
       }
       const status = pickString(row.status);
       if (messageSid && status) {
+        const normalized = normalizeWhatsAppDeliveryStatus(status);
         return {
           messageSid,
-          status,
-          errorDetail: status === "failed" ? description || parseStatusErrors(row) : undefined,
+          status: normalized,
+          errorDetail:
+            normalized === "failed" || normalized.startsWith("failed")
+              ? description || parseStatusErrors(row)
+              : undefined,
         };
       }
     }
@@ -265,10 +287,14 @@ export function parseExotelStatusWebhook(body: Record<string, unknown>): ParsedS
     const messageSid = pickString(block.message_sid, block.id);
     const status = pickString(block.status);
     if (messageSid && status) {
+      const normalized = normalizeWhatsAppDeliveryStatus(status);
       return {
         messageSid,
-        status,
-        errorDetail: status === "failed" ? parseStatusErrors(block) : undefined,
+        status: normalized,
+        errorDetail:
+          normalized === "failed" || normalized.startsWith("failed")
+            ? parseStatusErrors(block)
+            : undefined,
       };
     }
   }

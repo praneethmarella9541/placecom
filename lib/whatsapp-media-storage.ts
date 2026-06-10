@@ -7,11 +7,7 @@ import {
   getExotelBasicAuthHeader,
   getExotelApiHostCandidates,
 } from "@/lib/exotel-config";
-import {
-  buildStorageFilename,
-  inferWhatsAppMediaKind,
-  resolveWhatsAppMediaMime,
-} from "@/lib/whatsapp-media-mime";
+import { buildStorageFilename, resolveWhatsAppMediaMime } from "@/lib/whatsapp-media-mime";
 import { randomUUID } from "crypto";
 
 export { inferWhatsAppMediaKind } from "@/lib/whatsapp-media-mime";

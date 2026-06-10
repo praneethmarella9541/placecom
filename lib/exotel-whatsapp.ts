@@ -181,6 +181,7 @@ export async function sendExotelWhatsAppTemplate(params: {
 type MediaBlock = {
   id?: string;
   link?: string;
+  url?: string;       // Exotel uses "url" (not "link") for inbound media
   mime_type?: string;
   caption?: string;
   filename?: string;
@@ -203,7 +204,8 @@ export function extractExotelInboundBody(message: Record<string, unknown> | unde
   function pickMedia(block: MediaBlock | undefined): Pick<ExtractedBody, "mediaId" | "mediaLink" | "contentType"> {
     return {
       mediaId: block?.id?.trim() || null,
-      mediaLink: block?.link?.trim() || null,
+      // Exotel sends the presigned S3 URL in "url"; outbound templates use "link"
+      mediaLink: block?.url?.trim() || block?.link?.trim() || null,
       contentType: block?.mime_type?.trim() || null,
     };
   }

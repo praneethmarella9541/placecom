@@ -178,55 +178,105 @@ export async function sendExotelWhatsAppTemplate(params: {
 }
 
 /** Extract display text from Exotel inbound_message payload. */
-export function extractExotelInboundBody(message: Record<string, unknown> | undefined): {
+type MediaBlock = {
+  id?: string;
+  link?: string;
+  mime_type?: string;
+  caption?: string;
+  filename?: string;
+};
+
+export type ExtractedBody = {
   body: string;
   numMedia: number;
-} {
-  if (!message || typeof message !== "object") {
-    return { body: "", numMedia: 0 };
+  /** Exotel/Meta media object id — used to construct the proxy download URL. */
+  mediaId: string | null;
+  /** Direct CDN link when Exotel provides one (less common for inbound). */
+  mediaLink: string | null;
+  contentType: string | null;
+};
+
+export function extractExotelInboundBody(message: Record<string, unknown> | undefined): ExtractedBody {
+  const none: ExtractedBody = { body: "", numMedia: 0, mediaId: null, mediaLink: null, contentType: null };
+  if (!message || typeof message !== "object") return none;
+
+  function pickMedia(block: MediaBlock | undefined): Pick<ExtractedBody, "mediaId" | "mediaLink" | "contentType"> {
+    return {
+      mediaId: block?.id?.trim() || null,
+      mediaLink: block?.link?.trim() || null,
+      contentType: block?.mime_type?.trim() || null,
+    };
   }
 
   const type = String(message.type ?? "");
   switch (type) {
     case "text": {
       const text = message.text as { body?: string } | undefined;
-      return { body: text?.body?.trim() ?? "", numMedia: 0 };
+      return { ...none, body: text?.body?.trim() ?? "" };
     }
     case "image": {
-      const image = message.image as { caption?: string } | undefined;
-      return { body: image?.caption?.trim() || "[Image]", numMedia: 1 };
+      const image = message.image as MediaBlock | undefined;
+      return {
+        body: image?.caption?.trim() || "[Image]",
+        numMedia: 1,
+        ...pickMedia(image),
+        contentType: image?.mime_type?.trim() || "image/jpeg",
+      };
     }
     case "video": {
-      const video = message.video as { caption?: string } | undefined;
-      return { body: video?.caption?.trim() || "[Video]", numMedia: 1 };
+      const video = message.video as MediaBlock | undefined;
+      return {
+        body: video?.caption?.trim() || "[Video]",
+        numMedia: 1,
+        ...pickMedia(video),
+        contentType: video?.mime_type?.trim() || "video/mp4",
+      };
     }
-    case "document":
-      return { body: "[Document]", numMedia: 1 };
-    case "audio":
-      return { body: "[Audio]", numMedia: 1 };
-    case "sticker":
-      return { body: "[Sticker]", numMedia: 1 };
+    case "document": {
+      const doc = message.document as MediaBlock | undefined;
+      return {
+        body: doc?.filename?.trim() || "[Document]",
+        numMedia: 1,
+        ...pickMedia(doc),
+        contentType: doc?.mime_type?.trim() || "application/octet-stream",
+      };
+    }
+    case "audio": {
+      const audio = message.audio as MediaBlock | undefined;
+      return {
+        body: "[Audio]",
+        numMedia: 1,
+        ...pickMedia(audio),
+        contentType: audio?.mime_type?.trim() || "audio/ogg",
+      };
+    }
+    case "sticker": {
+      const sticker = message.sticker as MediaBlock | undefined;
+      return {
+        body: "[Sticker]",
+        numMedia: 1,
+        ...pickMedia(sticker),
+        contentType: sticker?.mime_type?.trim() || "image/webp",
+      };
+    }
     case "reaction": {
       const reaction = message.reaction as { emoji?: string } | undefined;
-      return { body: reaction?.emoji?.trim() || "❤️", numMedia: 0 };
+      return { ...none, body: reaction?.emoji?.trim() || "❤️" };
     }
     case "location":
-      return { body: "[Location]", numMedia: 0 };
+      return { ...none, body: "[Location]" };
     case "button": {
       const button = message.button as { text?: string } | undefined;
-      return { body: button?.text?.trim() || "[Button reply]", numMedia: 0 };
+      return { ...none, body: button?.text?.trim() || "[Button reply]" };
     }
     case "interactive": {
       const interactive = message.interactive as Record<string, unknown> | undefined;
       const btn = interactive?.button_reply as { title?: string } | undefined;
       const list = interactive?.list_reply as { title?: string } | undefined;
       const nfm = interactive?.nfm_reply as { body?: string } | undefined;
-      return {
-        body: btn?.title || list?.title || nfm?.body || "[Interactive reply]",
-        numMedia: 0,
-      };
+      return { ...none, body: btn?.title || list?.title || nfm?.body || "[Interactive reply]" };
     }
     default:
-      return { body: type ? `[${type}]` : "", numMedia: 0 };
+      return { ...none, body: type ? `[${type}]` : "" };
   }
 }

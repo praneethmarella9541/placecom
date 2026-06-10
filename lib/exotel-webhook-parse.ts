@@ -14,6 +14,11 @@ export type ParsedInbound = {
   businessE164: string;
   displayBody: string;
   numMedia: number;
+  /** Exotel/Meta media object id — pass to proxy as ?id= */
+  mediaId: string | null;
+  /** Direct CDN link when Exotel provides one. */
+  mediaLink: string | null;
+  contentType: string | null;
 };
 
 export type ParsedStatus = {
@@ -101,7 +106,7 @@ function parseInboundFromDataBlock(
   if (!toRaw && defaults?.toFallback) toRaw = defaults.toFallback;
 
   const content = asRecord(block.message) ?? asRecord(block.content) ?? block;
-  const { body, numMedia } = extractExotelInboundBody(content);
+  const { body, numMedia, mediaId, mediaLink, contentType } = extractExotelInboundBody(content);
 
   if (!messageSid || !fromRaw) return null;
 
@@ -113,6 +118,9 @@ function parseInboundFromDataBlock(
     businessE164: "",
     displayBody: body || (numMedia > 0 ? `[${numMedia} attachment(s)]` : ""),
     numMedia,
+    mediaId,
+    mediaLink,
+    contentType,
   };
 }
 

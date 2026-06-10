@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
+import { resolveStoredWhatsAppMediaUrl } from "@/lib/whatsapp-media-resolve";
 
 export const runtime = "nodejs";
 
@@ -50,5 +51,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ messages: rows || [], businessLine });
+  const messages = (rows ?? []).map((row) => ({
+    ...row,
+    media_url: resolveStoredWhatsAppMediaUrl(row as {
+      media_url?: string | null;
+      message_sid?: string | null;
+      body?: string | null;
+      num_media?: number | null;
+      content_type?: string | null;
+    }),
+  }));
+
+  return NextResponse.json({ messages, businessLine });
 }

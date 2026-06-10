@@ -66,6 +66,8 @@ export async function dispatchExotelWhatsAppOutbound(input: OutboundSendInput): 
     throw new Error("Media messages require an HTTPS URL (upload the file first).");
   }
 
+  console.log("[whatsapp/outbound] media send:", { type, link: link.slice(0, 120), filename: input.mediaFilename });
+
   if (type === "image") {
     const { sid } = await sendExotelWhatsAppSession({
       fromE164: input.fromE164,

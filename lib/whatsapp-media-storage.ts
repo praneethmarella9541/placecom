@@ -1,12 +1,20 @@
 import "server-only";
 
+import { getWebhookBaseUrl } from "@/lib/call-recording-url";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import {
   getExotelCredentials,
   getExotelBasicAuthHeader,
   getExotelApiHostCandidates,
 } from "@/lib/exotel-config";
+import {
+  buildStorageFilename,
+  inferWhatsAppMediaKind,
+  resolveWhatsAppMediaMime,
+} from "@/lib/whatsapp-media-mime";
 import { randomUUID } from "crypto";
+
+export { inferWhatsAppMediaKind } from "@/lib/whatsapp-media-mime";
 
 export const WHATSAPP_MEDIA_BUCKET = "whatsapp-media";
 
@@ -26,22 +34,26 @@ function ensureBucket(): Promise<void> {
   if (!bucketReady) {
     bucketReady = (async () => {
       const supabase = createServiceSupabase();
-      await supabase.storage.createBucket(WHATSAPP_MEDIA_BUCKET, { public: true });
-    })().catch(() => {});
+      // Create if not yet present; ignore "already exists" error.
+      await supabase.storage.createBucket(WHATSAPP_MEDIA_BUCKET, { public: true }).catch(() => {});
+      // Always ensure bucket is public (handles pre-existing private buckets).
+      await supabase.storage.updateBucket(WHATSAPP_MEDIA_BUCKET, { public: true }).catch(() => {});
+    })();
   }
   return bucketReady;
 }
 
-export function inferWhatsAppMediaKind(mimeType: string): "image" | "video" | "audio" | "document" {
-  const m = mimeType.toLowerCase();
-  if (m.startsWith("image/")) return "image";
-  if (m.startsWith("video/")) return "video";
-  if (m.startsWith("audio/")) return "audio";
-  return "document";
-}
-
 export function maxBytesForKind(kind: string): number {
   return MAX_BYTES[kind] ?? MAX_BYTES.document;
+}
+
+/** Public HTTPS URL that Exotel/Meta can fetch without auth. */
+export function getWhatsAppMediaServeUrl(objectPath: string): string {
+  const base = getWebhookBaseUrl();
+  if (!base) {
+    throw new Error("NEXT_PUBLIC_APP_URL is not configured for WhatsApp media delivery.");
+  }
+  return `${base}/api/whatsapp/serve-media?p=${encodeURIComponent(objectPath)}`;
 }
 
 export async function uploadWhatsAppMedia(params: {
@@ -49,30 +61,31 @@ export async function uploadWhatsAppMedia(params: {
   file: Buffer;
   filename: string;
   mimeType: string;
-}): Promise<{ publicUrl: string; kind: "image" | "video" | "audio" | "document" }> {
+}): Promise<{ publicUrl: string; kind: "image" | "video" | "audio" | "document"; storagePath: string }> {
   await ensureBucket();
-  const kind = inferWhatsAppMediaKind(params.mimeType);
+
+  const { mimeType, kind } = resolveWhatsAppMediaMime({
+    declaredMime: params.mimeType,
+    filename: params.filename,
+    file: params.file,
+  });
+
   if (params.file.length > maxBytesForKind(kind)) {
     throw new Error(`File too large for WhatsApp ${kind} (max ${Math.round(maxBytesForKind(kind) / 1024 / 1024)} MB).`);
   }
 
-  const safeName = params.filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
-  const objectPath = `${params.userId}/${randomUUID()}-${safeName}`;
+  const storageName = buildStorageFilename(params.filename, mimeType);
+  const objectPath = `${params.userId}/${randomUUID()}-${storageName}`;
   const supabase = createServiceSupabase();
   const { error } = await supabase.storage.from(WHATSAPP_MEDIA_BUCKET).upload(objectPath, params.file, {
-    contentType: params.mimeType,
+    contentType: mimeType,
     upsert: false,
+    cacheControl: "604800",
   });
   if (error) throw new Error(error.message);
 
-  const { data } = supabase.storage.from(WHATSAPP_MEDIA_BUCKET).getPublicUrl(objectPath);
-  const publicUrl = data.publicUrl;
-  if (!publicUrl?.startsWith("https://")) {
-    throw new Error(
-      "Could not get public URL for media. Ensure the whatsapp-media bucket exists and is public in Supabase Storage."
-    );
-  }
-  return { publicUrl, kind };
+  const publicUrl = getWhatsAppMediaServeUrl(objectPath);
+  return { publicUrl, kind, storagePath: objectPath };
 }
 
 /**

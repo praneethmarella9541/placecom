@@ -162,6 +162,8 @@ export async function POST(request: Request) {
     ownerUserId,
     peerE164: canonicalWhatsAppPeer(finalized.peerE164),
     bodyPreview: finalized.displayBody,
+    contentType: finalized.contentType,
+    numMedia: finalized.numMedia,
     businessE164: finalized.businessE164,
   };
 

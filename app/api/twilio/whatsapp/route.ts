@@ -143,6 +143,8 @@ export async function POST(request: Request) {
     ownerUserId,
     peerE164: peer,
     bodyPreview: displayBody || null,
+    contentType,
+    numMedia,
     businessE164: businessE164 || "",
   };
 

@@ -10,6 +10,7 @@ import {
 import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
 import { notifyWhatsAppInbound } from "@/lib/push-notifications";
+import { fetchAndStoreExotelMedia } from "@/lib/whatsapp-media-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -95,16 +96,17 @@ export async function POST(request: Request) {
 
   const ownerUserId = await findUserIdForBusinessLine(finalized.businessE164);
 
-  // Build the media_url to store:
-  //  • If Exotel gave a direct CDN link → store it as-is (publicly loadable).
-  //  • If Exotel gave only a media id   → store a relative proxy path so the
-  //    mobile app fetches through /api/whatsapp/media with auth.
-  //  • No media                         → null.
+  // Download inbound media and upload to Supabase Storage so the mobile app
+  // can load it from a stable public URL without needing Exotel credentials.
   let mediaUrl: string | null = null;
-  if (finalized.mediaLink) {
-    mediaUrl = finalized.mediaLink;
-  } else if (finalized.mediaId && finalized.messageSid) {
-    mediaUrl = `/api/whatsapp/media?msgSid=${encodeURIComponent(finalized.messageSid)}`;
+  if (finalized.numMedia > 0) {
+    mediaUrl = await fetchAndStoreExotelMedia({
+      mediaLink: finalized.mediaLink,
+      mediaId: finalized.mediaId,
+      messageSid: finalized.messageSid,
+      contentType: finalized.contentType,
+      businessE164: finalized.businessE164,
+    });
   }
 
   const { error } = await supabase.from("whatsapp_messages").insert({

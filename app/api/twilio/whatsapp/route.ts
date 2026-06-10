@@ -64,6 +64,18 @@ export async function POST(request: Request) {
   /** WhatsApp quoted reply (Twilio; ~7d window). See https://www.twilio.com/en-us/changelog/whatsapp-inbound-messages-will-now-include-reply-context */
   const originalRepliedSid = params.OriginalRepliedMessageSid?.trim() || "";
 
+  // Pick up the first media attachment Twilio posts as MediaUrl0 / MediaContentType0.
+  // (Twilio sends MediaUrl0…MediaUrlN for each media item.)
+  const mediaUrl = numMedia > 0 ? (params.MediaUrl0?.trim() || null) : null;
+  const rawContentType = numMedia > 0 ? (params.MediaContentType0?.trim() || null) : null;
+  // Normalise MIME type to a short token the mobile client understands.
+  const contentType = rawContentType
+    ? rawContentType.startsWith("image/") ? rawContentType
+      : rawContentType.startsWith("audio/") ? rawContentType
+      : rawContentType.startsWith("video/") ? rawContentType
+      : rawContentType
+    : null;
+
   if (!messageSid || !from || !to) {
     return twimlOk();
   }
@@ -85,8 +97,16 @@ export async function POST(request: Request) {
   }
 
   const supabase = createClient(supabaseUrl, serviceKey);
+  // Build a readable placeholder when the body is empty (common for media messages).
+  function mediaPlaceholder(ct: string | null, count: number): string {
+    if (ct?.startsWith("image/")) return "[Image]";
+    if (ct?.startsWith("audio/")) return "[Audio]";
+    if (ct?.startsWith("video/")) return "[Video]";
+    if (ct?.startsWith("application/") || ct?.includes("pdf")) return "[Document]";
+    return count === 1 ? "[Attachment]" : `[${count} attachments]`;
+  }
   const displayBody =
-    body.length > 0 ? body : numMedia > 0 ? `[${numMedia} attachment(s)]` : "";
+    body.length > 0 ? body : numMedia > 0 ? mediaPlaceholder(contentType, numMedia) : "";
 
   let replyToId: string | null = null;
   if (originalRepliedSid) {
@@ -114,6 +134,8 @@ export async function POST(request: Request) {
     body: displayBody || null,
     message_sid: messageSid,
     num_media: numMedia,
+    media_url: mediaUrl,
+    content_type: contentType,
   };
   if (replyToId) insertRow.reply_to_id = replyToId;
 

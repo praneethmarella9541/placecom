@@ -3,7 +3,7 @@
  * Mirrors Placecom mobile whatsapp-thread-cache (memory-only on web).
  */
 
-import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
+import { canonicalPeer } from "@/lib/wa-contacts-display";
 
 const FRESH_MS = 45_000;
 const PREFETCH_CONCURRENCY = 4;
@@ -36,20 +36,20 @@ function isFresh(entry: MemoryEntry | undefined): boolean {
 }
 
 export function getCachedWhatsAppMessages(peer: string): WhatsAppPrefetchMessage[] | null {
-  const key = canonicalWhatsAppPeer(peer);
+  const key = canonicalPeer(peer);
   if (!key) return null;
   const entry = memory.get(key);
   return entry?.messages ?? null;
 }
 
 export function writeWhatsAppThreadCache(peer: string, messages: WhatsAppPrefetchMessage[]): void {
-  const key = canonicalWhatsAppPeer(peer);
+  const key = canonicalPeer(peer);
   if (!key) return;
   memory.set(key, { messages, fetchedAt: Date.now() });
 }
 
 async function fetchThread(peer: string): Promise<WhatsAppPrefetchMessage[] | null> {
-  const key = canonicalWhatsAppPeer(peer);
+  const key = canonicalPeer(peer);
   if (!key) return null;
 
   const existing = inflight.get(key);
@@ -78,7 +78,7 @@ export async function warmWhatsAppThread(
   peer: string,
   opts?: { force?: boolean }
 ): Promise<WhatsAppPrefetchMessage[] | null> {
-  const key = canonicalWhatsAppPeer(peer);
+  const key = canonicalPeer(peer);
   if (!key) return null;
 
   if (!opts?.force && isFresh(memory.get(key))) {
@@ -103,7 +103,7 @@ export async function prefetchWhatsAppThreads(
   const seen = new Set<string>();
 
   for (const p of peers) {
-    const key = canonicalWhatsAppPeer(p);
+    const key = canonicalPeer(p);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     if (!opts?.force && isFresh(memory.get(key))) continue;

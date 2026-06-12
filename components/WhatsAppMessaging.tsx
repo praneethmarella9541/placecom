@@ -26,6 +26,11 @@ import {
   getWhatsAppPrefetchCache,
   patchWhatsAppPrefetchCache,
 } from "@/lib/workspace-feature-prefetch";
+import {
+  getCachedWhatsAppMessages,
+  prefetchWhatsAppThreadIntent,
+  writeWhatsAppThreadCache,
+} from "@/lib/whatsapp-thread-prefetch";
 import { showWhatsAppFailureDetail, WhatsAppTicks } from "@/components/WhatsAppTicks";
 import { titleCase } from "@/lib/title-case";
 import {
@@ -337,12 +342,22 @@ export function WhatsAppMessaging({
 
   const loadMessages = useCallback(async (p: string, opts?: { silent?: boolean }) => {
     const silent = opts?.silent ?? false;
-    if (!silent) { setLoadingThread(true); setError(null); }
+    if (!silent) {
+      const cached = getCachedWhatsAppMessages(p);
+      if (cached?.length) {
+        setMessages(cached);
+        setLoadingThread(false);
+      } else {
+        setLoadingThread(true);
+      }
+      setError(null);
+    }
     try {
       const res = await fetch(`/api/whatsapp/messages?peer=${encodeURIComponent(p)}`, { cache: "no-store" });
       const body = (await res.json()) as { messages?: Msg[]; error?: string };
       if (!res.ok) throw new Error(body.error || "Failed to load messages");
       const incoming = body.messages || [];
+      writeWhatsAppThreadCache(p, incoming);
       setMessages((prev) => {
         if (!silent) {
           // Initial load: replace entirely — never show old peer's messages
@@ -689,6 +704,7 @@ export function WhatsAppMessaging({
               key={c.peer_e164}
               type="button"
               onClick={() => selectPeer(c.peer_e164)}
+              onMouseEnter={() => prefetchWhatsAppThreadIntent(c.peer_e164)}
               className={cn(
                 "flex w-full items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 text-left transition-colors duration-100",
                 peer === c.peer_e164

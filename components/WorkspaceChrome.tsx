@@ -32,6 +32,7 @@ import { ContactPhotoProvider } from "@/components/ContactPhotoProvider";
 import { ExtractionRunProvider } from "@/components/ExtractionRunProvider";
 import { ExtractionRunBanner } from "@/components/ExtractionRunBanner";
 import { GmailAvatar } from "@/components/GmailAvatar";
+import { formatPhone } from "@/lib/wa-contacts-display";
 
 /* ─── nav config ──────────────────────────────────────────── */
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
@@ -119,10 +120,12 @@ function NavItem({
 function UserProfile({
   displayName,
   email,
+  me,
   onSignOut,
 }: {
   displayName: string;
   email: string;
+  me: MeMailboxResponse | null;
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -176,6 +179,18 @@ function UserProfile({
           <div className="border-b border-white/[0.08] px-4 py-3">
             <p className="truncate text-[12px] font-semibold text-white/90">{displayName}</p>
             <p className="truncate text-[11px] text-white/40">{email}</p>
+            {me?.mailboxEmail && (
+              <p className="mt-1.5 truncate text-[10px] text-white/35" title={me.mailboxEmail}>
+                <span className="text-white/25">{titleCase("Mailbox")}: </span>
+                {me.mailboxEmail}
+              </p>
+            )}
+            {me?.exotelVirtualNumber && (
+              <p className="mt-0.5 truncate text-[10px] text-white/35" title={me.exotelVirtualNumber}>
+                <span className="text-white/25">{titleCase("Line")}: </span>
+                {formatPhone(me.exotelVirtualNumber)}
+              </p>
+            )}
           </div>
           <Link
             href="/profile"
@@ -206,6 +221,7 @@ function Sidebar({
   searchParams,
   displayName,
   email,
+  me,
   onSignOut,
   onClick,
 }: {
@@ -214,6 +230,7 @@ function Sidebar({
   searchParams: URLSearchParams;
   displayName: string;
   email: string;
+  me: MeMailboxResponse | null;
   onSignOut: () => void;
   onClick?: () => void;
 }) {
@@ -280,6 +297,7 @@ function Sidebar({
         <UserProfile
           displayName={displayName}
           email={email}
+          me={me}
           onSignOut={onSignOut}
         />
       </div>
@@ -357,7 +375,7 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
 
   const displayName = me?.displayUsername || me?.sessionEmail?.split("@")[0] || "User";
   const email       = me?.sessionEmail || "";
-  const sidebarProps = { links, pathname, searchParams, displayName, email, onSignOut: () => void signOut() };
+  const sidebarProps = { links, pathname, searchParams, displayName, email, me, onSignOut: () => void signOut() };
 
   return (
     <ExtractionRunProvider>

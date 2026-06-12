@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import type { MeProfileResponse } from "@/app/api/me/profile/route";
+import { PasswordInput } from "@/components/PasswordInput";
 import { titleCase } from "@/lib/title-case";
+import { formatPhone } from "@/lib/wa-contacts-display";
 
 export function ProfileSettings() {
   const [profile, setProfile] = useState<MeProfileResponse | null>(null);
@@ -115,15 +117,31 @@ export function ProfileSettings() {
         </p>
       )}
 
+      <div className="card space-y-3 p-5">
+        <h2 className="text-sm font-semibold text-[var(--color-text)]">{titleCase("Account access")}</h2>
+        <dl className="space-y-2 text-sm">
+          <div>
+            <dt className="text-xs font-medium text-[var(--color-text-muted)]">{titleCase("Sign-in email")}</dt>
+            <dd className="mt-0.5 text-[var(--color-text)]">{profile.sessionEmail || "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-[var(--color-text-muted)]">{titleCase("Shared mailbox")}</dt>
+            <dd className="mt-0.5 text-[var(--color-text)]">{profile.mailboxEmail || titleCase("Not linked yet")}</dd>
+          </div>
+          <div>
+            <dt className="text-xs font-medium text-[var(--color-text-muted)]">{titleCase("Assigned virtual number")}</dt>
+            <dd className="mt-0.5 text-[var(--color-text)]">
+              {profile.exotelVirtualNumber
+                ? formatPhone(profile.exotelVirtualNumber)
+                : titleCase("Not assigned")}
+            </dd>
+          </div>
+        </dl>
+      </div>
+
       <div className="card space-y-4 p-5">
         <h2 className="text-sm font-semibold text-[var(--color-text)]">{titleCase("Your profile")}</h2>
         <form className="space-y-3" onSubmit={(e) => void saveProfile(e)}>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
-              {titleCase("Email")}
-            </label>
-            <input className="input-field w-full text-sm opacity-70" value={profile.sessionEmail ?? ""} readOnly />
-          </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
               {titleCase("Display name")}
@@ -199,10 +217,8 @@ export function ProfileSettings() {
               <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
                 {titleCase("Current password")}
               </label>
-              <input
-                type="password"
+              <PasswordInput
                 autoComplete="current-password"
-                className="input-field w-full text-sm"
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
               />
@@ -211,10 +227,8 @@ export function ProfileSettings() {
               <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
                 {titleCase("New password")}
               </label>
-              <input
-                type="password"
+              <PasswordInput
                 autoComplete="new-password"
-                className="input-field w-full text-sm"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
               />
@@ -223,10 +237,8 @@ export function ProfileSettings() {
               <label className="mb-1 block text-xs font-medium text-[var(--color-text-muted)]">
                 {titleCase("Confirm new password")}
               </label>
-              <input
-                type="password"
+              <PasswordInput
                 autoComplete="new-password"
-                className="input-field w-full text-sm"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
               />

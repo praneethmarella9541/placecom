@@ -6,6 +6,7 @@ import {
   rewriteCidImageUrls,
   type InlineImageAttachment,
 } from "@/lib/email-html-inline-images";
+import { linkifyBareUrlsInHtml, linkifyPlainTextToHtml } from "@/lib/linkify-plain-text";
 
 function sanitizeEmailHtml(html: string): string {
   return html
@@ -126,8 +127,17 @@ export function EmailHtmlBody({
     if (messageId && attachments?.length) {
       fragment = rewriteCidImageUrls(fragment, messageId, attachments);
     }
-    return prepareEmailFragment(fragment);
+    const prepared = prepareEmailFragment(fragment);
+    return {
+      styles: prepared.styles,
+      body: linkifyBareUrlsInHtml(prepared.body),
+    };
   }, [html, messageId, attachments]);
+
+  const linkifiedPlain = useMemo(
+    () => (plain ? linkifyPlainTextToHtml(plain) : ""),
+    [plain]
+  );
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -227,9 +237,12 @@ export function EmailHtmlBody({
 
   if (!html || !prepared) {
     return (
-      <div className="mt-3 max-w-[680px] whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[#202124]">
-        {plain || "(empty body)"}
-      </div>
+      <div
+        className="mt-3 max-w-[680px] whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[#202124] [&_a]:text-[#1a73e8] [&_a]:underline"
+        dangerouslySetInnerHTML={{
+          __html: linkifiedPlain || "(empty body)",
+        }}
+      />
     );
   }
 

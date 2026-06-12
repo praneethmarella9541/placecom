@@ -66,8 +66,15 @@ import {
   buildMailListCacheKey,
   clearMailListSessionCache,
   getMailListSessionCache,
-  startMailListPrefetchWarm,
 } from "@/lib/inbox-list-prefetch";
+import {
+  clearMailThreadPrefetchCache,
+  getCachedThread,
+  prefetchMailThreadIntent,
+  rememberOpenThread,
+  rememberPrefetchThread,
+  startMailListAndBodyPrefetchWarm,
+} from "@/lib/mail-thread-prefetch";
 import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon } from "lucide-react";
 import {
   IconInbox,
@@ -1604,7 +1611,7 @@ export default function InboxPage() {
     const skip = new Set<string>();
     if (activeListCacheKeyRef.current) skip.add(activeListCacheKeyRef.current);
     const t = window.setTimeout(() => {
-      startMailListPrefetchWarm({ skipKeys: skip, concurrency: 3 });
+      startMailListAndBodyPrefetchWarm({ skipKeys: skip, listConcurrency: 3, bodyConcurrency: 2 });
     }, 400);
     return () => {
       clearTimeout(t);
@@ -1836,11 +1843,12 @@ export default function InboxPage() {
   const warmMailListCachesAfterRefresh = useCallback(() => {
     const skip = new Set<string>();
     if (activeListCacheKeyRef.current) skip.add(activeListCacheKeyRef.current);
-    startMailListPrefetchWarm({ skipKeys: skip, concurrency: 3 });
+    startMailListAndBodyPrefetchWarm({ skipKeys: skip, listConcurrency: 3, bodyConcurrency: 2 });
   }, []);
 
   const handleMailListRefresh = useCallback(async () => {
     clearMailListSessionCache();
+    clearMailThreadPrefetchCache();
     await loadThreads({ append: false, forceRefresh: true, indicateRefresh: true });
     scheduleCountRefresh();
     warmMailListCachesAfterRefresh();
@@ -2150,6 +2158,17 @@ export default function InboxPage() {
       const existing = threadDataCache.current.get(cacheKey);
       if (existing) return existing;
 
+      const moduleCached = getCachedThread(threadId);
+      if (moduleCached) {
+        const data: ThreadCacheData = {
+          messages: moduleCached.messages as MsgView[],
+          labelIds: moduleCached.labelIds.filter((id) => id !== "UNREAD"),
+        };
+        const promise = Promise.resolve(data);
+        threadDataCache.current.set(cacheKey, promise);
+        return promise;
+      }
+
       const url = `/api/gmail/threads/${encodeURIComponent(threadId)}${
         prefetch ? "?prefetch=1" : ""
       }`;
@@ -2160,10 +2179,13 @@ export default function InboxPage() {
           labelIds?: string[];
         };
         if (!res.ok) throw new Error(data.error || "Failed to open thread");
-        return {
+        const payload: ThreadCacheData = {
           messages: data.messages || [],
           labelIds: (data.labelIds ?? []).filter((id) => id !== "UNREAD"),
         };
+        if (prefetch) rememberPrefetchThread(threadId, payload);
+        else rememberOpenThread(threadId, payload);
+        return payload;
       });
       threadDataCache.current.set(cacheKey, promise);
       promise.catch(() => {
@@ -2196,6 +2218,7 @@ export default function InboxPage() {
 
   const prefetchThread = useCallback(
     (threadId: string) => {
+      prefetchMailThreadIntent(threadId);
       void fetchThreadData(threadId, { prefetch: true });
     },
     [fetchThreadData]

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { IconChevronDown } from "@/components/Icons";
+import { PasswordInput } from "@/components/PasswordInput";
 import { AdminGroupsPanel, type TeamGroup } from "@/components/AdminGroupsPanel";
 import { titleCase } from "@/lib/title-case";
 import type { FeatureKey } from "@/lib/feature-access";
@@ -242,13 +243,11 @@ export default function AdminTeamPage() {
         <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
           {titleCase("Initial password (min. 8 characters)")}
         </label>
-        <input
-          type="password"
+        <PasswordInput
           autoComplete="new-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="••••••••"
-          className="input-field w-full text-sm"
         />
         <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
           {titleCase("Display name")}
@@ -560,8 +559,7 @@ export default function AdminTeamPage() {
                     <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
                       {titleCase("Set new password (optional)")}
                     </label>
-                    <input
-                      type="password"
+                    <PasswordInput
                       autoComplete="new-password"
                       value={member.newPassword ?? ""}
                       onChange={(e) =>
@@ -571,7 +569,6 @@ export default function AdminTeamPage() {
                           )
                         )
                       }
-                      className="input-field w-full text-sm"
                       placeholder="••••••••"
                     />
                     <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">

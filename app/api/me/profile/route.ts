@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { createServiceSupabase } from "@/lib/supabase-service";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import { getUserTokenLimitStatus } from "@/lib/openai-token-limit";
 import { getAuthedRequest } from "@/lib/api-auth";
@@ -24,6 +25,8 @@ export type MeProfileResponse = {
   tokensUsed: number;
   tokensRemaining: number | null;
   canChangePassword: boolean;
+  mailboxEmail: string | null;
+  exotelVirtualNumber: string | null;
 };
 
 /** GET /api/me/profile — signed-in user's portal profile */
@@ -40,14 +43,14 @@ export async function GET(request: Request) {
 
   let { data: profile, error: profileErr } = await supabase
     .from("profiles")
-    .select("role, display_username, job_title, bio, restricted_features, group_id")
+    .select("role, display_username, job_title, bio, restricted_features, group_id, mailbox_owner_id, exotel_virtual_number")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (profileErr && /job_title|bio|group_id/i.test(profileErr.message ?? "")) {
+  if (profileErr && /job_title|bio|group_id|mailbox_owner_id|exotel_virtual_number/i.test(profileErr.message ?? "")) {
     const fallback = await supabase
       .from("profiles")
-      .select("role, display_username, restricted_features")
+      .select("role, display_username, restricted_features, mailbox_owner_id")
       .eq("id", user.id)
       .maybeSingle();
     profile = fallback.data as typeof profile;
@@ -70,6 +73,24 @@ export async function GET(request: Request) {
   const appMeta = user.app_metadata as { provider?: string } | undefined;
   const canChangePassword = appMeta?.provider !== "google";
 
+  const role = (profile?.role as string) ?? "staff";
+  const mailboxOwnerId =
+    role === "admin" ? user.id : (profile?.mailbox_owner_id as string | null);
+  let mailboxEmail: string | null = null;
+  if (mailboxOwnerId) {
+    try {
+      const svc = createServiceSupabase();
+      const { data: cred } = await svc
+        .from("google_mailbox_credentials")
+        .select("gmail_address")
+        .eq("owner_user_id", mailboxOwnerId)
+        .maybeSingle();
+      mailboxEmail = (cred?.gmail_address as string | null) ?? null;
+    } catch {
+      /* ignore */
+    }
+  }
+
   const body: MeProfileResponse = {
     sessionEmail: user.email ?? null,
     displayUsername: (profile?.display_username as string | null) ?? null,
@@ -88,6 +109,8 @@ export async function GET(request: Request) {
     tokensUsed: tokenStatus.used,
     tokensRemaining: tokenStatus.remaining,
     canChangePassword,
+    mailboxEmail,
+    exotelVirtualNumber: (profile?.exotel_virtual_number as string | null) ?? null,
   };
 
   return NextResponse.json(body);

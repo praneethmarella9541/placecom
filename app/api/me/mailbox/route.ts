@@ -23,11 +23,11 @@ export async function GET(request: Request) {
 
   let { data: profile, error: profileErr } = await supabase
     .from("profiles")
-    .select("role, mailbox_owner_id, display_username, restricted_features, group_id")
+    .select("role, mailbox_owner_id, display_username, restricted_features, group_id, exotel_virtual_number")
     .eq("id", user.id)
     .maybeSingle();
 
-  if (profileErr && /restricted_features|group_id/i.test(profileErr.message ?? "")) {
+  if (profileErr && /restricted_features|group_id|exotel_virtual_number/i.test(profileErr.message ?? "")) {
     const fallback = await supabase
       .from("profiles")
       .select("role, mailbox_owner_id, display_username")
@@ -47,6 +47,7 @@ export async function GET(request: Request) {
       mailboxOwnerId: null,
       mailboxEmail: null,
       hasStoredMailbox: false,
+      exotelVirtualNumber: null,
     };
     return NextResponse.json(body);
   }
@@ -64,11 +65,13 @@ export async function GET(request: Request) {
       mailboxOwnerId: null,
       mailboxEmail: null,
       hasStoredMailbox: false,
+      exotelVirtualNumber: null,
     };
     return NextResponse.json(body);
   }
 
   const role = profile.role as string;
+  const exotelVirtualNumber = (profile.exotel_virtual_number as string | null) ?? null;
   const mailboxOwnerId =
     role === "admin" ? user.id : (profile.mailbox_owner_id as string | null);
 
@@ -122,6 +125,7 @@ export async function GET(request: Request) {
     mailboxOwnerId,
     mailboxEmail,
     hasStoredMailbox,
+    exotelVirtualNumber,
   };
   return NextResponse.json(body);
 }

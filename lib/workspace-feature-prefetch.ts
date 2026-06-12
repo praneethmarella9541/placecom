@@ -5,7 +5,8 @@
 
 import type { FeatureKey } from "@/lib/feature-access";
 import { prefetchDriveListViews } from "@/lib/drive-list-prefetch";
-import { prefetchMailListViews } from "@/lib/inbox-list-prefetch";
+import { clearMailThreadPrefetchCache, warmMailListsThenThreadBodies } from "@/lib/mail-thread-prefetch";
+import { clearWhatsAppThreadPrefetchCache, prefetchWhatsAppThreads } from "@/lib/whatsapp-thread-prefetch";
 
 /* ─── WhatsApp ─────────────────────────────────────────────── */
 
@@ -83,6 +84,11 @@ async function prefetchWhatsAppData(signal?: AbortSignal): Promise<void> {
 
   if (signal?.aborted) return;
   setWhatsAppPrefetchCache({ status, conversations, contacts });
+
+  const peers = conversations.map((c) => c.peer_e164).filter(Boolean);
+  if (peers.length) {
+    void prefetchWhatsAppThreads(peers, { limit: 24 });
+  }
 }
 
 /* ─── Calendar ─────────────────────────────────────────────── */
@@ -237,9 +243,10 @@ export async function runLoginPrefetchChain(opts?: {
   const signal = opts?.signal;
   try {
     await Promise.all([
-      prefetchMailListViews({
+      warmMailListsThenThreadBodies({
         signal,
-        concurrency: opts?.mailConcurrency ?? 3,
+        listConcurrency: opts?.mailConcurrency ?? 3,
+        bodyConcurrency: 2,
       }),
       prefetchDriveListViews({
         signal,
@@ -262,6 +269,8 @@ export function clearSecondaryFeaturePrefetchCache(): void {
   whatsappCache = null;
   calendarCache = null;
   formsCache = null;
+  clearMailThreadPrefetchCache();
+  clearWhatsAppThreadPrefetchCache();
 }
 
 export function isFeatureRestricted(

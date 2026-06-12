@@ -7,4 +7,5 @@ export type MeMailboxResponse = {
   mailboxOwnerId: string | null;
   mailboxEmail: string | null;
   hasStoredMailbox: boolean;
+  exotelVirtualNumber: string | null;
 };

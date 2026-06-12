@@ -6,6 +6,7 @@ import { CheckCircle2 } from "lucide-react";
 import { GOOGLE_OAUTH_SCOPES } from "@/lib/google-config";
 import { createClient } from "@/lib/supabase";
 import { Skeleton } from "@/components/Skeleton";
+import { PasswordInput } from "@/components/PasswordInput";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { titleCase } from "@/lib/title-case";
 import { IconMail } from "@/components/Icons";
@@ -362,13 +363,12 @@ export default function HomePage() {
                 placeholder="you@company.com"
                 className="input-field"
               />
-              <input
-                type="password"
+              <PasswordInput
                 autoComplete="current-password"
                 value={staffPassword}
                 onChange={(e) => setStaffPassword(e.target.value)}
                 placeholder={titleCase("Password from your admin")}
-                className="input-field mt-3"
+                wrapperClassName="mt-3"
               />
               <button
                 type="button"

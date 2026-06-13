@@ -1,5 +1,4 @@
 import { deriveCallDirection } from "@/lib/call-status";
-import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
 
 export type AnalyticsCallRow = {
@@ -33,11 +32,4 @@ export function resolveAnalyticsCallDirection(
   // Fallback: deriveCallDirection only checks from_number vs virtuals.
   const derived = deriveCallDirection(row.from_number, virtuals, phoneMatches);
   return derived === "outbound" ? "out" : "in";
-}
-
-export function buildVirtualNumbersList(userExotel: string, allVirtuals: string[]): string[] {
-  return [
-    ...allVirtuals,
-    ...(userExotel ? [normalizePhone(userExotel)] : []),
-  ].filter((v, i, a) => v && a.indexOf(v) === i);
 }

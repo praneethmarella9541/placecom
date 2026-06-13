@@ -10,6 +10,10 @@ import {
   prefetchMailListViews,
 } from "@/lib/inbox-list-prefetch";
 
+/** Set NEXT_PUBLIC_DISABLE_MAIL_THREAD_PREFETCH=1 to pause background thread fetches. */
+export const MAIL_THREAD_PREFETCH_DISABLED =
+  process.env.NEXT_PUBLIC_DISABLE_MAIL_THREAD_PREFETCH === "1";
+
 const THREAD_CACHE_TTL_MS = 120_000;
 const BODY_PREFETCH_CONCURRENCY = 2;
 const MAIL_LIST_PAGE_SIZE = 25;
@@ -73,6 +77,7 @@ export function prefetchMailThreadOnce(
   threadId: string,
   opts?: { signal?: AbortSignal }
 ): Promise<MailThreadCachePayload | null> {
+  if (MAIL_THREAD_PREFETCH_DISABLED) return Promise.resolve(null);
   if (!threadId || opts?.signal?.aborted) return Promise.resolve(null);
 
   const key = cacheKey(threadId, "prefetch");
@@ -127,6 +132,7 @@ export async function prefetchMailBodiesForWarmedCategories(opts?: {
   perCategory?: number;
   concurrency?: number;
 }): Promise<void> {
+  if (MAIL_THREAD_PREFETCH_DISABLED) return;
   if (opts?.signal?.aborted) return;
 
   const threadIds = collectThreadIdsFromWarmedMailLists(opts?.perCategory ?? MAIL_LIST_PAGE_SIZE);
@@ -154,9 +160,11 @@ export function startMailListAndBodyPrefetchWarm(opts?: {
     skipKeys: opts?.skipKeys,
     concurrency: opts?.listConcurrency ?? 3,
   }).then(() => {
-    void prefetchMailBodiesForWarmedCategories({
-      concurrency: opts?.bodyConcurrency ?? BODY_PREFETCH_CONCURRENCY,
-    });
+    if (!MAIL_THREAD_PREFETCH_DISABLED) {
+      void prefetchMailBodiesForWarmedCategories({
+        concurrency: opts?.bodyConcurrency ?? BODY_PREFETCH_CONCURRENCY,
+      });
+    }
   });
 }
 
@@ -172,10 +180,12 @@ export async function warmMailListsThenThreadBodies(opts?: {
     signal: opts?.signal,
   });
   if (opts?.signal?.aborted) return;
-  await prefetchMailBodiesForWarmedCategories({
-    signal: opts?.signal,
-    concurrency: opts?.bodyConcurrency ?? BODY_PREFETCH_CONCURRENCY,
-  });
+  if (!MAIL_THREAD_PREFETCH_DISABLED) {
+    await prefetchMailBodiesForWarmedCategories({
+      signal: opts?.signal,
+      concurrency: opts?.bodyConcurrency ?? BODY_PREFETCH_CONCURRENCY,
+    });
+  }
 }
 
 export function rememberOpenThread(threadId: string, data: MailThreadCachePayload): void {

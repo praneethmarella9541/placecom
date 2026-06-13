@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getWebhookBaseUrl, getWebhookBaseUrlFromRequest } from "@/lib/call-recording-url";
+import { getWebhookBaseUrl } from "@/lib/call-recording-url";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import {
   getExotelCredentials,

@@ -75,7 +75,7 @@ export async function GET(request: Request) {
   const stuck = rows.filter((r) => r.status === "in-progress" && r.call_sid);
   const missingTalk = rows
     .filter((r) => rowNeedsTalkDurationBackfill(r))
-    .slice(0, 8);
+    .slice(0, 12);
   const toRefresh = [...stuck, ...missingTalk];
   if (toRefresh.length > 0) {
     await Promise.all(

@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 import { normalizePhone, phoneLookupVariants, phoneMatches } from "@/lib/phone";
 import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
+import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
 import { notifyIncomingCall } from "@/lib/push-notifications";
 
 export const runtime = "nodejs";
@@ -94,12 +95,6 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
     updated_at: new Date().toISOString(),
   };
 
-  if (dialDuration) {
-    const talk = parseInt(dialDuration, 10) || null;
-    updates.conversation_duration_seconds = talk;
-    updates.recording_duration_seconds = talk;
-    updates.duration_seconds = talk;
-  }
   if (startTime) {
     try { updates.started_at = new Date(startTime).toISOString(); } catch {}
   }
@@ -116,6 +111,15 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
     .from("call_logs")
     .update(updates)
     .eq("call_sid", callSid);
+
+  // DialCallDuration on connect flows often includes ring time — pull authoritative
+  // ConversationDuration / RecordingDuration from Exotel after the call ends.
+  if (storedUrl || mappedStatus === "completed") {
+    const patch = await fetchExotelCallPatch(callSid, existing?.from_number);
+    if (patch) {
+      await supabaseAdmin.from("call_logs").update(patch).eq("call_sid", callSid);
+    }
+  }
 }
 
 type TelephonyAssignee = {

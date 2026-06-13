@@ -7,13 +7,16 @@ import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { isValidE164, normalizePhone } from "@/lib/phone";
 import { formatPhone, peerInitials } from "@/lib/wa-contacts-display";
+import { categorizeWhatsAppMedia, mediaFilenameFromMessage } from "@/lib/whatsapp-media-helpers";
+import { resolveWhatsAppMediaUrl } from "@/lib/whatsapp-media-url-client";
+import { ForwardChatModal } from "@/components/ForwardChatModal";
 import { useWaContacts } from "@/hooks/useWaContacts";
 import {
   formatWhatsAppDeliveryLabel,
   getDeliveryFailureAdvice,
   isWhatsAppDeliveryFailed,
 } from "@/lib/whatsapp-delivery";
-import { WhatsAppComposerBar, type WhatsAppSendPayload } from "@/components/WhatsAppComposerBar";
+import { WhatsAppComposerBar, type WhatsAppSendPayload, type PendingAttachment } from "@/components/WhatsAppComposerBar";
 import {
   applyTemplatePreview,
   type WhatsAppTemplateMeta,
@@ -29,6 +32,8 @@ import {
 import {
   getCachedWhatsAppMessages,
   prefetchWhatsAppThreadIntent,
+  prefetchWhatsAppThreads,
+  warmWhatsAppThread,
   writeWhatsAppThreadCache,
 } from "@/lib/whatsapp-thread-prefetch";
 import { showWhatsAppFailureDetail, WhatsAppTicks } from "@/components/WhatsAppTicks";
@@ -197,13 +202,15 @@ export function WhatsAppMessaging({
   const composerRef = useRef<HTMLDivElement>(null);
   const messageRowRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
   const highlightClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peerRef = useRef<string | null>(null);
   const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<Msg | null>(null);
   const [infoMsg, setInfoMsg] = useState<Msg | null>(null);
   const [menu, setMenu] = useState<{ msg: Msg; x: number; y: number } | null>(null);
+  const [forwardingMessage, setForwardingMessage] = useState<Msg | null>(null);
+  const [forwardModalOpen, setForwardModalOpen] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [newPhoneInput, setNewPhoneInput] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
   const { contacts: contactList, saveContact, deleteContact, resolveName } = useWaContacts();
@@ -315,6 +322,12 @@ export function WhatsAppMessaging({
       const list = body.conversations || [];
       setConversations(list);
       patchWhatsAppPrefetchCache({ conversations: list });
+      if (list.length) {
+        void prefetchWhatsAppThreads(
+          list.map((c) => c.peer_e164),
+          { limit: 24 }
+        );
+      }
     } catch (e) {
       if (!silent) setError(clientFetchFailedMessage(e));
     } finally {
@@ -340,55 +353,82 @@ export function WhatsAppMessaging({
     );
   }, []);
 
-  const loadMessages = useCallback(async (p: string, opts?: { silent?: boolean }) => {
+  const loadMessages = useCallback(async (p: string, opts?: { silent?: boolean; force?: boolean }) => {
     const silent = opts?.silent ?? false;
-    if (!silent) {
-      const cached = getCachedWhatsAppMessages(p);
-      if (cached?.length) {
-        setMessages(cached);
-        setLoadingThread(false);
-      } else {
-        setLoadingThread(true);
-      }
-      setError(null);
-    }
+    const force = opts?.force ?? false;
+
+    if (!silent) setError(null);
+
     try {
-      const res = await fetch(`/api/whatsapp/messages?peer=${encodeURIComponent(p)}`, { cache: "no-store" });
-      const body = (await res.json()) as { messages?: Msg[]; error?: string };
-      if (!res.ok) throw new Error(body.error || "Failed to load messages");
-      const incoming = body.messages || [];
+      const incoming = (await warmWhatsAppThread(p, { force })) ?? [];
+      // Ignore stale responses when the user switched chats mid-fetch.
+      if (peerRef.current !== p) return;
+
       writeWhatsAppThreadCache(p, incoming);
       setMessages((prev) => {
         if (!silent) {
-          // Initial load: replace entirely — never show old peer's messages
           setStickToBottom(true);
           return incoming;
         }
-        // Background poll: merge to preserve optimistic messages
         if (hasNewMessages(prev, incoming)) queueMicrotask(() => setStickToBottom(true));
         return mergeFetchedMessages(prev, incoming);
       });
       clearUnreadForPeer(p);
       void markThreadRead(p);
     } catch (e) {
-      if (!silent) setError(clientFetchFailedMessage(e));
+      if (peerRef.current === p && !silent) setError(clientFetchFailedMessage(e));
     } finally {
-      if (!silent) setLoadingThread(false);
+      if (peerRef.current === p && !silent) setLoadingThread(false);
     }
   }, [clearUnreadForPeer, markThreadRead]);
 
-  // Keep a ref to the current peer so the visibilitychange handler can
-  // access it without re-registering on every peer change.
-  const peerRef = useRef<string | null>(null);
+  const resetThreadUi = useCallback(() => {
+    setStickToBottom(true);
+    setSelectMode(false);
+    setSelectedIds([]);
+    setReplyTo(null);
+    setMenu(null);
+    setInfoMsg(null);
+    messageRowRefs.current.clear();
+    setHighlightMessageId(null);
+  }, []);
+
+  /** Instant paint from cache, then background refresh — matches mobile chat open. */
+  const switchToPeer = useCallback(
+    (raw: string) => {
+      const p = recipientE164(raw);
+      if (!isValidE164(p)) return;
+
+      resetThreadUi();
+      setError(null);
+      clearUnreadForPeer(p);
+
+      const cached = getCachedWhatsAppMessages(p);
+      if (cached?.length) {
+        setMessages(cached);
+        setLoadingThread(false);
+      } else {
+        setMessages([]);
+        setLoadingThread(true);
+      }
+
+      peerRef.current = p;
+      setPeer(p);
+      setMobileShowThread(true);
+      setNewPhoneInput(false);
+
+      void loadMessages(p, { silent: Boolean(cached?.length), force: Boolean(cached?.length) });
+    },
+    [resetThreadUi, clearUnreadForPeer, loadMessages]
+  );
+
   useEffect(() => { peerRef.current = peer; }, [peer]);
 
   useEffect(() => {
     if (!initialPeer) return;
     const normalized = recipientE164(initialPeer);
     if (!isValidE164(normalized)) return;
-    setPeer(normalized);
-    setMobileShowThread(true);
-    setNewPhoneInput(false);
+    switchToPeer(normalized);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialPeer]);
 
@@ -415,7 +455,7 @@ export function WhatsAppMessaging({
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void loadConversations({ silent: true });
-        if (peerRef.current) void loadMessages(peerRef.current, { silent: true });
+        if (peerRef.current) void loadMessages(peerRef.current, { silent: true, force: true });
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -424,12 +464,13 @@ export function WhatsAppMessaging({
   }, [loadStatus, loadConversations, loadMessages]);
 
   useEffect(() => {
-    // Clear previous peer's messages immediately so they never bleed into the new thread
-    setMessages([]);
-    setStickToBottom(true); setSelectMode(false); setSelectedIds([]);
-    setReplyTo(null); setMenu(null); setInfoMsg(null);
-    messageRowRefs.current.clear(); setHighlightMessageId(null);
-  }, [peer]);
+    if (!peer) return;
+    const t = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadMessages(peer, { silent: true, force: true });
+    }, POLL_MS);
+    return () => window.clearInterval(t);
+  }, [peer, loadMessages]);
 
   useEffect(() => () => { if (highlightClearRef.current) clearTimeout(highlightClearRef.current); }, []);
 
@@ -454,16 +495,6 @@ export function WhatsAppMessaging({
       } catch { setSessionOpen(null); }
     })();
   }, [peer, newPhone]);
-
-  useEffect(() => {
-    if (!peer) return;
-    void loadMessages(peer, { silent: false });
-    const t = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void loadMessages(peer, { silent: true });
-    }, POLL_MS);
-    return () => window.clearInterval(t);
-  }, [peer, loadMessages]);
 
   const onThreadScroll = useCallback(() => {
     const el = scrollThreadRef.current;
@@ -506,6 +537,168 @@ export function WhatsAppMessaging({
 
   const needsTemplate = forceTemplate || sessionOpen === false;
 
+  function sendAttachments(items: PendingAttachment[], caption: string) {
+    if (!items.length || needsTemplate) return;
+    const to = recipientE164(peer || newPhone);
+    if (!isValidE164(to)) {
+      setError("Enter a valid mobile with country code, e.g. +918489431508");
+      return;
+    }
+
+    const replyId = replyTo?.id;
+    const replyToId = replyId && !replyId.startsWith("optimistic-") ? replyId : undefined;
+
+    items.forEach((att, index) => {
+      const isLast = index === items.length - 1;
+      const tempId = `optimistic-${Date.now()}-${index}`;
+      const messageType = att.kind ?? (att.isImage ? "image" : "document");
+      const optimisticMsg: Msg = {
+        id: tempId,
+        direction: "outbound",
+        peer_e164: to,
+        body:
+          isLast && caption
+            ? caption
+            : messageType === "image"
+              ? "[Image]"
+              : messageType === "video"
+                ? "[Video]"
+                : messageType === "audio"
+                  ? "[Audio]"
+                  : `[Document: ${att.filename ?? att.name}]`,
+        created_at: new Date().toISOString(),
+        delivery_status: "pending",
+        message_sid: null,
+        num_media: 1,
+        media_url: att.remoteUrl ?? att.previewUrl,
+        content_type: messageType,
+        reply_to_id: isLast ? replyToId ?? null : null,
+      };
+
+      setMessages((prev) => [...prev, optimisticMsg]);
+      setStickToBottom(true);
+
+      void (async () => {
+        try {
+          const remoteUrl = att.remoteUrl;
+          const kind = att.kind ?? messageType;
+          if (!remoteUrl) throw new Error("Attachment is still uploading — wait and try again.");
+
+          const res = await fetch("/api/whatsapp/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({
+              to,
+              useTemplate: false,
+              messageType: kind,
+              mediaUrl: remoteUrl,
+              mediaCaption: isLast ? caption || undefined : undefined,
+              mediaFilename: att.filename ?? att.name,
+              ...(isLast && replyToId ? { replyToId } : {}),
+            }),
+          });
+          const body = (await res.json()) as { error?: string; messageSid?: string; peerE164?: string };
+          if (!res.ok) throw new Error(body.error || "Send failed");
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === tempId
+                ? {
+                    ...m,
+                    delivery_status: "sent",
+                    message_sid: body.messageSid ?? m.message_sid ?? null,
+                    media_url: remoteUrl!,
+                  }
+                : m
+            )
+          );
+          void loadConversations({ silent: true });
+          if (peer) void loadMessages(peer, { silent: true, force: true });
+        } catch (e) {
+          const err = clientFetchFailedMessage(e);
+          setMessages((prev) =>
+            prev.map((m) => (m.id === tempId ? { ...m, delivery_status: `failed: ${err}` } : m))
+          );
+          setError(err);
+        }
+      })();
+    });
+
+    setReplyTo(null);
+    setDraft("");
+  }
+
+  function startForward(message: Msg) {
+    setMenu(null);
+    setForwardingMessage(message);
+    setForwardModalOpen(true);
+  }
+
+  async function forwardToPeer(targetPeer: string) {
+    const msg = forwardingMessage;
+    if (!msg) return;
+    setForwardModalOpen(false);
+    setForwardingMessage(null);
+    setError(null);
+
+    const to = recipientE164(targetPeer);
+    if (!isValidE164(to)) {
+      setError("Enter a valid mobile with country code, e.g. +918489431508");
+      return;
+    }
+
+    try {
+      if (msg.media_url) {
+        const cat = categorizeWhatsAppMedia(msg);
+        const messageType = cat ?? "document";
+        const mediaUrl = resolveWhatsAppMediaUrl(msg.media_url) ?? msg.media_url;
+        if (!mediaUrl) {
+          setError("Media URL is not available for forwarding.");
+          return;
+        }
+
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            to,
+            useTemplate: false,
+            messageType,
+            mediaUrl,
+            mediaCaption:
+              msg.body?.trim() && !msg.body.startsWith("[") ? msg.body.trim() : undefined,
+            mediaFilename: mediaFilenameFromMessage(msg),
+          }),
+        });
+        const body = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(body.error || "Forward failed");
+      } else if (msg.body?.trim()) {
+        const res = await fetch("/api/whatsapp/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            to,
+            useTemplate: false,
+            messageType: "text",
+            text: msg.body.trim(),
+          }),
+        });
+        const body = (await res.json()) as { error?: string };
+        if (!res.ok) throw new Error(body.error || "Forward failed");
+      } else {
+        setError("Nothing to forward in this message.");
+        return;
+      }
+
+      void loadConversations({ silent: true });
+    } catch (e) {
+      setError(clientFetchFailedMessage(e));
+    }
+  }
+
   async function sendMessage(payload: WhatsAppSendPayload) {
     const to = recipientE164(peer || newPhone);
     if (!isValidE164(to)) { setError("Enter a valid mobile with country code, e.g. +918489431508"); return; }
@@ -532,12 +725,18 @@ export function WhatsAppMessaging({
     setError(null); setStickToBottom(true);
     setMessages((prev) => [...prev, optimisticMsg]);
     setDraft(""); setReplyTo(null); setMobileShowThread(true);
-    if (!peer) { setPeer(to); setNewPhone(""); setNewPhoneInput(false); }
+    if (!peer) {
+      peerRef.current = to;
+      setPeer(to);
+      setNewPhone("");
+      setNewPhoneInput(false);
+    }
 
     try {
       const res = await fetch("/api/whatsapp/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           to, useTemplate: needsTemplate,
           messageType: needsTemplate ? "template" : payload.messageType,
@@ -551,7 +750,7 @@ export function WhatsAppMessaging({
             : {}),
           mediaUrl: payload.mediaUrl, mediaCaption: payload.mediaCaption,
           mediaFilename: payload.mediaFilename,
-          ...(replyTo?.id ? { replyToId: replyTo.id } : {}),
+          ...(replyTo?.id && !replyTo.id.startsWith("optimistic-") ? { replyToId: replyTo.id } : {}),
         }),
       });
       const body = (await res.json()) as { error?: string; peerE164?: string; messageSid?: string };
@@ -565,7 +764,7 @@ export function WhatsAppMessaging({
         )
       );
       void loadConversations({ silent: true });
-      void loadMessages(threadPeer, { silent: true });
+      void loadMessages(threadPeer, { silent: true, force: true });
     } catch (e) {
       const err = clientFetchFailedMessage(e);
       setMessages((prev) => prev.map((m) => m.id === tempId ? { ...m, delivery_status: `failed: ${err}` } : m));
@@ -573,12 +772,7 @@ export function WhatsAppMessaging({
     }
   }
 
-  const selectPeer = (p: string) => {
-    setPeer(p);
-    setMobileShowThread(true);
-    setNewPhoneInput(false);
-    clearUnreadForPeer(p);
-  };
+  const selectPeer = switchToPeer;
 
   /* ── Sidebar conversation list ─────────────────────────── */
   const sidebar = (
@@ -705,6 +899,7 @@ export function WhatsAppMessaging({
               type="button"
               onClick={() => selectPeer(c.peer_e164)}
               onMouseEnter={() => prefetchWhatsAppThreadIntent(c.peer_e164)}
+              onMouseDown={() => prefetchWhatsAppThreadIntent(c.peer_e164)}
               className={cn(
                 "flex w-full items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 text-left transition-colors duration-100",
                 peer === c.peer_e164
@@ -817,9 +1012,17 @@ export function WhatsAppMessaging({
                 </div>
               )}
               {sessionOpen !== null && editingName !== peer && (
-                <p className="text-[11px] text-[var(--color-text-faint)]">
-                  {sessionOpen ? "● Session open" : "○ Session closed — template required"}
-                </p>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                    sessionOpen
+                      ? "bg-[#e7f8ef] text-[#075E54]"
+                      : "bg-[var(--color-warning-light)] text-[var(--color-warning)]",
+                  )}
+                >
+                  <span className={cn("h-1.5 w-1.5 rounded-full", sessionOpen ? "bg-[#25D366]" : "bg-[var(--color-warning)]")} />
+                  {sessionOpen ? titleCase("Session open") : titleCase("Template required")}
+                </span>
               )}
             </div>
           </>
@@ -1065,7 +1268,7 @@ export function WhatsAppMessaging({
             {([
               { key: "reply",   label: "Reply",        icon: IconReply,   onClick: () => { setReplyTo(menu.msg); setMenu(null); } },
               { key: "copy",    label: "Copy",         icon: IconCopy,    onClick: () => { void navigator.clipboard.writeText(menu.msg.body || ""); setMenu(null); } },
-              { key: "forward", label: "Forward",      icon: IconForward, onClick: () => { setDraft((d) => (d ? `${d}\n\n` : "") + `[Forwarded]\n${menu.msg.body || ""}`); setMenu(null); } },
+              { key: "forward", label: "Forward",      icon: IconForward, onClick: () => { startForward(menu.msg); } },
               { key: "pin",     label: menu.msg.is_pinned ? "Unpin" : "Pin", icon: IconPin, onClick: () => { void (async () => { try { await patchMessage(menu.msg.id, { is_pinned: !menu.msg.is_pinned }); if (peer) await loadMessages(peer, { silent: true }); } catch (e) { setError(clientFetchFailedMessage(e)); } finally { setMenu(null); } })(); } },
               { key: "star",    label: menu.msg.is_starred ? "Unstar" : "Star", icon: IconStar, onClick: () => { void (async () => { try { await patchMessage(menu.msg.id, { is_starred: !menu.msg.is_starred }); if (peer) await loadMessages(peer, { silent: true }); } catch (e) { setError(clientFetchFailedMessage(e)); } finally { setMenu(null); } })(); } },
               { key: "info",    label: "Message info", icon: IconInfo,    onClick: () => { setInfoMsg(menu.msg); setMenu(null); } },
@@ -1092,7 +1295,6 @@ export function WhatsAppMessaging({
         document.body
       )}
 
-      {/* Message info dialog — portalled to body */}
       {infoMsg && typeof document !== "undefined" && createPortal(
         <div
           className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4"
@@ -1167,11 +1369,10 @@ export function WhatsAppMessaging({
           onTemplateVariablesChange={setTemplateVariables}
           forceTemplate={forceTemplate}
           onForceTemplateChange={setForceTemplate}
-          uploading={uploading}
-          onUploadingChange={setUploading}
           recipientValid={isValidE164(recipientE164(peer || newPhone))}
           onInsertEmoji={insertAtCursor}
           onSend={(p) => void sendMessage(p)}
+          onSendAttachments={sendAttachments}
           textareaRef={textareaRef}
         />
       </div>
@@ -1200,7 +1401,22 @@ export function WhatsAppMessaging({
     </div>
   );
 
-  if (fullPage || embedded) return shell;
+  if (fullPage || embedded) {
+    return (
+      <>
+        {shell}
+        <ForwardChatModal
+          open={forwardModalOpen}
+          contacts={contactList}
+          onClose={() => {
+            setForwardModalOpen(false);
+            setForwardingMessage(null);
+          }}
+          onForward={(target) => void forwardToPeer(target)}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
@@ -1217,6 +1433,15 @@ export function WhatsAppMessaging({
         </div>
       </div>
       {shell}
+      <ForwardChatModal
+        open={forwardModalOpen}
+        contacts={contactList}
+        onClose={() => {
+          setForwardModalOpen(false);
+          setForwardingMessage(null);
+        }}
+        onForward={(target) => void forwardToPeer(target)}
+      />
     </div>
   );
 }

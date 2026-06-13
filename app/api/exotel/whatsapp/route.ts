@@ -144,7 +144,17 @@ export async function POST(request: Request) {
     console.log("[exotel/whatsapp] media upload result:", mediaUrl ?? "FAILED — media_url will be null");
   }
 
-  const { error } = await supabase.from("whatsapp_messages").insert({
+  let replyToId: string | null = null;
+  if (finalized.replyToMessageSid) {
+    const { data: parent } = await supabase
+      .from("whatsapp_messages")
+      .select("id")
+      .eq("message_sid", finalized.replyToMessageSid)
+      .maybeSingle();
+    if (parent?.id) replyToId = parent.id as string;
+  }
+
+  const insertRow: Record<string, unknown> = {
     user_id: ownerUserId,
     direction: "inbound",
     peer_e164: canonicalWhatsAppPeer(finalized.peerE164),
@@ -156,7 +166,10 @@ export async function POST(request: Request) {
     num_media: finalized.numMedia,
     media_url: mediaUrl,
     content_type: finalized.contentType,
-  });
+  };
+  if (replyToId) insertRow.reply_to_id = replyToId;
+
+  const { error } = await supabase.from("whatsapp_messages").insert(insertRow);
 
   const pushParams = {
     ownerUserId,

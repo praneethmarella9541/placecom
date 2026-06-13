@@ -156,6 +156,18 @@ export async function publishGoogleForm(
  * Returns a map of formId → title. Silently skips any form that errors
  * (insufficient scope, deleted, etc.) so the list still renders.
  */
+/** Parse a Google Form ID from a pasted link or raw ID. */
+export function parseGoogleFormIdFromInput(input: string): string | null {
+  const t = input.trim();
+  if (!t) return null;
+
+  const fromUrl = t.match(/\/forms\/d\/([a-zA-Z0-9_-]+)/);
+  if (fromUrl?.[1]) return fromUrl[1];
+
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(t)) return t;
+  return null;
+}
+
 export async function getFormTitlesBatch(
   accessToken: string,
   formIds: string[]

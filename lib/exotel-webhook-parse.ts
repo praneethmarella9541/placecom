@@ -24,6 +24,8 @@ export type ParsedInbound = {
   mediaLink: string | null;
   contentType: string | null;
   messageType: string | null;
+  /** Exotel sid of the message being quoted, when this inbound is a contextual reply. */
+  replyToMessageSid: string | null;
 };
 
 export type ParsedStatus = {
@@ -105,12 +107,14 @@ function parseInboundFromDataBlock(
   block: Record<string, unknown>,
   defaults?: { toFallback?: string }
 ): ParsedInbound | null {
-  const messageSid = pickString(block.message_sid, block.id, block.sid);
+  const messageSid = pickString(block.sid, block.message_sid, block.id);
   const fromRaw = pickString(block.from);
   let toRaw = pickString(block.to);
   if (!toRaw && defaults?.toFallback) toRaw = defaults.toFallback;
 
   const content = asRecord(block.message) ?? asRecord(block.content) ?? block;
+  const replyContext = asRecord(content.context) ?? asRecord(block.context);
+  const replyToMessageSid = pickString(replyContext?.sid, replyContext?.id, replyContext?.message_id) || null;
   const { body, numMedia, mediaId, mediaLink, contentType, messageType } =
     extractExotelInboundBody(content);
 
@@ -128,6 +132,7 @@ function parseInboundFromDataBlock(
     mediaLink,
     contentType,
     messageType,
+    replyToMessageSid,
   };
 }
 

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ClipboardList, Loader2, Plus, Search } from "lucide-react";
+import { ClipboardList, ExternalLink, Loader2, Plus, Search } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
@@ -31,6 +31,9 @@ export default function FormsPage() {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
+  const [connectedEmail, setConnectedEmail] = useState<string | null>(null);
+  const [openInput, setOpenInput] = useState("");
+  const [opening, setOpening] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
@@ -62,10 +65,12 @@ export default function FormsPage() {
         error?: string;
         forms?: FormRow[];
         nextPageToken?: string;
+        connectedEmail?: string | null;
       };
       if (!res.ok) throw new Error(data.error || "Failed to load forms");
       setForms((prev) => (opts.append ? [...prev, ...(data.forms || [])] : data.forms || []));
       setNextPageToken(data.nextPageToken);
+      if (typeof data.connectedEmail === "string") setConnectedEmail(data.connectedEmail);
       if (!opts.append && !searchDebounced) {
         setFormsPrefetchCache({
           forms: data.forms || [],
@@ -114,6 +119,32 @@ export default function FormsPage() {
     }
   }
 
+  async function handleOpenExisting(e: React.FormEvent) {
+    e.preventDefault();
+    const input = openInput.trim();
+    if (!input || opening) return;
+    setOpening(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/forms/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ input }),
+      });
+      const data = (await res.json()) as { error?: string; message?: string; formId?: string };
+      if (!res.ok) {
+        throw new Error(data.message || data.error || "Could not open form");
+      }
+      if (!data.formId) throw new Error("Invalid response");
+      setOpenInput("");
+      router.push(`/forms/${encodeURIComponent(data.formId)}/edit?tab=responses`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not open form");
+    } finally {
+      setOpening(false);
+    }
+  }
+
   const empty = useMemo(() => !loading && forms.length === 0, [loading, forms.length]);
 
   return (
@@ -126,7 +157,26 @@ export default function FormsPage() {
           <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--color-text)]">
             {titleCase("Forms")}
           </h1>
+          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
+            {titleCase("Synced with your Google account — including forms you created earlier in Google Forms.")}
+          </p>
         </div>
+      </div>
+
+      <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3 text-[13px] text-[var(--color-text-muted)]">
+        <p>
+          {connectedEmail ? (
+            <>
+              {titleCase("Connected account")}:{" "}
+              <span className="font-medium text-[var(--color-text)]">{connectedEmail}</span>
+            </>
+          ) : (
+            titleCase("Loading Google account…")
+          )}
+        </p>
+        <p className="mt-1 text-[12px] text-[var(--color-text-faint)]">
+          {titleCase("All forms in this Google Drive appear here. Open any form to view responses from Google.")}
+        </p>
       </div>
 
       <div className="surface-card rounded-[var(--radius-xl)] border border-[var(--color-border)] p-6 shadow-[var(--shadow-sm)]">
@@ -169,6 +219,40 @@ export default function FormsPage() {
         </form>
       </div>
 
+      <div className="surface-card rounded-[var(--radius-xl)] border border-[var(--color-border)] p-6 shadow-[var(--shadow-sm)]">
+        <form onSubmit={(e) => void handleOpenExisting(e)} className="space-y-3">
+          <div>
+            <label htmlFor="open-form-input" className="mb-1.5 block text-[13px] font-semibold text-[var(--color-text)]">
+              {titleCase("Open existing form")}
+            </label>
+            <p className="mb-2 text-[12px] text-[var(--color-text-faint)]">
+              {titleCase("Paste a Google Form link or form ID to open responses from an older form.")}
+            </p>
+            <input
+              id="open-form-input"
+              type="text"
+              value={openInput}
+              onChange={(e) => setOpenInput(e.target.value)}
+              placeholder="https://docs.google.com/forms/d/…/edit"
+              className="input-field h-11 w-full text-[14px]"
+              autoComplete="off"
+              disabled={opening}
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={opening || !openInput.trim()}
+            className={cn(
+              "btn-secondary inline-flex h-10 items-center gap-2 px-4 text-[13px]",
+              (!openInput.trim() || opening) && "opacity-60",
+            )}
+          >
+            {opening ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
+            {titleCase("Open & view responses")}
+          </button>
+        </form>
+      </div>
+
       {error ? (
         <div className="rounded-[var(--radius-md)] border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3 text-[13px] text-[var(--color-danger)]">
           {error}
@@ -186,7 +270,7 @@ export default function FormsPage() {
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={titleCase("Search forms")}
+              placeholder={titleCase("Search by form title")}
               className="input-field h-10 w-full pl-9 text-[13px]"
               autoComplete="off"
             />
@@ -200,7 +284,9 @@ export default function FormsPage() {
           </div>
         ) : empty ? (
           <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">
-            {titleCase("No forms yet. Create one above.")}
+            {searchDebounced
+              ? titleCase("No forms match your search.")
+              : titleCase("No forms found in your Google account. Create one above or open an existing form by link.")}
           </p>
         ) : (
           <ul className="divide-y divide-[var(--color-border)] rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -218,6 +304,12 @@ export default function FormsPage() {
                   </p>
                 </Link>
                 <div className="flex shrink-0 items-center gap-3">
+                  <Link
+                    href={`/forms/${encodeURIComponent(f.id)}/edit?tab=responses`}
+                    className="text-[13px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
+                  >
+                    {titleCase("Responses")}
+                  </Link>
                   <Link
                     href={`/forms/${encodeURIComponent(f.id)}/edit`}
                     className="text-[13px] font-semibold text-[var(--color-primary)]"

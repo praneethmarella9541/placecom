@@ -9,6 +9,7 @@ import {
   getExotelV2MessagesUrl,
   parseExotelErrorBody,
 } from "@/lib/exotel-config";
+import { buildExotelReplyContext } from "@/lib/exotel-whatsapp-reply";
 import { normalizePhone } from "@/lib/phone";
 
 export function isExotelWhatsAppConfigured(): boolean {
@@ -59,6 +60,11 @@ async function postExotelWhatsAppPayload(
   let lastError = "Exotel WhatsApp send failed";
   let lastStatus = 0;
 
+  const payloadJson = JSON.stringify(payload);
+  if (payloadJson.includes('"context"')) {
+    console.log("[exotel/whatsapp] outbound with reply context:", payloadJson.slice(0, 1200));
+  }
+
   for (const host of hosts) {
     const url = getExotelV2MessagesUrl(host, creds.sid);
     const res = await fetch(url, {
@@ -96,8 +102,10 @@ function buildMessageEnvelope(
   to: string,
   content: Record<string, unknown>,
   statusCallback: string | null | undefined,
-  recipientType: ExotelWhatsAppRecipientType = "individual"
+  recipientType: ExotelWhatsAppRecipientType = "individual",
+  replyToMessageId?: string | null
 ) {
+  const replyContext = buildExotelReplyContext(replyToMessageId);
   return {
     whatsapp: {
       messages: [
@@ -108,6 +116,7 @@ function buildMessageEnvelope(
           content: {
             recipient_type: recipientType,
             ...content,
+            ...(replyContext ? { context: replyContext } : {}),
           },
         },
       ],
@@ -122,13 +131,22 @@ export async function sendExotelWhatsAppSession(params: {
   content: Record<string, unknown>;
   recipientType?: ExotelWhatsAppRecipientType;
   statusCallback?: string | null;
+  /** WhatsApp / Exotel message id of the message being quoted (contextual reply). */
+  replyToMessageId?: string | null;
 }): Promise<{ sid: string }> {
   const from = normalizePhone(params.fromE164);
   const to =
     params.recipientType === "group" ? params.to.trim() : normalizePhone(params.to);
   const statusCallback = params.statusCallback ?? getExotelWhatsAppWebhookUrl();
   return postExotelWhatsAppPayload(
-    buildMessageEnvelope(from, to, params.content, statusCallback, params.recipientType ?? "individual")
+    buildMessageEnvelope(
+      from,
+      to,
+      params.content,
+      statusCallback,
+      params.recipientType ?? "individual",
+      params.replyToMessageId
+    )
   );
 }
 

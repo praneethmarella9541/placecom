@@ -54,9 +54,14 @@
     --color-blue: #2563EB;
     --color-gold: #D97706;
 
-    /* ── Sidebar (always dark regardless of theme) ───────────── */
-    --sidebar-bg: #0F0E14;
-    --sidebar-border: rgba(255, 255, 255, 0.07);
+    /* ── Sidebar (warm light — matches app shell) ─────────────── */
+    --sidebar-bg: #FDFCFA;
+    --sidebar-border: rgba(20, 18, 14, 0.09);
+    --sidebar-text: var(--color-text-muted);
+    --sidebar-text-faint: var(--color-text-faint);
+    --sidebar-hover: var(--color-surface-offset);
+    --sidebar-active-bg: var(--color-primary-tint);
+    --sidebar-active-text: var(--color-primary);
 
     /* ── Radii ───────────────────────────────────────────────── */
     --radius-sm: 4px;
@@ -229,6 +234,15 @@
     background: var(--color-surface);
     box-shadow: var(--shadow-md);
     transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  }
+
+  /* ── Workspace sidebar shell ───────────────────────────────── */
+  .workspace-sidebar {
+    background: var(--sidebar-bg);
+    border-color: var(--sidebar-border);
+    background-image:
+      radial-gradient(ellipse 120% 80% at 0% 0%, rgba(37, 99, 235, 0.04), transparent 55%),
+      linear-gradient(180deg, #ffffff 0%, var(--sidebar-bg) 100%);
   }
 
   .card {

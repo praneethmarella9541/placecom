@@ -5,7 +5,9 @@ import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 import { hasOpenWhatsAppSessionForPeer } from "@/lib/whatsapp-session";
 import { formatTemplatePreview } from "@/lib/whatsapp-template";
 import { resolveWhatsAppTemplateAsync } from "@/lib/whatsapp-template-resolve";
+import { resolveExotelQuoteMessageId } from "@/lib/exotel-whatsapp-reply";
 import { dispatchExotelWhatsAppOutbound } from "@/lib/whatsapp-outbound-content";
+import { resolveOutboundMediaUrl } from "@/lib/whatsapp-outbound-media-url";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import { isValidE164, normalizePhone } from "@/lib/phone";
@@ -107,10 +109,11 @@ export async function POST(request: Request) {
   }
 
   let replyToId: string | null = null;
+  let replyToMessageId: string | null = null;
   if (replyToIdRaw) {
     const { data: ref, error: refErr } = await supabase
       .from("whatsapp_messages")
-      .select("id, peer_e164, business_e164, deleted_at")
+      .select("id, peer_e164, business_e164, deleted_at, message_sid")
       .eq("id", replyToIdRaw)
       .maybeSingle();
     if (
@@ -123,9 +126,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid reply reference for this chat" }, { status: 400 });
     }
     replyToId = ref.id as string;
+    replyToMessageId = (ref.message_sid as string | null)?.trim() || null;
+    if (replyToMessageId) {
+      replyToMessageId = await resolveExotelQuoteMessageId(replyToMessageId);
+    } else {
+      console.warn("[whatsapp/send] reply reference has no message_sid; sending without quote context");
+    }
   }
 
   try {
+    let resolvedMediaUrl = body?.mediaUrl?.trim() || undefined;
+    if (resolvedMediaUrl && messageTypeRaw !== "template" && messageTypeRaw !== "text") {
+      resolvedMediaUrl = await resolveOutboundMediaUrl({
+        mediaUrl: resolvedMediaUrl,
+        userId: user.id,
+        request,
+      });
+    }
+
     const sent = await dispatchExotelWhatsAppOutbound({
       fromE164: businessLine,
       toE164: normalizePhone(to),
@@ -134,9 +152,10 @@ export async function POST(request: Request) {
       templateName,
       templateLanguage,
       templateVariables,
-      mediaUrl: body?.mediaUrl,
+      mediaUrl: resolvedMediaUrl,
       mediaCaption: body?.mediaCaption,
       mediaFilename: body?.mediaFilename,
+      replyToMessageId,
       location: body?.location
         ? {
             latitude: Number(body.location.latitude),

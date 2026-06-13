@@ -461,6 +461,7 @@ export async function listGoogleFormsPage(
     fields: "nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)",
     orderBy: "modifiedTime desc,name_natural",
     q,
+    corpora: "allDrives",
     includeItemsFromAllDrives: "true",
     supportsAllDrives: "true",
   });

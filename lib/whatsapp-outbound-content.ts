@@ -19,6 +19,8 @@ export type OutboundSendInput = {
   location?: { latitude: number; longitude: number; name?: string; address?: string };
   interactiveBody?: string;
   interactiveButtons?: Array<{ id: string; title: string }>;
+  /** Provider message id (message_sid) to quote in a contextual reply. */
+  replyToMessageId?: string | null;
 };
 
 export type OutboundSendResult = {
@@ -56,6 +58,7 @@ export async function dispatchExotelWhatsAppOutbound(input: OutboundSendInput): 
     const { sid } = await sendExotelWhatsAppSession({
       fromE164: input.fromE164,
       to: input.toE164,
+      replyToMessageId: input.replyToMessageId,
       content: { type: "text", text: { preview_url: false, body } },
     });
     return { sid, logBody: body, contentType: "text", numMedia: 0, mediaUrl: null };
@@ -72,6 +75,7 @@ export async function dispatchExotelWhatsAppOutbound(input: OutboundSendInput): 
     const { sid } = await sendExotelWhatsAppSession({
       fromE164: input.fromE164,
       to: input.toE164,
+      replyToMessageId: input.replyToMessageId,
       content: {
         type: "image",
         image: { link, ...(input.mediaCaption ? { caption: input.mediaCaption.slice(0, 1024) } : {}) },
@@ -90,6 +94,7 @@ export async function dispatchExotelWhatsAppOutbound(input: OutboundSendInput): 
     const { sid } = await sendExotelWhatsAppSession({
       fromE164: input.fromE164,
       to: input.toE164,
+      replyToMessageId: input.replyToMessageId,
       content: {
         type: "video",
         video: { link, ...(input.mediaCaption ? { caption: input.mediaCaption.slice(0, 1024) } : {}) },
@@ -108,6 +113,7 @@ export async function dispatchExotelWhatsAppOutbound(input: OutboundSendInput): 
     const { sid } = await sendExotelWhatsAppSession({
       fromE164: input.fromE164,
       to: input.toE164,
+      replyToMessageId: input.replyToMessageId,
       content: { type: "audio", audio: { link } },
     });
     return { sid, logBody: "[Audio]", contentType: "audio", numMedia: 1, mediaUrl: link };
@@ -118,6 +124,7 @@ export async function dispatchExotelWhatsAppOutbound(input: OutboundSendInput): 
     const { sid } = await sendExotelWhatsAppSession({
       fromE164: input.fromE164,
       to: input.toE164,
+      replyToMessageId: input.replyToMessageId,
       content: {
         type: "document",
         document: {
@@ -144,6 +151,7 @@ export async function dispatchExotelWhatsAppOutbound(input: OutboundSendInput): 
     const { sid } = await sendExotelWhatsAppSession({
       fromE164: input.fromE164,
       to: input.toE164,
+      replyToMessageId: input.replyToMessageId,
       content: {
         type: "location",
         location: {
@@ -166,6 +174,7 @@ export async function dispatchExotelWhatsAppOutbound(input: OutboundSendInput): 
     const { sid } = await sendExotelWhatsAppSession({
       fromE164: input.fromE164,
       to: input.toE164,
+      replyToMessageId: input.replyToMessageId,
       content: {
         type: "interactive",
         interactive: {

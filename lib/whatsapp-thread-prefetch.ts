@@ -42,6 +42,12 @@ export function getCachedWhatsAppMessages(peer: string): WhatsAppPrefetchMessage
   return entry?.messages ?? null;
 }
 
+/** True when we have any cached messages for this peer (even if stale). */
+export function hasCachedWhatsAppThread(peer: string): boolean {
+  const msgs = getCachedWhatsAppMessages(peer);
+  return Boolean(msgs?.length);
+}
+
 export function writeWhatsAppThreadCache(peer: string, messages: WhatsAppPrefetchMessage[]): void {
   const key = canonicalPeer(peer);
   if (!key) return;

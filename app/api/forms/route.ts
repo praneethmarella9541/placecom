@@ -12,6 +12,61 @@ function insufficientFormsScope(body: string): boolean {
   );
 }
 
+type ListedForm = {
+  id: string;
+  name: string;
+  mimeType: string;
+  modifiedTime: string;
+  formTitle?: string | null;
+};
+
+async function listFormsPage(
+  accessToken: string,
+  options: { pageSize: number; pageToken?: string; search?: string }
+): Promise<{ forms: ListedForm[]; nextPageToken?: string }> {
+  const search = options.search?.trim().toLowerCase();
+  const targetSize = options.pageSize;
+  const collected: ListedForm[] = [];
+  let driveToken = options.pageToken;
+  let lastDriveNextToken: string | undefined;
+  const maxDrivePages = search ? 6 : 1;
+
+  for (let page = 0; page < maxDrivePages && collected.length < targetSize; page++) {
+    const drivePage = await listGoogleFormsPage(accessToken, {
+      pageSize: Math.min(100, Math.max(targetSize, 30)),
+      pageToken: driveToken,
+    });
+    lastDriveNextToken = drivePage.nextPageToken;
+
+    const titleMap = await getFormTitlesBatch(
+      accessToken,
+      drivePage.files.map((f) => f.id)
+    );
+
+    for (const f of drivePage.files) {
+      const formTitle = titleMap[f.id] ?? null;
+      const displayTitle = formTitle?.trim() || f.name?.trim() || "";
+      if (search) {
+        const haystack = `${displayTitle} ${f.name}`.toLowerCase();
+        if (!haystack.includes(search)) continue;
+      }
+      collected.push({ ...f, formTitle });
+      if (collected.length >= targetSize) break;
+    }
+
+    if (collected.length >= targetSize || !drivePage.nextPageToken) break;
+    driveToken = drivePage.nextPageToken;
+  }
+
+  const hasMore =
+    collected.length >= targetSize && Boolean(lastDriveNextToken);
+
+  return {
+    forms: collected.slice(0, targetSize),
+    nextPageToken: hasMore ? lastDriveNextToken : undefined,
+  };
+}
+
 export async function GET(request: Request) {
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
@@ -27,28 +82,18 @@ export async function GET(request: Request) {
   );
 
   try {
-    const page = await listGoogleFormsPage(auth.accessToken, {
+    const page = await listFormsPage(auth.accessToken, {
       pageSize,
       pageToken,
       search,
     });
 
-    // Fetch real form titles from the Forms API in parallel.
-    // Drive's `name` field stays as the original file name ("Untitled form")
-    // even after the user renames the form inside Google Forms, so we always
-    // need info.title from the Forms API to get the actual title.
-    const titleMap = await getFormTitlesBatch(
-      auth.accessToken,
-      page.files.map((f) => f.id)
-    );
-
-    const forms = page.files.map((f) => ({
-      ...f,
-      formTitle: titleMap[f.id] ?? null,
-    }));
-
     return NextResponse.json(
-      { forms, nextPageToken: page.nextPageToken },
+      {
+        forms: page.forms,
+        nextPageToken: page.nextPageToken,
+        connectedEmail: auth.gmailAddress ?? null,
+      },
       { headers: { "Cache-Control": "private, max-age=60, stale-while-revalidate=180" } }
     );
   } catch (e) {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ChevronDown,
@@ -390,6 +391,7 @@ function ResponsesTab({
 }
 
 export function FormEditor({ formId }: { formId: string }) {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [saveBusy, setSaveBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -398,6 +400,13 @@ export function FormEditor({ formId }: { formId: string }) {
   const [linkedSheetId, setLinkedSheetId] = useState<string | null>(null);
   const [copyDone, setCopyDone] = useState(false);
   const [tab, setTab] = useState<"questions" | "responses" | "settings" | "preview">("questions");
+
+  useEffect(() => {
+    const requested = searchParams.get("tab");
+    if (requested === "responses" || requested === "settings" || requested === "preview") {
+      setTab(requested);
+    }
+  }, [searchParams]);
 
   const load = useCallback(async () => {
     setLoading(true);

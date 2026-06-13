@@ -67,3 +67,32 @@ export function peerInitials(peer: string, name?: string): string {
   if (digits.length >= 2) return digits.slice(-2);
   return peer.slice(0, 2).toUpperCase() || "?";
 }
+
+/** Saved contacts filtered by name or phone query (for forward / new chat pickers). */
+export function filterSavedContacts(
+  contacts: Record<string, string>,
+  query: string
+): WaContactRow[] {
+  const q = query.trim().toLowerCase();
+  const seen = new Set<string>();
+  const rows: WaContactRow[] = [];
+
+  for (const [peer, name] of Object.entries(contacts)) {
+    const trimmed = name.trim();
+    if (!peer.trim() || !trimmed) continue;
+    const canonical = canonicalPeer(peer);
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    rows.push({ peer_e164: canonical, name: trimmed });
+  }
+
+  rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  if (!q) return rows;
+
+  return rows.filter(
+    (c) =>
+      c.name.toLowerCase().includes(q) ||
+      c.peer_e164.includes(q) ||
+      formatPhone(c.peer_e164).toLowerCase().includes(q)
+  );
+}

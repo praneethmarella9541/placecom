@@ -12,13 +12,11 @@ import {
   IconX,
   IconPlus,
   IconMessageChat,
-  IconSms,
 } from "@/components/Icons";
 import { WhatsAppBroadcastPanel } from "@/components/WhatsAppBroadcastPanel";
-import { SmsBroadcastPanel } from "@/components/SmsBroadcastPanel";
 import { MailMergePanel } from "@/components/MailMergePanel";
 
-type Channel = "mail" | "sms" | "whatsapp";
+type Channel = "mail" | "whatsapp";
 type MailSubView = "broadcast" | "merge";
 type PendingFile = { file: File; base64: string };
 
@@ -86,7 +84,7 @@ function BroadcastingPageInner() {
 
   useEffect(() => {
     const c = searchParams.get("channel");
-    if (c === "whatsapp" || c === "sms" || c === "mail") setChannelState(c);
+    if (c === "whatsapp" || c === "mail") setChannelState(c);
     else setChannelState("mail");
   }, [searchParams]);
 
@@ -207,7 +205,7 @@ function BroadcastingPageInner() {
   };
 
   return (
-    <div className={cn("mx-auto space-y-5", channel === "whatsapp" || channel === "sms" ? "max-w-5xl" : "max-w-4xl")}>
+    <div className={cn("mx-auto space-y-5", channel === "whatsapp" ? "max-w-5xl" : "max-w-4xl")}>
 
       {/* ── Header ───────────────────────────────────────────── */}
       <div className="animate-fade-up flex items-end justify-between" style={{ animationDuration: "0.3s" }}>
@@ -216,7 +214,7 @@ function BroadcastingPageInner() {
             {titleCase("Broadcasting")}
           </h1>
           <p className="mt-0.5 text-[13px] text-[var(--color-text-faint)]">
-            {titleCase("Reach your audience by mail, SMS, or WhatsApp")}
+            {titleCase("Reach your audience by mail or WhatsApp")}
           </p>
         </div>
       </div>
@@ -224,7 +222,6 @@ function BroadcastingPageInner() {
       {/* ── Channel tabs ─────────────────────────────────────── */}
       <div className="inline-flex rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1">
         <ChannelTab icon={IconMail}        label="Mail"      active={channel === "mail"}      onClick={() => selectChannel("mail")} />
-        <ChannelTab icon={IconSms}         label="SMS"       active={channel === "sms"}       onClick={() => selectChannel("sms")} />
         <ChannelTab icon={IconMessageChat} label="WhatsApp"  active={channel === "whatsapp"}  onClick={() => selectChannel("whatsapp")} />
       </div>
 
@@ -489,8 +486,6 @@ function BroadcastingPageInner() {
             </div>
           )}
         </div>
-      ) : channel === "sms" ? (
-        <SmsBroadcastPanel />
       ) : (
         <WhatsAppBroadcastPanel />
       )}

@@ -6,23 +6,45 @@ import {
   sendWhatsAppSessionMessage,
   toWhatsAppAddress,
 } from "@/lib/whatsapp";
-import { sendExotelWhatsAppText, isExotelWhatsAppConfigured } from "@/lib/exotel-whatsapp";
+import {
+  sendExotelWhatsAppText,
+  sendExotelWhatsAppTemplate,
+  isExotelWhatsAppConfigured,
+} from "@/lib/exotel-whatsapp";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 import { getUserOr401 } from "@/lib/request-auth";
 import { normalizeToE164 } from "@/lib/broadcast-phones";
 import { peerForOutbound } from "@/lib/whatsapp-address";
 import { normalizePhone } from "@/lib/phone";
+import { resolveWhatsAppTemplateAsync } from "@/lib/whatsapp-template-resolve";
+import { formatTemplatePreview } from "@/lib/whatsapp-template";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-const MAX_RECIPIENTS = 50;
+const MAX_RECIPIENTS = 200;
 const MS_BETWEEN_SENDS = 550;
 
-type Body = {
+type SessionBody = {
+  mode?: "session";
   recipients: string[];
   text: string;
 };
+
+type TemplateMergeRow = {
+  phone: string;
+  /** Values for {{1}}, {{2}}, … */
+  variables: string[];
+};
+
+type TemplateBody = {
+  mode: "template";
+  rows: TemplateMergeRow[];
+  templateName?: string;
+  templateLanguage?: string;
+};
+
+type Body = SessionBody | TemplateBody;
 
 export async function POST(request: Request) {
   if (!isWhatsAppSendConfigured()) {
@@ -47,37 +69,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const rawList = Array.isArray(body.recipients) ? body.recipients : [];
-  const recipients = Array.from(
-    new Set(
-      rawList
-        .map((r) => normalizeToE164(String(r)))
-        .filter((r): r is string => r !== null)
-    )
-  );
-
-  const text = (body.text ?? "").trim();
-  if (recipients.length === 0) {
-    return NextResponse.json(
-      { error: "Add at least one valid phone in E.164 format (e.g. +14155552671)" },
-      { status: 400 }
-    );
-  }
-  if (recipients.length > MAX_RECIPIENTS) {
-    return NextResponse.json(
-      { error: `Too many recipients (max ${MAX_RECIPIENTS} per batch)` },
-      { status: 400 }
-    );
-  }
-  if (!text) {
-    return NextResponse.json({ error: "Message body is required" }, { status: 400 });
-  }
-
   const useExotel = isExotelWhatsAppConfigured();
-  let businessLine: string | null = null;
   const client = useExotel ? null : getTwilioClient();
   const fromAddr = useExotel ? null : getWhatsAppFromAddress();
 
+  let businessLine: string | null = null;
   if (useExotel) {
     const lineResult = await getUserWhatsAppLine(supabase, user.id);
     if (!lineResult.ok) {
@@ -90,6 +86,90 @@ export async function POST(request: Request) {
 
   const failed: { phone: string; error: string }[] = [];
   let sent = 0;
+
+  /* ── Template broadcast mode ───────────────────────────────── */
+  if (body.mode === "template") {
+    if (!useExotel) {
+      return NextResponse.json(
+        { error: "Template broadcast requires Exotel WhatsApp (Twilio does not support this mode)." },
+        { status: 400 }
+      );
+    }
+
+    const rawRows = Array.isArray(body.rows) ? body.rows : [];
+    const rows = rawRows
+      .map((r) => ({ phone: normalizeToE164(String(r.phone || "")), variables: (r.variables ?? []).map(String) }))
+      .filter((r): r is { phone: string; variables: string[] } => r.phone !== null) as {
+        phone: string;
+        variables: string[];
+      }[];
+
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "No valid phone numbers found in the list." }, { status: 400 });
+    }
+    if (rows.length > MAX_RECIPIENTS) {
+      return NextResponse.json({ error: `Too many recipients (max ${MAX_RECIPIENTS} per batch)` }, { status: 400 });
+    }
+
+    const templateConfig = await resolveWhatsAppTemplateAsync(body.templateName);
+
+    for (let i = 0; i < rows.length; i++) {
+      const { phone, variables } = rows[i];
+      const vars = variables.slice(0, templateConfig.bodyParamCount);
+      try {
+        const result = await sendExotelWhatsAppTemplate({
+          fromE164: businessLine!,
+          toE164: normalizePhone(phone),
+          templateName: templateConfig.name,
+          languageCode: body.templateLanguage ?? templateConfig.languageCode,
+          bodyVariables: vars,
+        });
+        const logBody = formatTemplatePreview(templateConfig, vars);
+        const { error: logErr } = await supabase.from("whatsapp_messages").insert({
+          user_id: user.id,
+          direction: "outbound",
+          peer_e164: peerForOutbound(phone),
+          business_e164: businessLine,
+          from_addr: businessLine,
+          to_addr: normalizePhone(phone),
+          body: logBody,
+          message_sid: result.sid,
+          num_media: 0,
+          content_type: "template",
+          delivery_status: "sent",
+        });
+        if (logErr && !String(logErr.message).includes("does not exist")) {
+          console.warn("[broadcast/whatsapp/template] log insert:", logErr.message);
+        }
+        sent++;
+      } catch (e) {
+        failed.push({ phone, error: e instanceof Error ? e.message : "Send failed" });
+      }
+      if (i < rows.length - 1) await new Promise((r) => setTimeout(r, MS_BETWEEN_SENDS));
+    }
+
+    return NextResponse.json({ sent, failed });
+  }
+
+  /* ── Session message mode (existing behavior) ───────────────── */
+  const rawList = Array.isArray((body as SessionBody).recipients) ? (body as SessionBody).recipients : [];
+  const recipients = Array.from(
+    new Set(rawList.map((r) => normalizeToE164(String(r))).filter((r): r is string => r !== null))
+  );
+
+  const text = ((body as SessionBody).text ?? "").trim();
+  if (recipients.length === 0) {
+    return NextResponse.json(
+      { error: "Add at least one valid phone in E.164 format (e.g. +91 98765 43210)" },
+      { status: 400 }
+    );
+  }
+  if (recipients.length > MAX_RECIPIENTS) {
+    return NextResponse.json({ error: `Too many recipients (max ${MAX_RECIPIENTS} per batch)` }, { status: 400 });
+  }
+  if (!text) {
+    return NextResponse.json({ error: "Message body is required" }, { status: 400 });
+  }
 
   for (let i = 0; i < recipients.length; i++) {
     const to = recipients[i];
@@ -138,12 +218,9 @@ export async function POST(request: Request) {
       }
       sent++;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Send failed";
-      failed.push({ phone: to, error: msg });
+      failed.push({ phone: to, error: e instanceof Error ? e.message : "Send failed" });
     }
-    if (i < recipients.length - 1) {
-      await new Promise((r) => setTimeout(r, MS_BETWEEN_SENDS));
-    }
+    if (i < recipients.length - 1) await new Promise((r) => setTimeout(r, MS_BETWEEN_SENDS));
   }
 
   return NextResponse.json({ sent, failed });

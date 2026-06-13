@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getWebhookBaseUrl } from "@/lib/call-recording-url";
+import { getWebhookBaseUrl, getWebhookBaseUrlFromRequest } from "@/lib/call-recording-url";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import {
   getExotelCredentials,
@@ -45,10 +45,12 @@ export function maxBytesForKind(kind: string): number {
 }
 
 /** Public HTTPS URL that Exotel/Meta can fetch without auth. */
-export function getWhatsAppMediaServeUrl(objectPath: string): string {
-  const base = getWebhookBaseUrl();
+export function getWhatsAppMediaServeUrl(objectPath: string, publicBaseUrl?: string | null): string {
+  const base = publicBaseUrl ?? getWebhookBaseUrl();
   if (!base) {
-    throw new Error("NEXT_PUBLIC_APP_URL is not configured for WhatsApp media delivery.");
+    throw new Error(
+      "App URL is not configured for WhatsApp media delivery. Set NEXT_PUBLIC_APP_URL or EXOTEL_WEBHOOK_BASE_URL."
+    );
   }
   return `${base}/api/whatsapp/serve-media?p=${encodeURIComponent(objectPath)}`;
 }
@@ -58,6 +60,7 @@ export async function uploadWhatsAppMedia(params: {
   file: Buffer;
   filename: string;
   mimeType: string;
+  publicBaseUrl?: string | null;
 }): Promise<{ publicUrl: string; kind: "image" | "video" | "audio" | "document"; storagePath: string }> {
   await ensureBucket();
 
@@ -81,7 +84,7 @@ export async function uploadWhatsAppMedia(params: {
   });
   if (error) throw new Error(error.message);
 
-  const publicUrl = getWhatsAppMediaServeUrl(objectPath);
+  const publicUrl = getWhatsAppMediaServeUrl(objectPath, params.publicBaseUrl);
   return { publicUrl, kind, storagePath: objectPath };
 }
 
@@ -154,13 +157,24 @@ export async function downloadExotelWhatsAppMedia(params: {
     }
   }
 
-  if (!messageSid) return null;
-
   const creds = getExotelCredentials();
   if (!creds) return null;
   const auth = getExotelBasicAuthHeader(creds);
   const hosts = getExotelApiHostCandidates();
 
+  // ── 1. media/{mediaId} — stable per-object endpoint, try first ─────────
+  if (mediaId) {
+    for (const h of hosts) {
+      const url = `https://${h}/v2/accounts/${creds.sid}/media/${mediaId}`;
+      const hit = await fetchBuffer(url, { Authorization: auth });
+      if (hit?.buffer.length) return hit;
+      console.warn("[downloadExotelWhatsAppMedia] media-id miss:", url);
+    }
+  }
+
+  if (!messageSid) return null;
+
+  // ── 2. GET message record and extract embedded media URL ───────────────
   for (const h of hosts) {
     const msgUrl = `https://${h}/v2/accounts/${creds.sid}/messages/${messageSid}`;
     try {
@@ -183,12 +197,8 @@ export async function downloadExotelWhatsAppMedia(params: {
     }
   }
 
+  // ── 3. Twilio-style sub-resource paths (last resort) ──────────────────
   const candidates: string[] = [];
-  if (mediaId) {
-    for (const h of hosts) {
-      candidates.push(`https://${h}/v2/accounts/${creds.sid}/media/${mediaId}`);
-    }
-  }
   for (const h of hosts) {
     candidates.push(`https://${h}/v2/accounts/${creds.sid}/messages/${messageSid}/media`);
     candidates.push(`https://${h}/v2/accounts/${creds.sid}/messages/${messageSid}/media/0`);
@@ -237,7 +247,7 @@ export async function fetchAndStoreExotelMedia(params: {
     }
   }
 
-  const proxy = whatsAppMediaProxyPath({ messageSid, mediaLink });
+  const proxy = whatsAppMediaProxyPath({ messageSid, mediaId, mediaLink });
   if (proxy) {
     console.warn("[fetchAndStoreExotelMedia] using proxy URL:", proxy);
     return proxy;

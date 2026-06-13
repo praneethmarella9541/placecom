@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
+import { getWebhookBaseUrlFromRequest } from "@/lib/call-recording-url";
 import { uploadWhatsAppMedia } from "@/lib/whatsapp-media-storage";
 
 export const runtime = "nodejs";
@@ -10,7 +11,10 @@ export async function POST(request: Request) {
 
   const form = await request.formData().catch(() => null);
   const file = form?.get("file");
-  if (!file || !(file instanceof File)) {
+
+  // React Native's fetch sends FormData files as Blob (not File). Both extend
+  // Blob so we accept any Blob-like object that has arrayBuffer().
+  if (!file || !(file instanceof Blob)) {
     return NextResponse.json({ error: "file is required" }, { status: 400 });
   }
 
@@ -19,19 +23,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Empty file" }, { status: 400 });
   }
 
+  // File extends Blob and has a .name; plain Blob doesn't. Fall back gracefully.
+  const filename = (file instanceof File ? file.name : null) || "upload";
+  const mimeType = file.type || "application/octet-stream";
+
   try {
+    const publicBaseUrl = getWebhookBaseUrlFromRequest(request);
     const { publicUrl, kind } = await uploadWhatsAppMedia({
       userId: user.id,
       file: buffer,
-      filename: file.name || "upload",
-      mimeType: file.type || "application/octet-stream",
+      filename,
+      mimeType,
+      publicBaseUrl,
     });
     return NextResponse.json({
       ok: true,
       url: publicUrl,
       kind,
       messageType: kind,
-      filename: file.name,
+      filename,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Upload failed";

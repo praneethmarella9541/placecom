@@ -4,14 +4,30 @@ export function isWhatsAppMediaPlaceholderBody(body: string | null | undefined):
   return MEDIA_PLACEHOLDER_RE.test((body ?? "").trim());
 }
 
-/** Relative API path the mobile app can load with a Bearer token. */
+/** Relative API path the mobile app can load with a Bearer token.
+ *
+ * Priority order:
+ *  1. ?url=  — direct CDN/presigned link (fastest, but may expire)
+ *  2. ?mediaId= — stable Exotel media-object id (preferred over msgSid)
+ *  3. ?msgSid=  — Exotel message SID (last resort; message-record endpoint
+ *                  often returns 400 for WhatsApp messages)
+ */
 export function whatsAppMediaProxyPath(params: {
   messageSid?: string | null;
+  mediaId?: string | null;
   mediaLink?: string | null;
 }): string | null {
   const link = params.mediaLink?.trim();
   if (link?.startsWith("http")) {
-    return `/api/whatsapp/media?url=${encodeURIComponent(link)}`;
+    // Include mediaId as a secondary hint so the proxy can fall back to it
+    // if the presigned link has expired by the time it is fetched.
+    const base = `/api/whatsapp/media?url=${encodeURIComponent(link)}`;
+    const mid = params.mediaId?.trim();
+    return mid ? `${base}&mediaId=${encodeURIComponent(mid)}` : base;
+  }
+  const mid = params.mediaId?.trim();
+  if (mid) {
+    return `/api/whatsapp/media?mediaId=${encodeURIComponent(mid)}`;
   }
   const sid = params.messageSid?.trim();
   if (sid) {

@@ -25,17 +25,18 @@ export async function GET(request: Request) {
   }
 
   const params = new URL(request.url).searchParams;
-  const msgSid = params.get("msgSid")?.trim();
-  const directUrl = params.get("url")?.trim();
+  const msgSid   = params.get("msgSid")?.trim()   || null;
+  const mediaId  = params.get("mediaId")?.trim()  || null;
+  const directUrl = params.get("url")?.trim()     || null;
 
-  if (!msgSid && !directUrl) {
-    return NextResponse.json({ error: "Provide msgSid or url query param" }, { status: 400 });
+  if (!msgSid && !mediaId && !directUrl) {
+    return NextResponse.json({ error: "Provide msgSid, mediaId, or url query param" }, { status: 400 });
   }
 
   const downloaded = await downloadExotelWhatsAppMedia({
-    mediaLink: directUrl ?? null,
-    mediaId: null,
-    messageSid: msgSid ?? null,
+    mediaLink: directUrl,
+    mediaId,
+    messageSid: msgSid,
   });
 
   if (downloaded?.buffer.length) {

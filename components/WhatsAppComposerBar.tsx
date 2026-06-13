@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import type { WhatsAppTemplateMeta } from "@/lib/whatsapp-template-shared";
 import { uploadWhatsAppMediaFile } from "@/lib/whatsapp-outbound-media-client";
-import { IconSend, IconX } from "@/components/Icons";
+import { IconSend } from "@/components/Icons";
 import { WhatsAppEmojiPicker } from "@/components/WhatsAppEmojiPicker";
 import { WhatsAppTemplatePanel } from "@/components/WhatsAppTemplatePanel";
 import {
@@ -90,9 +90,10 @@ export function WhatsAppComposerBar({
   }, []);
 
   useEffect(() => {
+    const previewUrls = previewUrlsRef.current;
     return () => {
-      for (const url of Array.from(previewUrlsRef.current)) URL.revokeObjectURL(url);
-      previewUrlsRef.current.clear();
+      for (const url of Array.from(previewUrls)) URL.revokeObjectURL(url);
+      previewUrls.clear();
     };
   }, []);
 

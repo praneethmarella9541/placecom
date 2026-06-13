@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { titleCase } from "@/lib/title-case";
 import { normalizePhoneList } from "@/lib/broadcast-phones";
 import {
   type WhatsAppTemplateMeta,
@@ -521,9 +520,9 @@ function TemplateMergeSection({
           {parseError && (
             <p className="mt-2 text-xs text-red-600 dark:text-red-400">{parseError}</p>
           )}
-          {parseResult?.skipped > 0 && (
+          {parseResult && (parseResult.skipped ?? 0) > 0 && (
             <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-              {parseResult.skipped} row{parseResult.skipped !== 1 ? "s" : ""} skipped (no valid phone number).
+              {parseResult.skipped ?? 0} row{(parseResult.skipped ?? 0) !== 1 ? "s" : ""} skipped (no valid phone number).
             </p>
           )}
         </div>

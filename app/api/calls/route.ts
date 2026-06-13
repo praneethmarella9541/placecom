@@ -56,6 +56,9 @@ async function refreshFromExotel(
     if (call.RecordingDuration) {
       updates.recording_duration_seconds = parseInt(String(call.RecordingDuration), 10) || null;
     }
+    if (call.ConversationDuration != null) {
+      updates.conversation_duration_seconds = parseInt(String(call.ConversationDuration), 10) || null;
+    }
     if (call.Duration) updates.duration_seconds = parseInt(call.Duration, 10) || null;
     if (call.StartTime) {
       try { updates.started_at = new Date(call.StartTime).toISOString(); } catch {}
@@ -113,7 +116,7 @@ export async function GET(request: Request) {
   const { data, error } = await supabase
     .from("call_logs")
     .select(
-      "id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, started_at, ended_at, created_at, recording_sid, recording_duration_seconds, transcript, transcript_segments"
+      "id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, conversation_duration_seconds, started_at, ended_at, created_at, recording_sid, recording_duration_seconds, transcript, transcript_segments"
     )
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })

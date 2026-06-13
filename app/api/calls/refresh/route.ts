@@ -88,6 +88,9 @@ export async function POST(request: Request) {
   if (call.RecordingDuration != null) {
     updates.recording_duration_seconds = parseInt(String(call.RecordingDuration), 10) || null;
   }
+  if (call.ConversationDuration != null) {
+    updates.conversation_duration_seconds = parseInt(String(call.ConversationDuration), 10) || null;
+  }
   if (call.Duration != null) updates.duration_seconds = parseInt(String(call.Duration), 10) || null;
   if (call.StartTime) {
     try { updates.started_at = new Date(call.StartTime).toISOString(); } catch {}

@@ -94,7 +94,11 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
     updated_at: new Date().toISOString(),
   };
 
-  if (dialDuration) updates.duration_seconds = parseInt(dialDuration, 10) || null;
+  if (dialDuration) {
+    const talk = parseInt(dialDuration, 10) || null;
+    updates.conversation_duration_seconds = talk;
+    updates.duration_seconds = talk;
+  }
   if (startTime) {
     try { updates.started_at = new Date(startTime).toISOString(); } catch {}
   }

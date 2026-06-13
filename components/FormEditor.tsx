@@ -11,7 +11,6 @@ import {
   Copy,
   CopyPlus,
   Download,
-  ExternalLink,
   Eye,
   Inbox,
   Loader2,
@@ -130,7 +129,8 @@ function ResponsesTab({
   const [error, setError] = useState<string | null>(null);
   const [nextPageToken, setNextPageToken] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [view, setView] = useState<"summary" | "individual">("summary");
+  const [view, setView] = useState<"summary" | "individual" | "spreadsheet">("summary");
+  const [sheetPreviewLoading, setSheetPreviewLoading] = useState(true);
 
   const load = useCallback(async (append = false, pageToken?: string) => {
     if (append) setLoadingMore(true);
@@ -203,33 +203,27 @@ function ResponsesTab({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] p-0.5">
-          {(["summary", "individual"] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => setView(v)}
-              className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-[12px] font-medium transition-colors ${
-                view === v
-                  ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              {titleCase(v === "summary" ? "Summary" : "Individual")}
-            </button>
-          ))}
+          {(["summary", "individual", ...(linkedSheetId ? (["spreadsheet"] as const) : [])] as const).map(
+            (v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => {
+                  setView(v);
+                  if (v === "spreadsheet") setSheetPreviewLoading(true);
+                }}
+                className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                  view === v
+                    ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                }`}
+              >
+                {titleCase(v === "summary" ? "Summary" : v === "individual" ? "Individual" : "Spreadsheet")}
+              </button>
+            )
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {linkedSheetId ? (
-            <a
-              href={`https://docs.google.com/spreadsheets/d/${linkedSheetId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-secondary inline-flex h-9 items-center gap-1.5 px-3 text-[12px]"
-            >
-              <ExternalLink className="h-3.5 w-3.5" strokeWidth={2} />
-              {titleCase("Open in Sheets")}
-            </a>
-          ) : null}
           {responses.length > 0 ? (
             <button
               type="button"
@@ -243,7 +237,29 @@ function ResponsesTab({
         </div>
       </div>
 
-      {responses.length === 0 ? (
+      {view === "spreadsheet" && linkedSheetId ? (
+        <div className="relative overflow-hidden rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-white">
+          {sheetPreviewLoading ? (
+            <div
+              className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-bg)]"
+              aria-live="polite"
+            >
+              <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+              <p className="text-sm font-medium text-[var(--color-text-muted)]">
+                {titleCase("Opening spreadsheet")}
+              </p>
+            </div>
+          ) : null}
+          <iframe
+            key={linkedSheetId}
+            title={titleCase("Spreadsheet preview")}
+            src={`https://drive.google.com/file/d/${encodeURIComponent(linkedSheetId)}/preview`}
+            className="h-[min(720px,70vh)] w-full border-0"
+            allow="autoplay"
+            onLoad={() => setSheetPreviewLoading(false)}
+          />
+        </div>
+      ) : responses.length === 0 ? (
         <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-12 text-center text-[13px] text-[var(--color-text-muted)]">
           {titleCase("No responses yet.")}
         </p>

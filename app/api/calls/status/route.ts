@@ -84,6 +84,9 @@ export async function POST(request: Request) {
   };
 
   if (duration) updates.duration_seconds = parseInt(duration, 10) || null;
+  if (conversationDuration) {
+    updates.conversation_duration_seconds = parseInt(conversationDuration, 10) || null;
+  }
   if (recordingDuration) updates.recording_duration_seconds = parseInt(recordingDuration, 10) || null;
   if (storedRecordingUrl) updates.recording_sid = storedRecordingUrl;
   if (startTime) updates.started_at = new Date(startTime).toISOString();

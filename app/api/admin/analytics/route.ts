@@ -69,7 +69,6 @@ type UserAnalytics = {
     callsOut: number;
     callsFailed: number;
     talkMinutes: number;
-    smsSent: number;
     whatsappSent: number;
     whatsappReceived: number;
     emailsSent: number;
@@ -207,17 +206,15 @@ export async function GET(request: Request) {
   const userIdsForQuery = teamUserIds;
 
   if (allTime) {
-    const [callEarliest, waEarliest, smsEarliest, emailEarliest, jobEarliest] = await Promise.all([
+    const [callEarliest, waEarliest, emailEarliest, jobEarliest] = await Promise.all([
       svc.from("call_logs").select("created_at").in("user_id", userIdsForQuery).order("created_at", { ascending: true }).limit(1).maybeSingle(),
       svc.from("whatsapp_messages").select("created_at").in("user_id", userIdsForQuery).order("created_at", { ascending: true }).limit(1).maybeSingle(),
-      svc.from("sms_messages").select("created_at").in("user_id", userIdsForQuery).order("created_at", { ascending: true }).limit(1).maybeSingle(),
       svc.from("email_tracking").select("sent_at").in("user_id", userIdsForQuery).order("sent_at", { ascending: true }).limit(1).maybeSingle(),
       svc.from("extraction_jobs").select("created_at").in("user_id", userIdsForQuery).order("created_at", { ascending: true }).limit(1).maybeSingle(),
     ]);
     const candidates = [
       callEarliest.data?.created_at,
       waEarliest.data?.created_at,
-      smsEarliest.data?.created_at,
       emailEarliest.data?.sent_at,
       jobEarliest.data?.created_at,
     ]
@@ -259,20 +256,13 @@ export async function GET(request: Request) {
   // Pull activity rows scoped to the team window. We do per-query .in() filters
   // so RLS-bypass (service role) is targeted, not table-wide. Upper bound
   // (`lt`) is exclusive next-day-midnight so `toUtc` itself is included.
-  const [callsRes, smsRes, waRes, emailsRes, jobsRes, ...emailEntries] = await Promise.all([
+  const [callsRes, waRes, emailsRes, jobsRes, ...emailEntries] = await Promise.all([
     svc
       .from("call_logs")
       .select(
         "id, call_sid, user_id, status, from_number, to_number, duration_seconds, conversation_duration_seconds, recording_duration_seconds, recording_sid, created_at"
       )
       .in("user_id", userIdsForQuery)
-      .gte("created_at", sinceIso)
-      .lt("created_at", queryUpperIso),
-    svc
-      .from("sms_messages")
-      .select("user_id, direction, created_at")
-      .in("user_id", userIdsForQuery)
-      .eq("direction", "outbound")
       .gte("created_at", sinceIso)
       .lt("created_at", queryUpperIso),
     svc
@@ -300,7 +290,7 @@ export async function GET(request: Request) {
 
   // Surface the first hard error if any; missing tables (e.g. migration not
   // applied) give a friendlier message than a 500.
-  for (const { error } of [callsRes, smsRes, waRes, emailsRes, jobsRes]) {
+  for (const { error } of [callsRes, waRes, emailsRes, jobsRes]) {
     if (error) {
       // 42P01 = table doesn't exist. Treat as empty rather than failing the
       // whole dashboard — different installs are at different migration levels.
@@ -354,7 +344,6 @@ export async function GET(request: Request) {
       callsOut: 0,
       callsFailed: 0,
       talkMinutes: 0,
-      smsSent: 0,
       whatsappSent: 0,
       whatsappReceived: 0,
       emailsSent: 0,
@@ -386,14 +375,6 @@ export async function GET(request: Request) {
         totals.talkMinutes += talkSecs / 60;
         addCallCost(totals.costs, talkSecs);
       }
-    }
-
-    // SMS (outbound only — that's "messages sent")
-    for (const r of (smsRes.data as MessageRow[] | null) ?? []) {
-      if (r.user_id !== uid) continue;
-      totals.smsSent += 1;
-      const i = dayIdx.get(dayKey(r.created_at));
-      if (i !== undefined) series[i].messages += 1;
     }
 
     // WhatsApp (inbound + outbound, billed per message)
@@ -453,7 +434,6 @@ export async function GET(request: Request) {
       callsIn: acc.callsIn + u.totals.callsIn,
       callsOut: acc.callsOut + u.totals.callsOut,
       talkMinutes: Math.round((acc.talkMinutes + u.totals.talkMinutes) * 10) / 10,
-      smsSent: acc.smsSent + u.totals.smsSent,
       whatsappSent: acc.whatsappSent + u.totals.whatsappSent,
       whatsappReceived: acc.whatsappReceived + u.totals.whatsappReceived,
       emailsSent: acc.emailsSent + u.totals.emailsSent,
@@ -473,7 +453,6 @@ export async function GET(request: Request) {
       callsIn: 0,
       callsOut: 0,
       talkMinutes: 0,
-      smsSent: 0,
       whatsappSent: 0,
       whatsappReceived: 0,
       emailsSent: 0,

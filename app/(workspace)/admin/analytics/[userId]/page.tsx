@@ -39,7 +39,6 @@ type Totals = {
   callsOut: number;
   callsFailed: number;
   talkMinutes: number;
-  smsSent: number;
   whatsappSent: number;
   whatsappReceived: number;
   emailsSent: number;
@@ -285,7 +284,6 @@ function MessagesByChannel({ totals }: { totals: Totals }) {
   const rows = [
     { label: "Email", value: totals.emailsSent, color: "var(--color-primary)" },
     { label: "WhatsApp", value: totals.whatsappSent, color: "#25D366" },
-    { label: "SMS", value: totals.smsSent, color: "#6366F1" },
   ];
   const max = Math.max(1, ...rows.map((r) => r.value));
   return (
@@ -407,12 +405,12 @@ export default function AdminUserAnalyticsPage() {
           {/* KPI row */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             <StatCard label="Total calls" value={String(totalCalls)} sub={`${user.totals.callsIn} in · ${user.totals.callsOut} out`} />
-            <StatCard label="Talk minutes" value={String(user.totals.costs.callBillableMinutes)} sub={`${user.totals.talkMinutes} min actual talk · rounded up per call`} />
+            <StatCard label="Talk minutes" value={String(user.totals.costs.callBillableMinutes)} />
             <StatCard label="Call cost" value={formatInr(user.totals.costs.callsInr)} sub="₹0.60/min, rounded up per call" accent="#1a73e8" />
             <StatCard label="WhatsApp msgs" value={String(user.totals.whatsappSent + user.totals.whatsappReceived)} sub={`${user.totals.whatsappSent} sent · ${user.totals.whatsappReceived} received`} accent="#25d366" />
             <StatCard label="WA cost" value={formatInr(user.totals.costs.whatsappInr)} sub={`${user.totals.costs.whatsappUtilityMsgs} utility · ${user.totals.costs.whatsappPromotionalMsgs} promo · ${user.totals.costs.whatsappSessionMsgs} session`} accent="#128c7e" />
             <StatCard label="Telephony total" value={formatInr(user.totals.costs.totalInr)} sub="Calls + WhatsApp" accent="#e37400" />
-            <StatCard label="Messages sent" value={String(user.totals.smsSent + user.totals.whatsappSent + user.totals.emailsSent)} sub={`${user.totals.emailsSent} email · ${user.totals.whatsappSent} WA · ${user.totals.smsSent} SMS`} />
+            <StatCard label="Messages sent" value={String(user.totals.whatsappSent + user.totals.emailsSent)} sub={`${user.totals.emailsSent} email · ${user.totals.whatsappSent} WA`} />
             <StatCard label="AI cost (USD)" value={`$${user.totals.costUsd.toFixed(2)}`} sub="OpenAI extraction" />
           </div>
 

@@ -33,7 +33,6 @@ type Totals = {
   callsOut: number;
   callsFailed: number;
   talkMinutes: number;
-  smsSent: number;
   whatsappSent: number;
   whatsappReceived: number;
   emailsSent: number;
@@ -47,7 +46,6 @@ type AccountTotals = {
   callsIn: number;
   callsOut: number;
   talkMinutes: number;
-  smsSent: number;
   whatsappSent: number;
   whatsappReceived: number;
   emailsSent: number;
@@ -284,7 +282,6 @@ export default function AdminAnalyticsPage() {
             <KpiCard icon={MessageSquare}  label="WA Sent"         value={accountTotals.whatsappSent}      accent="#25d366" />
             <KpiCard icon={Phone}          label="WA Received"     value={accountTotals.whatsappReceived}  accent="#128c7e" sub={`${accountTotals.costs.whatsappSessionMsgs + accountTotals.costs.whatsappUtilityMsgs + accountTotals.costs.whatsappPromotionalMsgs} billed msgs`} />
             <KpiCard icon={Mail}           label="Emails Sent"     value={accountTotals.emailsSent}        accent="#f29900" />
-            <KpiCard icon={MessageSquare}  label="SMS Sent"        value={accountTotals.smsSent}           accent="#188038" />
             <KpiCard icon={IndianRupee}    label="Telephony Cost"  value={formatInr(accountTotals.costs.totalInr)} accent="#e37400" sub={`Calls ${formatInr(accountTotals.costs.callsInr)} · WA ${formatInr(accountTotals.costs.whatsappInr)}`} />
             <KpiCard icon={TrendingDown}   label="AI Cost"         value={`$${accountTotals.costUsd.toFixed(4)}`} accent="#d93025" sub="OpenAI extraction" />
           </div>
@@ -319,7 +316,6 @@ export default function AdminAnalyticsPage() {
                   <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Call cost</th>
                   <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">WA cost</th>
                   <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Total</th>
-                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">SMS</th>
                   <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Emails</th>
                   <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Tokens</th>
                   <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Trend</th>
@@ -350,7 +346,6 @@ export default function AdminAnalyticsPage() {
                       <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{formatInr(u.totals.costs.callsInr)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{formatInr(u.totals.costs.whatsappInr)}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-medium text-[var(--color-text)]">{formatInr(u.totals.costs.totalInr)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{u.totals.smsSent}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{u.totals.emailsSent}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{formatNumber(tokens)}</td>
                       <td className="px-4 py-3">

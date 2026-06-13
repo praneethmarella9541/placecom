@@ -439,44 +439,44 @@ function PostSigninInboxSkeleton() {
   return (
     <div className="flex min-h-screen bg-[var(--color-bg)]">
       {/* Left nav sidebar */}
-      <aside className="hidden w-[220px] shrink-0 flex-col border-r border-white/[0.07] bg-[#0F0E14] md:flex">
+      <aside className="hidden w-[220px] shrink-0 flex-col border-r border-[var(--sidebar-border)] bg-[var(--sidebar-bg)] md:flex">
         {/* Logo */}
         <div className="flex h-14 items-center gap-2.5 px-4">
-          <div className="h-7 w-7 rounded-lg bg-white/[0.08]" />
-          <div className="h-4 w-24 rounded bg-white/[0.07]" />
+          <Skeleton className="skeleton-shimmer h-7 w-7 rounded-lg" />
+          <Skeleton className="skeleton-shimmer h-4 w-24 rounded" />
         </div>
         {/* Primary nav links */}
         <div className="flex flex-col gap-0.5 px-2 pt-1">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2.5">
-              <div className="h-[17px] w-[17px] rounded bg-white/[0.07]" />
-              <div
-                className="h-3 rounded bg-white/[0.07]"
+              <Skeleton className="skeleton-shimmer h-[17px] w-[17px] rounded" />
+              <Skeleton
+                className="skeleton-shimmer h-3 rounded"
                 style={{ width: `${[55, 65, 40, 60, 55][i]}%` }}
               />
             </div>
           ))}
         </div>
-        <div className="mx-4 my-3 h-px bg-white/[0.08]" />
+        <div className="mx-4 my-3 h-px bg-[var(--sidebar-border)]" />
         {/* Secondary nav links */}
         <div className="flex flex-col gap-0.5 px-2">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2">
-              <div className="h-[16px] w-[16px] rounded bg-white/[0.07]" />
-              <div
-                className="h-3 rounded bg-white/[0.07]"
+             <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2">
+              <Skeleton className="skeleton-shimmer h-[16px] w-[16px] rounded" />
+              <Skeleton
+                className="skeleton-shimmer h-3 rounded"
                 style={{ width: `${[45, 38, 70, 42][i]}%` }}
               />
             </div>
           ))}
         </div>
         {/* User profile footer */}
-        <div className="mt-auto border-t border-white/[0.08] px-2 py-2">
+        <div className="mt-auto border-t border-[var(--sidebar-border)] px-2 py-2">
           <div className="flex items-center gap-3 rounded-lg px-3 py-2.5">
-            <div className="h-8 w-8 shrink-0 rounded-full bg-white/[0.10]" />
+            <Skeleton className="skeleton-shimmer h-8 w-8 shrink-0 rounded-full" />
             <div className="flex flex-1 flex-col gap-1.5">
-              <div className="h-3 w-20 rounded bg-white/[0.07]" />
-              <div className="h-2.5 w-28 rounded bg-white/[0.07]" />
+              <Skeleton className="skeleton-shimmer h-3 w-20 rounded" />
+              <Skeleton className="skeleton-shimmer h-2.5 w-28 rounded" />
             </div>
           </div>
         </div>

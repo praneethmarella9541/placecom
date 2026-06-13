@@ -17,10 +17,10 @@ import {
   ScanText,
   UserRound,
   Users,
-  Video,
   X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
+import { clearAdminTeamPrefetchCache, prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { runLoginPrefetchChain } from "@/lib/workspace-feature-prefetch";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
@@ -39,9 +39,7 @@ const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 const primaryNav = [
   { href: "/inbox",     label: "Mail",       Icon: Inbox },
   { href: "/dashboard", label: "Extraction", Icon: ScanText },
-  { href: "/crm",       label: "CRM",        Icon: Contact },
   { href: "/calendar",  label: "Calendar",   Icon: Calendar },
-  { href: "/meetings",  label: "Meetings",   Icon: Video },
 ] as const;
 
 const secondaryNav = [
@@ -76,6 +74,7 @@ function NavItem({
   active,
   size = "md",
   onClick,
+  onMouseEnter,
 }: {
   href: string;
   label: string;
@@ -83,12 +82,14 @@ function NavItem({
   active: boolean;
   size?: "md" | "sm";
   onClick?: () => void;
+  onMouseEnter?: () => void;
 }) {
   return (
     <Link
       href={href}
       prefetch
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
       className={cn(
         "group relative flex items-center gap-3 rounded-xl px-3 transition-all duration-150",
         size === "md" ? "py-2.5 text-[13.5px]" : "py-2 text-[13px]",
@@ -223,6 +224,7 @@ function Sidebar({
   me,
   onSignOut,
   onClick,
+  onAdminHover,
 }: {
   links: { primary: typeof primaryNav[number][]; secondary: typeof secondaryNav[number][]; admin: typeof adminLink | null };
   pathname: string;
@@ -232,6 +234,7 @@ function Sidebar({
   me: MeMailboxResponse | null;
   onSignOut: () => void;
   onClick?: () => void;
+  onAdminHover?: () => void;
 }) {
   return (
     <aside className="flex h-full flex-col">
@@ -284,6 +287,7 @@ function Sidebar({
               active={pathname.startsWith(links.admin.href)}
               size="sm"
               onClick={onClick}
+              onMouseEnter={onAdminHover}
             />
           )}
         </div>
@@ -341,6 +345,19 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
     };
   }, [me?.hasStoredMailbox, me?.restrictedFeatures]);
 
+  /* Warm admin team data for admins (members, groups, Exotel numbers). */
+  useEffect(() => {
+    if (me?.role !== "admin") return;
+    const ac = new AbortController();
+    const t = window.setTimeout(() => {
+      void prefetchAdminTeamData({ signal: ac.signal });
+    }, 400);
+    return () => {
+      clearTimeout(t);
+      ac.abort();
+    };
+  }, [me?.role]);
+
   /* close mobile drawer on navigation */
   useEffect(() => { setMobileOpen(false); }, [pathname]);
 
@@ -368,13 +385,23 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
   }, [me?.role, me?.restrictedFeatures, searchParams]);
 
   async function signOut() {
+    clearAdminTeamPrefetchCache();
     await supabase.auth.signOut();
     window.location.href = "/";
   }
 
   const displayName = me?.displayUsername || me?.sessionEmail?.split("@")[0] || "User";
   const email       = me?.sessionEmail || "";
-  const sidebarProps = { links, pathname, searchParams, displayName, email, me, onSignOut: () => void signOut() };
+  const sidebarProps = {
+    links,
+    pathname,
+    searchParams,
+    displayName,
+    email,
+    me,
+    onSignOut: () => void signOut(),
+    onAdminHover: me?.role === "admin" ? () => void prefetchAdminTeamData() : undefined,
+  };
 
   return (
     <ExtractionRunProvider>
@@ -453,13 +480,48 @@ function WorkspaceChromeInner({ children }: { children: React.ReactNode }) {
   );
 }
 
+/* ─── Sidebar skeleton (warm light theme) ─────────────────── */
+function SidebarSkeleton() {
+  return (
+    <aside className="workspace-sidebar fixed inset-y-0 left-0 z-40 hidden w-[220px] border-r md:block">
+      <div className="flex h-14 items-center border-b border-[var(--sidebar-border)] px-4">
+        <div className="skeleton-shimmer h-6 w-28 rounded-md" />
+      </div>
+      <div className="flex flex-1 flex-col px-2 py-3">
+        <div className="flex flex-col gap-1">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skeleton-shimmer h-9 w-full rounded-xl" />
+          ))}
+        </div>
+        <div className="my-3 px-2">
+          <div className="h-px bg-[var(--sidebar-border)]" />
+        </div>
+        <div className="flex flex-col gap-1">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="skeleton-shimmer h-8 w-full rounded-xl" />
+          ))}
+        </div>
+      </div>
+      <div className="shrink-0 border-t border-[var(--sidebar-border)] px-2 py-2">
+        <div className="skeleton-shimmer h-10 w-full rounded-xl" />
+      </div>
+    </aside>
+  );
+}
+
 export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
   return (
     <Suspense
       fallback={
         <div className="flex min-h-screen bg-[var(--color-bg)]">
-          <div className="workspace-sidebar hidden w-[220px] shrink-0 border-r md:block" />
-          <div className="flex-1" />
+          <SidebarSkeleton />
+          <div className="flex-1 md:ml-[220px] md:px-6 md:py-6">
+            <div className="skeleton-shimmer h-7 w-56 rounded" />
+            <div className="mt-6 space-y-3">
+              <div className="skeleton-shimmer h-24 w-full rounded-[var(--radius-lg)]" />
+              <div className="skeleton-shimmer h-40 w-full rounded-[var(--radius-lg)]" />
+            </div>
+          </div>
         </div>
       }
     >

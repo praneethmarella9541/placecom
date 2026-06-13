@@ -59,6 +59,15 @@ type ExotelBalance = {
   debug?: { hasSid: boolean; hasKey: boolean; hasToken: boolean; sidHint?: string | null; keyHint?: string | null; tokenHint?: string | null };
 };
 
+type OpenAIBalance = {
+  balance: number | null;
+  currency: string;
+  totalGranted: number | null;
+  dateUpdated: string | null;
+  error?: string;
+  debug?: { hasKey: boolean };
+};
+
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -116,21 +125,28 @@ export default function AdminAnalyticsPage() {
   const [users, setUsers] = useState<UserAnalytics[]>([]);
   const [accountTotals, setAccountTotals] = useState<AccountTotals | null>(null);
   const [balance, setBalance] = useState<ExotelBalance | null>(null);
+  const [openaiBalance, setOpenaiBalance] = useState<OpenAIBalance | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState(14);
   const [range, setRange] = useState<DateRange>(() => rangeEndingToday(14));
 
-  // Fetch Exotel balance once on mount
+  // Fetch Exotel and OpenAI balances once on mount
   useEffect(() => {
     void (async () => {
       try {
-        const res = await fetch("/api/admin/exotel-balance");
-        const j = (await res.json()) as ExotelBalance;
-        setBalance(j);
+        const [exoRes, openaiRes] = await Promise.all([
+          fetch("/api/admin/exotel-balance"),
+          fetch("/api/admin/openai-balance"),
+        ]);
+        const exoData = (await exoRes.json()) as ExotelBalance;
+        const openaiData = (await openaiRes.json()) as OpenAIBalance;
+        setBalance(exoData);
+        setOpenaiBalance(openaiData);
       } catch {
         setBalance(null);
+        setOpenaiBalance(null);
       } finally {
         setBalanceLoading(false);
       }
@@ -190,48 +206,52 @@ export default function AdminAnalyticsPage() {
         </div>
       </header>
 
-      {/* ── Exotel balance card ─────────────────────────────── */}
+      {/* ── Account balances card ─────────────────────────────── */}
       <div className="surface-card rounded-2xl p-5">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-display text-[14px] font-semibold text-[var(--color-text)]">Exotel Account Balance</h2>
-          {balance?.dateUpdated && (
-            <span className="text-[11px] text-[var(--color-text-faint)]">Updated {balance.dateUpdated}</span>
-          )}
+          <h2 className="font-display text-[14px] font-semibold text-[var(--color-text)]">Account Balances</h2>
         </div>
         {balanceLoading ? (
           <div className="flex gap-4">
-            {[...Array(3)].map((_, i) => <div key={i} className="skeleton-shimmer h-14 flex-1 rounded-xl" />)}
-          </div>
-        ) : balance?.error || !balance || balance.balance === null ? (
-          <div className="space-y-1">
-            <p className="text-[13px] text-[var(--color-text-muted)]">
-              {balance?.error ?? "Exotel not configured — set EXOTEL_SID, EXOTEL_API_KEY, EXOTEL_API_TOKEN."}
-            </p>
-            {balance?.debug && (
-              <p className="font-mono text-[11px] text-[var(--color-text-faint)]">
-                SID: {balance.debug.hasSid ? `✓ (${balance.debug.sidHint}…)` : "✗ MISSING"} ·{" "}
-                API Key: {balance.debug.hasKey ? `✓ (${balance.debug.keyHint}…)` : "✗ MISSING"} ·{" "}
-                API Token: {balance.debug.hasToken ? `✓ (${balance.debug.tokenHint}…)` : "✗ MISSING"}
-              </p>
-            )}
+            {[...Array(2)].map((_, i) => <div key={i} className="skeleton-shimmer h-14 flex-1 rounded-xl" />)}
           </div>
         ) : (
           <div className="flex flex-wrap gap-4">
-            <div className="flex min-w-[160px] flex-1 flex-col gap-0.5 rounded-xl bg-[var(--color-surface-offset)]/50 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Wallet Balance</p>
-              <p className="font-display text-[26px] font-extrabold leading-none text-[var(--color-success)]">
-                ₹{balance.balance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </p>
-              <p className="text-[11px] text-[var(--color-text-faint)]">{balance.currency}</p>
-            </div>
-            <div className="flex min-w-[160px] flex-1 flex-col gap-0.5 rounded-xl bg-[var(--color-surface-offset)]/50 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Pricing Plan</p>
-              <p className="mt-1 text-[15px] font-semibold text-[var(--color-text)]">{balance.pricingPlan ?? "—"}</p>
-            </div>
-            <div className="flex min-w-[160px] flex-1 flex-col gap-0.5 rounded-xl bg-[var(--color-surface-offset)]/50 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Account SID</p>
-              <p className="mt-1 font-mono text-[13px] text-[var(--color-text)]">{balance.accountSid}</p>
-            </div>
+            {/* Exotel Wallet Balance */}
+            {balance?.error || !balance || balance.balance === null ? (
+              <div className="flex min-w-[160px] flex-1 flex-col gap-0.5 rounded-xl bg-[var(--color-surface-offset)]/50 px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Exotel Wallet</p>
+                <p className="text-[11px] text-[var(--color-text-muted)]">
+                  {balance?.error ?? "Not configured"}
+                </p>
+              </div>
+            ) : (
+              <div className="flex min-w-[160px] flex-1 flex-col gap-0.5 rounded-xl bg-[var(--color-surface-offset)]/50 px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Exotel Wallet</p>
+                <p className="font-display text-[26px] font-extrabold leading-none text-[var(--color-success)]">
+                  ₹{balance.balance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+                <p className="text-[11px] text-[var(--color-text-faint)]">{balance.currency}</p>
+              </div>
+            )}
+
+            {/* OpenAI API Balance */}
+            {openaiBalance?.error || !openaiBalance || openaiBalance.balance === null ? (
+              <div className="flex min-w-[160px] flex-1 flex-col gap-0.5 rounded-xl bg-[var(--color-surface-offset)]/50 px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">OpenAI API Balance</p>
+                <p className="text-[11px] text-[var(--color-text-muted)]">
+                  {openaiBalance?.error ?? "Not configured"}
+                </p>
+              </div>
+            ) : (
+              <div className="flex min-w-[160px] flex-1 flex-col gap-0.5 rounded-xl bg-[var(--color-surface-offset)]/50 px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">OpenAI API Balance</p>
+                <p className="font-display text-[26px] font-extrabold leading-none text-[#10a37f]">
+                  ${openaiBalance.balance.toFixed(2)}
+                </p>
+                <p className="text-[11px] text-[var(--color-text-faint)]">{openaiBalance.currency}</p>
+              </div>
+            )}
           </div>
         )}
       </div>

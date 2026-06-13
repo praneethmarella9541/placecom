@@ -26,6 +26,17 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   whatsapp: "WhatsApp",
 };
 
+/** Features shown in admin access-group checklists. */
+export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
+  "inbox",
+  "drive",
+  "forms",
+  "broadcasting",
+  "dashboard",
+  "calendar",
+  "whatsapp",
+];
+
 const SET = new Set<string>(FEATURE_KEYS);
 
 export function normalizeRestrictedFeatures(value: unknown): FeatureKey[] {
@@ -124,12 +135,9 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
     { path: "/forms" },
     { path: "/broadcasting" },
     { path: "/dashboard" },
-    { path: "/crm" },
     { path: "/calendar" },
-    { path: "/sms" },
     { path: "/whatsapp" },
     { path: "/contacts" },
-    { path: "/meetings" },
   ];
   for (const { path, search = "" } of candidates) {
     const sp = new URLSearchParams(search);

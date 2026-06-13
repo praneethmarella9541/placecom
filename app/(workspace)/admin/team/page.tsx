@@ -1,94 +1,82 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { IconChevronDown } from "@/components/Icons";
 import { PasswordInput } from "@/components/PasswordInput";
 import { AdminGroupsPanel, type TeamGroup } from "@/components/AdminGroupsPanel";
+import { AdminToast, toastVariantForMessage, type AdminToastState } from "@/components/AdminToast";
+import {
+  getAdminTeamPrefetchCache,
+  prefetchAdminTeamData,
+  type AdminTeamMember,
+} from "@/lib/admin-team-prefetch";
 import { titleCase } from "@/lib/title-case";
-import type { FeatureKey } from "@/lib/feature-access";
 
-type TeamMember = {
-  id: string;
-  email: string | null;
-  displayUsername: string | null;
-  jobTitle: string | null;
-  bio: string | null;
-  role: "staff" | "committee" | string;
-  restrictedFeatures: FeatureKey[];
-  mobilePhone: string | null;
-  exotelVirtualNumber: string | null;
-  groupId: string | null;
-  groupName: string | null;
-  openaiTokenLimit: number | null;
-  tokensUsed: number;
-  newPassword?: string;
-};
+type TeamMember = AdminTeamMember & { newPassword?: string };
+
+function initialFromCache() {
+  const cached = getAdminTeamPrefetchCache();
+  return {
+    members: cached?.members ?? [],
+    groups: cached?.groups ?? [],
+    exotelNumbers: cached?.exotelNumbers ?? [],
+    hasCache: Boolean(cached),
+  };
+}
 
 export default function AdminTeamPage() {
+  const boot = initialFromCache();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newDisplayUsername, setNewDisplayUsername] = useState("");
   const [newJobTitle, setNewJobTitle] = useState("");
   const [newGroupId, setNewGroupId] = useState("");
   const [newTokenLimit, setNewTokenLimit] = useState("");
-  const [groups, setGroups] = useState<TeamGroup[]>([]);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [groups, setGroups] = useState<TeamGroup[]>(boot.groups);
+  const [toast, setToast] = useState<AdminToastState>(null);
   const [busy, setBusy] = useState(false);
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [loadingMembers, setLoadingMembers] = useState(true);
+  const [members, setMembers] = useState<TeamMember[]>(boot.members);
+  const [loadingMembers, setLoadingMembers] = useState(!boot.hasCache);
   const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
   const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
-  const [exotelNumbers, setExotelNumbers] = useState<string[]>([]);
+  const [exotelNumbers, setExotelNumbers] = useState<string[]>(boot.exotelNumbers);
   const [newMobilePhone, setNewMobilePhone] = useState("");
   const [newExotelNumber, setNewExotelNumber] = useState("");
 
-  function feedbackClass(text: string | null): string {
-    if (!text) return "";
-    const m = text.toLowerCase();
-    if (
-      m.includes("created") ||
-      m.includes("member updated") ||
-      m.includes("team member removed") ||
-      m.includes("group")
-    ) {
-      return "text-indigo-700 dark:text-indigo-400";
-    }
-    return "text-red-600 dark:text-red-400";
-  }
-
-  async function loadMembers() {
-    setLoadingMembers(true);
-    try {
-      const res = await fetch("/api/admin/team-members");
-      const j = (await res.json().catch(() => ({}))) as { error?: string; members?: TeamMember[] };
-      if (!res.ok) {
-        setMsg(j.error || "Could not load team members.");
-        return;
-      }
-      setMembers(j.members ?? []);
-    } catch {
-      setMsg("Could not load team members.");
-    } finally {
-      setLoadingMembers(false);
-    }
-  }
-
-  useEffect(() => {
-    void loadMembers();
-    void (async () => {
-      try {
-        const res = await fetch("/api/admin/exotel-numbers");
-        const j = (await res.json().catch(() => ({}))) as { numbers?: string[] };
-        if (res.ok) setExotelNumbers(j.numbers ?? []);
-      } catch {
-        setExotelNumbers([]);
-      }
-    })();
+  const showToast = useCallback((message: string, variant?: "info" | "success" | "error") => {
+    setToast({ message, variant: variant ?? toastVariantForMessage(message) });
   }, []);
 
+  const applySnapshot = useCallback((snap: NonNullable<ReturnType<typeof getAdminTeamPrefetchCache>>) => {
+    setMembers(snap.members);
+    setGroups(snap.groups);
+    setExotelNumbers(snap.exotelNumbers);
+  }, []);
+
+  const revalidate = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const hasCache = Boolean(getAdminTeamPrefetchCache());
+      if (!opts?.silent && !hasCache) setLoadingMembers(true);
+      try {
+        const snap = await prefetchAdminTeamData({ force: true });
+        if (snap) applySnapshot(snap);
+      } catch {
+        if (!hasCache) showToast("Could not load team members.", "error");
+      } finally {
+        setLoadingMembers(false);
+      }
+    },
+    [applySnapshot, showToast],
+  );
+
+  useEffect(() => {
+    const cached = getAdminTeamPrefetchCache();
+    if (cached) applySnapshot(cached);
+    void revalidate({ silent: Boolean(cached) });
+  }, [applySnapshot, revalidate]);
+
   async function createStaff() {
-    setMsg(null);
     setBusy(true);
     try {
       const res = await fetch("/api/admin/staff-users", {
@@ -111,11 +99,12 @@ export default function AdminTeamPage() {
         email?: string;
       };
       if (!res.ok) {
-        setMsg(j.error || "Request failed");
+        showToast(j.error || "Request failed", "error");
         return;
       }
-      setMsg(
-        `Account created for ${j.email ?? email.trim()}. They can sign in on the home page with this email and password.`
+      showToast(
+        `Account created for ${j.email ?? email.trim()}. They can sign in on the home page with this email and password.`,
+        "success",
       );
       setEmail("");
       setPassword("");
@@ -125,9 +114,9 @@ export default function AdminTeamPage() {
       setNewTokenLimit("");
       setNewMobilePhone("");
       setNewExotelNumber("");
-      void loadMembers();
+      void revalidate({ silent: true });
     } catch {
-      setMsg("Network error");
+      showToast("Network error", "error");
     } finally {
       setBusy(false);
     }
@@ -154,13 +143,13 @@ export default function AdminTeamPage() {
       });
       const j = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
-        setMsg(j.error || "Failed to update member permissions.");
+        showToast(j.error || "Failed to update member permissions.", "error");
         return;
       }
-      setMsg("Member updated.");
-      void loadMembers();
+      showToast("Member updated.", "success");
+      void revalidate({ silent: true });
     } catch {
-      setMsg("Network error");
+      showToast("Network error", "error");
     } finally {
       setSavingMemberId(null);
     }
@@ -175,7 +164,6 @@ export default function AdminTeamPage() {
     ) {
       return;
     }
-    setMsg(null);
     setDeletingMemberId(member.id);
     try {
       const res = await fetch("/api/admin/team-members", {
@@ -185,13 +173,13 @@ export default function AdminTeamPage() {
       });
       const j = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
-        setMsg(j.error || "Could not remove team member.");
+        showToast(j.error || "Could not remove team member.", "error");
         return;
       }
-      setMsg(titleCase("Team member removed."));
-      void loadMembers();
+      showToast(titleCase("Team member removed."), "success");
+      void revalidate({ silent: true });
     } catch {
-      setMsg("Network error");
+      showToast("Network error", "error");
     } finally {
       setDeletingMemberId(null);
     }
@@ -199,7 +187,13 @@ export default function AdminTeamPage() {
 
   return (
     <div className="mx-auto max-w-lg space-y-6">
-      <AdminGroupsPanel onGroupsChange={setGroups} />
+      <AdminToast toast={toast} onDismiss={() => setToast(null)} />
+      <AdminGroupsPanel
+        groups={groups}
+        groupsLoading={loadingMembers}
+        onRefresh={() => revalidate({ silent: true })}
+        onToast={showToast}
+      />
 
       <div>
         <div className="flex items-start justify-between gap-3">
@@ -213,22 +207,16 @@ export default function AdminTeamPage() {
             {titleCase("View analytics →")}
           </Link>
         </div>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-          {titleCase(
-            "Create staff accounts here. Each person gets their own login and automatically uses your connected Gmail. Assign each member an Exotel line and their personal mobile so inbound calls to that line transfer to them and outbound calls work from the app."
-          )}
-        </p>
-        {msg ? (
-          <p className={`mt-4 text-sm ${feedbackClass(msg)}`} role="status">
-            {msg}
-          </p>
-        ) : null}
       </div>
 
-      <div className="card space-y-3 p-5">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          {titleCase("Add staff member")}
-        </h2>
+      <details className="team-member-details card group p-0">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-5 [&::-webkit-details-marker]:hidden">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {titleCase("Add staff member")}
+          </h2>
+          <IconChevronDown className="team-member-chevron h-4 w-4 shrink-0 text-zinc-400" aria-hidden />
+        </summary>
+        <div className="space-y-3 border-t border-zinc-100 px-5 pb-5 pt-4 dark:border-zinc-800">
         <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
           {titleCase("Work email")}
         </label>
@@ -344,7 +332,8 @@ export default function AdminTeamPage() {
         >
           {busy ? titleCase("Creating…") : titleCase("Create staff account")}
         </button>
-      </div>
+        </div>
+      </details>
 
       <div className="card space-y-3 p-5">
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">

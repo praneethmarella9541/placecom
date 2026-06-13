@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { FEATURE_KEYS, FEATURE_LABELS, type FeatureKey } from "@/lib/feature-access";
+import { useState } from "react";
+import { GROUP_MANAGEABLE_FEATURES, FEATURE_LABELS, type FeatureKey } from "@/lib/feature-access";
 import { titleCase } from "@/lib/title-case";
 
 export type TeamGroup = {
@@ -11,40 +11,23 @@ export type TeamGroup = {
 };
 
 type Props = {
-  onGroupsChange?: (groups: TeamGroup[]) => void;
+  groups: TeamGroup[];
+  groupsLoading?: boolean;
+  onRefresh?: () => void | Promise<void>;
+  onToast?: (message: string, variant: "info" | "success" | "error") => void;
 };
 
-export function AdminGroupsPanel({ onGroupsChange }: Props) {
-  const [groups, setGroups] = useState<TeamGroup[]>([]);
-  const [loading, setLoading] = useState(true);
+export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onToast }: Props) {
   const [name, setName] = useState("");
   const [blocked, setBlocked] = useState<FeatureKey[]>([]);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editBlocked, setEditBlocked] = useState<FeatureKey[]>([]);
 
-  async function loadGroups() {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/admin/groups");
-      const j = (await res.json()) as { groups?: TeamGroup[]; error?: string };
-      if (!res.ok) throw new Error(j.error || "Could not load groups");
-      const list = j.groups ?? [];
-      setGroups(list);
-      onGroupsChange?.(list);
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Could not load groups");
-    } finally {
-      setLoading(false);
-    }
+  function notify(message: string, variant: "info" | "success" | "error" = "info") {
+    onToast?.(message, variant);
   }
-
-  useEffect(() => {
-    void loadGroups();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   function toggleBlocked(list: FeatureKey[], feature: FeatureKey, setter: (v: FeatureKey[]) => void) {
     setter(list.includes(feature) ? list.filter((f) => f !== feature) : [...list, feature]);
@@ -52,7 +35,6 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
 
   async function createGroup() {
     setBusy(true);
-    setMsg(null);
     try {
       const res = await fetch("/api/admin/groups", {
         method: "POST",
@@ -63,10 +45,10 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
       if (!res.ok) throw new Error(j.error || "Could not create group");
       setName("");
       setBlocked([]);
-      setMsg("Group created.");
-      await loadGroups();
+      notify("Group created.", "success");
+      await onRefresh?.();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Could not create group");
+      notify(e instanceof Error ? e.message : "Could not create group", "error");
     } finally {
       setBusy(false);
     }
@@ -80,7 +62,6 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
 
   async function saveEdit(groupId: string) {
     setBusy(true);
-    setMsg(null);
     try {
       const res = await fetch("/api/admin/groups", {
         method: "PATCH",
@@ -90,10 +71,10 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
       const j = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(j.error || "Could not update group");
       setEditingId(null);
-      setMsg("Group updated.");
-      await loadGroups();
+      notify("Group updated.", "success");
+      await onRefresh?.();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Could not update group");
+      notify(e instanceof Error ? e.message : "Could not update group", "error");
     } finally {
       setBusy(false);
     }
@@ -102,7 +83,6 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
   async function deleteGroup(groupId: string, groupName: string) {
     if (!confirm(`Delete group "${groupName}"? Members will be unassigned from this group.`)) return;
     setBusy(true);
-    setMsg(null);
     try {
       const res = await fetch("/api/admin/groups", {
         method: "DELETE",
@@ -111,10 +91,10 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
       });
       const j = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(j.error || "Could not delete group");
-      setMsg("Group deleted.");
-      await loadGroups();
+      notify("Group deleted.", "success");
+      await onRefresh?.();
     } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Could not delete group");
+      notify(e instanceof Error ? e.message : "Could not delete group", "error");
     } finally {
       setBusy(false);
     }
@@ -129,7 +109,7 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
   }) {
     return (
       <div className="grid gap-2 sm:grid-cols-2">
-        {FEATURE_KEYS.map((feature) => (
+        {GROUP_MANAGEABLE_FEATURES.map((feature) => (
           <label key={feature} className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
             <input
               type="checkbox"
@@ -147,11 +127,7 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
     <div className="card space-y-4 p-5">
       <div>
         <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{titleCase("Access groups")}</h2>
-        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          {titleCase("Create custom groups with any name and assign them to team members instead of hardcoded Staff/Committee roles.")}
-        </p>
       </div>
-      {msg && <p className="text-xs text-indigo-700 dark:text-indigo-400">{msg}</p>}
 
       <div className="space-y-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
         <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">{titleCase("New group name")}</label>
@@ -176,7 +152,7 @@ export function AdminGroupsPanel({ onGroupsChange }: Props) {
         </button>
       </div>
 
-      {loading ? (
+      {groupsLoading ? (
         <p className="text-sm text-zinc-500">{titleCase("Loading groups…")}</p>
       ) : groups.length === 0 ? (
         <p className="text-sm text-zinc-500">{titleCase("No custom groups yet. Full access = leave group unassigned when adding members.")}</p>

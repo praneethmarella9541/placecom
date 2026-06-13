@@ -5,6 +5,7 @@
 
 import type { FeatureKey } from "@/lib/feature-access";
 import { prefetchDriveListViews } from "@/lib/drive-list-prefetch";
+import { clearAdminTeamPrefetchCache } from "@/lib/admin-team-prefetch";
 import { clearMailThreadPrefetchCache, warmMailListsThenThreadBodies } from "@/lib/mail-thread-prefetch";
 import { clearWhatsAppThreadPrefetchCache, prefetchWhatsAppThreads } from "@/lib/whatsapp-thread-prefetch";
 
@@ -269,6 +270,7 @@ export function clearSecondaryFeaturePrefetchCache(): void {
   whatsappCache = null;
   calendarCache = null;
   formsCache = null;
+  clearAdminTeamPrefetchCache();
   clearMailThreadPrefetchCache();
   clearWhatsAppThreadPrefetchCache();
 }

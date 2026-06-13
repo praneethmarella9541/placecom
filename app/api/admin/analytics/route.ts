@@ -327,7 +327,7 @@ export async function GET(request: Request) {
     }));
   }
 
-  let callRows = ((callsRes.data as CallRow[] | null) ?? []).map((r) => r);
+  const callRows = ((callsRes.data as CallRow[] | null) ?? []).map((r) => r);
   const toBackfill = callRows
     .filter((r) => rowNeedsTalkDurationBackfill(r))
     .slice(0, 20);

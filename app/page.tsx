@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2 } from "lucide-react";
 import { GOOGLE_OAUTH_SCOPES } from "@/lib/google-config";
 import { createClient } from "@/lib/supabase";
 import { Skeleton } from "@/components/Skeleton";
@@ -213,92 +212,73 @@ export default function HomePage() {
     );
   }
 
-  const checklist = [
-    "Shared inbox for the whole placement team",
-    "Auto-extract recruiter contacts from every email",
-    "Kanban CRM with intelligent stage tracking",
-    "Outbound calls with recordings & AI transcripts",
-    "Calendar sync + meeting summaries that write themselves",
+  const features = [
+    { n: "01", text: "Shared inbox for the whole placement team" },
+    { n: "02", text: "Auto-extract recruiter contacts from every email" },
+    { n: "03", text: "Outbound calls with recordings & AI transcripts" },
+    { n: "04", text: "Calendar sync + meeting summaries that write themselves" },
   ];
 
   return (
     <div className="relative min-h-screen bg-[var(--color-bg)]">
-      <div className="flex min-h-screen flex-col md:flex-row">
-        {/* Left hero — deep editorial dark */}
-        <div
-          className="relative flex flex-col overflow-hidden px-8 pb-10 pt-16 text-white md:min-h-screen md:w-1/2 md:justify-between md:p-12"
-          style={{
-            backgroundColor: "#0C0B11",
-            backgroundImage: [
-              "radial-gradient(ellipse at 15% 20%, rgba(37,99,235,0.18) 0%, transparent 50%)",
-              "radial-gradient(ellipse at 85% 80%, rgba(217,119,6,0.10) 0%, transparent 50%)",
-              "radial-gradient(rgba(255,255,255,0.035) 1px, transparent 1px)",
-            ].join(", "),
-            backgroundSize: "100% 100%, 100% 100%, 32px 32px",
-          }}
-        >
-          {/* Decorative accent line */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute left-0 top-0 h-[1px] w-full opacity-60"
-            style={{ background: "linear-gradient(90deg, transparent, rgba(37,99,235,0.6) 40%, rgba(217,119,6,0.4) 70%, transparent)" }}
-          />
-          {/* Large background numeral — editorial accent */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -right-8 bottom-16 select-none text-[220px] font-extrabold leading-none text-white/[0.025] md:text-[280px]"
-            style={{ fontFamily: "var(--font-display)", letterSpacing: "-0.05em" }}
-          >
-            01
+      <div className="flex min-h-screen flex-col lg:flex-row">
+        {/* Left — warm editorial hero */}
+        <section className="landing-hero relative flex flex-col px-6 pb-10 pt-10 sm:px-10 sm:pt-14 lg:min-h-screen lg:w-[52%] lg:px-12 lg:py-14">
+          <div aria-hidden className="landing-grain" />
+
+          <div className="relative z-10 animate-fade-up" style={{ animationDelay: "0ms" }}>
+            <PlacecomLogo inverted />
           </div>
 
-          <div className="relative z-10">
-            <div className="animate-fade-up" style={{ animationDelay: "0ms" }}>
-              <PlacecomLogo inverted />
-            </div>
-            <h2
-              className="font-display mt-14 max-w-xl text-[40px] font-extrabold leading-[1.08] tracking-tight md:text-[50px] animate-fade-up"
-              style={{ animationDelay: "80ms" }}
-            >
-              Your placement team&apos;s{" "}
-              <span
-                className="animate-gradient-x bg-clip-text text-transparent"
-                style={{ backgroundImage: "linear-gradient(135deg, #93C5FD, #FFFFFF 45%, #FCD34D)", backgroundSize: "200% 100%" }}
-              >
-                command center.
-              </span>
-            </h2>
-            <p
-              className="mt-5 max-w-[400px] text-[15px] leading-relaxed text-white/60 animate-fade-up"
-              style={{ animationDelay: "160ms" }}
-            >
-              Mail, extraction, CRM, calendar, and meeting notes — every tool the team needs, in one workspace.
+          <div className="relative z-10 mt-10 md:mt-12 lg:mt-14">
+            <span className="landing-copper-bar animate-fade-up" style={{ animationDelay: "60ms" }} />
+            <p className="landing-eyebrow animate-fade-up" style={{ animationDelay: "100ms" }}>
+              Placement operations
             </p>
-            <ul className="mt-10 flex flex-col gap-3 text-[14px]">
-              {checklist.map((line, i) => (
-                <li
-                  key={line}
-                  className="flex items-start gap-3 text-white/80 animate-fade-up"
-                  style={{ animationDelay: `${240 + i * 55}ms` }}
-                >
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-white/15 bg-white/[0.07]">
-                    <CheckCircle2 className="h-3 w-3 text-blue-300" strokeWidth={2.5} />
-                  </span>
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
 
-        {/* Right auth */}
-        <div className="flex flex-1 flex-col items-center justify-center bg-[var(--color-bg)] px-4 py-12 md:py-16">
-          <div className="w-full max-w-[400px] animate-slide-in-right rounded-[var(--radius-2xl)] border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-[var(--shadow-lg)] md:p-10" style={{ animationDelay: "120ms" }}>
-            <h1 className="font-display text-center text-[22px] font-bold tracking-tight text-[var(--color-text)]">
+            <div
+              className="mt-8 flex flex-col gap-10 md:mt-10 md:grid md:grid-cols-2 md:items-start md:gap-x-10 lg:gap-x-12"
+            >
+              <div className="animate-fade-up" style={{ animationDelay: "140ms" }}>
+                <h2 className="landing-headline">
+                  One workspace for mail, calls, and the whole team.
+                </h2>
+                <p className="landing-body">
+                  Placecom keeps placement communication in one place — inbox, extraction, outreach, and follow-up without switching tools.
+                </p>
+              </div>
+
+              <ul className="landing-features landing-features-divider">
+                {features.map((item, i) => (
+                  <li
+                    key={item.n}
+                    className="landing-feature-row animate-fade-up"
+                    style={{ animationDelay: `${200 + i * 50}ms` }}
+                  >
+                    <span className="landing-feature-num">{item.n}</span>
+                    <p className="landing-feature-text">{item.text}</p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </section>
+
+        {/* Right — sign-in */}
+        <section className="flex flex-1 flex-col items-center justify-center px-4 py-10 sm:px-8 lg:py-16">
+          <div
+            className="landing-auth-card w-full max-w-[420px] animate-slide-in-right p-7 sm:p-9"
+            style={{ animationDelay: "120ms" }}
+          >
+            <div className="relative z-10">
+            <p className="text-center font-mono text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-faint)]">
+              Workspace access
+            </p>
+            <h1 className="font-display mt-2 text-center text-[24px] font-bold tracking-tight text-[var(--color-text)]">
               Sign in
             </h1>
             <p className="mt-1.5 text-center text-[13px] text-[var(--color-text-muted)]">
-              Access your workspace.
+              Admins use Google. Staff sign in with credentials from your admin.
             </p>
 
             {authErrorBanner ? (
@@ -361,7 +341,7 @@ export default function HomePage() {
                 value={staffEmail}
                 onChange={(e) => setStaffEmail(e.target.value)}
                 placeholder="you@company.com"
-                className="input-field"
+                className="input-field landing-input"
               />
               <PasswordInput
                 autoComplete="current-password"
@@ -369,12 +349,13 @@ export default function HomePage() {
                 onChange={(e) => setStaffPassword(e.target.value)}
                 placeholder={titleCase("Password from your admin")}
                 wrapperClassName="mt-3"
+                className="landing-input"
               />
               <button
                 type="button"
                 disabled={staffPwdBusy}
                 onClick={() => void signInStaffPassword()}
-                className="btn-primary mt-4 h-[42px] w-full"
+                className="landing-btn-primary mt-4"
               >
                 {staffPwdBusy ? titleCase("Signing in…") : titleCase("Sign In")}
               </button>
@@ -385,7 +366,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => setMagicOpen((v) => !v)}
-                className="mt-4 w-full text-center text-[13px] font-medium text-[var(--color-primary)] hover:underline"
+                className="mt-4 w-full text-center text-[13px] font-medium text-[#9a4510] hover:underline"
               >
                 Use magic link instead
               </button>
@@ -398,7 +379,7 @@ export default function HomePage() {
                     value={staffEmail}
                     onChange={(e) => setStaffEmail(e.target.value)}
                     placeholder="you@company.com"
-                    className="input-field bg-[var(--color-surface)]"
+                    className="input-field landing-input bg-[var(--color-surface)]"
                   />
                   <button
                     type="button"
@@ -422,8 +403,9 @@ export default function HomePage() {
               ) : null}
 
             </div>
+            </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

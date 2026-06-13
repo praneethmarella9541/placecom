@@ -77,12 +77,12 @@ function KpiCard({
 }) {
   return (
     <div
-      className="animate-fade-up surface-card group relative overflow-hidden rounded-2xl p-5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]"
+      className="animate-fade-up surface-card group relative overflow-hidden rounded-2xl p-5 pl-6 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[var(--shadow-md)]"
       style={{ animationDelay: `${delay}ms`, animationFillMode: "both" }}
     >
-      {/* Accent glow in corner */}
+      <div className="kpi-accent-bar" style={{ background: accent }} />
       <div
-        className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full opacity-10 blur-2xl transition-opacity duration-300 group-hover:opacity-20"
+        className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full opacity-[0.07] blur-2xl transition-opacity duration-300 group-hover:opacity-[0.14]"
         style={{ background: accent }}
       />
       <div className="flex items-start justify-between">
@@ -98,10 +98,10 @@ function KpiCard({
           </p>
         </div>
         <div
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl"
-          style={{ background: `${accent}18` }}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-black/[0.04]"
+          style={{ background: `${accent}14` }}
         >
-          <Icon className="h-4.5 w-4.5" style={{ color: accent }} strokeWidth={2} />
+          <Icon className="h-[18px] w-[18px]" style={{ color: accent }} strokeWidth={2} />
         </div>
       </div>
     </div>
@@ -332,20 +332,39 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5">
+    <div className="mx-auto max-w-5xl space-y-6">
 
-      {/* ── Page header ─────────────────────────────────────── */}
-      <div className="animate-fade-up flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between" style={{ animationDuration: "0.3s" }}>
-        <div>
-          <h1 className="font-display text-[22px] font-bold tracking-tight text-[var(--color-text)]">
-            {titleCase("Email Extraction")}
-          </h1>
-          <p className="mt-0.5 text-[13px] text-[var(--color-text-faint)]">
-            {titleCase("Extract contacts and data from your Gmail inbox")}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <ExportButton />
+      {/* ── Hero strip ──────────────────────────────────────── */}
+      <div
+        className="dash-hero animate-fade-up relative px-6 py-7 sm:px-8"
+        style={{ animationDuration: "0.35s" }}
+      >
+        <div className="relative z-[1] flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="max-w-lg">
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#e8a04c]/90">
+              Gmail Intelligence
+            </p>
+            <h1 className="font-display mt-2 text-[26px] font-bold leading-tight tracking-tight text-[#f5f3ef] sm:text-[30px]">
+              {titleCase("Email Extraction")}
+            </h1>
+            <p className="mt-2 text-[13px] leading-relaxed text-[#c4bdb3]">
+              {titleCase("Pull contacts from your inbox with AI — names, phones, and emails in one pass.")}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold text-[#f5f3ef] ring-1 ring-white/10">
+                {kpiNames.toLocaleString()} names
+              </span>
+              <span className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold text-[#f5f3ef] ring-1 ring-white/10">
+                {kpiPhones.toLocaleString()} phones
+              </span>
+              <span className="rounded-full bg-white/10 px-3 py-1 text-[11px] font-semibold text-[#f5f3ef] ring-1 ring-white/10">
+                {rows.length.toLocaleString()} rows stored
+              </span>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <ExportButton />
+          </div>
         </div>
       </div>
 

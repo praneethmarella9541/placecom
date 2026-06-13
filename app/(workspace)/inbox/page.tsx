@@ -70,6 +70,7 @@ import {
 import {
   clearMailThreadPrefetchCache,
   getCachedThread,
+  MAIL_THREAD_PREFETCH_DISABLED,
   prefetchMailThreadIntent,
   rememberOpenThread,
   rememberPrefetchThread,
@@ -2218,6 +2219,7 @@ export default function InboxPage() {
 
   const prefetchThread = useCallback(
     (threadId: string) => {
+      if (MAIL_THREAD_PREFETCH_DISABLED) return;
       prefetchMailThreadIntent(threadId);
       void fetchThreadData(threadId, { prefetch: true });
     },

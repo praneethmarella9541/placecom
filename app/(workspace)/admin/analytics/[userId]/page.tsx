@@ -170,7 +170,7 @@ function CallsPerDayChart({ series }: { series: DayPoint[] }) {
                 width={w}
                 height={inH}
                 rx={2}
-                fill="#10b981"
+                fill="#6366f1"
               />
               {/* x-axis labels — spaced to avoid overlap */}
               {i % labelStep === 0 && (

@@ -30,6 +30,12 @@ export function isAnsweredCallRow(row: CallTalkRow): boolean {
   return false;
 }
 
+/** A stored talk duration likely equals total call time (ring + talk). */
+export function talkSecondsLooksInflated(talk: number, total: number): boolean {
+  if (total <= 0 || talk <= 0) return false;
+  return talk >= total - 3;
+}
+
 /** Stored talk duration likely equals total call time (ring + talk). */
 export function talkTimeLooksInflated(row: CallTalkRow): boolean {
   const total = Number(row.duration_seconds ?? 0) || 0;
@@ -38,20 +44,25 @@ export function talkTimeLooksInflated(row: CallTalkRow): boolean {
   const convDur = Number(row.conversation_duration_seconds ?? 0) || 0;
   const talk = Math.max(recDur, convDur);
   if (talk <= 0) return false;
-  return talk >= total - 3;
+  return talkSecondsLooksInflated(talk, total);
 }
 
 /** Talk seconds for billing and display; 0 when unanswered or unknown. */
 export function callTalkSecondsFromRow(row: CallTalkRow): number {
   if (!isAnsweredCallRow(row)) return 0;
 
+  const total = Number(row.duration_seconds ?? 0) || 0;
   const convDur = Number(row.conversation_duration_seconds ?? 0) || 0;
   const recDur = Number(row.recording_duration_seconds ?? 0) || 0;
 
   // Exotel dashboard "Total Talk Time" = ConversationDuration.
-  if (convDur > 0) return Math.round(convDur);
+  if (convDur > 0 && !talkSecondsLooksInflated(convDur, total)) {
+    return Math.round(convDur);
+  }
 
-  if (recDur > 0 && !talkTimeLooksInflated(row)) return Math.round(recDur);
+  if (recDur > 0 && !talkSecondsLooksInflated(recDur, total)) {
+    return Math.round(recDur);
+  }
 
   return 0;
 }

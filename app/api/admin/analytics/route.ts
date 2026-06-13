@@ -8,9 +8,10 @@ import {
   roundInr,
   type UsageCosts,
 } from "@/lib/member-analytics-cost";
-import { callTalkSecondsFromRow } from "@/lib/call-talk-seconds";
+import { callTalkSecondsFromRow, rowNeedsTalkDurationBackfill } from "@/lib/call-talk-seconds";
 import { resolveAnalyticsCallDirection } from "@/lib/analytics-call-direction";
 import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
+import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
 
 export const runtime = "nodejs";
 
@@ -20,7 +21,9 @@ const DEFAULT_WINDOW_DAYS = 14;
 const MAX_WINDOW_DAYS = 180;
 
 type CallRow = {
+  id: string;
   user_id: string;
+  call_sid: string | null;
   status: string;
   from_number: string;
   to_number: string;
@@ -260,7 +263,7 @@ export async function GET(request: Request) {
     svc
       .from("call_logs")
       .select(
-        "user_id, status, from_number, to_number, duration_seconds, conversation_duration_seconds, recording_duration_seconds, recording_sid, created_at"
+        "id, call_sid, user_id, status, from_number, to_number, duration_seconds, conversation_duration_seconds, recording_duration_seconds, recording_sid, created_at"
       )
       .in("user_id", userIdsForQuery)
       .gte("created_at", sinceIso)
@@ -324,6 +327,21 @@ export async function GET(request: Request) {
     }));
   }
 
+  let callRows = ((callsRes.data as CallRow[] | null) ?? []).map((r) => r);
+  const toBackfill = callRows
+    .filter((r) => rowNeedsTalkDurationBackfill(r))
+    .slice(0, 20);
+  if (toBackfill.length > 0) {
+    await Promise.all(
+      toBackfill.map(async (row) => {
+        if (!row.call_sid) return;
+        const patch = await fetchExotelCallPatch(row.call_sid, row.from_number);
+        if (!patch) return;
+        await svc.from("call_logs").update(patch).eq("id", row.id);
+        Object.assign(row, patch);
+      })
+    );
+  }
 
   const result: UserAnalytics[] = userIdsForQuery.map((uid) => {
     const profile = teamProfiles.find((p) => p.id === uid);
@@ -348,7 +366,7 @@ export async function GET(request: Request) {
     const callStatusBreakdown: Record<string, number> = {};
 
     // Calls
-    for (const r of (callsRes.data as CallRow[] | null) ?? []) {
+    for (const r of callRows) {
       if (r.user_id !== uid) continue;
       const dir = resolveAnalyticsCallDirection(r, telephony.mobile, telephony.exotel, allVirtuals);
       const status = (r.status ?? "").toLowerCase();

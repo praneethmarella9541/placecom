@@ -4,14 +4,17 @@ import { getAuthedRequest } from "@/lib/api-auth";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
 import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
+import {
+  exotelConversationSeconds,
+  exotelRecordingSeconds,
+  exotelTotalSeconds,
+  type ExotelCallLike,
+} from "@/lib/exotel-call-durations";
 
 export const runtime = "nodejs";
 
-type ExotelCall = {
+type ExotelCall = ExotelCallLike & {
   Status?: string;
-  Duration?: string | number;
-  ConversationDuration?: string | number;
-  RecordingDuration?: string | number;
   StartTime?: string;
   EndTime?: string;
   RecordingUrl?: string;
@@ -25,7 +28,7 @@ async function fetchExotelCall(callSid: string): Promise<ExotelCall | null> {
 
   const basic = Buffer.from(`${apiKey}:${apiToken}`).toString("base64");
   const res = await fetch(
-    `https://api.exotel.com/v1/Accounts/${sid}/Calls/${callSid}.json`,
+    `https://api.exotel.com/v1/Accounts/${sid}/Calls/${callSid}.json?details=true`,
     { headers: { Authorization: `Basic ${basic}` } }
   );
   if (!res.ok) throw new Error(`Exotel call lookup failed (${res.status})`);
@@ -70,12 +73,15 @@ export async function POST(request: Request) {
   const status = (call.Status ?? "").toLowerCase();
   const virtuals = listConfiguredExotelNumbers().map((v) => normalizePhone(v));
   const direction = deriveCallDirection(row.from_number, virtuals, phoneMatches);
+  const conversationSeconds = exotelConversationSeconds(call);
+  const recordingSeconds = exotelRecordingSeconds(call);
+  const totalSeconds = exotelTotalSeconds(call);
   const mapped = resolveCallStatus(
     {
       status: call.Status,
-      duration: call.Duration,
-      conversationDuration: call.ConversationDuration,
-      recordingDuration: call.RecordingDuration,
+      duration: totalSeconds ?? undefined,
+      conversationDuration: conversationSeconds ?? undefined,
+      recordingDuration: recordingSeconds ?? undefined,
       hasRecording: !!call.RecordingUrl,
     },
     direction
@@ -85,13 +91,13 @@ export async function POST(request: Request) {
     status: mapped,
     updated_at: new Date().toISOString(),
   };
-  if (call.RecordingDuration != null) {
-    updates.recording_duration_seconds = parseInt(String(call.RecordingDuration), 10) || null;
+  if (recordingSeconds != null) {
+    updates.recording_duration_seconds = recordingSeconds;
   }
-  if (call.ConversationDuration != null) {
-    updates.conversation_duration_seconds = parseInt(String(call.ConversationDuration), 10) || null;
+  if (conversationSeconds != null) {
+    updates.conversation_duration_seconds = conversationSeconds;
   }
-  if (call.Duration != null) updates.duration_seconds = parseInt(String(call.Duration), 10) || null;
+  if (totalSeconds != null) updates.duration_seconds = totalSeconds;
   if (call.StartTime) {
     try { updates.started_at = new Date(call.StartTime).toISOString(); } catch {}
   }

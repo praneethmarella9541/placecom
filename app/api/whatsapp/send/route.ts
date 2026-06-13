@@ -188,6 +188,7 @@ export async function POST(request: Request) {
       num_media: sent.numMedia,
       media_url: sent.mediaUrl,
       content_type: sent.contentType,
+      template_name: sent.contentType === "template" ? templateName : null,
       reply_to_id: replyToId,
       delivery_status: "sent",
     };

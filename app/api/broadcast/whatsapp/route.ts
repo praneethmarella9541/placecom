@@ -136,6 +136,7 @@ export async function POST(request: Request) {
           message_sid: result.sid,
           num_media: 0,
           content_type: "template",
+          template_name: templateConfig.name,
           delivery_status: "sent",
         });
         if (logErr && !String(logErr.message).includes("does not exist")) {

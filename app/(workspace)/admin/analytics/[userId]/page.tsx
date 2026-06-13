@@ -5,6 +5,26 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { titleCase } from "@/lib/title-case";
 import { DateRangePicker, rangeEndingToday, type DateRange } from "@/components/DateRangePicker";
+import {
+  bucketSeriesForChart,
+  chartLabelStep,
+  formatChartXLabel,
+  type ChartDayPoint,
+} from "@/lib/analytics-chart-utils";
+
+type UsageCosts = {
+  callsInr: number;
+  whatsappInr: number;
+  totalInr: number;
+  callBillableMinutes: number;
+  whatsappUtilityMsgs: number;
+  whatsappPromotionalMsgs: number;
+  whatsappSessionMsgs: number;
+};
+
+function formatInr(amount: number): string {
+  return `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 type DayPoint = {
   date: string;
@@ -21,10 +41,12 @@ type Totals = {
   talkMinutes: number;
   smsSent: number;
   whatsappSent: number;
+  whatsappReceived: number;
   emailsSent: number;
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
+  costs: UsageCosts;
 };
 
 type UserAnalytics = {
@@ -72,13 +94,15 @@ function StatCard({
 
 /** Stacked bars: incoming + outgoing per day. */
 function CallsPerDayChart({ series }: { series: DayPoint[] }) {
-  const max = Math.max(1, ...series.map((d) => d.callsIn + d.callsOut));
+  const chartSeries = useMemo(() => bucketSeriesForChart(series as ChartDayPoint[]), [series]);
+  const labelStep = chartLabelStep(chartSeries.length);
+  const max = Math.max(1, ...chartSeries.map((d) => d.callsIn + d.callsOut));
   const width = 600;
   const height = 160;
   const padding = { top: 12, right: 12, bottom: 24, left: 28 };
   const innerW = width - padding.left - padding.right;
   const innerH = height - padding.top - padding.bottom;
-  const barWidth = innerW / series.length;
+  const barWidth = innerW / chartSeries.length;
   const barGap = Math.max(2, barWidth * 0.2);
 
   return (
@@ -121,7 +145,7 @@ function CallsPerDayChart({ series }: { series: DayPoint[] }) {
             </g>
           );
         })}
-        {series.map((d, i) => {
+        {chartSeries.map((d, i) => {
           const total = d.callsIn + d.callsOut;
           const totalH = (total / max) * innerH;
           const outH = (d.callsOut / max) * innerH;
@@ -129,7 +153,7 @@ function CallsPerDayChart({ series }: { series: DayPoint[] }) {
           const x = padding.left + i * barWidth + barGap / 2;
           const w = barWidth - barGap;
           return (
-            <g key={d.date}>
+            <g key={`${d.date}-${i}`}>
               {/* Outgoing on bottom */}
               <rect
                 x={x}
@@ -148,8 +172,8 @@ function CallsPerDayChart({ series }: { series: DayPoint[] }) {
                 rx={2}
                 fill="#10b981"
               />
-              {/* x-axis label every 2 days to avoid overlap */}
-              {i % 2 === 0 && (
+              {/* x-axis labels — spaced to avoid overlap */}
+              {i % labelStep === 0 && (
                 <text
                   x={x + w / 2}
                   y={height - 6}
@@ -158,7 +182,7 @@ function CallsPerDayChart({ series }: { series: DayPoint[] }) {
                   fill="currentColor"
                   opacity="0.55"
                 >
-                  {d.date.slice(5)}
+                  {formatChartXLabel(d.date, chartSeries.length)}
                 </text>
               )}
             </g>
@@ -180,14 +204,16 @@ function SimpleBarChart({
   title: string;
   color: string;
 }) {
-  const values = series.map((d) => d[field]);
+  const chartSeries = useMemo(() => bucketSeriesForChart(series as ChartDayPoint[]), [series]);
+  const labelStep = chartLabelStep(chartSeries.length);
+  const values = chartSeries.map((d) => d[field]);
   const max = Math.max(1, ...values);
   const width = 600;
   const height = 140;
   const padding = { top: 12, right: 12, bottom: 24, left: 32 };
   const innerW = width - padding.left - padding.right;
   const innerH = height - padding.top - padding.bottom;
-  const barWidth = innerW / series.length;
+  const barWidth = innerW / chartSeries.length;
   const barGap = Math.max(2, barWidth * 0.2);
 
   return (
@@ -219,13 +245,13 @@ function SimpleBarChart({
             </g>
           );
         })}
-        {series.map((d, i) => {
+        {chartSeries.map((d, i) => {
           const v = d[field];
           const h = (v / max) * innerH;
           const x = padding.left + i * barWidth + barGap / 2;
           const w = barWidth - barGap;
           return (
-            <g key={d.date}>
+            <g key={`${d.date}-${i}`}>
               <rect
                 x={x}
                 y={padding.top + innerH - h}
@@ -235,7 +261,7 @@ function SimpleBarChart({
                 fill={color}
                 opacity={v === 0 ? 0.2 : 1}
               />
-              {i % 2 === 0 && (
+              {i % labelStep === 0 && (
                 <text
                   x={x + w / 2}
                   y={height - 6}
@@ -244,7 +270,7 @@ function SimpleBarChart({
                   fill="currentColor"
                   opacity="0.55"
                 >
-                  {d.date.slice(5)}
+                  {formatChartXLabel(d.date, chartSeries.length)}
                 </text>
               )}
             </g>
@@ -301,7 +327,9 @@ export default function AdminUserAnalyticsPage() {
       setLoading(true);
       setError(null);
       try {
-        const qs = `?userId=${encodeURIComponent(userId)}&from=${r.from}&to=${r.to}`;
+        const qs = r.allTime
+          ? `?userId=${encodeURIComponent(userId)}&allTime=1`
+          : `?userId=${encodeURIComponent(userId)}&from=${r.from}&to=${r.to}`;
         const res = await fetch(`/api/admin/analytics${qs}`);
         const j = (await res.json().catch(() => ({}))) as {
           users?: UserAnalytics[];
@@ -328,7 +356,6 @@ export default function AdminUserAnalyticsPage() {
   }, [load, range]);
 
   const totalCalls = user ? user.totals.callsIn + user.totals.callsOut : 0;
-  const totalTokens = user ? user.totals.tokensIn + user.totals.tokensOut : 0;
 
   const statusRows = useMemo(() => {
     if (!user) return [];
@@ -366,11 +393,10 @@ export default function AdminUserAnalyticsPage() {
           </h1>
           {user && (
             <p className="text-sm text-[var(--color-text-muted)]">
-              {user.email ?? "—"} · {user.role} · {windowDays} day{windowDays === 1 ? "" : "s"}
+              {user.email ?? "—"} · {user.role} · {range.allTime ? "All time" : `${windowDays} day${windowDays === 1 ? "" : "s"}`}
             </p>
           )}
         </div>
-        <DateRangePicker value={range} onChange={setRange} />
       </header>
 
       {loading && <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>}
@@ -379,16 +405,23 @@ export default function AdminUserAnalyticsPage() {
       {user && (
         <>
           {/* KPI row */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             <StatCard label="Total calls" value={String(totalCalls)} sub={`${user.totals.callsIn} in · ${user.totals.callsOut} out`} />
-            <StatCard label="Talk minutes" value={String(user.totals.talkMinutes)} sub="completed calls only" />
-            <StatCard label="Failed calls" value={String(user.totals.callsFailed)} accent={user.totals.callsFailed > 0 ? "#ef4444" : undefined} />
+            <StatCard label="Talk minutes" value={String(user.totals.costs.callBillableMinutes)} sub={`${user.totals.talkMinutes} min actual talk · rounded up per call`} />
+            <StatCard label="Call cost" value={formatInr(user.totals.costs.callsInr)} sub="₹0.60/min, rounded up per call" accent="#1a73e8" />
+            <StatCard label="WhatsApp msgs" value={String(user.totals.whatsappSent + user.totals.whatsappReceived)} sub={`${user.totals.whatsappSent} sent · ${user.totals.whatsappReceived} received`} accent="#25d366" />
+            <StatCard label="WA cost" value={formatInr(user.totals.costs.whatsappInr)} sub={`${user.totals.costs.whatsappUtilityMsgs} utility · ${user.totals.costs.whatsappPromotionalMsgs} promo · ${user.totals.costs.whatsappSessionMsgs} session`} accent="#128c7e" />
+            <StatCard label="Telephony total" value={formatInr(user.totals.costs.totalInr)} sub="Calls + WhatsApp" accent="#e37400" />
             <StatCard label="Messages sent" value={String(user.totals.smsSent + user.totals.whatsappSent + user.totals.emailsSent)} sub={`${user.totals.emailsSent} email · ${user.totals.whatsappSent} WA · ${user.totals.smsSent} SMS`} />
-            <StatCard label="Tokens used" value={formatNumber(totalTokens)} sub={`${formatNumber(user.totals.tokensIn)} in · ${formatNumber(user.totals.tokensOut)} out`} />
-            <StatCard label="AI cost (USD)" value={`$${user.totals.costUsd.toFixed(2)}`} sub="estimated" />
+            <StatCard label="AI cost (USD)" value={`$${user.totals.costUsd.toFixed(2)}`} sub="OpenAI extraction" />
           </div>
 
-          {/* Charts row 1 */}
+          {/* Charts */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">Activity over time</h2>
+            <DateRangePicker value={range} onChange={setRange} />
+          </div>
+
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <CallsPerDayChart series={user.series} />

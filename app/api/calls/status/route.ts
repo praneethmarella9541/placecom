@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
 import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
+import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
 
 export const runtime = "nodejs";
 
@@ -32,8 +33,9 @@ export async function POST(request: Request) {
   const recordingUrl = params.get("RecordingUrl") ?? params.get("recording_url") ?? "";
   const recordingDuration = params.get("RecordingDuration") ?? params.get("recording_duration") ?? "";
   const duration     = params.get("Duration") ?? params.get("duration") ?? "";
+  const dialDuration = params.get("DialCallDuration") ?? params.get("dial_call_duration") ?? "";
   const conversationDuration =
-    params.get("ConversationDuration") ?? params.get("conversation_duration") ?? "";
+    params.get("ConversationDuration") ?? params.get("conversation_duration") ?? dialDuration;
   // Per-leg dial status, when Exotel includes it — the strongest answered signal.
   const legStatus =
     params.get("DialCallStatus") ?? params.get("Legs[0][Status]") ?? params.get("leg_status") ?? "";
@@ -84,10 +86,18 @@ export async function POST(request: Request) {
   };
 
   if (duration) updates.duration_seconds = parseInt(duration, 10) || null;
-  if (conversationDuration) {
-    updates.conversation_duration_seconds = parseInt(conversationDuration, 10) || null;
+  const talkFromWebhook =
+    (conversationDuration ? parseInt(conversationDuration, 10) : 0) ||
+    (recordingDuration ? parseInt(recordingDuration, 10) : 0) ||
+    (dialDuration ? parseInt(dialDuration, 10) : 0);
+  if (conversationDuration || dialDuration) {
+    updates.conversation_duration_seconds = parseInt(conversationDuration || dialDuration, 10) || null;
   }
-  if (recordingDuration) updates.recording_duration_seconds = parseInt(recordingDuration, 10) || null;
+  if (recordingDuration) {
+    updates.recording_duration_seconds = parseInt(recordingDuration, 10) || null;
+  } else if (talkFromWebhook > 0 && storedRecordingUrl) {
+    updates.recording_duration_seconds = talkFromWebhook;
+  }
   if (storedRecordingUrl) updates.recording_sid = storedRecordingUrl;
   if (startTime) updates.started_at = new Date(startTime).toISOString();
   if (endTime) updates.ended_at = new Date(endTime).toISOString();
@@ -100,6 +110,14 @@ export async function POST(request: Request) {
   if (error) {
     console.error("[calls/status] update failed:", error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  // If we have a recording but no talk time yet, pull full call details from Exotel.
+  if (storedRecordingUrl && talkFromWebhook <= 0) {
+    const patch = await fetchExotelCallPatch(callSid, existing?.from_number);
+    if (patch) {
+      await supabaseAdmin.from("call_logs").update(patch).eq("call_sid", callSid);
+    }
   }
 
   return NextResponse.json({ ok: true });

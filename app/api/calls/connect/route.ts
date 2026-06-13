@@ -97,6 +97,7 @@ async function handleEndOfCall(params: URLSearchParams | FormData, callSid: stri
   if (dialDuration) {
     const talk = parseInt(dialDuration, 10) || null;
     updates.conversation_duration_seconds = talk;
+    updates.recording_duration_seconds = talk;
     updates.duration_seconds = talk;
   }
   if (startTime) {

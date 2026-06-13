@@ -1,6 +1,7 @@
 [
   {
     "name": "utility",
+    "category": "utility",
     "languageCode": "en",
     "bodyParamCount": 2,
     "label": "XLRI recruiter time slots",
@@ -8,6 +9,7 @@
   },
   {
     "name": "initial_conversation",
+    "category": "promotional",
     "languageCode": "en",
     "bodyParamCount": 2,
     "label": "Short intro (PlaceCom)",

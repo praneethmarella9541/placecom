@@ -3,7 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
-import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
+import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
+import { rowNeedsTalkDurationBackfill } from "@/lib/call-talk-seconds";
 
 export const runtime = "nodejs";
 
@@ -12,67 +13,7 @@ async function refreshFromExotel(
   callSid: string,
   fromNumber?: string | null
 ): Promise<Record<string, unknown> | null> {
-  const sid      = process.env.EXOTEL_SID?.trim();
-  const apiKey   = process.env.EXOTEL_API_KEY?.trim();
-  const apiToken = process.env.EXOTEL_API_TOKEN?.trim();
-  if (!sid || !apiKey || !apiToken) return null;
-  if (!callSid || callSid.startsWith("pending_") || callSid.startsWith("exotel_")) return null;
-
-  const basic = Buffer.from(`${apiKey}:${apiToken}`).toString("base64");
-
-  try {
-    const detailsRes = await fetch(
-      `https://api.exotel.com/v1/Accounts/${sid}/Calls/${callSid}.json`,
-      { headers: { Authorization: `Basic ${basic}` } }
-    );
-    if (!detailsRes.ok) return null;
-    const json = await detailsRes.json();
-    const call = json?.Call ?? json?.TwilioResponse?.Call ?? null;
-    if (!call) return null;
-
-    const status = (call.Status ?? "").toLowerCase();
-    // Only persist if the call has finished.
-    if (!["completed", "busy", "no-answer", "failed", "canceled", "cancelled"].includes(status)) {
-      return null;
-    }
-
-    const virtuals = listConfiguredExotelNumbers().map((v) => normalizePhone(v));
-    const direction = deriveCallDirection(fromNumber, virtuals, phoneMatches);
-    const mapped = resolveCallStatus(
-      {
-        status: call.Status,
-        duration: call.Duration,
-        conversationDuration: call.ConversationDuration,
-        recordingDuration: call.RecordingDuration,
-        hasRecording: !!call.RecordingUrl,
-      },
-      direction
-    );
-
-    const updates: Record<string, unknown> = {
-      status: mapped,
-      updated_at: new Date().toISOString(),
-    };
-    if (call.RecordingDuration) {
-      updates.recording_duration_seconds = parseInt(String(call.RecordingDuration), 10) || null;
-    }
-    if (call.ConversationDuration != null) {
-      updates.conversation_duration_seconds = parseInt(String(call.ConversationDuration), 10) || null;
-    }
-    if (call.Duration) updates.duration_seconds = parseInt(call.Duration, 10) || null;
-    if (call.StartTime) {
-      try { updates.started_at = new Date(call.StartTime).toISOString(); } catch {}
-    }
-    if (call.EndTime && call.EndTime !== "1970-01-01 05:30:00") {
-      try { updates.ended_at = new Date(call.EndTime).toISOString(); } catch {}
-    }
-    if (call.RecordingUrl) updates.recording_sid = call.RecordingUrl;
-
-    return updates;
-  } catch (e) {
-    console.error("[calls] refreshFromExotel failed:", (e as Error).message);
-    return null;
-  }
+  return fetchExotelCallPatch(callSid, fromNumber);
 }
 
 async function getUserOr401(request?: Request) {
@@ -126,15 +67,19 @@ export async function GET(request: Request) {
 
   const rows = data ?? [];
 
-  // Auto-refresh any in-progress calls (the connect end-of-call hit may not fire reliably)
+  // Auto-refresh in-progress calls and recent answered rows missing talk durations.
+  const svc = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
   const stuck = rows.filter((r) => r.status === "in-progress" && r.call_sid);
-  if (stuck.length > 0) {
-    const svc = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+  const missingTalk = rows
+    .filter((r) => rowNeedsTalkDurationBackfill(r))
+    .slice(0, 8);
+  const toRefresh = [...stuck, ...missingTalk];
+  if (toRefresh.length > 0) {
     await Promise.all(
-      stuck.map(async (row) => {
+      toRefresh.map(async (row) => {
         const patch = await refreshFromExotel(row.call_sid, row.from_number);
         if (!patch) return;
         await svc.from("call_logs").update(patch).eq("id", row.id);

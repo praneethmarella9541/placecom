@@ -70,6 +70,20 @@ export async function POST(request: Request) {
         "|",
         deliveryStatus
       );
+      // DLR can arrive before /api/whatsapp/send finishes inserting the row.
+      await new Promise((r) => setTimeout(r, 2500));
+      const { data: retry } = await supabase
+        .from("whatsapp_messages")
+        .select("id, delivery_status")
+        .eq("message_sid", status.messageSid)
+        .maybeSingle();
+      if (!retry) return ok();
+      const mergedRetry = mergeWhatsAppDeliveryStatus(retry.delivery_status, deliveryStatus);
+      await supabase
+        .from("whatsapp_messages")
+        .update({ delivery_status: mergedRetry })
+        .eq("message_sid", status.messageSid);
+      console.log("[exotel/whatsapp] delivery (retry) | sid:", status.messageSid, "|", mergedRetry);
       return ok();
     }
 
@@ -103,11 +117,16 @@ export async function POST(request: Request) {
 
   const inbound = parseExotelInboundWebhook(body);
   if (!inbound) {
+    const looksLikeStatus =
+      Boolean(body.sid || body.message_sid || body.exo_detailed_status || body.exo_status_code) ||
+      body.event === "message_status" ||
+      body.type === "message_status";
     console.log(
       "[exotel/whatsapp] unhandled webhook keys:",
       Object.keys(body).join(","),
       "| event:",
-      body.event ?? body.type ?? "(none)"
+      body.event ?? body.type ?? "(none)",
+      looksLikeStatus ? "| (status-shaped — check parser)" : ""
     );
     return ok();
   }

@@ -106,13 +106,16 @@ function buildMessageEnvelope(
   replyToMessageId?: string | null
 ) {
   const replyContext = buildExotelReplyContext(replyToMessageId);
+  const callbackFields = statusCallback ? { status_callback: statusCallback } : {};
   return {
+    ...callbackFields,
     whatsapp: {
+      ...callbackFields,
       messages: [
         {
           from,
           to,
-          ...(statusCallback ? { status_callback: statusCallback } : {}),
+          ...callbackFields,
           content: {
             recipient_type: recipientType,
             ...content,

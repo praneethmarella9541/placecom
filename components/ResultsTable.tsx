@@ -168,8 +168,8 @@ export function ResultsTable({ rows, className }: Props) {
               <th className="px-4 py-3.5">{titleCase("Sender")}</th>
               <th className="min-w-[240px] px-4 py-3.5">{titleCase("Contacts (paired)")}</th>
               <th className="px-4 py-3.5 text-zinc-400 dark:text-zinc-500">{titleCase("All names")}</th>
-              <th className="px-4 py-3.5 text-zinc-400 dark:text-zinc-500">{titleCase("All phones")}</th>
-              <th className="px-4 py-3.5 text-zinc-400 dark:text-zinc-500">{titleCase("All emails")}</th>
+              <th className="min-w-[148px] px-4 py-3.5 text-zinc-400 dark:text-zinc-500">{titleCase("All phones")}</th>
+              <th className="min-w-[180px] px-4 py-3.5 text-zinc-400 dark:text-zinc-500">{titleCase("All emails")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
@@ -227,11 +227,15 @@ export function ResultsTable({ rows, className }: Props) {
                     )}
                   </div>
                 </td>
-                <td className="px-4 py-3 align-top">
-                  <div className="flex flex-wrap gap-1">
+                <td className="min-w-[148px] px-4 py-3 align-top">
+                  <div className="flex flex-wrap gap-1.5">
                     {r.phones.length ? (
                       r.phones.map((p, i) => (
-                        <span key={i} className="badge-blue text-[11px]">
+                        <span
+                          key={i}
+                          className="inline-flex max-w-full items-center whitespace-nowrap rounded-md border border-sky-200/80 bg-sky-50 px-2 py-0.5 font-mono text-[11px] tabular-nums leading-none text-sky-800 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-200"
+                          title={p}
+                        >
                           {p}
                         </span>
                       ))
@@ -240,11 +244,15 @@ export function ResultsTable({ rows, className }: Props) {
                     )}
                   </div>
                 </td>
-                <td className="px-4 py-3 align-top">
-                  <div className="flex flex-wrap gap-1">
+                <td className="min-w-[180px] px-4 py-3 align-top">
+                  <div className="flex flex-wrap gap-1.5">
                     {r.emails.length ? (
                       r.emails.map((em, i) => (
-                        <span key={i} className="badge-purple text-[11px]">
+                        <span
+                          key={i}
+                          className="inline-flex max-w-full items-center whitespace-nowrap rounded-md border border-violet-200/80 bg-violet-50 px-2 py-0.5 text-[11px] leading-none text-violet-800 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-200"
+                          title={em}
+                        >
                           {em}
                         </span>
                       ))

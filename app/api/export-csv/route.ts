@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { groupContactsFromExtraction } from "@/lib/contact-grouping";
+import { sanitizeContactPhone, sanitizeExtractedPhones } from "@/lib/phone";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
 function escapeCsvCell(value: string): string {
@@ -52,9 +53,8 @@ export async function GET() {
     const names = Array.isArray(r.extracted_names)
       ? (r.extracted_names as string[]).join("; ")
       : "";
-    const phones = Array.isArray(r.extracted_phones)
-      ? (r.extracted_phones as string[]).join("; ")
-      : "";
+    const rawPhones = Array.isArray(r.extracted_phones) ? (r.extracted_phones as string[]) : [];
+    const phones = sanitizeExtractedPhones(rawPhones).join("; ");
     const emails = Array.isArray(r.extracted_emails)
       ? (r.extracted_emails as string[]).join("; ")
       : "";
@@ -62,7 +62,7 @@ export async function GET() {
       | { name: string | null; email: string | null; phone: string | null }[]
       | null
       | undefined;
-    const contacts =
+    const contacts = (
       stored && Array.isArray(stored) && stored.length > 0
         ? stored
         : groupContactsFromExtraction({
@@ -70,9 +70,10 @@ export async function GET() {
             body: (r.body as string) || "",
             sender: (r.sender as string) || "",
             names: (r.extracted_names as string[]) || [],
-            phones: (r.extracted_phones as string[]) || [],
+            phones: rawPhones,
             emails: (r.extracted_emails as string[]) || [],
-          });
+          })
+    ).map(sanitizeContactPhone);
     const contactsPaired = contacts
       .map((c) =>
         [

@@ -3,8 +3,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   firstAccessibleWorkspacePath,
   requestPathToFeature,
+  type FeatureKey,
 } from "@/lib/feature-access";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
+import {
+  readMiddlewareAccessCache,
+  writeMiddlewareAccessCache,
+} from "@/lib/middleware-access-cache";
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
@@ -37,43 +42,71 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user?.id) return supabaseResponse;
 
-  let { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("role, restricted_features, group_id")
-    .eq("id", user.id)
-    .maybeSingle();
+  const cached = readMiddlewareAccessCache(request, user.id);
+  if (cached?.role === "admin") return supabaseResponse;
 
-  if (profileErr && /restricted_features|group_id/i.test(profileErr.message ?? "")) {
-    const fallback = await supabase
+  let role = cached?.role ?? "";
+  let restricted: FeatureKey[] = cached?.restricted ?? [];
+  let groupId = cached?.groupId ?? null;
+
+  if (!cached) {
+    let { data: profile, error: profileErr } = await supabase
       .from("profiles")
-      .select("role, restricted_features")
+      .select("role, restricted_features, group_id")
       .eq("id", user.id)
       .maybeSingle();
-    profile = fallback.data as typeof profile;
-    profileErr = fallback.error;
+
+    if (profileErr && /restricted_features|group_id/i.test(profileErr.message ?? "")) {
+      const fallback = await supabase
+        .from("profiles")
+        .select("role, restricted_features")
+        .eq("id", user.id)
+        .maybeSingle();
+      profile = fallback.data as typeof profile;
+      profileErr = fallback.error;
+    }
+    if (profileErr || !profile) return supabaseResponse;
+
+    role = profile.role as string;
+    groupId = (profile.group_id as string | null) ?? null;
+
+    if (role === "admin") {
+      writeMiddlewareAccessCache(supabaseResponse, {
+        uid: user.id,
+        role,
+        restricted: [],
+        groupId,
+      });
+      return supabaseResponse;
+    }
+
+    let group: { restricted_features: unknown } | null = null;
+    if (groupId) {
+      const { data: g } = await supabase
+        .from("team_groups")
+        .select("restricted_features")
+        .eq("id", groupId)
+        .maybeSingle();
+      if (g) group = g as { restricted_features: unknown };
+    }
+
+    restricted = mergeRestrictedFeatures(
+      {
+        role,
+        restricted_features: profile.restricted_features,
+        group_id: groupId,
+      },
+      group
+    );
+
+    writeMiddlewareAccessCache(supabaseResponse, {
+      uid: user.id,
+      role,
+      restricted,
+      groupId,
+    });
   }
-  if (profileErr || !profile) return supabaseResponse;
 
-  if ((profile.role as string) === "admin") return supabaseResponse;
-
-  let group: { restricted_features: unknown } | null = null;
-  if (profile.group_id) {
-    const { data: g } = await supabase
-      .from("team_groups")
-      .select("restricted_features")
-      .eq("id", profile.group_id as string)
-      .maybeSingle();
-    if (g) group = g as { restricted_features: unknown };
-  }
-
-  const restricted = mergeRestrictedFeatures(
-    {
-      role: profile.role as string,
-      restricted_features: profile.restricted_features,
-      group_id: profile.group_id as string | null,
-    },
-    group
-  );
   if (!restricted.length) return supabaseResponse;
 
   const feature = requestPathToFeature(

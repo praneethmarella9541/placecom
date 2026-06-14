@@ -307,7 +307,7 @@ export function WhatsAppComposerBar({
         type="file"
         className="hidden"
         multiple
-        accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx"
+        accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ods,.txt"
         onChange={(e) => {
           if (e.target.files?.length) queueFiles(e.target.files);
           e.target.value = "";

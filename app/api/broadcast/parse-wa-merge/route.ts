@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { getUserOr401 } from "@/lib/request-auth";
 import { splitCsvLine } from "@/lib/broadcast-recipients";
-import { normalizeToE164 } from "@/lib/broadcast-phones";
+import {
+  detectBroadcastSpreadsheetKind,
+  detectPhoneColumnIndex,
+  normalizeToE164,
+} from "@/lib/broadcast-phones";
 
 export const runtime = "nodejs";
 
@@ -26,18 +30,12 @@ export type WaMergeParseResult = {
   truncated: boolean;
 };
 
-const PHONE_HEADER_RE = /^(phone|mobile|tel|cell|whatsapp|e[-_]?164|msisdn|number|contact)$/i;
-
 function stripBom(s: string): string {
   return s.replace(/^\uFEFF/, "").trim();
 }
 
 function detectPhoneColumn(headers: string[]): number {
-  for (let i = 0; i < headers.length; i++) {
-    const h = headers[i].trim().replace(/[^a-zA-Z0-9]/g, "");
-    if (PHONE_HEADER_RE.test(headers[i].trim()) || PHONE_HEADER_RE.test(h)) return i;
-  }
-  return 0; // default: first column
+  return detectPhoneColumnIndex(headers);
 }
 
 function parseTable(
@@ -98,11 +96,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "File too large (max 5 MB)" }, { status: 400 });
   }
 
-  const name = file.name.toLowerCase();
+  const kind = detectBroadcastSpreadsheetKind(file);
   const buf = Buffer.from(await file.arrayBuffer());
 
   try {
-    if (name.endsWith(".csv") || file.type === "text/csv") {
+    if (kind === "csv") {
       const text = stripBom(buf.toString("utf8"));
       const lines = text.split(/\r?\n/).filter((l) => l.trim());
       if (lines.length < 2) {
@@ -113,8 +111,8 @@ export async function POST(request: Request) {
       return NextResponse.json(parseTable(headers, dataRows));
     }
 
-    if (name.endsWith(".xlsx") || name.endsWith(".xls") || name.endsWith(".ods")) {
-      const wb = XLSX.read(buf, { type: "buffer" });
+    if (kind === "excel") {
+      const wb = XLSX.read(buf, { type: "buffer", cellDates: false, raw: false });
       const sheetName = wb.SheetNames[0];
       if (!sheetName) return NextResponse.json({ error: "Empty workbook" }, { status: 400 });
       const sheet = wb.Sheets[sheetName];
@@ -126,7 +124,7 @@ export async function POST(request: Request) {
       if (raw.length < 2) {
         return NextResponse.json({ error: "Sheet must have a header row and at least one data row." }, { status: 400 });
       }
-      const headers = raw[0].map((h) => String(h ?? "").trim());
+      const headers = raw[0].map((h) => stripBom(String(h ?? "")));
       const dataRows = raw.slice(1).map((r) => r.map((c) => String(c ?? "").trim()));
       return NextResponse.json(parseTable(headers, dataRows));
     }

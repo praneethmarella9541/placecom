@@ -1,4 +1,5 @@
 import { extractEmailAddress } from "@/lib/email-parse";
+import { isExtractablePhone } from "@/lib/phone";
 
 export type GroupedContact = {
   name: string | null;
@@ -9,9 +10,9 @@ export type GroupedContact = {
 const NAME_EMAIL_ANGLE =
   /([^<\n]{1,100}?)\s*<\s*([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\s*>/gi;
 
-/** Same-line phone pairing (international + Indian-style). */
+/** Same-line phone pairing — Indian mobiles, toll-free, and +E.164 only. */
 const PHONE_RE =
-  /(?:\+\d{1,3}[\s-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]?\d{3,4}[\s.-]?\d{2,6}\b|\+\d{10,15}\b|\b[6-9]\d{9}\b|\b0[6-9]\d{9}\b/g;
+  /\+91[\s.-]?[6-9]\d{9}\b|\+[1-9]\d{9,14}\b|\b0[6-9]\d{9}\b|\b[6-9]\d{9}\b|\b1(800|860|865)[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
 
 function emailLineSource(): string {
   return "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}";
@@ -154,9 +155,9 @@ export function groupContactsFromExtraction(input: {
     const emMatches = Array.from(
       line.matchAll(new RegExp(emailLineSource(), "gi"))
     ).map((x) => ({ v: x[0], i: x.index ?? 0 }));
-    const phMatches = Array.from(line.matchAll(new RegExp(PHONE_RE.source, "g"))).map(
-      (x) => ({ v: x[0].trim(), i: x.index ?? 0 })
-    );
+    const phMatches = Array.from(line.matchAll(new RegExp(PHONE_RE.source, "g")))
+      .map((x) => ({ v: x[0].trim(), i: x.index ?? 0 }))
+      .filter((x) => isExtractablePhone(x.v));
     if (emMatches.length === 0 || phMatches.length === 0) continue;
 
     for (const ph of phMatches) {
@@ -206,6 +207,7 @@ export function groupContactsFromExtraction(input: {
   }
 
   for (const ph of phones) {
+    if (!isExtractablePhone(ph)) continue;
     const p = normPhone(ph);
     if (!p || phonesAlready.has(p)) continue;
     phonesAlready.add(p);

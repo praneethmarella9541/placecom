@@ -9,10 +9,10 @@ import { parseMaxEmails, type LabelOption, type MaxEmailsOption } from "@/lib/us
 export type ExtractionPhase = "idle" | "fetching" | "extracting" | "done" | "error";
 
 export type FetchStreamMsg =
-  | { type: "listing"; listed: number }
-  | { type: "list"; total: number }
+  | { type: "listing"; listed: number; skipped?: number }
+  | { type: "list"; total: number; skipped?: number }
   | { type: "bodies"; done: number; total: number }
-  | { type: "complete"; emails: ExtractionEmailPayload[] }
+  | { type: "complete"; emails: ExtractionEmailPayload[]; skippedCount?: number }
   | { type: "error"; code?: string; message?: string };
 
 export type PipelineProgress = {
@@ -93,20 +93,26 @@ export async function fetchGmailForExtraction(
   maxEmails: MaxEmailsOption,
   labelFilter: LabelOption,
   cb: PipelineCallbacks,
-  signal?: AbortSignal
-): Promise<{ emails: ExtractionEmailPayload[] } | { error: string }> {
+  signal?: AbortSignal,
+  options?: { excludeIds?: Set<string> }
+): Promise<{ emails: ExtractionEmailPayload[]; skippedCount: number } | { error: string }> {
   const parsedMax = parseMaxEmails(maxEmails);
+  const excludeIds = options?.excludeIds;
+  const skipExisting = Boolean(excludeIds && excludeIds.size > 0);
 
   cb.onProgress({
     phase: "fetching",
     progress: 0,
     progressMax: 1,
     gmailListReady: false,
-    progressLabel: "Connecting to Gmail…",
+    progressLabel: skipExisting
+      ? "Scanning Gmail for new messages…"
+      : "Connecting to Gmail…",
     progressHint: "",
   });
 
   let emails: ExtractionEmailPayload[] = [];
+  let skippedCount = 0;
 
   try {
     const fetchRes = await fetch("/api/fetch-emails", {
@@ -119,6 +125,9 @@ export async function fetchGmailForExtraction(
         maxEmails: parsedMax,
         labelFilter: labelFilter as GmailLabelFilter,
         stream: true,
+        ...(excludeIds && excludeIds.size > 0
+          ? { excludeEmailIds: Array.from(excludeIds) }
+          : {}),
       }),
       signal,
     });
@@ -163,10 +172,15 @@ export async function fetchGmailForExtraction(
           return { error: "Invalid progress stream from server." };
         }
         if (msg.type === "listing") {
+          const skipped = msg.skipped ?? 0;
           cb.onProgress({
-            progressLabel: `Listing messages in Gmail… (${msg.listed} found)`,
+            progressLabel:
+              skipped > 0
+                ? `Scanning Gmail… (${msg.listed} new, ${skipped} already extracted)`
+                : `Listing messages in Gmail… (${msg.listed} found)`,
           });
         } else if (msg.type === "list") {
+          skippedCount = msg.skipped ?? skippedCount;
           cb.onProgress({
             progressMax: Math.max(msg.total, 1),
             progress: 0,
@@ -177,6 +191,7 @@ export async function fetchGmailForExtraction(
           cb.onProgress({ progress: msg.done });
         } else if (msg.type === "complete") {
           emails = msg.emails;
+          skippedCount = msg.skippedCount ?? skippedCount;
           gotComplete = true;
         } else if (msg.type === "error") {
           if (msg.code === "UNAUTHORIZED") {
@@ -204,7 +219,7 @@ export async function fetchGmailForExtraction(
     return { error: clientFetchFailedMessage(e) };
   }
 
-  return { emails };
+  return { emails, skippedCount };
 }
 
 export async function filterSkipExtracted(
@@ -254,7 +269,7 @@ export async function runExtractionBatches(options: {
     });
     const summary =
       skippedCount > 0
-        ? `Fetched ${fetchedCount} — skipped ${skippedCount} already extracted, none left to process.`
+        ? `Scanned Gmail — skipped ${skippedCount} already extracted, no new messages left to process.`
         : "No new messages to extract.";
     cb.onProgress({ phase: "done", progressLabel: "", progressHint: "" });
     return { ok: true, summary, extractedCount: 0, skippedCount, fetchedCount };

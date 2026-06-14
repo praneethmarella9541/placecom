@@ -140,10 +140,16 @@ export function WhatsAppBroadcastPanel() {
     try {
       const res = await fetch("/api/broadcast/parse-wa-merge", { method: "POST", body: fd });
       const data = (await res.json()) as ParseResult & { error?: string };
-      if (!res.ok) throw new Error(data.error ?? "Parse failed");
+      if (!res.ok) {
+        throw new Error(
+          res.status === 403
+            ? "WhatsApp broadcasting is disabled for your account."
+            : (data.error ?? "Parse failed")
+        );
+      }
       if (data.rows.length === 0) {
         setParseError(
-          `No valid phone numbers found. Make sure your CSV has a column named Phone, Mobile, or Tel with E.164 numbers (e.g. +91 98765 43210).`
+          `No valid phone numbers found. Use a Phone/Mobile column with 10-digit Indian numbers or +91… format.`
         );
       } else {
         setParseResult(data);
@@ -176,10 +182,16 @@ export function WhatsAppBroadcastPanel() {
     try {
       const res = await fetch("/api/broadcast/parse-phones", { method: "POST", body: fd });
       const data = (await res.json()) as { error?: string; phones?: string[] };
-      if (!res.ok) throw new Error(data.error ?? "Import failed");
+      if (!res.ok) {
+        throw new Error(
+          res.status === 403
+            ? "WhatsApp broadcasting is disabled for your account."
+            : (data.error ?? "Import failed")
+        );
+      }
       const phones = data.phones ?? [];
       if (phones.length === 0) {
-        setSessionParseError("No phone numbers found. Use a column named Phone, Mobile, or Tel.");
+        setSessionParseError("No phone numbers found. Use a Phone/Mobile column with 10-digit Indian numbers or +91… format.");
       } else {
         mergeRecipients(phones);
       }

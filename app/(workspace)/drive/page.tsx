@@ -25,6 +25,7 @@ import {
   driveUploadResultToRow,
   uploadFileToDriveFolder,
 } from "@/lib/upload-file-to-drive-folder";
+import { uploadFormDataWithProgress, bytesSentPercent, createSmoothedUploadProgress, isUploadCancelledError } from "@/lib/upload-form-progress";
 import {
   buildDriveListCacheKey,
   buildDriveFetchOrderBy,
@@ -46,7 +47,7 @@ import {
   sortDriveListRows,
 } from "@/lib/drive-list-sort";
 import { driveApiErrorMessage } from "@/lib/drive-scope-error";
-import { pickFolderForUpload } from "@/lib/pick-folder-for-upload";
+import { runWithConcurrency } from "@/lib/run-with-concurrency";
 import { patchDriveStarInSessionCache } from "@/lib/drive-star-session-sync";
 import {
   Share2,
@@ -73,6 +74,9 @@ import {
 } from "lucide-react";
 
 const DRIVE_SIMPLE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+/** Match Drive-style parallel small-file uploads without tripping user rate limits. */
+const DRIVE_UPLOAD_CONCURRENCY = 6;
+const DRIVE_FOLDER_CREATE_CONCURRENCY = 4;
 const LIST_MUTATION_OVERRIDE_TTL_MS = 8_000;
 
 type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
@@ -264,6 +268,27 @@ export default function DrivePage() {
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   // Upload-button dropdown ("File upload" / "Folder upload") open state.
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const uploadAbortRef = useRef<AbortController | null>(null);
+
+  const cancelUpload = useCallback(() => {
+    uploadAbortRef.current?.abort();
+    uploadAbortRef.current = null;
+    setUploadQueue((q) =>
+      q.map((it) =>
+        it.status === "queued" || it.status === "uploading"
+          ? { ...it, status: "cancelled", error: undefined }
+          : it
+      )
+    );
+    setUploadBusy(false);
+  }, []);
+
+  const startUploadBatch = useCallback(() => {
+    uploadAbortRef.current?.abort();
+    const controller = new AbortController();
+    uploadAbortRef.current = controller;
+    return controller.signal;
+  }, []);
 
   /** Patch a single queue item by id (status / error). */
   const updateQueueItem = useCallback(
@@ -806,13 +831,14 @@ export default function DrivePage() {
     if (!driveSearch && mimeFilter !== "all") {
       rows = rows.filter((f) => matchesMimeFilter(f, mimeFilter));
     }
-    if (driveSearch) return rows;
-    const keepRecentFetchOrder =
-      view === "recent" &&
-      pathStack.length === 0 &&
+    // Search uses Drive relevance order by default; fullText queries cannot use
+    // orderBy server-side, so apply client sort when the user picks a column.
+    const keepFetchOrder =
       sortKey === "name" &&
-      sortDir === "asc";
-    if (keepRecentFetchOrder) return rows;
+      sortDir === "asc" &&
+      (driveSearch ||
+        (view === "recent" && pathStack.length === 0));
+    if (keepFetchOrder) return rows;
     return sortDriveListRows(rows, sortKey, sortDir);
   }, [driveFiles, mimeFilter, driveSearch, view, pathStack.length, sortKey, sortDir]);
 
@@ -912,7 +938,8 @@ export default function DrivePage() {
   async function uploadSingleFile(
     file: File,
     parentId: string,
-    onProgress?: (percent: number) => void
+    onProgress?: (percent: number) => void,
+    signal?: AbortSignal
   ): Promise<DriveFileRow> {
     const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || "";
     const basename = (rel ? rel.split("/").pop() : file.name) || file.name || "upload";
@@ -921,7 +948,8 @@ export default function DrivePage() {
       const uploaded = await uploadFileToDriveFolder(
         new File([file], basename, { type: file.type }),
         parentId,
-        onProgress
+        onProgress,
+        signal
       );
       return driveUploadResultToRow(uploaded);
     }
@@ -929,28 +957,48 @@ export default function DrivePage() {
     const fd = new FormData();
     fd.set("file", file, basename);
     fd.set("parent", parentId);
-    onProgress?.(50);
-    const res = await fetch("/api/drive/upload", { method: "POST", body: fd });
-    const raw = await res.text();
-    let data: { error?: string; file?: DriveFileRow } = {};
+    const progress = createSmoothedUploadProgress(onProgress);
+    progress.markStarted();
     try {
-      data = raw ? JSON.parse(raw) : {};
-    } catch {
-      throw new Error(`Upload failed (${res.status}). Please try again.`);
+      const { status, responseText: raw } = await uploadFormDataWithProgress(
+        "/api/drive/upload",
+        fd,
+        {
+          signal,
+          onProgress: ({ loaded }) => {
+            if (file.size <= 0) return;
+            progress.setBytesPercent(bytesSentPercent(Math.min(loaded, file.size), file.size));
+          },
+        }
+      );
+      progress.markBytesComplete();
+      let data: { error?: string; file?: DriveFileRow } = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error(`Upload failed (${status}). Please try again.`);
+      }
+      if (status < 200 || status >= 300) throw new Error(data.error || `Upload failed (${status})`);
+      if (!data.file) throw new Error("Upload returned no file metadata");
+      progress.markComplete();
+      return data.file;
+    } finally {
+      progress.stop();
     }
-    if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
-    if (!data.file) throw new Error("Upload returned no file metadata");
-    onProgress?.(100);
-    return data.file;
   }
 
   /** Create a Drive folder named `name` under `parentId` and return its id.
    *  Used by the folder-upload flow to replicate the source directory tree. */
-  async function createFolderUnder(name: string, parentId: string): Promise<string> {
+  async function createFolderUnder(
+    name: string,
+    parentId: string,
+    signal?: AbortSignal
+  ): Promise<string> {
     const res = await fetch("/api/drive/folders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, parentId }),
+      signal,
     });
     const j = (await res.json()) as { file?: { id?: string }; error?: string };
     if (!res.ok) throw new Error(driveApiErrorMessage(j, "Failed to create folder"));
@@ -958,14 +1006,10 @@ export default function DrivePage() {
     return j.file.id;
   }
 
-  /** Multi-file upload. Each file goes to the current folder; we upload
-   *  sequentially to avoid hitting Drive's per-user concurrency limits
-   *  and keep error reporting linear. */
+  /** Multi-file upload with bounded parallelism (like Google Drive). */
   async function onUploadFiles(files: FileList | null) {
     if (!files?.length) return;
     const list = Array.from(files);
-    // Seed one queue row per file (status "queued"), then upload sequentially,
-    // flipping each row to uploading → done/error as we go.
     const items: UploadQueueItem[] = list.map((file, i) => ({
       id: `f-${Date.now()}-${i}`,
       name: file.name,
@@ -974,40 +1018,41 @@ export default function DrivePage() {
     }));
     setUploadQueue(items);
     setUploadBusy(true);
+    const signal = startUploadBatch();
     try {
-      for (let i = 0; i < list.length; i++) {
+      await runWithConcurrency(list, DRIVE_UPLOAD_CONCURRENCY, async (file, i) => {
+        if (signal.aborted) return;
         const item = items[i];
-        updateQueueItem(item.id, { status: "uploading", percent: 0 });
+        updateQueueItem(item.id, { status: "uploading", percent: 1 });
         try {
-          const uploaded = await uploadSingleFile(list[i], currentParentId, (pct) => {
+          const uploaded = await uploadSingleFile(file, currentParentId, (pct) => {
             updateQueueItem(item.id, { percent: pct });
-          });
+          }, signal);
+          if (signal.aborted) return;
           updateQueueItem(item.id, { status: "done", percent: 100 });
           syncDriveListCache((prev) => {
             if (prev.some((r) => r.id === uploaded.id)) return prev;
             return [uploaded, ...prev];
           });
         } catch (e) {
+          if (isUploadCancelledError(e) || signal.aborted) {
+            updateQueueItem(item.id, { status: "cancelled", error: undefined });
+            return;
+          }
           updateQueueItem(item.id, {
             status: "error",
             error: e instanceof Error ? e.message : "Upload failed",
           });
         }
-      }
+      });
     } finally {
+      uploadAbortRef.current = null;
       setUploadBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
-  /** Folder upload. Browsers expose the picked directory tree as a flat
-   *  FileList where each File has a webkitRelativePath like
-   *  "MyFolder/sub/file.txt". We:
-   *    1. Walk all unique directory prefixes in path order (parents first).
-   *    2. Create each on Drive once, caching the mapping
-   *       prefix -> driveFolderId so deeper subfolders find their parent.
-   *    3. Upload each file into the cached parent folder id.
-   *  Sequential to keep error reporting linear and avoid Drive rate limits. */
+  /** Folder upload — create subfolders by depth, then upload files in parallel. */
   async function onUploadFolder(files: FileList | null) {
     if (!files?.length) return;
     const list = Array.from(files);
@@ -1046,11 +1091,18 @@ export default function DrivePage() {
     }));
     setUploadQueue(rootFolderItems);
     setUploadBusy(true);
+    const signal = startUploadBatch();
 
-    // Mark all root-folder rows as "uploading" immediately (they upload in parallel
-    // with their contents; we flip to done once all their files are done).
+    // Mark all root-folder rows as uploading with 0% progress.
     for (const item of rootFolderItems) {
-      updateQueueItem(item.id, { status: "uploading" });
+      updateQueueItem(item.id, { status: "uploading", percent: 1 });
+    }
+
+    const bytesByRoot = new Map<string, number>();
+    for (const f of list) {
+      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
+      const rootName = rel.split("/")[0] || f.name;
+      bytesByRoot.set(rootName, (bytesByRoot.get(rootName) ?? 0) + f.size);
     }
 
     try {
@@ -1058,56 +1110,138 @@ export default function DrivePage() {
       folderIdByPath.set("", currentParentId);
 
       const topLevelFolderRows: DriveFileRow[] = [];
+      const fileErrors = new Map<string, boolean>();
+      const bytesAccountedByFile = new Map<string, number>();
+      const maxDisplayPctByRoot = new Map<string, number>();
+      const filesByParentDir = new Map<string, File[]>();
+      const uploadPromises: Promise<void>[] = [];
 
-      // Create folders in depth order, mapping each path → new Drive id.
-      for (let i = 0; i < sortedDirs.length; i++) {
-        const dirPath = sortedDirs[i];
-        const parts = dirPath.split("/");
-        const parentDirPath = parts.slice(0, -1).join("/");
-        const parentId = folderIdByPath.get(parentDirPath) ?? currentParentId;
-        const name = parts[parts.length - 1];
-        try {
-          const newId = await createFolderUnder(name, parentId);
-          folderIdByPath.set(dirPath, newId);
-          if (parts.length === 1) {
-            topLevelFolderRows.push({
-              id: newId,
-              name,
-              mimeType: "application/vnd.google-apps.folder",
-              modifiedTime: new Date().toISOString(),
-            });
-          }
-        } catch {
-          // Mark the root folder row as errored if the top-level folder fails.
-          if (parts.length === 1) {
-            const rootItem = rootFolderItems.find((it) => it.name === name);
-            if (rootItem) updateQueueItem(rootItem.id, { status: "error", error: "Failed to create folder" });
-          }
-        }
+      for (const f of list) {
+        const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
+        const dirPath = rel.split("/").slice(0, -1).join("/");
+        const bucket = filesByParentDir.get(dirPath) ?? [];
+        bucket.push(f);
+        filesByParentDir.set(dirPath, bucket);
       }
 
-      // Upload each file into its computed parent folder.
-      const fileErrors = new Map<string, boolean>(); // rootFolderName → had error
-      for (let i = 0; i < list.length; i++) {
-        const f = list[i];
+      const reportFolderProgress = (rootName: string, rootItem: UploadQueueItem | undefined) => {
+        if (!rootItem) return;
+        const totalBytes = bytesByRoot.get(rootName) ?? 0;
+        if (totalBytes <= 0) return;
+        let accounted = 0;
+        for (const file of list) {
+          const fileRel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || "";
+          if ((fileRel.split("/")[0] || file.name) !== rootName) continue;
+          accounted += bytesAccountedByFile.get(fileRel || file.name) ?? 0;
+        }
+        const pct = Math.round((accounted / totalBytes) * 99);
+        const prev = maxDisplayPctByRoot.get(rootName) ?? 0;
+        const next = Math.max(prev, Math.min(99, pct));
+        maxDisplayPctByRoot.set(rootName, next);
+        updateQueueItem(rootItem.id, { percent: Math.max(1, next) });
+      };
+
+      const uploadOneFile = async (f: File) => {
+        if (signal.aborted) return;
         const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || "";
         const parts = rel.split("/");
         const rootName = parts[0] || f.name;
         const dirPath = parts.slice(0, -1).join("/");
         const parentId = folderIdByPath.get(dirPath) ?? currentParentId;
+        const rootItem = rootFolderItems.find((it) => it.name === rootName);
+        const fileKey = rel || f.name;
         try {
-          await uploadSingleFile(f, parentId);
-        } catch {
+          await uploadSingleFile(f, parentId, (filePct) => {
+            const bytes = Math.round((filePct / 100) * f.size);
+            bytesAccountedByFile.set(
+              fileKey,
+              Math.max(bytesAccountedByFile.get(fileKey) ?? 0, bytes)
+            );
+            reportFolderProgress(rootName, rootItem);
+          }, signal);
+          if (signal.aborted) return;
+          bytesAccountedByFile.set(fileKey, f.size);
+          reportFolderProgress(rootName, rootItem);
+        } catch (e) {
+          if (isUploadCancelledError(e) || signal.aborted) {
+            if (rootItem) updateQueueItem(rootItem.id, { status: "cancelled", error: undefined });
+            return;
+          }
           fileErrors.set(rootName, true);
         }
+      };
+
+      const enqueueFilesForDir = (dirPath: string) => {
+        const batch = filesByParentDir.get(dirPath);
+        if (!batch?.length || signal.aborted) return;
+        filesByParentDir.delete(dirPath);
+        uploadPromises.push(
+          runWithConcurrency(batch, DRIVE_UPLOAD_CONCURRENCY, (f) => uploadOneFile(f))
+        );
+      };
+
+      // Files that belong directly in the current Drive folder need no mkdir wait.
+      enqueueFilesForDir("");
+
+      const dirsByDepth = new Map<number, string[]>();
+      for (const dirPath of sortedDirs) {
+        const depth = dirPath.split("/").length;
+        const bucket = dirsByDepth.get(depth) ?? [];
+        bucket.push(dirPath);
+        dirsByDepth.set(depth, bucket);
       }
 
-      // Flip each root-folder row to done/error based on whether its files had errors.
-      for (const item of rootFolderItems) {
-        if (item.status !== "error") {
+      for (const depth of Array.from(dirsByDepth.keys()).sort((a, b) => a - b)) {
+        if (signal.aborted) break;
+        await runWithConcurrency(
+          dirsByDepth.get(depth)!,
+          DRIVE_FOLDER_CREATE_CONCURRENCY,
+          async (dirPath) => {
+            if (signal.aborted) return;
+            const parts = dirPath.split("/");
+            const parentDirPath = parts.slice(0, -1).join("/");
+            const parentId = folderIdByPath.get(parentDirPath) ?? currentParentId;
+            const name = parts[parts.length - 1];
+            try {
+              const newId = await createFolderUnder(name, parentId, signal);
+              folderIdByPath.set(dirPath, newId);
+              if (parts.length === 1) {
+                topLevelFolderRows.push({
+                  id: newId,
+                  name,
+                  mimeType: "application/vnd.google-apps.folder",
+                  modifiedTime: new Date().toISOString(),
+                });
+              }
+              // Start uploading this folder's files immediately — don't wait for siblings.
+              enqueueFilesForDir(dirPath);
+            } catch (e) {
+              if (isUploadCancelledError(e) || signal.aborted) return;
+              if (parts.length === 1) {
+                const rootItem = rootFolderItems.find((it) => it.name === name);
+                if (rootItem) {
+                  updateQueueItem(rootItem.id, { status: "error", error: "Failed to create folder" });
+                }
+              }
+            }
+          }
+        );
+      }
+
+      await Promise.all(uploadPromises);
+
+      if (signal.aborted) {
+        for (const item of rootFolderItems) {
+          updateQueueItem(item.id, { status: "cancelled", error: undefined });
+        }
+      } else {
+        for (const item of rootFolderItems) {
+          if (item.status === "error" || item.status === "cancelled") continue;
+          const hadErrors = fileErrors.get(item.name);
           updateQueueItem(item.id, {
-            status: fileErrors.get(item.name) ? "error" : "done",
-            error: fileErrors.get(item.name) ? "Some files failed to upload" : undefined,
+            status: hadErrors ? "error" : "done",
+            percent: hadErrors ? maxDisplayPctByRoot.get(item.name) : 100,
+            error: hadErrors ? "Some files failed to upload" : undefined,
           });
         }
       }
@@ -1120,21 +1254,15 @@ export default function DrivePage() {
         });
       }
     } finally {
+      uploadAbortRef.current = null;
       setUploadBusy(false);
       if (folderInputRef.current) folderInputRef.current.value = "";
     }
   }
 
-  async function triggerFolderUpload() {
+  function triggerFolderUpload() {
     setUploadMenuOpen(false);
-    const picked = await pickFolderForUpload();
-    if (picked.ok) {
-      await onUploadFolder(picked.files);
-      return;
-    }
-    if (picked.reason === "unsupported") {
-      folderInputRef.current?.click();
-    }
+    folderInputRef.current?.click();
   }
 
   /* ── Rename / Move / New-folder handlers ──────────────────── */
@@ -2357,6 +2485,7 @@ export default function DrivePage() {
       <DriveUploadQueue
         items={uploadQueue}
         busy={uploadBusy}
+        onCancel={cancelUpload}
         onClose={() => setUploadQueue([])}
       />
 

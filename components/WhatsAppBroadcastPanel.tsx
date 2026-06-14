@@ -267,16 +267,16 @@ export function WhatsAppBroadcastPanel() {
   return (
     <div className="space-y-5">
       {/* Mode toggle */}
-      <div className="flex gap-1.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-1">
+      <div className="flex gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1">
         {(["template", "session"] as BroadcastMode[]).map((m) => (
           <button
             key={m}
             type="button"
             onClick={() => { setMode(m); setSendResult(null); setSendError(null); }}
             className={cn(
-              "flex-1 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all",
+              "flex-1 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all duration-150",
               mode === m
-                ? "bg-white text-[var(--color-primary)] shadow-sm dark:bg-zinc-800 dark:text-white"
+                ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-[var(--shadow-sm)]"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             )}
           >

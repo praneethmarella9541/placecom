@@ -1,4 +1,5 @@
 import { splitCsvLine } from "@/lib/broadcast-recipients";
+import { isValidE164, normalizePhone } from "@/lib/phone";
 
 /** E.164-like segments in free text (incl. spaced / dashed). */
 const PHONE_PLUS_RE = /\+[\d\s().-]{7,22}/g;
@@ -8,17 +9,11 @@ const WHATSAPP_ADDR_RE = /whatsapp:\s*\+?[\d\s().-]{7,22}/gi;
 
 export function normalizeToE164(input: string): string | null {
   let t = input.trim();
-  t = t.replace(/^whatsapp:/i, "").replace(/[\s()-]/g, "");
+  if (!t) return null;
+  t = t.replace(/^whatsapp:/i, "").trim();
   if (t.startsWith("00")) t = `+${t.slice(2)}`;
-  if (!t.startsWith("+")) {
-    const digits = t.replace(/\D/g, "");
-    if (digits.length === 10) t = `+1${digits}`;
-    else if (digits.length >= 8 && digits.length <= 15) t = `+${digits}`;
-    else return null;
-  }
-  const digits = t.slice(1).replace(/\D/g, "");
-  if (digits.length < 8 || digits.length > 15) return null;
-  return `+${digits}`;
+  const normalized = normalizePhone(t);
+  return isValidE164(normalized) ? normalized : null;
 }
 
 export function isValidE164Phone(s: string): boolean {

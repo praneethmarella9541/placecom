@@ -9,14 +9,18 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function escapeJsString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "\\u0022").replace(/</g, "\\u003c");
+}
+
 function handoffTarget(mobileReturn: string, code: string): string {
   const sep = mobileReturn.includes("?") ? "&" : "?";
   return `${mobileReturn}${sep}code=${encodeURIComponent(code)}`;
 }
 
 /**
- * Mobile OAuth landing. Cookie from /auth/mobile-bridge → 302 to exp:// immediately
- * so Expo Go opens and the in-app browser closes. Never web /inbox.
+ * Mobile OAuth landing — return 200 with ?code= so openAuthSessionAsync captures
+ * the URL and closes the in-app browser. Fallback: delayed JS redirect to exp://.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -54,31 +58,31 @@ export async function GET(request: Request) {
     mobileReturn = "thenucleus://auth/callback";
   }
 
+  let expFallback = "";
   if (mobileReturn) {
     const target = handoffTarget(mobileReturn, code);
-    const response = NextResponse.redirect(target, {
-      status: 302,
-      headers: { "Cache-Control": "no-store" },
-    });
-    if (cookieReturn) {
-      response.cookies.set(
-        MOBILE_OAUTH_RETURN_COOKIE,
-        "",
-        mobileOAuthCookieOptions(0)
-      );
-    }
-    return response;
+    expFallback = `<script>
+setTimeout(function () {
+  window.location.replace("${escapeJsString(target)}");
+}, 400);
+</script>`;
   }
 
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Signing in</title>
-<meta http-equiv="refresh" content="0;url=about:blank"/></head>
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Signing in</title></head>
 <body style="font-family:system-ui,sans-serif;padding:32px;text-align:center">
 <p><strong>Signing you in…</strong></p>
-<p style="color:#666;font-size:14px">Return to The Nucleus app.</p>
+<p style="color:#666;font-size:14px">Returning to The Nucleus app.</p>
+${expFallback}
 </body></html>`;
 
-  return new NextResponse(html, {
+  const response = new NextResponse(html, {
     status: 200,
     headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
   });
+
+  if (cookieReturn) {
+    response.cookies.set(MOBILE_OAUTH_RETURN_COOKIE, "", mobileOAuthCookieOptions(0));
+  }
+
+  return response;
 }

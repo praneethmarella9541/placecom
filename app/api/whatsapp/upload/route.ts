@@ -23,8 +23,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Empty file" }, { status: 400 });
   }
 
-  // File extends Blob and has a .name; plain Blob doesn't. Fall back gracefully.
-  const filename = (file instanceof File ? file.name : null) || "upload";
+  // Web sends File (has .name). React Native sends a Blob-like part — use explicit filename field.
+  const filenameField = form?.get("filename");
+  const filenameFromField =
+    typeof filenameField === "string" ? filenameField.trim() : "";
+  const filename =
+    (file instanceof File ? file.name.trim() : "") ||
+    filenameFromField ||
+    "upload";
   const mimeType = file.type || "application/octet-stream";
 
   try {

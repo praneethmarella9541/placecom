@@ -12,6 +12,7 @@ import {
   type AdminTeamMember,
 } from "@/lib/admin-team-prefetch";
 import { titleCase } from "@/lib/title-case";
+import { exotelNumbersForSelect } from "@/lib/admin-exotel-select";
 
 type TeamMember = AdminTeamMember & { newPassword?: string };
 
@@ -520,7 +521,7 @@ export default function AdminTeamPage() {
                         className="input-field w-full text-sm"
                       >
                         <option value="">{titleCase("Not assigned")}</option>
-                        {exotelNumbers.map((n) => (
+                        {exotelNumbersForSelect(exotelNumbers, member.exotelVirtualNumber).map((n) => (
                           <option key={n} value={n}>
                             {n}
                           </option>

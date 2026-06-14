@@ -56,7 +56,7 @@ async function fetchAdminTeamSnapshot(signal?: AbortSignal): Promise<AdminTeamPr
   const [membersRes, groupsRes, exotelRes] = await Promise.all([
     fetch("/api/admin/team-members", { cache: "no-store", signal }),
     fetch("/api/admin/groups", { cache: "no-store", signal }),
-    fetch("/api/admin/exotel-numbers", { cache: "no-store", signal }),
+    fetch("/api/admin/exotel-numbers?available=1", { cache: "no-store", signal }),
   ]);
 
   if (signal?.aborted) return null;

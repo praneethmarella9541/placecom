@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { assertAdminUserId } from "@/lib/admin-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
-import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
 import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";

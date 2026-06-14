@@ -4,6 +4,7 @@ import { assertAdminUserId } from "@/lib/admin-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
 import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
+import { isExotelNumberTakenGlobally } from "@/lib/admin-exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
 
 export const runtime = "nodejs";
@@ -165,22 +166,8 @@ export async function POST(request: Request) {
   const jobTitle = body.jobTitle?.trim().slice(0, 120) || null;
 
   if (exotelVirtualNumber) {
-    const { data: peers, error: peerErr } = await svc
-      .from("profiles")
-      .select("id, exotel_virtual_number")
-      .eq("mailbox_owner_id", adminUserId);
-    if (peerErr && /exotel_virtual_number/i.test(peerErr.message ?? "")) {
-      await svc.auth.admin.deleteUser(newId);
-      return NextResponse.json(
-        { error: "Database migration 0023_profile_telephony.sql is required for call settings." },
-        { status: 503 }
-      );
-    }
-    if (
-      peers?.some(
-        (p) => p.exotel_virtual_number && phoneMatches(p.exotel_virtual_number as string, exotelVirtualNumber)
-      )
-    ) {
+    const taken = await isExotelNumberTakenGlobally(exotelVirtualNumber, newId);
+    if (taken) {
       await svc.auth.admin.deleteUser(newId);
       return NextResponse.json(
         { error: "That Exotel number is already assigned to another team member." },

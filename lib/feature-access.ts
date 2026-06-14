@@ -113,7 +113,9 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
 
   if (pathname.startsWith("/api/broadcast")) {
     if (pathname.includes("/sms")) return "sms";
-    if (pathname.includes("/whatsapp")) return "whatsapp";
+    if (pathname.includes("/whatsapp") || pathname.endsWith("/parse-wa-merge")) return "whatsapp";
+    // Shared by SMS + WhatsApp session import — gated by sign-in only.
+    if (pathname.endsWith("/parse-phones")) return null;
     return "broadcasting";
   }
 

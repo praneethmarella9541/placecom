@@ -16,11 +16,13 @@ import {
   getLabelSetting,
   getMaxEmailsSetting,
   getNotifyOnExtractionCompleteSetting,
+  getSkipExtractedSetting,
 } from "@/lib/user-settings";
 import type { ExtractionEmailPayload } from "@/lib/extraction-types";
 import { jobCanResume } from "@/lib/extraction-types";
 import {
   createExtractionJob,
+  fetchExistingEmailIds,
   fetchGmailForExtraction,
   filterSkipExtracted,
   patchJob,
@@ -333,6 +335,8 @@ export function ExtractionRunProvider({ children }: { children: ReactNode }) {
 
     const maxEmails = getMaxEmailsSetting();
     const labelFilter = getLabelSetting();
+    const skipExisting = getSkipExtractedSetting();
+    const excludeIds = skipExisting ? await fetchExistingEmailIds(supabase) : undefined;
 
     const fetchResult = await fetchGmailForExtraction(
       maxEmails,
@@ -341,7 +345,8 @@ export function ExtractionRunProvider({ children }: { children: ReactNode }) {
         onProgress: (p) => applyProgress(p),
         onError: (msg) => finishWithError(msg),
       },
-      ac.signal
+      ac.signal,
+      excludeIds && excludeIds.size > 0 ? { excludeIds } : undefined
     );
 
     if ("error" in fetchResult) {
@@ -351,10 +356,11 @@ export function ExtractionRunProvider({ children }: { children: ReactNode }) {
     }
 
     const fetchedCount = fetchResult.emails.length;
-    const { emails, skippedCount } = await filterSkipExtracted(
+    const { emails, skippedCount: extraSkipped } = await filterSkipExtracted(
       supabase,
       fetchResult.emails
     );
+    const skippedCount = fetchResult.skippedCount + extraSkipped;
 
     await runExtractPhase({
       jobId,

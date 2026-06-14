@@ -238,6 +238,62 @@ function mapExoDetailedStatus(exo: string, description: string): ParsedStatus | 
   return null;
 }
 
+/** Map numeric Exotel status codes (legacy 25xxx and current 30xxx). */
+function mapExoStatusCode(code: unknown): string | null {
+  const n = typeof code === "number" ? code : Number(String(code ?? "").trim());
+  if (!Number.isFinite(n)) return null;
+  if (n === 30001 || n === 25002) return "sent";
+  if (n === 30002 || n === 25001) return "delivered";
+  if (n === 30003) return "read";
+  if (n >= 30004 || (n >= 25003 && n <= 25099)) return "failed";
+  return null;
+}
+
+function parsedStatusFromFields(params: {
+  messageSid: string;
+  status?: string;
+  exoDetailed?: string;
+  exoCode?: unknown;
+  description?: string;
+  errors?: string;
+}): ParsedStatus | null {
+  const messageSid = params.messageSid.trim();
+  if (!messageSid) return null;
+
+  const description = params.description?.trim() ?? "";
+  const exoDetailed = params.exoDetailed?.trim() ?? "";
+
+  if (exoDetailed) {
+    const mapped = mapExoDetailedStatus(exoDetailed, description);
+    if (mapped) return { ...mapped, messageSid };
+  }
+
+  const fromCode = mapExoStatusCode(params.exoCode);
+  if (fromCode) {
+    return {
+      messageSid,
+      status: fromCode,
+      errorDetail:
+        fromCode === "failed"
+          ? description || params.errors || "delivery failed"
+          : undefined,
+    };
+  }
+
+  const status = params.status?.trim();
+  if (!status) return null;
+
+  const normalized = normalizeWhatsAppDeliveryStatus(status);
+  return {
+    messageSid,
+    status: normalized,
+    errorDetail:
+      normalized === "failed" || normalized.startsWith("failed")
+        ? description || params.errors
+        : undefined,
+  };
+}
+
 function parseStatusErrors(block: Record<string, unknown>): string | undefined {
   const errors = block.errors;
   if (!Array.isArray(errors) || !errors[0] || typeof errors[0] !== "object") return undefined;
@@ -276,28 +332,18 @@ export function parseExotelStatusWebhook(body: Record<string, unknown>): ParsedS
       const row = asRecord(item);
       if (!row) continue;
       const cb = String(row.callback_type ?? row.type ?? "").toLowerCase();
-      if (cb && cb !== "dlr" && cb !== "message_status") continue;
-      const messageSid = pickString(row.sid, row.message_sid, row.id);
-      const exo = pickString(row.exo_detailed_status);
-      const description = pickString(row.description);
-      if (exo) {
-        const mapped = mapExoDetailedStatus(exo, description);
-        if (mapped && messageSid) {
-          return { ...mapped, messageSid };
-        }
-      }
-      const status = pickString(row.status);
-      if (messageSid && status) {
-        const normalized = normalizeWhatsAppDeliveryStatus(status);
-        return {
-          messageSid,
-          status: normalized,
-          errorDetail:
-            normalized === "failed" || normalized.startsWith("failed")
-              ? description || parseStatusErrors(row)
-              : undefined,
-        };
-      }
+      if (cb && cb !== "dlr" && cb !== "message_status" && cb !== "status") continue;
+      const nested = asRecord(row.data);
+      const messageSid = pickString(row.sid, row.message_sid, row.id, nested?.sid, nested?.message_sid, nested?.id);
+      const parsed = parsedStatusFromFields({
+        messageSid,
+        status: pickString(row.status, nested?.status),
+        exoDetailed: pickString(row.exo_detailed_status, nested?.exo_detailed_status),
+        exoCode: row.exo_status_code ?? nested?.exo_status_code,
+        description: pickString(row.description, nested?.description),
+        errors: parseStatusErrors(row) ?? (nested ? parseStatusErrors(nested) : undefined),
+      });
+      if (parsed) return parsed;
     }
   }
 
@@ -306,21 +352,47 @@ export function parseExotelStatusWebhook(body: Record<string, unknown>): ParsedS
     const data = asRecord(body.data);
     const msg = asRecord(body.message);
     const block = data ?? msg;
-    if (!block) return null;
-    const messageSid = pickString(block.message_sid, block.id);
-    const status = pickString(block.status);
-    if (messageSid && status) {
-      const normalized = normalizeWhatsAppDeliveryStatus(status);
-      return {
+    if (block) {
+      const messageSid = pickString(block.message_sid, block.id, block.sid);
+      const parsed = parsedStatusFromFields({
         messageSid,
-        status: normalized,
-        errorDetail:
-          normalized === "failed" || normalized.startsWith("failed")
-            ? parseStatusErrors(block)
-            : undefined,
-      };
+        status: pickString(block.status),
+        exoDetailed: pickString(block.exo_detailed_status),
+        exoCode: block.exo_status_code,
+        description: pickString(block.description),
+        errors: parseStatusErrors(block),
+      });
+      if (parsed) return parsed;
     }
   }
+
+  // Shape D: flat root DLR — { sid, status, exo_status_code, exo_detailed_status }
+  const rootSid = pickString(body.sid, body.message_sid, body.id);
+  const rootParsed = parsedStatusFromFields({
+    messageSid: rootSid,
+    status: pickString(body.status),
+    exoDetailed: pickString(body.exo_detailed_status),
+    exoCode: body.exo_status_code,
+    description: pickString(body.description),
+    errors: parseStatusErrors(body),
+  });
+  if (rootParsed) return rootParsed;
+
+  // Shape E: { data: { message_sid, status } } without an explicit event type
+  const dataOnly = asRecord(body.data);
+  if (dataOnly) {
+    const messageSid = pickString(dataOnly.message_sid, dataOnly.id, dataOnly.sid);
+    const parsed = parsedStatusFromFields({
+      messageSid,
+      status: pickString(dataOnly.status),
+      exoDetailed: pickString(dataOnly.exo_detailed_status),
+      exoCode: dataOnly.exo_status_code,
+      description: pickString(dataOnly.description),
+      errors: parseStatusErrors(dataOnly),
+    });
+    if (parsed) return parsed;
+  }
+
   return null;
 }
 

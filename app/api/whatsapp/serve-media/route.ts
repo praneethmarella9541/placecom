@@ -21,6 +21,11 @@ const MIME_BY_EXT: Record<string, string> = {
   ogg: "audio/ogg",
   pdf: "application/pdf",
   txt: "text/plain",
+  csv: "text/plain",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 
 function contentTypeForPath(objectPath: string, storedType: string | null): string {

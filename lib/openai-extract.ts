@@ -5,6 +5,7 @@ import type { ChatCompletionContentPart } from "openai/resources/chat/completion
 
 import { groupContactsFromExtraction } from "@/lib/contact-grouping";
 import { openaiCostUsd } from "@/lib/openai-pricing";
+import { isExtractablePhone } from "@/lib/phone";
 
 const DEFAULT_MODEL = "gpt-5";
 
@@ -146,6 +147,8 @@ Rules:
 - Only extract what appears in the message; do not invent data.
 - Prefer real human names over company names for **names** and **contacts[].name**.
 - Exclude obvious noreply/system addresses from meaningful contacts when possible.
+- For **phones**, only include real contact numbers: Indian mobiles (10 digits starting with 6–9, optional +91/0 prefix), Indian toll-free (1800/1860), or international numbers with a + country code. Do NOT extract security codes, verification IDs, order/reference numbers, timestamps, or other long numeric tokens from automated/security emails.
+- Only pair an email with a phone when they clearly belong to the same person (signature block, same contact line). Never pair a user's email with a security/alert code from the same message.
 - You MUST return exactly one object in **results** per input email id, with the same **id** string.
 - Do not add the sender (From header) as a contact row from the header alone; do extract names, phones, and emails that appear in the body or in embedded images (e.g. signature blocks, cards).
 - Extract any email addresses or names from images that might be embedded in the email.
@@ -247,6 +250,10 @@ function dedupeStrings(xs: string[]): string[] {
   return out;
 }
 
+function filterPhones(phones: string[]): string[] {
+  return dedupeStrings(phones.filter((p) => isExtractablePhone(p)));
+}
+
 function normalizeContacts(raw: unknown): ExtractedContact[] {
   if (!Array.isArray(raw)) return [];
   const out: ExtractedContact[] = [];
@@ -256,8 +263,9 @@ function normalizeContacts(raw: unknown): ExtractedContact[] {
     const name = typeof o.name === "string" && o.name.trim() ? o.name.trim() : null;
     const email =
       typeof o.email === "string" && o.email.trim() ? o.email.trim().toLowerCase() : null;
-    const phone =
+    const rawPhone =
       typeof o.phone === "string" && o.phone.trim() ? o.phone.trim() : null;
+    const phone = rawPhone && isExtractablePhone(rawPhone) ? rawPhone : null;
     if (!name && !email && !phone) continue;
     out.push({ name, email, phone });
   }
@@ -331,7 +339,7 @@ async function callOpenAIOnce(emails: ExtractEmailIn[]): Promise<{
     byId.set(r.id, {
       id: r.id,
       names: dedupeStrings(Array.isArray(r.names) ? r.names : []),
-      phones: dedupeStrings(Array.isArray(r.phones) ? r.phones : []),
+      phones: filterPhones(Array.isArray(r.phones) ? r.phones : []),
       emails: dedupeStrings(Array.isArray(r.emails) ? r.emails : []),
       contacts: normalizeContacts(r.contacts),
     });

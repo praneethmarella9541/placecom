@@ -332,43 +332,71 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-export type CollectIdsProgress = { listedSoFar: number };
+export type CollectIdsResult = {
+  messageIds: string[];
+  skippedCount: number;
+};
 
 /**
  * List message ids up to the cap (paged Gmail list API).
+ * When excludeIds is set, pages through Gmail until target new ids are found or inbox ends.
  */
 export async function collectMessageIdsForFetch(
   accessToken: string,
   options: {
     maxEmails: number | "all";
     labelFilter: GmailLabelFilter;
-    onListProgress?: (listedSoFar: number) => void;
+    excludeIds?: Set<string>;
+    onListProgress?: (progress: { listed: number; skipped: number }) => void;
   }
-): Promise<string[]> {
+): Promise<CollectIdsResult> {
   const q = buildListQuery(options.labelFilter);
+  const exclude = options.excludeIds;
+  const skipExisting = Boolean(exclude && exclude.size > 0);
   const target =
     options.maxEmails === "all" ? ALL_MAIL_CAP : Math.min(options.maxEmails, ALL_MAIL_CAP);
 
   const ids: string[] = [];
+  let skippedCount = 0;
   let pageToken: string | undefined;
+  const maxScan =
+    skipExisting && options.maxEmails !== "all"
+      ? Math.min(ALL_MAIL_CAP, target * 100)
+      : ALL_MAIL_CAP;
+  let scanned = 0;
 
   while (ids.length < target) {
-    const need = Math.min(500, target - ids.length);
+    const remaining = target - ids.length;
+    const pageSize = skipExisting
+      ? Math.min(500, Math.max(remaining, 50))
+      : Math.min(500, remaining);
     const page = await listMessageIdsPage(accessToken, {
-      maxResults: need,
+      maxResults: pageSize,
       pageToken,
       q: q || undefined,
     });
+    if (page.messageIds.length === 0) break;
+
     for (const id of page.messageIds) {
+      if (skipExisting) {
+        scanned += 1;
+        if (exclude!.has(id)) {
+          skippedCount += 1;
+          continue;
+        }
+      }
       ids.push(id);
       if (ids.length >= target) break;
     }
-    options.onListProgress?.(ids.length);
-    if (!page.nextPageToken || page.messageIds.length === 0) break;
+
+    options.onListProgress?.({ listed: ids.length, skipped: skippedCount });
+
+    if (!page.nextPageToken) break;
+    if (skipExisting && scanned >= maxScan) break;
     pageToken = page.nextPageToken;
   }
 
-  return ids.slice(0, target);
+  return { messageIds: ids.slice(0, target), skippedCount };
 }
 
 /**
@@ -405,11 +433,11 @@ export async function fetchEmailsWithDetails(
     onProgress?: (fetched: number, target: number) => void;
   }
 ): Promise<GmailMessageSummary[]> {
-  const ids = await collectMessageIdsForFetch(accessToken, {
+  const { messageIds } = await collectMessageIdsForFetch(accessToken, {
     maxEmails: options.maxEmails,
     labelFilter: options.labelFilter,
   });
-  return fetchGmailMessagesByIds(accessToken, ids, {
+  return fetchGmailMessagesByIds(accessToken, messageIds, {
     onProgress: options.onProgress,
   });
 }

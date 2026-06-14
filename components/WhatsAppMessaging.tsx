@@ -49,6 +49,7 @@ import {
   IconRefresh,
   IconReply,
   IconStar,
+  IconUpload,
   IconX,
 } from "@/components/Icons";
 
@@ -213,6 +214,10 @@ export function WhatsAppMessaging({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [newPhoneInput, setNewPhoneInput] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importedPhones, setImportedPhones] = useState<string[]>([]);
+  const importFileRef = useRef<HTMLInputElement>(null);
   const { contacts: contactList, saveContact, deleteContact, resolveName } = useWaContacts();
   const [editingName, setEditingName] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
@@ -442,6 +447,40 @@ export function WhatsAppMessaging({
       : contactList;
     return list.slice(0, q ? 12 : 8);
   }, [contactList, contactSearch]);
+
+  const filteredImportedPhones = useMemo(() => {
+    const q = contactSearch.trim().toLowerCase();
+    const list = importedPhones.filter((p) => {
+      if (!q) return true;
+      return p.includes(q) || formatPhone(p).toLowerCase().includes(q);
+    });
+    return list.slice(0, q ? 20 : 12);
+  }, [importedPhones, contactSearch]);
+
+  const onPickImportFile = useCallback(async (list: FileList | null) => {
+    if (!list?.length) return;
+    setImportError(null);
+    setImportBusy(true);
+    const fd = new FormData();
+    fd.set("file", list[0]);
+    try {
+      const res = await fetch("/api/broadcast/parse-phones", { method: "POST", body: fd });
+      const data = (await res.json()) as { error?: string; phones?: string[] };
+      if (!res.ok) throw new Error(data.error ?? "Import failed");
+      const phones = data.phones ?? [];
+      if (phones.length === 0) {
+        setImportError("No phone numbers found. Use a Phone/Mobile column with 10-digit Indian numbers or +91… format.");
+      } else {
+        setImportedPhones((prev) => Array.from(new Set([...prev, ...phones])));
+        setNewPhoneInput(true);
+      }
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setImportBusy(false);
+      if (importFileRef.current) importFileRef.current.value = "";
+    }
+  }, []);
 
   useEffect(() => {
     const cached = getWhatsAppPrefetchCache();
@@ -833,6 +872,64 @@ export function WhatsAppMessaging({
               {titleCase("Open")}
             </button>
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".csv,.xlsx,.xls,.ods"
+              className="hidden"
+              onChange={(e) => void onPickImportFile(e.target.files)}
+            />
+            <button
+              type="button"
+              disabled={importBusy}
+              onClick={() => importFileRef.current?.click()}
+              className="btn-secondary gap-1.5 px-3 py-1.5 text-[12px]"
+            >
+              <IconUpload className="h-3.5 w-3.5" />
+              {importBusy ? titleCase("Reading…") : titleCase("Import CSV / Excel")}
+            </button>
+            {importedPhones.length > 0 ? (
+              <button
+                type="button"
+                className="btn-ghost px-2 py-1 text-[11px]"
+                onClick={() => setImportedPhones([])}
+              >
+                {titleCase("Clear import")}
+              </button>
+            ) : null}
+          </div>
+          {importError ? (
+            <p className="mt-2 text-[11px] text-red-600 dark:text-red-400">{importError}</p>
+          ) : null}
+          {filteredImportedPhones.length > 0 && (
+            <div className="mt-3 border-t border-[var(--color-border)] pt-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
+                {titleCase("From file")} ({importedPhones.length})
+              </p>
+              <div className="max-h-36 space-y-0.5 overflow-y-auto">
+                {filteredImportedPhones.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-offset)]"
+                    onClick={() => {
+                      setError(null);
+                      selectPeer(p);
+                      setContactSearch("");
+                    }}
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#128c7e] text-[11px] font-bold text-white">
+                      {peerInitials(p)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--color-text)]">
+                      {formatPhone(p)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {contactList.length > 0 && (
             <div className="mt-3 border-t border-[var(--color-border)] pt-3">
               <input

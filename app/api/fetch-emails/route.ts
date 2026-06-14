@@ -17,6 +17,8 @@ type Body = {
   accessToken?: string;
   maxEmails?: number | "all" | string;
   labelFilter?: GmailLabelFilter;
+  /** Gmail message ids to skip while listing (used with skip-existing to find N new emails). */
+  excludeEmailIds?: string[];
   /** When true, respond with NDJSON lines for progress + final emails (see dashboard). */
   stream?: boolean;
 };
@@ -60,6 +62,10 @@ export async function POST(request: Request) {
     }
   }
   const labelFilter: GmailLabelFilter = body.labelFilter ?? "inbox";
+  const excludeIds =
+    Array.isArray(body.excludeEmailIds) && body.excludeEmailIds.length > 0
+      ? new Set(body.excludeEmailIds.filter((id) => typeof id === "string" && id.trim()))
+      : undefined;
 
   if (body.stream) {
     const encoder = new TextEncoder();
@@ -69,16 +75,18 @@ export async function POST(request: Request) {
           controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
         };
         try {
-          const ids = await collectMessageIdsForFetch(accessToken, {
+          const { messageIds, skippedCount } = await collectMessageIdsForFetch(accessToken, {
             maxEmails,
             labelFilter,
-            onListProgress: (listed) => send({ type: "listing", listed }),
+            excludeIds,
+            onListProgress: ({ listed, skipped }) =>
+              send({ type: "listing", listed, skipped }),
           });
-          send({ type: "list", total: ids.length });
-          const emails = await fetchGmailMessagesByIds(accessToken, ids, {
+          send({ type: "list", total: messageIds.length, skipped: skippedCount });
+          const emails = await fetchGmailMessagesByIds(accessToken, messageIds, {
             onProgress: (done, total) => send({ type: "bodies", done, total }),
           });
-          send({ type: "complete", emails });
+          send({ type: "complete", emails, skippedCount });
         } catch (e) {
           const err = e as Error & { code?: string };
           if (err.code === "UNAUTHORIZED") {

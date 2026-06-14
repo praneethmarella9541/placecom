@@ -25,6 +25,7 @@ const MIME_ALIASES: Record<string, string> = {
   "audio/x-aac": "audio/aac",
   "audio/mp3": "audio/mpeg",
   "video/3gp": "video/3gpp",
+  "application/x-zip-compressed": "application/zip",
 };
 
 const EXT_TO_MIME: Record<string, string> = {
@@ -43,6 +44,10 @@ const EXT_TO_MIME: Record<string, string> = {
   ogg: "audio/ogg",
   pdf: "application/pdf",
   txt: "text/plain",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  csv: "text/csv",
+  ods: "application/vnd.oasis.opendocument.spreadsheet",
 };
 
 export function inferWhatsAppMediaKind(mimeType: string): "image" | "video" | "audio" | "document" {
@@ -68,6 +73,9 @@ export function extensionForMime(mimeType: string): string {
   if (m === "audio/ogg") return "ogg";
   if (m === "application/pdf") return "pdf";
   if (m === "text/plain") return "txt";
+  if (m === "application/vnd.ms-excel") return "xls";
+  if (m === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
+  if (m === "text/csv") return "csv";
   return "bin";
 }
 
@@ -103,6 +111,26 @@ export function sniffMimeType(buffer: Buffer): string | null {
   if (buffer.length >= 4 && buffer.slice(0, 4).toString("ascii") === "%PDF") {
     return "application/pdf";
   }
+  // ZIP container — xlsx/docx/pptx (Office Open XML)
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x50 &&
+    buffer[1] === 0x4b &&
+    (buffer[2] === 0x03 || buffer[2] === 0x05 || buffer[2] === 0x07) &&
+    (buffer[3] === 0x04 || buffer[3] === 0x06 || buffer[3] === 0x08)
+  ) {
+    return "application/zip";
+  }
+  // Legacy Excel .xls (OLE compound document)
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0xd0 &&
+    buffer[1] === 0xcf &&
+    buffer[2] === 0x11 &&
+    buffer[3] === 0xe0
+  ) {
+    return "application/vnd.ms-excel";
+  }
   if (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1] & 0xf0) === 0xf0) {
     return "audio/aac";
   }
@@ -119,6 +147,14 @@ function mimeFromFilename(filename: string): string | null {
   const ext = filename.split(".").pop()?.toLowerCase();
   if (!ext) return null;
   return EXT_TO_MIME[ext] ?? null;
+}
+
+/** xlsx/docx are ZIP on disk; trust filename for known Office / spreadsheet types. */
+function documentMimeFromFilename(filename: string): string | null {
+  const mime = mimeFromFilename(filename);
+  if (!mime) return null;
+  if (inferWhatsAppMediaKind(mime) === "document") return mime;
+  return null;
 }
 
 export function normalizeDeclaredMime(mimeType: string, filename: string): string {
@@ -145,9 +181,30 @@ export function resolveWhatsAppMediaMime(params: {
 }): ResolvedWhatsAppMedia {
   const declared = normalizeDeclaredMime(params.declaredMime, params.filename);
   const sniffed = sniffMimeType(params.file);
+  const fromFilename = documentMimeFromFilename(params.filename);
 
   let mimeType = sniffed ?? declared;
   mimeType = MIME_ALIASES[mimeType] ?? mimeType;
+
+  // ZIP sniff or generic octet-stream — use filename for Excel/Word/PDF types.
+  if (
+    (mimeType === "application/zip" || mimeType === "application/octet-stream") &&
+    fromFilename
+  ) {
+    mimeType = fromFilename;
+  }
+
+  // Sniffed legacy/xlsx Excel but browser declared zip — prefer spreadsheet MIME from name.
+  if (
+    sniffed === "application/vnd.ms-excel" ||
+    (sniffed === "application/zip" && fromFilename)
+  ) {
+    mimeType = fromFilename ?? sniffed;
+  }
+
+  if (mimeType === "text/csv" || params.filename.toLowerCase().endsWith(".csv")) {
+    mimeType = "text/plain";
+  }
 
   if (mimeType === "image/heic" || mimeType === "image/heif") {
     throw new Error(
@@ -165,11 +222,17 @@ export function resolveWhatsAppMediaMime(params: {
     const declaredKind = inferWhatsAppMediaKind(declared);
     const sniffedKind = inferWhatsAppMediaKind(sniffed);
     if (declaredKind !== sniffedKind) {
-      throw new Error(
-        `File looks like ${sniffedKind} (${sniffed}) but was sent as ${declaredKind} (${declared}). Try picking the file again.`
-      );
+      // ZIP-based Office files: keep spreadsheet/document MIME from filename.
+      if (sniffed === "application/zip" && fromFilename) {
+        mimeType = fromFilename;
+      } else {
+        throw new Error(
+          `File looks like ${sniffedKind} (${sniffed}) but was sent as ${declaredKind} (${declared}). Try picking the file again.`
+        );
+      }
+    } else {
+      mimeType = sniffed;
     }
-    mimeType = sniffed;
   }
 
   const kind = inferWhatsAppMediaKind(mimeType);
@@ -186,7 +249,11 @@ export function resolveWhatsAppMediaMime(params: {
 
 export function buildStorageFilename(originalName: string, mimeType: string): string {
   const safe = originalName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 60) || "upload";
-  const ext = extensionForMime(mimeType);
+  const origExt = safe.split(".").pop()?.toLowerCase();
+  const keepExt =
+    origExt && ["csv", "xlsx", "xls", "ods", "pdf", "doc", "docx", "txt"].includes(origExt)
+      ? origExt
+      : extensionForMime(mimeType);
   const base = safe.replace(/\.[^.]+$/, "") || "upload";
-  return `${base}.${ext}`;
+  return `${base}.${keepExt}`;
 }

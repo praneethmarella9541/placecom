@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Mail, Phone, Sparkles, Trash2, User, Zap } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { groupContactsFromExtraction } from "@/lib/contact-grouping";
+import { sanitizeContactPhone, sanitizeExtractedPhones } from "@/lib/phone";
 import {
   getLabelSetting,
   getMaxEmailsSetting,
@@ -223,13 +224,13 @@ export default function DashboardPage() {
     setRows(
       (data || []).map((r) => {
         const names = (r.extracted_names as string[]) || [];
-        const phones = (r.extracted_phones as string[]) || [];
+        const phones = sanitizeExtractedPhones((r.extracted_phones as string[]) || []);
         const emails = (r.extracted_emails as string[]) || [];
         const stored = r.extracted_contacts as
           | { name: string | null; email: string | null; phone: string | null }[]
           | null
           | undefined;
-        const contacts =
+        const contacts = (
           stored && Array.isArray(stored) && stored.length > 0
             ? stored
             : groupContactsFromExtraction({
@@ -239,7 +240,8 @@ export default function DashboardPage() {
                 names,
                 phones,
                 emails,
-              });
+              })
+        ).map(sanitizeContactPhone);
         return {
           id: r.id as string,
           subject: r.subject as string | null,
@@ -514,7 +516,7 @@ export default function DashboardPage() {
               onChange={handleSkipExtractedChange}
               title={titleCase("Skip already extracted emails")}
               description={titleCase(
-                "Re-runs update existing rows instead of duplicating. Skipped messages are not sent to OpenAI again."
+                "Keeps scanning Gmail until the selected count of new emails is found. Re-runs update existing rows instead of duplicating."
               )}
             />
             <ToggleRow

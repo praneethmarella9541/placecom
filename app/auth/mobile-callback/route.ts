@@ -53,8 +53,6 @@ export async function GET(request: Request) {
     mobileReturn = queryReturn;
   }
 
-  const safeCode = escapeJsString(code);
-
   if (handoffNative && !mobileReturn) {
     mobileReturn = "thenucleus://auth/callback";
   }

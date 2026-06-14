@@ -1176,7 +1176,11 @@ export default function DrivePage() {
         if (!batch?.length || signal.aborted) return;
         filesByParentDir.delete(dirPath);
         uploadPromises.push(
-          runWithConcurrency(batch, DRIVE_UPLOAD_CONCURRENCY, (f) => uploadOneFile(f))
+          (async () => {
+            await runWithConcurrency(batch, DRIVE_UPLOAD_CONCURRENCY, async (f) => {
+              await uploadOneFile(f);
+            });
+          })()
         );
       };
 

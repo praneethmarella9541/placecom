@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { MOBILE_OAUTH_RETURN_COOKIE } from "../mobile-bridge/route";
+import {
+  isAllowedMobileOAuthReturnUri,
+  MOBILE_OAUTH_RETURN_COOKIE,
+} from "@/lib/mobile-oauth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function escapeJsString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/</g, "\\u003c");
-}
-
-function isAllowedReturnUri(value: string): boolean {
-  return value.startsWith("exp://") || value.startsWith("thenucleus://");
 }
 
 /**
@@ -51,7 +50,7 @@ export async function GET(request: Request) {
 
   const cookieStore = cookies();
   const mobileReturnRaw = cookieStore.get(MOBILE_OAUTH_RETURN_COOKIE)?.value ?? "";
-  const mobileReturn = isAllowedReturnUri(mobileReturnRaw) ? mobileReturnRaw : "";
+  const mobileReturn = isAllowedMobileOAuthReturnUri(mobileReturnRaw) ? mobileReturnRaw : "";
 
   const safeCode = escapeJsString(code);
   const safeNext = escapeJsString(next);

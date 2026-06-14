@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
+import {
+  isAllowedMobileOAuthReturnUri,
+  MOBILE_OAUTH_RETURN_COOKIE,
+} from "@/lib/mobile-oauth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-export const MOBILE_OAUTH_RETURN_COOKIE = "nucleus_mobile_oauth_return";
-
-function isAllowedReturnUri(value: string): boolean {
-  return value.startsWith("exp://") || value.startsWith("thenucleus://");
-}
 
 function isSupabaseAuthUrl(value: string): boolean {
   try {
@@ -30,7 +28,7 @@ export async function GET(request: Request) {
   if (!returnUri || !authUrl) {
     return new NextResponse("Missing return or auth parameter", { status: 400 });
   }
-  if (!isAllowedReturnUri(returnUri)) {
+  if (!isAllowedMobileOAuthReturnUri(returnUri)) {
     return new NextResponse("Invalid return URI", { status: 400 });
   }
   if (!isSupabaseAuthUrl(authUrl)) {

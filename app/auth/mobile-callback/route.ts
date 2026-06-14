@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import {
   isAllowedMobileOAuthReturnUri,
   MOBILE_OAUTH_RETURN_COOKIE,
+  mobileOAuthCookieOptions,
 } from "@/lib/mobile-oauth";
 
 export const runtime = "nodejs";
@@ -76,13 +77,11 @@ export async function GET(request: Request) {
       headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
     });
     if (cookieReturn) {
-      response.cookies.set(MOBILE_OAUTH_RETURN_COOKIE, "", {
-        httpOnly: true,
-        secure: true,
-        sameSite: "lax",
-        maxAge: 0,
-        path: "/",
-      });
+      response.cookies.set(
+        MOBILE_OAUTH_RETURN_COOKIE,
+        "",
+        mobileOAuthCookieOptions(0)
+      );
     }
     return response;
   }

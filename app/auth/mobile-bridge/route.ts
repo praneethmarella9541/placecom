@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   isAllowedMobileOAuthReturnUri,
   MOBILE_OAUTH_RETURN_COOKIE,
+  mobileOAuthCookieOptions,
 } from "@/lib/mobile-oauth";
 
 export const runtime = "nodejs";
@@ -18,7 +19,6 @@ function isSupabaseAuthUrl(value: string): boolean {
 
 /**
  * Expo Go entry: persist exp:// return URI in a cookie, then redirect to Supabase OAuth.
- * sessionStorage is unreliable in ephemeral in-app browser sessions.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -36,12 +36,10 @@ export async function GET(request: Request) {
   }
 
   const response = NextResponse.redirect(authUrl);
-  response.cookies.set(MOBILE_OAUTH_RETURN_COOKIE, returnUri, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    maxAge: 10 * 60,
-    path: "/",
-  });
+  response.cookies.set(
+    MOBILE_OAUTH_RETURN_COOKIE,
+    returnUri,
+    mobileOAuthCookieOptions(10 * 60)
+  );
   return response;
 }

@@ -5,6 +5,9 @@ import type { ExtractionEmailPayload } from "@/lib/extraction-types";
 const JOB_SELECT =
   "id, status, total_emails, processed_emails, created_at, openai_input_tokens, openai_output_tokens, openai_cost_usd, next_batch_index, batch_count, error_message, fetched_count, skipped_count, pending_emails";
 
+const JOB_SELECT_CORE =
+  "id, status, total_emails, processed_emails, created_at";
+
 const ALLOWED_STATUS = new Set([
   "pending",
   "running",
@@ -12,6 +15,39 @@ const ALLOWED_STATUS = new Set([
   "error",
   "partial",
 ]);
+
+type RouteContext = { params: { id: string } | Promise<{ id: string }> };
+
+async function resolveJobId(context: RouteContext): Promise<string | null> {
+  const params =
+    context.params instanceof Promise ? await context.params : context.params;
+  const id = params.id?.trim();
+  return id || null;
+}
+
+function jobErrorResponse(error: { message?: string; code?: string } | null, id: string) {
+  const message = error?.message?.trim();
+  if (message) {
+    const missingColumn =
+      /column.+does not exist/i.test(message) ||
+      /schema cache/i.test(message);
+    if (missingColumn) {
+      return NextResponse.json(
+        {
+          error:
+            "Extraction database is out of date. Apply Supabase migrations 0005_openai_job_usage.sql and 0022_extraction_job_resume.sql, then try again.",
+        },
+        { status: 500 }
+      );
+    }
+    if (error?.code === "PGRST116") {
+      return NextResponse.json({ error: "Job not found" }, { status: 404 });
+    }
+    console.error("[jobs/:id]", id, error);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+  return NextResponse.json({ error: "Job not found" }, { status: 404 });
+}
 
 function isEmailPayloadArray(x: unknown): x is ExtractionEmailPayload[] {
   if (!Array.isArray(x)) return false;
@@ -23,11 +59,12 @@ function isEmailPayloadArray(x: unknown): x is ExtractionEmailPayload[] {
   );
 }
 
-export async function GET(
-  _request: Request,
-  context: { params: { id: string } }
-) {
-  const { id } = context.params;
+export async function GET(_request: Request, context: RouteContext) {
+  const id = await resolveJobId(context);
+  if (!id) {
+    return NextResponse.json({ error: "Missing job id" }, { status: 400 });
+  }
+
   const supabase = createServerSupabaseClient();
   const {
     data: { user },
@@ -37,25 +74,35 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: job, error } = await supabase
+  let result = await supabase
     .from("extraction_jobs")
     .select(JOB_SELECT)
     .eq("id", id)
     .eq("user_id", user.id)
     .single();
 
-  if (error || !job) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (result.error && /column|schema cache/i.test(result.error.message ?? "")) {
+    result = await supabase
+      .from("extraction_jobs")
+      .select(JOB_SELECT_CORE)
+      .eq("id", id)
+      .eq("user_id", user.id)
+      .single();
   }
 
-  return NextResponse.json({ job });
+  if (result.error || !result.data) {
+    return jobErrorResponse(result.error, id);
+  }
+
+  return NextResponse.json({ job: result.data });
 }
 
-export async function PATCH(
-  request: Request,
-  context: { params: { id: string } }
-) {
-  const { id } = context.params;
+export async function PATCH(request: Request, context: RouteContext) {
+  const id = await resolveJobId(context);
+  if (!id) {
+    return NextResponse.json({ error: "Missing job id" }, { status: 400 });
+  }
+
   const supabase = createServerSupabaseClient();
   const {
     data: { user },
@@ -115,11 +162,11 @@ export async function PATCH(
     .update(updates)
     .eq("id", id)
     .eq("user_id", user.id)
-    .select(JOB_SELECT)
+    .select(JOB_SELECT_CORE)
     .single();
 
   if (error || !job) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return jobErrorResponse(error, id);
   }
 
   return NextResponse.json({ job });

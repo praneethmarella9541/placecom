@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isValidEmail } from "@/lib/broadcast-recipients";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { assertAdminUserId } from "@/lib/admin-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
@@ -28,33 +28,11 @@ type Body = {
  * Admin-only: creates a staff auth user and links their profile to this admin's mailbox.
  */
 export async function POST(request: Request) {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) {
+    return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
-
-  const { data: me, error: meErr } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (meErr && isMailboxMigrationNotApplied(meErr)) {
-    return NextResponse.json(
-      { error: "Database migration not applied (profiles table)." },
-      { status: 503 }
-    );
-  }
-  if (meErr) {
-    return NextResponse.json({ error: meErr.message }, { status: 500 });
-  }
-  if (me?.role !== "admin") {
-    return NextResponse.json({ error: "Admin only" }, { status: 403 });
-  }
+  const user = { id: auth.userId };
 
   let body: Body;
   try {

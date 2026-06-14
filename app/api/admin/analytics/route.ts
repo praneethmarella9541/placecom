@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { assertAdminUserId } from "@/lib/admin-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import {
   addCallCost,
@@ -114,28 +114,12 @@ function parseDateOnly(s: string | null): Date | null {
 
 // Direction uses the same rules as /api/calls (per-member Exotel line + mobile).
 
-async function assertAdminUserId() {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user?.id) return { error: "Unauthorized", status: 401 as const };
-  const { data: me, error: meErr } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (meErr) return { error: meErr.message, status: 500 as const };
-  if (me?.role !== "admin") return { error: "Admin only", status: 403 as const };
-  return { adminId: user.id };
-}
-
 export async function GET(request: Request) {
-  const auth = await assertAdminUserId();
-  if (!("adminId" in auth)) {
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
+  const adminId = auth.userId;
 
   let svc: ReturnType<typeof createServiceSupabase>;
   try {
@@ -182,7 +166,7 @@ export async function GET(request: Request) {
   const { data: profiles, error: profileErr } = await svc
     .from("profiles")
     .select("id, role, display_username, mailbox_owner_id, mobile_phone, exotel_virtual_number")
-    .or(`id.eq.${auth.adminId},mailbox_owner_id.eq.${auth.adminId}`)
+    .or(`id.eq.${adminId},mailbox_owner_id.eq.${adminId}`)
     .order("created_at", { ascending: true });
   if (profileErr) {
     return NextResponse.json({ error: profileErr.message }, { status: 500 });

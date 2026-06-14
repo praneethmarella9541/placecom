@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
+import { assertAdminUserId } from "@/lib/admin-auth";
 import { normalizeRestrictedFeatures, type FeatureKey } from "@/lib/feature-access";
 
 export const runtime = "nodejs";
@@ -9,26 +9,6 @@ type GroupBody = {
   name?: string;
   restrictedFeatures?: string[];
 };
-
-async function assertAdminUserId(): Promise<
-  { userId: string } | { error: string; status: 401 | 403 | 500 }
-> {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user?.id) return { error: "Unauthorized", status: 401 };
-
-  const { data: me, error: meErr } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (meErr) return { error: meErr.message, status: 500 };
-  if (me?.role !== "admin") return { error: "Admin only", status: 403 };
-  return { userId: user.id };
-}
 
 function mapGroup(row: Record<string, unknown>) {
   return {
@@ -40,9 +20,9 @@ function mapGroup(row: Record<string, unknown>) {
 }
 
 /** GET /api/admin/groups — list custom groups for this admin's team */
-export async function GET() {
-  const auth = await assertAdminUserId();
-  if (!("userId" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+export async function GET(request: Request) {
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let svc: ReturnType<typeof createServiceSupabase>;
   try {
@@ -69,8 +49,8 @@ export async function GET() {
 
 /** POST /api/admin/groups — create a custom group */
 export async function POST(request: Request) {
-  const auth = await assertAdminUserId();
-  if (!("userId" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: GroupBody;
   try {
@@ -115,8 +95,8 @@ export async function POST(request: Request) {
 
 /** PATCH /api/admin/groups — update group name or blocked features */
 export async function PATCH(request: Request) {
-  const auth = await assertAdminUserId();
-  if (!("userId" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: GroupBody & { groupId?: string };
   try {
@@ -168,8 +148,8 @@ export async function PATCH(request: Request) {
 
 /** DELETE /api/admin/groups — remove group (members keep profile, group_id cleared via FK) */
 export async function DELETE(request: Request) {
-  const auth = await assertAdminUserId();
-  if (!("userId" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: { groupId?: string };
   try {

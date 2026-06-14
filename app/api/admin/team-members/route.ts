@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
+import { assertAdminUserId } from "@/lib/admin-auth";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import { getUserOpenAITokenUsage } from "@/lib/openai-token-limit";
@@ -73,31 +73,9 @@ async function assertExotelNotTaken(
   return null;
 }
 
-type AdminAuthResult =
-  | { userId: string }
-  | { error: string; status: 401 | 403 | 500 };
-
-async function assertAdminUserId(): Promise<AdminAuthResult> {
-  const supabase = createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user?.id) return { error: "Unauthorized", status: 401 };
-  const adminUserId = user.id;
-  const { data: me, error: meErr } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", adminUserId)
-    .maybeSingle();
-  if (meErr) return { error: meErr.message, status: 500 };
-  if (me?.role !== "admin") return { error: "Admin only", status: 403 };
-  return { userId: adminUserId };
-}
-
-export async function GET() {
-  const auth = await assertAdminUserId();
-  if (!("userId" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+export async function GET(request: Request) {
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let svc: ReturnType<typeof createServiceSupabase>;
   try {
@@ -188,8 +166,8 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  const auth = await assertAdminUserId();
-  if (!("userId" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
   const adminUserId = auth.userId;
 
   let body: PatchBody;
@@ -396,8 +374,8 @@ type DeleteBody = {
 };
 
 export async function DELETE(request: Request) {
-  const auth = await assertAdminUserId();
-  if (!("userId" in auth)) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  const auth = await assertAdminUserId(request);
+  if ("error" in auth) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: DeleteBody;
   try {

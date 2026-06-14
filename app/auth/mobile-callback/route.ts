@@ -34,10 +34,19 @@ export async function GET(request: Request) {
     return new NextResponse("Missing authorization code", { status: 400 });
   }
 
+  const safeCode = code.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Signing in</title></head>
 <body style="font-family:system-ui,sans-serif;padding:32px;text-align:center">
 <p><strong>Signing you in…</strong></p>
 <p style="color:#666;font-size:14px">Returning to The Nucleus app.</p>
+<script>
+(function () {
+  var code = '${safeCode}';
+  var appUrl = 'thenucleus://auth/callback?code=' + encodeURIComponent(code);
+  // Let Chrome Custom Tab / ASWebAuthenticationSession capture this HTTPS URL first.
+  setTimeout(function () { window.location.href = appUrl; }, 400);
+})();
+</script>
 </body></html>`;
   return new NextResponse(html, {
     status: 200,

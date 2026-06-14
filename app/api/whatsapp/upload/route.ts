@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getWebhookBaseUrlFromRequest } from "@/lib/call-recording-url";
 import { uploadWhatsAppMedia } from "@/lib/whatsapp-media-storage";
+import { resolveWhatsAppUploadFilename } from "@/lib/whatsapp-upload-filename";
 
 export const runtime = "nodejs";
 
@@ -23,14 +24,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Empty file" }, { status: 400 });
   }
 
-  // Web sends File (has .name). React Native sends a Blob-like part — use explicit filename field.
-  const filenameField = form?.get("filename");
-  const filenameFromField =
-    typeof filenameField === "string" ? filenameField.trim() : "";
-  const filename =
-    (file instanceof File ? file.name.trim() : "") ||
-    filenameFromField ||
-    "upload";
+  const filename = resolveWhatsAppUploadFilename({ form, file, request });
   const mimeType = file.type || "application/octet-stream";
 
   try {

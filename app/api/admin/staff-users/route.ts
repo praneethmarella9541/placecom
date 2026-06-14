@@ -135,7 +135,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 
-  const newId = created.adminUserId;
+  const newId = created.user.id;
   const displayUsername =
     body.displayUsername?.trim().slice(0, 64) ||
     email.split("@")[0]?.slice(0, 64) ||

@@ -1,98 +1,76 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
-import { cookies } from "next/headers";
-import { createServiceSupabase } from "@/lib/supabase-service";
 
-const MSG_MAX = 450;
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-function truncateMsg(s: string, max: number): string {
-  const t = s.trim();
-  return t.length <= max ? t : `${t.slice(0, max)}…`;
+function escapeJsString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/</g, "\\u003c");
 }
 
+/**
+ * OAuth landing page. Runs in the browser before any server-side exchange.
+ *
+ * Expo Go: /auth/mobile-bridge sets sessionStorage; this page hands the code
+ * to exp://… so the mobile app can exchange it (web must not steal the code).
+ *
+ * Web: no sessionStorage → redirect to /auth/callback/exchange for server PKCE.
+ */
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
-
-  /** Supabase/Google may redirect here with ?error=... when exchange fails upstream */
-  const oauthError = searchParams.get("error");
-  const oauthDesc = searchParams.get("error_description") ?? "";
-  const oauthCode = searchParams.get("error_code") ?? "";
-  if (oauthError) {
-    const parts = [oauthError, oauthCode, oauthDesc].filter(Boolean);
-    const combined = parts.join(" — ");
-    const msg = truncateMsg(combined || oauthError, MSG_MAX);
-    return NextResponse.redirect(
-      `${origin}/?error=auth&msg=${encodeURIComponent(msg)}`
-    );
-  }
-
+  const { searchParams } = new URL(request.url);
+  const error = searchParams.get("error");
+  const description = searchParams.get("error_description") ?? "";
   const code = searchParams.get("code");
   const next = searchParams.get("next") ?? "/inbox";
 
-  if (!code) {
-    return NextResponse.redirect(`${origin}/?error=auth&msg=${encodeURIComponent("Missing authorization code")}`);
-  }
-
-  const cookieStore = cookies();
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  const { data: sessionData, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) {
-    const msg = truncateMsg(error.message, MSG_MAX);
-    return NextResponse.redirect(
-      `${origin}/?error=auth&msg=${encodeURIComponent(msg)}`
-    );
+    const msg = `${error}${description ? ` — ${description}` : ""}`;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Sign-in failed</title>
+<script>location.replace('/?error=auth&msg=${encodeURIComponent(msg)}');</script></head>
+<body><p>Sign-in failed. Redirecting…</p></body></html>`;
+    return new NextResponse(html, {
+      status: 400,
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+    });
   }
 
-  // If this is a Google sign-in, persist the refresh token directly so
-  // Gmail/Drive keep working long after the short-lived session token expires.
-  const session = sessionData?.session;
-  const provider = session?.user?.app_metadata?.provider;
-  if (provider === "google" && session) {
-    try {
-      const refreshToken = session.provider_refresh_token;
-      const accessToken = session.provider_token;
-      const userId = session.user.id;
-      const email = session.user.email ?? null;
-
-      if (refreshToken || accessToken) {
-        const svc = createServiceSupabase();
-        const expiresAt = accessToken
-          ? new Date(Date.now() + 50 * 60 * 1000).toISOString()
-          : null;
-        await svc.from("google_mailbox_credentials").upsert(
-          {
-            owner_user_id: userId,
-            gmail_address: email,
-            refresh_token: refreshToken ?? "",
-            access_token: accessToken ?? null,
-            access_token_expires_at: expiresAt,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "owner_user_id" }
-        );
-      }
-    } catch {
-      // Non-fatal — user can still use the app today but will need to
-      // re-sign-in when the short-lived token expires.
-      console.error("[auth/callback] Failed to persist Google mailbox credentials");
-    }
+  if (!code) {
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Sign-in failed</title>
+<script>location.replace('/?error=auth&msg=${encodeURIComponent("Missing authorization code")}');</script></head>
+<body><p>Missing code. Redirecting…</p></body></html>`;
+    return new NextResponse(html, {
+      status: 400,
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+    });
   }
 
-  return NextResponse.redirect(`${origin}${next}`);
+  const safeCode = escapeJsString(code);
+  const safeNext = escapeJsString(next);
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Signing in</title></head>
+<body style="font-family:system-ui,sans-serif;padding:32px;text-align:center">
+<p><strong>Signing you in…</strong></p>
+<p style="color:#666;font-size:14px">Returning to The Nucleus app.</p>
+<script>
+(function () {
+  var code = '${safeCode}';
+  var next = '${safeNext}';
+  var mobileReturn = null;
+  try { mobileReturn = sessionStorage.getItem('nucleusMobileOAuthReturn'); } catch (e) {}
+  if (mobileReturn) {
+    try { sessionStorage.removeItem('nucleusMobileOAuthReturn'); } catch (e) {}
+    var sep = mobileReturn.indexOf('?') >= 0 ? '&' : '?';
+    window.location.href = mobileReturn + sep + 'code=' + encodeURIComponent(code);
+    return;
+  }
+  window.location.replace(
+    '/auth/callback/exchange?code=' + encodeURIComponent(code) + '&next=' + encodeURIComponent(next)
+  );
+})();
+</script>
+</body></html>`;
+
+  return new NextResponse(html, {
+    status: 200,
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }

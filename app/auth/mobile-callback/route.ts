@@ -53,10 +53,8 @@ export async function GET(request: Request) {
   var base = '${safeReturn}';
   var sep = base.indexOf('?') >= 0 ? '&' : '?';
   setTimeout(function () {
-    if (document.visibilityState === 'visible') {
-      window.location.href = base + sep + 'code=' + encodeURIComponent(code);
-    }
-  }, 500);
+    window.location.href = base + sep + 'code=' + encodeURIComponent(code);
+  }, 50);
 })();
 </script>`;
   } else if (handoffNative) {
@@ -64,10 +62,8 @@ export async function GET(request: Request) {
 (function () {
   var code = '${safeCode}';
   setTimeout(function () {
-    if (document.visibilityState === 'visible') {
-      window.location.href = 'thenucleus://auth/callback?code=' + encodeURIComponent(code);
-    }
-  }, 500);
+    window.location.href = 'thenucleus://auth/callback?code=' + encodeURIComponent(code);
+  }, 50);
 })();
 </script>`;
   }

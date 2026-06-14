@@ -14,7 +14,7 @@ const supabaseAdmin = createClient(
 
 // Exotel posts call status when the call ends.
 // Configure this URL in Exotel dashboard → App → Status Callback URL:
-//   https://www.rideasy.co.in/api/calls/status
+//   https://www.thenucleus.in/api/calls/status
 export async function POST(request: Request) {
   let params: URLSearchParams;
   const ct = request.headers.get("content-type") ?? "";

@@ -5,7 +5,7 @@ export function isAllowedMobileOAuthReturnUri(value: string): boolean {
   return value.startsWith("exp://") || value.startsWith("thenucleus://");
 }
 
-/** Shared across www.rideasy.co.in and rideasy.co.in. */
+/** Shared across www.thenucleus.in and thenucleus.in. */
 export function mobileOAuthCookieOptions(maxAge: number) {
   return {
     httpOnly: true,
@@ -13,6 +13,6 @@ export function mobileOAuthCookieOptions(maxAge: number) {
     sameSite: "lax" as const,
     maxAge,
     path: "/",
-    domain: ".rideasy.co.in",
+    domain: ".thenucleus.in",
   };
 }

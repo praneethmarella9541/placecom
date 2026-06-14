@@ -9,16 +9,14 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function escapeJsString(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "\\u0022").replace(/</g, "\\u003c");
+function buildHandoffTarget(mobileReturn: string, code: string): string {
+  const sep = mobileReturn.includes("?") ? "&" : "?";
+  return `${mobileReturn}${sep}code=${encodeURIComponent(code)}`;
 }
 
 /**
- * OAuth redirect target for the mobile app (PKCE).
- * Do NOT exchange the code here — the app calls exchangeCodeForSession().
- *
- * Default: return 200 with ?code= in the URL so openAuthSessionAsync captures it.
- * Cookie / ?return= / handoff=native: also redirect to exp:// or thenucleus://.
+ * OAuth redirect for mobile PKCE — never exchange the code here.
+ * When a mobile return URI is known, 302 straight to exp:// / thenucleus://.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -52,29 +50,15 @@ export async function GET(request: Request) {
     mobileReturn = cookieReturn;
   } else if (isAllowedMobileOAuthReturnUri(queryReturn)) {
     mobileReturn = queryReturn;
-  }
-
-  if (handoffNative && !mobileReturn) {
+  } else if (handoffNative) {
     mobileReturn = "thenucleus://auth/callback";
   }
 
   if (mobileReturn) {
-    const sep = mobileReturn.includes("?") ? "&" : "?";
-    const target = `${mobileReturn}${sep}code=${encodeURIComponent(code)}`;
-    const safeTarget = escapeJsString(target);
-    const tapHref = target.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
-
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Signing in</title></head>
-<body style="font-family:system-ui,sans-serif;padding:32px;text-align:center">
-<p><strong>Signing you in…</strong></p>
-<p style="color:#666;font-size:14px">Returning to The Nucleus app.</p>
-<p style="margin-top:20px"><a href="${tapHref}" style="color:#1a73e8">Tap here if the app did not open</a></p>
-<script>window.location.replace("${safeTarget}");</script>
-</body></html>`;
-
-    const response = new NextResponse(html, {
-      status: 200,
-      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+    const target = buildHandoffTarget(mobileReturn, code);
+    const response = NextResponse.redirect(target, {
+      status: 302,
+      headers: { "Cache-Control": "no-store" },
     });
     if (cookieReturn) {
       response.cookies.set(
@@ -86,8 +70,6 @@ export async function GET(request: Request) {
     return response;
   }
 
-  // Expo Go primary path: stay on this HTTPS URL with ?code= so the in-app browser
-  // returns the full URL to openAuthSessionAsync (no redirect to web or exp).
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Signing in</title></head>
 <body style="font-family:system-ui,sans-serif;padding:32px;text-align:center">
 <p><strong>Signing you in…</strong></p>

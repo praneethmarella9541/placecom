@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   if ("error" in auth) {
     return NextResponse.json({ error: auth.error }, { status: auth.status });
   }
-  const user = { id: auth.userId };
+  const adminUserId = auth.userId;
 
   let body: Body;
   try {
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
     }
   }
 
-  if (email === user.email?.trim().toLowerCase()) {
+  if (email === auth.email?.trim().toLowerCase()) {
     return NextResponse.json(
       { error: "Use a different email than your own admin account." },
       { status: 400 }
@@ -135,7 +135,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 
-  const newId = created.user.id;
+  const newId = created.adminUserId;
   const displayUsername =
     body.displayUsername?.trim().slice(0, 64) ||
     email.split("@")[0]?.slice(0, 64) ||
@@ -147,7 +147,7 @@ export async function POST(request: Request) {
       .from("team_groups")
       .select("id")
       .eq("id", groupIdRaw)
-      .eq("mailbox_owner_id", user.id)
+      .eq("mailbox_owner_id", adminUserId)
       .maybeSingle();
     if (!groupRow) {
       await svc.auth.admin.deleteUser(newId);
@@ -168,7 +168,7 @@ export async function POST(request: Request) {
     const { data: peers, error: peerErr } = await svc
       .from("profiles")
       .select("id, exotel_virtual_number")
-      .eq("mailbox_owner_id", user.id);
+      .eq("mailbox_owner_id", adminUserId);
     if (peerErr && /exotel_virtual_number/i.test(peerErr.message ?? "")) {
       await svc.auth.admin.deleteUser(newId);
       return NextResponse.json(
@@ -199,7 +199,7 @@ export async function POST(request: Request) {
     .update({
       role: effectiveRole,
       restricted_features: restrictedFeatures,
-      mailbox_owner_id: user.id,
+      mailbox_owner_id: adminUserId,
       display_username: displayUsername,
       group_id: groupId,
       openai_token_limit: openaiTokenLimit,
@@ -229,7 +229,7 @@ export async function POST(request: Request) {
       .from("profiles")
       .update({
         role,
-        mailbox_owner_id: user.id,
+        mailbox_owner_id: adminUserId,
         display_username: displayUsername,
         ...telephonyFields,
         updated_at: new Date().toISOString(),
@@ -251,7 +251,7 @@ export async function POST(request: Request) {
       id: newId,
       role,
       restricted_features: restrictedFeatures,
-      mailbox_owner_id: user.id,
+      mailbox_owner_id: adminUserId,
       display_username: displayUsername,
       ...telephonyFields,
     });
@@ -267,7 +267,7 @@ export async function POST(request: Request) {
         await svc.from("profiles").insert({
           id: newId,
           role,
-          mailbox_owner_id: user.id,
+          mailbox_owner_id: adminUserId,
           display_username: displayUsername,
           ...telephonyFields,
         })

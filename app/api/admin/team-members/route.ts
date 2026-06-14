@@ -6,6 +6,7 @@ import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import { getUserOpenAITokenUsage } from "@/lib/openai-token-limit";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
+import { listGloballyAssignedExotelNumbers } from "@/lib/admin-exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
 
 export const runtime = "nodejs";
@@ -162,7 +163,9 @@ export async function GET(request: Request) {
     })
   );
 
-  return NextResponse.json({ members });
+  const assignedExotelNumbers = await listGloballyAssignedExotelNumbers();
+
+  return NextResponse.json({ members, assignedExotelNumbers });
 }
 
 export async function PATCH(request: Request) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { IconChevronDown } from "@/components/Icons";
 import { PasswordInput } from "@/components/PasswordInput";
@@ -9,10 +9,11 @@ import { AdminToast, toastVariantForMessage, type AdminToastState } from "@/comp
 import {
   getAdminTeamPrefetchCache,
   prefetchAdminTeamData,
+  clearAdminTeamPrefetchCache,
   type AdminTeamMember,
 } from "@/lib/admin-team-prefetch";
 import { titleCase } from "@/lib/title-case";
-import { exotelNumbersForSelect } from "@/lib/admin-exotel-select";
+import { exotelNumbersForSelect, filterAvailableExotelNumbers } from "@/lib/admin-exotel-select";
 
 type TeamMember = AdminTeamMember & { newPassword?: string };
 
@@ -21,7 +22,8 @@ function initialFromCache() {
   return {
     members: cached?.members ?? [],
     groups: cached?.groups ?? [],
-    exotelNumbers: cached?.exotelNumbers ?? [],
+    configuredExotelNumbers: cached?.configuredExotelNumbers ?? cached?.exotelNumbers ?? [],
+    assignedExotelNumbers: cached?.assignedExotelNumbers ?? [],
     hasCache: Boolean(cached),
   };
 }
@@ -41,7 +43,8 @@ export default function AdminTeamPage() {
   const [loadingMembers, setLoadingMembers] = useState(!boot.hasCache);
   const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
   const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
-  const [exotelNumbers, setExotelNumbers] = useState<string[]>(boot.exotelNumbers);
+  const [configuredExotelNumbers, setConfiguredExotelNumbers] = useState<string[]>(boot.configuredExotelNumbers);
+  const [assignedExotelNumbers, setAssignedExotelNumbers] = useState<string[]>(boot.assignedExotelNumbers);
   const [newMobilePhone, setNewMobilePhone] = useState("");
   const [newExotelNumber, setNewExotelNumber] = useState("");
 
@@ -52,8 +55,14 @@ export default function AdminTeamPage() {
   const applySnapshot = useCallback((snap: NonNullable<ReturnType<typeof getAdminTeamPrefetchCache>>) => {
     setMembers(snap.members);
     setGroups(snap.groups);
-    setExotelNumbers(snap.exotelNumbers);
+    setConfiguredExotelNumbers(snap.configuredExotelNumbers);
+    setAssignedExotelNumbers(snap.assignedExotelNumbers);
   }, []);
+
+  const availableExotelNumbers = useMemo(
+    () => filterAvailableExotelNumbers(configuredExotelNumbers, assignedExotelNumbers),
+    [configuredExotelNumbers, assignedExotelNumbers],
+  );
 
   const revalidate = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -73,7 +82,11 @@ export default function AdminTeamPage() {
 
   useEffect(() => {
     const cached = getAdminTeamPrefetchCache();
-    if (cached) applySnapshot(cached);
+    if (cached && !Array.isArray(cached.assignedExotelNumbers)) {
+      clearAdminTeamPrefetchCache();
+    } else if (cached) {
+      applySnapshot(cached);
+    }
     void revalidate({ silent: Boolean(cached) });
   }, [applySnapshot, revalidate]);
 
@@ -298,14 +311,14 @@ export default function AdminTeamPage() {
         <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
           {titleCase("Assigned Exotel number")}
         </label>
-        {exotelNumbers.length > 0 ? (
+        {availableExotelNumbers.length > 0 ? (
           <select
             value={newExotelNumber}
             onChange={(e) => setNewExotelNumber(e.target.value)}
             className="input-field w-full text-sm"
           >
             <option value="">{titleCase("Not assigned")}</option>
-            {exotelNumbers.map((n) => (
+            {availableExotelNumbers.map((n) => (
               <option key={n} value={n}>
                 {n}
               </option>
@@ -506,7 +519,8 @@ export default function AdminTeamPage() {
                     <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
                       {titleCase("Exotel number")}
                     </label>
-                    {exotelNumbers.length > 0 ? (
+                    {availableExotelNumbers.length > 0 ||
+                    member.exotelVirtualNumber?.trim() ? (
                       <select
                         value={member.exotelVirtualNumber ?? ""}
                         onChange={(e) =>
@@ -521,7 +535,14 @@ export default function AdminTeamPage() {
                         className="input-field w-full text-sm"
                       >
                         <option value="">{titleCase("Not assigned")}</option>
-                        {exotelNumbersForSelect(exotelNumbers, member.exotelVirtualNumber).map((n) => (
+                        {exotelNumbersForSelect(
+                          filterAvailableExotelNumbers(
+                            configuredExotelNumbers,
+                            assignedExotelNumbers,
+                            member.exotelVirtualNumber,
+                          ),
+                          member.exotelVirtualNumber,
+                        ).map((n) => (
                           <option key={n} value={n}>
                             {n}
                           </option>

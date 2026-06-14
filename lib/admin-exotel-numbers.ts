@@ -2,7 +2,7 @@ import "server-only";
 
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
-import { phoneMatches } from "@/lib/phone";
+import { normalizePhone, phoneMatches } from "@/lib/phone";
 
 type AssignedRow = { id: string; exotel_virtual_number: string | null };
 
@@ -12,7 +12,8 @@ async function fetchAllAssignedExotelProfiles(
   const { data, error } = await svc
     .from("profiles")
     .select("id, exotel_virtual_number")
-    .not("exotel_virtual_number", "is", null);
+    .not("exotel_virtual_number", "is", null)
+    .neq("exotel_virtual_number", "");
 
   if (error) {
     console.warn("[admin-exotel-numbers] profiles query failed:", error.message);
@@ -28,8 +29,29 @@ function isAssignedToOtherMember(
 ): boolean {
   return peers.some((p) => {
     if (forMemberId && p.id === forMemberId) return false;
-    return Boolean(p.exotel_virtual_number && phoneMatches(p.exotel_virtual_number, number));
+    const assigned = p.exotel_virtual_number?.trim();
+    return Boolean(assigned && phoneMatches(assigned, number));
   });
+}
+
+/** All Exotel lines currently stored on any profile (every admin / team). */
+export async function listGloballyAssignedExotelNumbers(): Promise<string[]> {
+  let svc: ReturnType<typeof createServiceSupabase>;
+  try {
+    svc = createServiceSupabase();
+  } catch {
+    return [];
+  }
+  const rows = await fetchAllAssignedExotelProfiles(svc);
+  const out: string[] = [];
+  for (const row of rows) {
+    const raw = row.exotel_virtual_number?.trim();
+    if (!raw) continue;
+    const normalized = normalizePhone(raw);
+    if (!normalized) continue;
+    if (!out.some((n) => phoneMatches(n, normalized))) out.push(normalized);
+  }
+  return out;
 }
 
 /**
@@ -47,6 +69,7 @@ export async function getAvailableExotelNumbers(
   try {
     svc = createServiceSupabase();
   } catch {
+    console.warn("[admin-exotel-numbers] service role unavailable; returning unfiltered list");
     return configured;
   }
 

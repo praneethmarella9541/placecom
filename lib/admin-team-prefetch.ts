@@ -5,6 +5,7 @@
 
 import type { FeatureKey } from "@/lib/feature-access";
 import type { TeamGroup } from "@/components/AdminGroupsPanel";
+import { filterAvailableExotelNumbers } from "@/lib/admin-exotel-select";
 
 export type AdminTeamMember = {
   id: string;
@@ -25,6 +26,11 @@ export type AdminTeamMember = {
 export type AdminTeamPrefetchSnapshot = {
   members: AdminTeamMember[];
   groups: TeamGroup[];
+  /** All configured Exotel lines from the account. */
+  configuredExotelNumbers: string[];
+  /** Lines already on a profile in Supabase (any admin team). */
+  assignedExotelNumbers: string[];
+  /** configured minus assigned — used for add-member dropdown. */
   exotelNumbers: string[];
 };
 
@@ -43,6 +49,9 @@ export function patchAdminTeamPrefetchCache(patch: Partial<AdminTeamPrefetchSnap
   cache = {
     members: patch.members ?? cache?.members ?? [],
     groups: patch.groups ?? cache?.groups ?? [],
+    configuredExotelNumbers:
+      patch.configuredExotelNumbers ?? cache?.configuredExotelNumbers ?? [],
+    assignedExotelNumbers: patch.assignedExotelNumbers ?? cache?.assignedExotelNumbers ?? [],
     exotelNumbers: patch.exotelNumbers ?? cache?.exotelNumbers ?? [],
   };
 }
@@ -56,15 +65,20 @@ async function fetchAdminTeamSnapshot(signal?: AbortSignal): Promise<AdminTeamPr
   const [membersRes, groupsRes, exotelRes] = await Promise.all([
     fetch("/api/admin/team-members", { cache: "no-store", signal }),
     fetch("/api/admin/groups", { cache: "no-store", signal }),
-    fetch("/api/admin/exotel-numbers?available=1", { cache: "no-store", signal }),
+    fetch("/api/admin/exotel-numbers", { cache: "no-store", signal }),
   ]);
 
   if (signal?.aborted) return null;
 
   let members: AdminTeamMember[] = [];
+  let assignedExotelNumbers: string[] = [];
   if (membersRes.ok) {
-    const body = (await membersRes.json()) as { members?: AdminTeamMember[] };
+    const body = (await membersRes.json()) as {
+      members?: AdminTeamMember[];
+      assignedExotelNumbers?: string[];
+    };
     members = body.members ?? [];
+    assignedExotelNumbers = body.assignedExotelNumbers ?? [];
   }
 
   let groups: TeamGroup[] = [];
@@ -73,15 +87,26 @@ async function fetchAdminTeamSnapshot(signal?: AbortSignal): Promise<AdminTeamPr
     groups = body.groups ?? [];
   }
 
-  let exotelNumbers: string[] = [];
+  let configuredExotelNumbers: string[] = [];
   if (exotelRes.ok) {
     const body = (await exotelRes.json()) as { numbers?: string[] };
-    exotelNumbers = body.numbers ?? [];
+    configuredExotelNumbers = body.numbers ?? [];
   }
+
+  const exotelNumbers = filterAvailableExotelNumbers(
+    configuredExotelNumbers,
+    assignedExotelNumbers,
+  );
 
   if (signal?.aborted) return null;
 
-  const snapshot: AdminTeamPrefetchSnapshot = { members, groups, exotelNumbers };
+  const snapshot: AdminTeamPrefetchSnapshot = {
+    members,
+    groups,
+    configuredExotelNumbers,
+    assignedExotelNumbers,
+    exotelNumbers,
+  };
   setAdminTeamPrefetchCache(snapshot);
   return snapshot;
 }

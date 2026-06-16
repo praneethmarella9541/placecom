@@ -12,7 +12,6 @@ import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
 import { ThreadActionsMenu } from "@/components/ThreadActionsMenu";
 import { GmailAttachmentPreviews } from "@/components/GmailAttachmentPreviews";
-import { useResolveContactPhotos } from "@/components/ContactPhotoProvider";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
@@ -66,16 +65,21 @@ import {
   buildMailListCacheKey,
   clearMailListSessionCache,
   getMailListSessionCache,
+  MAIL_LIST_PREFETCH_SPECS,
+  prefetchMailListViewIfMissing,
+  prefetchMailListViews,
+  setMailListCache,
 } from "@/lib/inbox-list-prefetch";
 import {
   clearMailThreadPrefetchCache,
   getCachedThread,
   MAIL_THREAD_PREFETCH_DISABLED,
-  prefetchMailThreadIntent,
   rememberOpenThread,
   rememberPrefetchThread,
+  prefetchMailThreadBodies,
   startMailListAndBodyPrefetchWarm,
 } from "@/lib/mail-thread-prefetch";
+import { isPrefetchPausedAfterBrowserReload } from "@/lib/login-prefetch-session";
 import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon } from "lucide-react";
 import {
   IconInbox,
@@ -115,6 +119,20 @@ type ThreadRow = {
   hasCalendarInvite?: boolean;
   historyId?: string;
 };
+
+function threadIdsForPrefetch(rows: ThreadRow[]): string[] {
+  return rows.filter((t) => !t.draftId).map((t) => t.id);
+}
+
+/** Maps sidebar folder to the list-cache key used by loadThreads / login warm. */
+function listViewForFolder(folder: Folder): { apiFolder: string; labelId: string | null } {
+  if (folder === "starred") return { apiFolder: "inbox", labelId: "STARRED" };
+  if (folder === "important") return { apiFolder: "inbox", labelId: "IMPORTANT" };
+  if (folder === "trash") return { apiFolder: "trash", labelId: null };
+  if (folder === "spam") return { apiFolder: "spam", labelId: null };
+  if (folder === "allmail") return { apiFolder: "allmail", labelId: null };
+  return { apiFolder: folder, labelId: null };
+}
 
 function pickHigherHistoryId(
   current: string | null,
@@ -314,7 +332,6 @@ function MessageBubble({
   const isCollapsed = !expanded;
   const fromEmail = extractEmailAddress(m.from || "").trim().toLowerCase();
   const fromName = senderName(m.from || "");
-  useResolveContactPhotos(fromEmail ? [fromEmail] : []);
 
   const bodyContent = (
     <>
@@ -733,8 +750,45 @@ export default function InboxPage() {
     setFilterOpen(false);
   }, [clearFilter]);
 
+  const prefetchBodiesForRows = useCallback(
+    (rows: ThreadRow[], opts?: { forceRefresh?: boolean; append?: boolean }) => {
+      const ids = threadIdsForPrefetch(rows);
+      if (!ids.length || MAIL_THREAD_PREFETCH_DISABLED) return;
+      void prefetchMailThreadBodies(ids, {
+        concurrency: 12,
+        forceRefresh: opts?.forceRefresh,
+        append: opts?.append,
+        landing: true,
+      });
+    },
+    []
+  );
+
+  const warmBodiesFromListCacheKey = useCallback(
+    (cacheKey: string, opts?: { forceRefresh?: boolean }) => {
+      const cached = listCacheRef.current.get(cacheKey);
+      if (!cached?.threads.length) return;
+      prefetchBodiesForRows(cached.threads, opts);
+    },
+    [prefetchBodiesForRows]
+  );
+
+  /** Start list + body warm for a folder/tab on pointer-down (before click). */
+  const primeListView = useCallback(
+    (apiFolder: string, labelId: string | null) => {
+      const cacheKey = buildMailListCacheKey(apiFolder, labelId, "");
+      warmBodiesFromListCacheKey(cacheKey);
+      void prefetchMailListViewIfMissing(apiFolder, labelId).then((snap) => {
+        if (snap?.threads.length) prefetchBodiesForRows(snap.threads);
+      });
+    },
+    [warmBodiesFromListCacheKey, prefetchBodiesForRows]
+  );
+
   const switchMailFolder = useCallback(
     (key: Folder) => {
+      const view = listViewForFolder(key);
+      primeListView(view.apiFolder, view.labelId);
       setFolder(key);
       setFilterLabelId(null);
       setSelectedId(null);
@@ -742,7 +796,7 @@ export default function InboxPage() {
       resetMailSearch();
       setMobileFolderMenuOpen(false);
     },
-    [resetMailSearch],
+    [resetMailSearch, primeListView]
   );
 
   useEffect(() => {
@@ -797,6 +851,34 @@ export default function InboxPage() {
     forums: "CATEGORY_FORUMS",
   };
   const [category, setCategory] = useState<CategoryKey>("primary");
+
+  const switchCategory = useCallback(
+    (key: CategoryKey) => {
+      const labelId = CATEGORY_LABEL[key];
+      const cacheKey = buildMailListCacheKey("inbox", labelId, "");
+      activeListCacheKeyRef.current = cacheKey;
+      const cached = listCacheRef.current.get(cacheKey);
+      if (cached?.threads.length) {
+        setThreads(cached.threads);
+        setNextPageToken(cached.nextPageToken);
+        setLoadingList(false);
+        prefetchBodiesForRows(cached.threads);
+      } else {
+        setLoadingList(true);
+        void prefetchMailListViewIfMissing("inbox", labelId).then((snap) => {
+          if (!snap?.threads.length) return;
+          if (activeListCacheKeyRef.current !== cacheKey) return;
+          setThreads(snap.threads);
+          setNextPageToken(snap.nextPageToken);
+          setLoadingList(false);
+          prefetchBodiesForRows(snap.threads);
+        });
+      }
+      setCategory(key);
+    },
+    [prefetchBodiesForRows]
+  );
+
   // Effective label-id passed to the API: when in inbox and no user-label
   // filter is set, use the category label; otherwise use whatever the user
   // explicitly filtered to. Starred/Important sections force their label IDs.
@@ -921,6 +1003,9 @@ export default function InboxPage() {
   const listFetchAbortRef = useRef<AbortController | null>(null);
   /** Bumps on each non-append fetch so aborted/superseded loads cannot clear the spinner. */
   const listLoadGenRef = useRef(0);
+  const countsInFlightRef = useRef(false);
+  const countsRescheduleRef = useRef(false);
+  const countRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Timestamp of the most recent local mutation. We use this to skip the
   // SWR background revalidation for ~5 s afterwards — Gmail's API lags a
@@ -1512,6 +1597,9 @@ export default function InboxPage() {
           bumpHistoryAnchorFromThreads(latestHistoryIdRef, cached.threads);
           setLoadingList(false);
           listWasVisible = true;
+          void prefetchBodiesForRows(cached.threads, {
+            forceRefresh: opts.forceRefresh,
+          });
           const sinceMutation = Date.now() - lastMutationAtRef.current;
           if (!opts.forceRefresh && sinceMutation < MUTATION_COOLDOWN_MS) {
             return;
@@ -1545,7 +1633,8 @@ export default function InboxPage() {
             const merged = [...prev, ...uniqueIncoming];
             // Keep the cache snapshot in sync with the merged list so coming
             // back to this view after infinite-scrolling still feels instant.
-            listCacheRef.current.set(cacheKey, { threads: merged, nextPageToken: data.nextPageToken });
+            setMailListCache(cacheKey, { threads: merged, nextPageToken: data.nextPageToken });
+            prefetchBodiesForRows(uniqueIncoming, { append: true });
             return merged;
           });
         } else {
@@ -1559,7 +1648,8 @@ export default function InboxPage() {
           // fresh data, then restore it immediately after so the view doesn't jump.
           const scrollBefore = listWasVisible ? (listScrollRef.current?.scrollTop ?? 0) : 0;
           setThreads(incoming);
-          listCacheRef.current.set(cacheKey, { threads: incoming, nextPageToken: data.nextPageToken });
+          setMailListCache(cacheKey, { threads: incoming, nextPageToken: data.nextPageToken });
+          prefetchBodiesForRows(incoming, { forceRefresh: opts.forceRefresh });
           if (scrollBefore > 0) {
             requestAnimationFrame(() => {
               if (listScrollRef.current) {
@@ -1596,7 +1686,7 @@ export default function InboxPage() {
         }
       }
     },
-    [folder, mailSearch, effectiveLabelId]
+    [folder, mailSearch, effectiveLabelId, prefetchBodiesForRows]
   );
 
   // useLayoutEffect so cached folder/tab content paints before the browser
@@ -1605,17 +1695,79 @@ export default function InboxPage() {
     void loadThreads({ append: false });
   }, [loadThreads]);
 
-  // After the active view loads, warm any remaining folder/tab caches in the background.
+  // Prefetch thread bodies as soon as the user lands on a folder/tab (from list cache).
+  useLayoutEffect(() => {
+    const apiFolder =
+      folder === "starred" || folder === "important"
+        ? "inbox"
+        : folder === "trash"
+          ? "trash"
+          : folder === "spam"
+            ? "spam"
+            : folder === "allmail"
+              ? "allmail"
+              : folder;
+    const cacheKey = buildMailListCacheKey(apiFolder, effectiveLabelId, mailSearch);
+    const cached = listCacheRef.current.get(cacheKey);
+    if (cached?.threads.length) {
+      prefetchBodiesForRows(cached.threads);
+    }
+  }, [folder, category, effectiveLabelId, mailSearch, prefetchBodiesForRows]);
+
+  // Warm list + body caches on first visit only — after F5 use sessionStorage instead.
+  useEffect(() => {
+    if (isPrefetchPausedAfterBrowserReload()) return;
+
+    void prefetchMailListViews({ concurrency: 4 }).then(() => {
+      if (MAIL_THREAD_PREFETCH_DISABLED) return;
+      const cache = getMailListSessionCache();
+      for (const spec of MAIL_LIST_PREFETCH_SPECS) {
+        const key = buildMailListCacheKey(spec.apiFolder, spec.labelId ?? null, "");
+        const page = cache.get(key);
+        if (!page?.threads.length) continue;
+        void prefetchMailThreadBodies(
+          page.threads.filter((t) => !t.draftId).map((t) => t.id)
+        );
+      }
+    });
+  }, []);
+
+  // Warm bodies when the visible list changes (current folder/tab only).
+  useEffect(() => {
+    if (loadingList || !threads.length || selectedId) return;
+    prefetchBodiesForRows(threads);
+  }, [threads, loadingList, selectedId, prefetchBodiesForRows, folder, category, effectiveLabelId]);
+
+  // Bridge module/session body cache into the per-page open cache for instant paint.
+  useEffect(() => {
+    for (const t of threads) {
+      if (t.draftId) continue;
+      const mod = getCachedThread(t.id);
+      if (!mod) continue;
+      const payload: ThreadCacheData = {
+        messages: mod.messages as MsgView[],
+        labelIds: mod.labelIds.filter((id) => id !== "UNREAD"),
+      };
+      const resolved = Promise.resolve(payload);
+      const prefetchKey = `prefetch:${t.id}`;
+      const openKey = `open:${t.id}`;
+      if (!threadDataCache.current.has(prefetchKey)) {
+        threadDataCache.current.set(prefetchKey, resolved);
+      }
+      if (!threadDataCache.current.has(openKey)) {
+        threadDataCache.current.set(openKey, resolved);
+      }
+    }
+  }, [threads]);
+
+  // After the active view loads, warm remaining views + bulk bodies when allowed.
   useEffect(() => {
     if (loadingList || listPrefetchBoostRef.current) return;
     listPrefetchBoostRef.current = true;
     const skip = new Set<string>();
     if (activeListCacheKeyRef.current) skip.add(activeListCacheKeyRef.current);
-    const t = window.setTimeout(() => {
-      startMailListAndBodyPrefetchWarm({ skipKeys: skip, listConcurrency: 3, bodyConcurrency: 2 });
-    }, 400);
+    void startMailListAndBodyPrefetchWarm({ skipKeys: skip, listConcurrency: 4, bodyConcurrency: 2 });
     return () => {
-      clearTimeout(t);
       listPrefetchBoostRef.current = false;
     };
   }, [loadingList]);
@@ -1756,6 +1908,13 @@ export default function InboxPage() {
   );
 
   const loadCounts = useCallback(async () => {
+    if (countsInFlightRef.current) {
+      countsRescheduleRef.current = true;
+      return;
+    }
+    countsInFlightRef.current = true;
+    countsRescheduleRef.current = false;
+
     const ids = [
       "INBOX",
       "SENT",
@@ -1819,6 +1978,13 @@ export default function InboxPage() {
         return { ...merged, INBOX: { ...incoming.INBOX, unread: mergedUnread } };
       });
     } catch { /* ignore */ }
+    finally {
+      countsInFlightRef.current = false;
+      if (countsRescheduleRef.current) {
+        countsRescheduleRef.current = false;
+        void loadCounts();
+      }
+    }
   }, [allLabels]);
 
   useEffect(() => {
@@ -1829,22 +1995,32 @@ export default function InboxPage() {
   }, [adjustDraftCount, loadCounts]);
 
   /**
-   * Re-fetch counts shortly after a mutation. Gmail's label counts API lags
-   * a few seconds behind a label change, so we retry once with a delay to
-   * catch the propagated value. The first call serves as an immediate sync
-   * (in case Gmail responds fast); the second covers the typical lag.
+   * Sync sidebar counts with Gmail after a mutation. Optimistic UI updates
+   * badges immediately; one delayed fetch catches Gmail's ~1–3 s count lag.
    */
   const scheduleCountRefresh = useCallback(() => {
-    void loadCounts();
-    const t1 = setTimeout(() => void loadCounts(), 800);
-    const t2 = setTimeout(() => void loadCounts(), 2500);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
+    if (countRefreshTimerRef.current) clearTimeout(countRefreshTimerRef.current);
+    countRefreshTimerRef.current = setTimeout(() => {
+      countRefreshTimerRef.current = null;
+      void loadCounts();
+    }, 1500);
   }, [loadCounts]);
+
+  useEffect(() => {
+    return () => {
+      if (countRefreshTimerRef.current) clearTimeout(countRefreshTimerRef.current);
+    };
+  }, []);
 
   const warmMailListCachesAfterRefresh = useCallback(() => {
     const skip = new Set<string>();
     if (activeListCacheKeyRef.current) skip.add(activeListCacheKeyRef.current);
-    startMailListAndBodyPrefetchWarm({ skipKeys: skip, listConcurrency: 3, bodyConcurrency: 2 });
+    startMailListAndBodyPrefetchWarm({
+      skipKeys: skip,
+      listConcurrency: 3,
+      bodyConcurrency: 2,
+      force: true,
+    });
   }, []);
 
   const handleMailListRefresh = useCallback(async () => {
@@ -1969,9 +2145,13 @@ export default function InboxPage() {
           );
         }
         if (data.hasChanges || data.expired) {
-          void pollRef.current.loadCounts();
-          // Poll-detected changes always refresh — don't block on mutation cooldown.
-          void pollRef.current.loadThreads({ append: false, forceRefresh: true });
+          const inMutationCooldown =
+            Date.now() - lastMutationAtRef.current < MUTATION_COOLDOWN_MS;
+          // Local read/label/archive already updated list + badges optimistically.
+          if (!inMutationCooldown) {
+            void pollRef.current.loadCounts();
+            void pollRef.current.loadThreads({ append: false, forceRefresh: true });
+          }
         }
       } catch {
         /* network blip */
@@ -2220,7 +2400,6 @@ export default function InboxPage() {
   const prefetchThread = useCallback(
     (threadId: string) => {
       if (MAIL_THREAD_PREFETCH_DISABLED) return;
-      prefetchMailThreadIntent(threadId);
       void fetchThreadData(threadId, { prefetch: true });
     },
     [fetchThreadData]
@@ -2395,8 +2574,7 @@ export default function InboxPage() {
     return ids;
   }, [threadLabelIds, selectedId, threads]);
 
-  // Prefetch a draft on hover — same pattern as prefetchThread so openDraft
-  // can reuse the already-in-flight response and open instantly on click.
+  // Prefetch a draft on pointer-down so openDraft can reuse the in-flight response.
   const prefetchDraft = useCallback((draftId: string) => {
     if (draftPrefetchCache.current.has(draftId)) return; // already in-flight or done
     const promise = fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, { cache: "no-store" });
@@ -2439,8 +2617,16 @@ export default function InboxPage() {
     setThreadError(null);
     const rowLabelIds = threads.find((r) => r.id === threadId)?.labelIds;
     setThreadLabelIds(mergeThreadLabelIds(rowLabelIds));
-    setMessages(null);
-    setLoadingThread(true);
+
+    const warmed = getCachedThread(threadId);
+    if (warmed) {
+      setMessages(warmed.messages as MsgView[]);
+      setLoadingThread(false);
+    } else {
+      setMessages(null);
+      setLoadingThread(true);
+    }
+
     if (composeOpen && (composeKind === "reply" || composeKind === "replyAll")) {
       setComposeOpen(false);
     }
@@ -3865,7 +4051,8 @@ export default function InboxPage() {
                 <button
                   key={t.key}
                   type="button"
-                  onClick={() => setCategory(t.key)}
+                  onPointerDown={() => primeListView("inbox", CATEGORY_LABEL[t.key])}
+                  onClick={() => switchCategory(t.key)}
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-5 py-3 text-[13px] font-medium transition-colors",
                     active
@@ -4226,7 +4413,8 @@ export default function InboxPage() {
                     <li
                       key={t.draftId ?? t.id}
                       onPointerDown={() => {
-                        if (!t.draftId) prefetchThread(t.id);
+                        if (t.draftId) prefetchDraft(t.draftId);
+                        else prefetchThread(t.id);
                       }}
                       onClick={(e) => {
                         const t0 = e.target as HTMLElement;
@@ -4385,7 +4573,6 @@ export default function InboxPage() {
                       <button
                         type="button"
                         onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
-                        onMouseEnter={() => { if (t.draftId) { prefetchDraft(t.draftId); } else { prefetchThread(t.id); } }}
                         className={cn(
                           "w-[160px] shrink-0 truncate px-2 text-left text-[13px]",
                           isUnread ? "font-bold text-[var(--color-text)]" : "font-normal text-[var(--color-text)]"
@@ -4402,7 +4589,6 @@ export default function InboxPage() {
                       <button
                         type="button"
                         onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
-                        onMouseEnter={() => { if (t.draftId) { prefetchDraft(t.draftId); } else { prefetchThread(t.id); } }}
                         className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left pr-3"
                       >
                         {chips.length > 0 && (

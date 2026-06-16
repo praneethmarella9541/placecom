@@ -9,19 +9,31 @@ import {
   MAIL_LIST_PREFETCH_SPECS,
   prefetchMailListViews,
 } from "@/lib/inbox-list-prefetch";
+import {
+  beginMailBodyPrefetchWarm,
+  finishMailBodyPrefetchWarm,
+  isPrefetchPausedAfterBrowserReload,
+  isWorkspacePrefetchSessionComplete,
+  shouldPrefetchVisibleMailList,
+} from "@/lib/login-prefetch-session";
+import {
+  clearMailThreadSessionCache,
+  hydrateMailThreadSessionCache,
+  persistMailThreadSessionCache,
+  type MailThreadCachePayload,
+} from "@/lib/mail-thread-session-cache";
 
 /** Set NEXT_PUBLIC_DISABLE_MAIL_THREAD_PREFETCH=1 to pause background thread fetches. */
 export const MAIL_THREAD_PREFETCH_DISABLED =
   process.env.NEXT_PUBLIC_DISABLE_MAIL_THREAD_PREFETCH === "1";
 
-const THREAD_CACHE_TTL_MS = 120_000;
 const BODY_PREFETCH_CONCURRENCY = 2;
 const MAIL_LIST_PAGE_SIZE = 25;
+const VISIBLE_BODY_PREFETCH_CONCURRENCY = 12;
+const VISIBLE_BODY_PREFETCH_LEAD = 15;
+const SESSION_THREAD_TTL_MS = 30 * 60 * 1000;
 
-export type MailThreadCachePayload = {
-  messages: Record<string, unknown>[];
-  labelIds: string[];
-};
+export type { MailThreadCachePayload } from "@/lib/mail-thread-session-cache";
 
 type CacheEntry = {
   data: MailThreadCachePayload;
@@ -35,21 +47,28 @@ function cacheKey(threadId: string, kind: "prefetch" | "open"): string {
   return `${kind}:${threadId}`;
 }
 
+if (typeof window !== "undefined") {
+  for (const [threadId, entry] of hydrateMailThreadSessionCache()) {
+    threadCache.set(cacheKey(threadId, "prefetch"), entry);
+  }
+}
+
 function isFresh(entry: CacheEntry | undefined): boolean {
   if (!entry) return false;
-  return Date.now() - entry.fetchedAt < THREAD_CACHE_TTL_MS;
+  return Date.now() - entry.fetchedAt < SESSION_THREAD_TTL_MS;
 }
 
 function gcThreadCache(): void {
   const now = Date.now();
   for (const [key, entry] of Array.from(threadCache.entries())) {
-    if (now - entry.fetchedAt > THREAD_CACHE_TTL_MS) threadCache.delete(key);
+    if (now - entry.fetchedAt > SESSION_THREAD_TTL_MS) threadCache.delete(key);
   }
 }
 
 export function clearMailThreadPrefetchCache(): void {
   threadCache.clear();
   inflight.clear();
+  clearMailThreadSessionCache();
 }
 
 function store(threadId: string, kind: "prefetch" | "open", data: MailThreadCachePayload): void {
@@ -58,6 +77,7 @@ function store(threadId: string, kind: "prefetch" | "open", data: MailThreadCach
   if (kind === "open") {
     threadCache.set(cacheKey(threadId, "prefetch"), { data, fetchedAt: Date.now() });
   }
+  persistMailThreadSessionCache(threadId, data);
 }
 
 export function getCachedThread(threadId: string): MailThreadCachePayload | undefined {
@@ -127,18 +147,55 @@ export function collectThreadIdsFromWarmedMailLists(perCategory = MAIL_LIST_PAGE
   return ids;
 }
 
-export async function prefetchMailBodiesForWarmedCategories(opts?: {
-  signal?: AbortSignal;
-  perCategory?: number;
-  concurrency?: number;
-}): Promise<void> {
+export async function prefetchMailThreadBodies(
+  threadIds: readonly string[],
+  opts?: {
+    signal?: AbortSignal;
+    concurrency?: number;
+    forceRefresh?: boolean;
+    append?: boolean;
+    landing?: boolean;
+  }
+): Promise<void> {
   if (MAIL_THREAD_PREFETCH_DISABLED) return;
   if (opts?.signal?.aborted) return;
+  if (!shouldPrefetchVisibleMailList(opts)) return;
 
-  const threadIds = collectThreadIdsFromWarmedMailLists(opts?.perCategory ?? MAIL_LIST_PAGE_SIZE);
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const id of threadIds) {
+    if (!id || seen.has(id)) continue;
+    if (getCachedThread(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  if (!ids.length) return;
+
+  const lead = ids.slice(0, VISIBLE_BODY_PREFETCH_LEAD);
+  const rest = ids.slice(VISIBLE_BODY_PREFETCH_LEAD);
+  const leadConcurrency = opts?.concurrency ?? VISIBLE_BODY_PREFETCH_CONCURRENCY;
+
+  await Promise.all([
+    prefetchMailThreadBodiesBatch(lead, { signal: opts?.signal, concurrency: leadConcurrency }),
+    rest.length
+      ? prefetchMailThreadBodiesBatch(rest, {
+          signal: opts?.signal,
+          concurrency: Math.max(4, Math.floor(leadConcurrency / 2)),
+        })
+      : Promise.resolve(),
+  ]);
+}
+
+async function prefetchMailThreadBodiesBatch(
+  threadIds: readonly string[],
+  opts?: {
+    signal?: AbortSignal;
+    concurrency?: number;
+  }
+): Promise<void> {
   if (!threadIds.length) return;
 
-  const concurrency = opts?.concurrency ?? BODY_PREFETCH_CONCURRENCY;
+  const concurrency = opts?.concurrency ?? 4;
   let idx = 0;
 
   const workers = Array.from({ length: Math.min(concurrency, threadIds.length) }, async () => {
@@ -151,18 +208,58 @@ export async function prefetchMailBodiesForWarmedCategories(opts?: {
   await Promise.all(workers);
 }
 
+export async function prefetchMailBodiesForWarmedCategories(opts?: {
+  signal?: AbortSignal;
+  perCategory?: number;
+  concurrency?: number;
+  force?: boolean;
+}): Promise<void> {
+  if (MAIL_THREAD_PREFETCH_DISABLED) return;
+  if (opts?.signal?.aborted) return;
+  if (!beginMailBodyPrefetchWarm({ force: opts?.force })) return;
+
+  try {
+    const threadIds = collectThreadIdsFromWarmedMailLists(opts?.perCategory ?? MAIL_LIST_PAGE_SIZE);
+    if (!threadIds.length) return;
+
+    const concurrency = opts?.concurrency ?? BODY_PREFETCH_CONCURRENCY;
+    let idx = 0;
+
+    const workers = Array.from({ length: Math.min(concurrency, threadIds.length) }, async () => {
+      while (idx < threadIds.length && !opts?.signal?.aborted) {
+        const i = idx++;
+        await prefetchMailThreadOnce(threadIds[i]!, { signal: opts?.signal });
+      }
+    });
+
+    await Promise.all(workers);
+  } finally {
+    finishMailBodyPrefetchWarm();
+  }
+}
+
 export function startMailListAndBodyPrefetchWarm(opts?: {
   skipKeys?: ReadonlySet<string>;
   listConcurrency?: number;
   bodyConcurrency?: number;
+  /** Bypass session guard (inbox manual refresh). */
+  force?: boolean;
 }): void {
-  void prefetchMailListViews({
+  if (!opts?.force && isPrefetchPausedAfterBrowserReload()) return;
+
+  const listPromise = prefetchMailListViews({
     skipKeys: opts?.skipKeys,
     concurrency: opts?.listConcurrency ?? 3,
-  }).then(() => {
+    force: opts?.force,
+  });
+
+  if (!opts?.force && isWorkspacePrefetchSessionComplete()) return;
+
+  void listPromise.then(() => {
     if (!MAIL_THREAD_PREFETCH_DISABLED) {
       void prefetchMailBodiesForWarmedCategories({
         concurrency: opts?.bodyConcurrency ?? BODY_PREFETCH_CONCURRENCY,
+        force: opts?.force,
       });
     }
   });

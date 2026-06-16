@@ -19,7 +19,8 @@ import {
   Users,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
-import { clearAdminTeamPrefetchCache, prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
+import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
+import { clearSecondaryFeaturePrefetchCache } from "@/lib/workspace-feature-prefetch";
 import { pathToFeature } from "@/lib/feature-access";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
@@ -365,7 +366,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
   }, [me?.role, me?.restrictedFeatures]);
 
   const signOut = useCallback(async () => {
-    clearAdminTeamPrefetchCache();
+    clearSecondaryFeaturePrefetchCache();
     await supabase.auth.signOut();
     window.location.href = "/";
   }, [supabase]);

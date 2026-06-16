@@ -9,6 +9,7 @@ import { titleCase } from "@/lib/title-case";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { pathToFeature } from "@/lib/feature-access";
+import { clearSecondaryFeaturePrefetchCache } from "@/lib/workspace-feature-prefetch";
 import {
   IconMail,
   IconFolder,
@@ -98,6 +99,7 @@ function AppHeaderInner() {
   }, [mobileOpen, router, links]);
 
   async function signOut() {
+    clearSecondaryFeaturePrefetchCache();
     await supabase.auth.signOut();
     window.location.href = "/";
   }

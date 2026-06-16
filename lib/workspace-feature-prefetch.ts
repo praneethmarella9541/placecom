@@ -6,6 +6,11 @@
 import type { FeatureKey } from "@/lib/feature-access";
 import { prefetchDriveListViews } from "@/lib/drive-list-prefetch";
 import { clearAdminTeamPrefetchCache } from "@/lib/admin-team-prefetch";
+import {
+  abortWorkspacePrefetchWarm,
+  beginWorkspacePrefetchWarm,
+  clearWorkspacePrefetchSession,
+} from "@/lib/login-prefetch-session";
 import { clearMailThreadPrefetchCache, warmMailListsThenThreadBodies } from "@/lib/mail-thread-prefetch";
 import { clearWhatsAppThreadPrefetchCache, prefetchWhatsAppThreads } from "@/lib/whatsapp-thread-prefetch";
 
@@ -240,7 +245,11 @@ export async function runLoginPrefetchChain(opts?: {
   signal?: AbortSignal;
   mailConcurrency?: number;
   driveConcurrency?: number;
+  /** Re-run full warm (e.g. after explicit user refresh). */
+  force?: boolean;
 }): Promise<void> {
+  if (!beginWorkspacePrefetchWarm({ force: opts?.force })) return;
+
   const signal = opts?.signal;
   try {
     await Promise.all([
@@ -262,6 +271,8 @@ export async function runLoginPrefetchChain(opts?: {
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") return;
     /* prefetch is best-effort */
+  } finally {
+    abortWorkspacePrefetchWarm();
   }
 }
 
@@ -270,6 +281,7 @@ export function clearSecondaryFeaturePrefetchCache(): void {
   whatsappCache = null;
   calendarCache = null;
   formsCache = null;
+  clearWorkspacePrefetchSession();
   clearAdminTeamPrefetchCache();
   clearMailThreadPrefetchCache();
   clearWhatsAppThreadPrefetchCache();

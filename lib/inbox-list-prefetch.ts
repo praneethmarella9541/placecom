@@ -3,26 +3,15 @@
  * Survives navigation within the workspace so prefetched views stay warm.
  */
 
-export type MailThreadListItem = {
-  id: string;
-  snippet: string;
-  subject: string;
-  from: string;
-  date: string;
-  draftId?: string;
-  labelIds?: string[];
-  unread?: boolean;
-  starred?: boolean;
-  important?: boolean;
-  hasAttachments?: boolean;
-  hasCalendarInvite?: boolean;
-  historyId?: string;
-};
+import {
+  clearMailListSessionStorage,
+  hydrateMailListSessionCache,
+  persistMailListSessionCache,
+  type MailListCacheSnapshot,
+  type MailThreadListItem,
+} from "@/lib/mail-list-session-cache";
 
-export type MailListCacheSnapshot = {
-  threads: MailThreadListItem[];
-  nextPageToken?: string;
-};
+export type { MailListCacheSnapshot, MailThreadListItem } from "@/lib/mail-list-session-cache";
 
 export type MailListPrefetchSpec = {
   apiFolder: string;
@@ -51,8 +40,19 @@ const PREFETCH_IN_FLIGHT = new Set<string>();
 let cacheWriteGeneration = 0;
 let activePrefetchAbort: AbortController | null = null;
 
+if (typeof window !== "undefined") {
+  for (const [key, snapshot] of hydrateMailListSessionCache()) {
+    SESSION_CACHE.set(key, snapshot);
+  }
+}
+
 export function getMailListSessionCache(): Map<string, MailListCacheSnapshot> {
   return SESSION_CACHE;
+}
+
+export function setMailListCache(cacheKey: string, snapshot: MailListCacheSnapshot): void {
+  SESSION_CACHE.set(cacheKey, snapshot);
+  persistMailListSessionCache(cacheKey, snapshot);
 }
 
 /** Clear session list cache and cancel in-flight prefetches (manual refresh). */
@@ -61,6 +61,7 @@ export function clearMailListSessionCache(): void {
   cacheWriteGeneration += 1;
   activePrefetchAbort?.abort();
   activePrefetchAbort = null;
+  clearMailListSessionStorage();
 }
 
 /**
@@ -110,6 +111,81 @@ async function mapWithConcurrency<T>(
   await Promise.all(Array.from({ length: n }, () => worker()));
 }
 
+async function fetchMailListIntoCache(
+  spec: MailListPrefetchSpec,
+  cacheKey: string,
+  opts: {
+    signal?: AbortSignal;
+    search?: string;
+    writeGeneration: number;
+    force?: boolean;
+  }
+): Promise<MailListCacheSnapshot | null> {
+  if (opts.signal?.aborted) return null;
+  if (!opts.force && SESSION_CACHE.has(cacheKey)) {
+    return SESSION_CACHE.get(cacheKey) ?? null;
+  }
+  if (PREFETCH_IN_FLIGHT.has(cacheKey)) return SESSION_CACHE.get(cacheKey) ?? null;
+
+  PREFETCH_IN_FLIGHT.add(cacheKey);
+  try {
+    const search = opts.search ?? "";
+    const params = new URLSearchParams({
+      folder: spec.apiFolder,
+      maxResults: "25",
+    });
+    if (spec.labelId) params.set("labelId", spec.labelId);
+    if (search) params.set("search", search);
+
+    const res = await fetch(`/api/gmail/threads?${params.toString()}`, {
+      cache: "no-store",
+      signal: opts.signal,
+    });
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as {
+      threads?: MailThreadListItem[];
+      nextPageToken?: string;
+    };
+
+    if (opts.signal?.aborted) return null;
+    if (opts.writeGeneration !== cacheWriteGeneration) return null;
+    if (!opts.force && SESSION_CACHE.has(cacheKey)) {
+      return SESSION_CACHE.get(cacheKey) ?? null;
+    }
+
+    const snapshot: MailListCacheSnapshot = {
+      threads: data.threads ?? [],
+      nextPageToken: data.nextPageToken,
+    };
+    setMailListCache(cacheKey, snapshot);
+    return snapshot;
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") return null;
+    return null;
+  } finally {
+    PREFETCH_IN_FLIGHT.delete(cacheKey);
+  }
+}
+
+/** Fetch one folder/tab view if not already cached — for pointer-down / tab intent. */
+export async function prefetchMailListViewIfMissing(
+  apiFolder: string,
+  labelId: string | null | undefined,
+  opts?: { signal?: AbortSignal; search?: string }
+): Promise<MailListCacheSnapshot | null> {
+  const search = opts?.search ?? "";
+  const cacheKey = buildMailListCacheKey(apiFolder, labelId, search);
+  const cached = SESSION_CACHE.get(cacheKey);
+  if (cached?.threads.length) return cached;
+
+  return fetchMailListIntoCache(
+    { apiFolder, labelId },
+    cacheKey,
+    { signal: opts?.signal, search, writeGeneration: cacheWriteGeneration }
+  );
+}
+
 /**
  * Quietly fetch thread lists into the session cache (never touches React state).
  * Safe to call from WorkspaceChrome on login and from inbox after first paint.
@@ -140,42 +216,11 @@ export async function prefetchMailListViews(opts?: {
   if (queue.length === 0) return;
 
   await mapWithConcurrency(queue, concurrency, async ({ spec, cacheKey }) => {
-    if (opts?.signal?.aborted) return;
-    if (SESSION_CACHE.has(cacheKey) || PREFETCH_IN_FLIGHT.has(cacheKey)) return;
-
-    PREFETCH_IN_FLIGHT.add(cacheKey);
-    try {
-      const params = new URLSearchParams({
-        folder: spec.apiFolder,
-        maxResults: "25",
-      });
-      if (spec.labelId) params.set("labelId", spec.labelId);
-      if (search) params.set("search", search);
-
-      const res = await fetch(`/api/gmail/threads?${params.toString()}`, {
-        cache: "no-store",
-        signal: opts?.signal,
-      });
-      if (!res.ok) return;
-
-      const data = (await res.json()) as {
-        threads?: MailThreadListItem[];
-        nextPageToken?: string;
-      };
-
-      if (opts?.signal?.aborted) return;
-      if (writeGeneration !== cacheWriteGeneration) return;
-      if (!force && SESSION_CACHE.has(cacheKey)) return;
-
-      SESSION_CACHE.set(cacheKey, {
-        threads: data.threads ?? [],
-        nextPageToken: data.nextPageToken,
-      });
-    } catch (e) {
-      if (e instanceof Error && e.name === "AbortError") return;
-      /* ignore — prefetch is best-effort */
-    } finally {
-      PREFETCH_IN_FLIGHT.delete(cacheKey);
-    }
+    await fetchMailListIntoCache(spec, cacheKey, {
+      signal: opts?.signal,
+      search,
+      writeGeneration,
+      force,
+    });
   });
 }

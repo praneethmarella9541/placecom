@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
+import { isWorkspacePrefetchSessionComplete } from "@/lib/login-prefetch-session";
 import { runLoginPrefetchChain } from "@/lib/workspace-feature-prefetch";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,7 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!me?.hasStoredMailbox) return;
+    if (isWorkspacePrefetchSessionComplete()) return;
     const ac = new AbortController();
     const t = window.setTimeout(() => {
       void runLoginPrefetchChain({

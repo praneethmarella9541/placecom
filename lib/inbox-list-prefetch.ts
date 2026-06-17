@@ -41,9 +41,9 @@ let cacheWriteGeneration = 0;
 let activePrefetchAbort: AbortController | null = null;
 
 if (typeof window !== "undefined") {
-  for (const [key, snapshot] of hydrateMailListSessionCache()) {
+  hydrateMailListSessionCache().forEach((snapshot, key) => {
     SESSION_CACHE.set(key, snapshot);
-  }
+  });
 }
 
 export function getMailListSessionCache(): Map<string, MailListCacheSnapshot> {

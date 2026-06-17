@@ -48,9 +48,9 @@ function cacheKey(threadId: string, kind: "prefetch" | "open"): string {
 }
 
 if (typeof window !== "undefined") {
-  for (const [threadId, entry] of hydrateMailThreadSessionCache()) {
+  hydrateMailThreadSessionCache().forEach((entry, threadId) => {
     threadCache.set(cacheKey(threadId, "prefetch"), entry);
-  }
+  });
 }
 
 function isFresh(entry: CacheEntry | undefined): boolean {

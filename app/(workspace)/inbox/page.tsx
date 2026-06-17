@@ -575,6 +575,16 @@ function useResizablePane(storageKey: string, defaultWidth: number, min: number,
   return { width, onResizeStart };
 }
 
+type InboxCategoryKey = "primary" | "promotions" | "social" | "updates" | "forums";
+
+const INBOX_CATEGORY_LABEL: Record<InboxCategoryKey, string> = {
+  primary: "CATEGORY_PERSONAL",
+  promotions: "CATEGORY_PROMOTIONS",
+  social: "CATEGORY_SOCIAL",
+  updates: "CATEGORY_UPDATES",
+  forums: "CATEGORY_FORUMS",
+};
+
 export default function InboxPage() {
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
@@ -842,19 +852,11 @@ export default function InboxPage() {
   // Inbox category sub-tabs (Primary / Promotions / Social / Updates / Forums).
   // Each maps to a CATEGORY_* system label; the API filters INBOX rows to
   // those carrying the chosen category. Only shown when folder = inbox.
-  type CategoryKey = "primary" | "promotions" | "social" | "updates" | "forums";
-  const CATEGORY_LABEL: Record<CategoryKey, string> = {
-    primary: "CATEGORY_PERSONAL",
-    promotions: "CATEGORY_PROMOTIONS",
-    social: "CATEGORY_SOCIAL",
-    updates: "CATEGORY_UPDATES",
-    forums: "CATEGORY_FORUMS",
-  };
-  const [category, setCategory] = useState<CategoryKey>("primary");
+  const [category, setCategory] = useState<InboxCategoryKey>("primary");
 
   const switchCategory = useCallback(
-    (key: CategoryKey) => {
-      const labelId = CATEGORY_LABEL[key];
+    (key: InboxCategoryKey) => {
+      const labelId = INBOX_CATEGORY_LABEL[key];
       const cacheKey = buildMailListCacheKey("inbox", labelId, "");
       activeListCacheKeyRef.current = cacheKey;
       const cached = listCacheRef.current.get(cacheKey);
@@ -889,7 +891,7 @@ export default function InboxPage() {
         ? "IMPORTANT"
         : folder === "trash" || folder === "spam" || folder === "allmail" || folder === "sent" || folder === "drafts"
           ? null
-          : filterLabelId ?? (folder === "inbox" ? CATEGORY_LABEL[category] : null);
+          : filterLabelId ?? (folder === "inbox" ? INBOX_CATEGORY_LABEL[category] : null);
 
   // Multi-select state (Gmail-style row checkboxes).
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
@@ -4051,7 +4053,7 @@ export default function InboxPage() {
                 <button
                   key={t.key}
                   type="button"
-                  onPointerDown={() => primeListView("inbox", CATEGORY_LABEL[t.key])}
+                  onPointerDown={() => primeListView("inbox", INBOX_CATEGORY_LABEL[t.key])}
                   onClick={() => switchCategory(t.key)}
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-5 py-3 text-[13px] font-medium transition-colors",

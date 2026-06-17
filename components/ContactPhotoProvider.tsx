@@ -46,4 +46,4 @@ export function useContactPhotoActions() {
 }
 
 /** No-op — profile photo lookup disabled; GmailAvatar uses initials only. */
-export function useResolveContactPhotos(_emails: string[]) {}
+export function useResolveContactPhotos(): void {}

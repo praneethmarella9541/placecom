@@ -295,60 +295,64 @@ export default function AdminTeamPage() {
             </option>
           ))}
         </select>
-        <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          {titleCase("OpenAI token limit")}
-        </label>
-        <input
-          type="number"
-          min={0}
-          value={newTokenLimit}
-          onChange={(e) => setNewTokenLimit(e.target.value)}
-          placeholder="Leave empty for unlimited"
-          className="input-field w-full text-sm"
-        />
-        <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-          {titleCase("Total input + output tokens allowed for email extraction. User is blocked once exceeded.")}
-        </p>
-        <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          {titleCase("Personal mobile (for incoming call transfer)")}
-        </label>
-        <input
-          type="tel"
-          value={newMobilePhone}
-          onChange={(e) => setNewMobilePhone(e.target.value)}
-          placeholder="+91 98765 43210"
-          className="input-field w-full text-sm"
-        />
-        <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-          {titleCase("Assigned Exotel number")}
-        </label>
-        {availableExotelNumbers.length > 0 ? (
-          <select
-            value={newExotelNumber}
-            onChange={(e) => setNewExotelNumber(e.target.value)}
-            className="input-field w-full text-sm"
-          >
-            <option value="">{titleCase("Not assigned")}</option>
-            {availableExotelNumbers.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            type="tel"
-            value={newExotelNumber}
-            onChange={(e) => setNewExotelNumber(e.target.value)}
-            placeholder="+91… (loads from your Exotel account)"
-            className="input-field w-full text-sm"
-          />
+        {!allowedFeatures && (
+          <>
+            <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              {titleCase("OpenAI token limit")}
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={newTokenLimit}
+              onChange={(e) => setNewTokenLimit(e.target.value)}
+              placeholder="Leave empty for unlimited"
+              className="input-field w-full text-sm"
+            />
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+              {titleCase("Total input + output tokens allowed for email extraction. User is blocked once exceeded.")}
+            </p>
+            <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              {titleCase("Personal mobile (for incoming call transfer)")}
+            </label>
+            <input
+              type="tel"
+              value={newMobilePhone}
+              onChange={(e) => setNewMobilePhone(e.target.value)}
+              placeholder="+91 98765 43210"
+              className="input-field w-full text-sm"
+            />
+            <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+              {titleCase("Assigned Exotel number")}
+            </label>
+            {availableExotelNumbers.length > 0 ? (
+              <select
+                value={newExotelNumber}
+                onChange={(e) => setNewExotelNumber(e.target.value)}
+                className="input-field w-full text-sm"
+              >
+                <option value="">{titleCase("Not assigned")}</option>
+                {availableExotelNumbers.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="tel"
+                value={newExotelNumber}
+                onChange={(e) => setNewExotelNumber(e.target.value)}
+                placeholder="+91… (loads from your Exotel account)"
+                className="input-field w-full text-sm"
+              />
+            )}
+            <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
+              {titleCase(
+                "Inbound calls to this Exotel line ring their mobile. Outbound calls dial this Exotel number from the app.",
+              )}
+            </p>
+          </>
         )}
-        <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-          {titleCase(
-            "Inbound calls to this Exotel line ring their mobile. Outbound calls dial this Exotel number from the app.",
-          )}
-        </p>
         <button
           type="button"
           disabled={busy || !email.trim() || password.length < 8}
@@ -474,108 +478,112 @@ export default function AdminTeamPage() {
                     </select>
                   </div>
 
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                      {titleCase("OpenAI token limit")}
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={member.openaiTokenLimit ?? ""}
-                      onChange={(e) =>
-                        setMembers((prev) =>
-                          prev.map((m) =>
-                            m.id === member.id
-                              ? {
-                                  ...m,
-                                  openaiTokenLimit: e.target.value
-                                    ? Math.max(0, Number(e.target.value) || 0)
-                                    : null,
-                                }
-                              : m
-                          )
-                        )
-                      }
-                      placeholder="Unlimited"
-                      className="input-field w-full text-sm"
-                    />
-                    <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                      {titleCase("Used")}: {member.tokensUsed.toLocaleString()}
-                      {member.openaiTokenLimit != null
-                        ? ` / ${member.openaiTokenLimit.toLocaleString()}`
-                        : ""}
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                      {titleCase("Personal mobile")}
-                    </label>
-                    <input
-                      type="tel"
-                      value={member.mobilePhone ?? ""}
-                      onChange={(e) =>
-                        setMembers((prev) =>
-                          prev.map((m) =>
-                            m.id === member.id ? { ...m, mobilePhone: e.target.value || null } : m
-                          )
-                        )
-                      }
-                      placeholder="+91 98765 43210"
-                      className="input-field w-full text-sm"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                      {titleCase("Exotel number")}
-                    </label>
-                    {availableExotelNumbers.length > 0 ||
-                    member.exotelVirtualNumber?.trim() ? (
-                      <select
-                        value={member.exotelVirtualNumber ?? ""}
-                        onChange={(e) =>
-                          setMembers((prev) =>
-                            prev.map((m) =>
-                              m.id === member.id
-                                ? { ...m, exotelVirtualNumber: e.target.value || null }
-                                : m
+                  {!allowedFeatures && (
+                    <>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                          {titleCase("OpenAI token limit")}
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={member.openaiTokenLimit ?? ""}
+                          onChange={(e) =>
+                            setMembers((prev) =>
+                              prev.map((m) =>
+                                m.id === member.id
+                                  ? {
+                                      ...m,
+                                      openaiTokenLimit: e.target.value
+                                        ? Math.max(0, Number(e.target.value) || 0)
+                                        : null,
+                                    }
+                                  : m
+                              )
                             )
-                          )
-                        }
-                        className="input-field w-full text-sm"
-                      >
-                        <option value="">{titleCase("Not assigned")}</option>
-                        {exotelNumbersForSelect(
-                          filterAvailableExotelNumbers(
-                            configuredExotelNumbers,
-                            assignedExotelNumbers,
-                            member.exotelVirtualNumber,
-                          ),
-                          member.exotelVirtualNumber,
-                        ).map((n) => (
-                          <option key={n} value={n}>
-                            {n}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="tel"
-                        value={member.exotelVirtualNumber ?? ""}
-                        onChange={(e) =>
-                          setMembers((prev) =>
-                            prev.map((m) =>
-                              m.id === member.id
-                                ? { ...m, exotelVirtualNumber: e.target.value || null }
-                                : m
+                          }
+                          placeholder="Unlimited"
+                          className="input-field w-full text-sm"
+                        />
+                        <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                          {titleCase("Used")}: {member.tokensUsed.toLocaleString()}
+                          {member.openaiTokenLimit != null
+                            ? ` / ${member.openaiTokenLimit.toLocaleString()}`
+                            : ""}
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                          {titleCase("Personal mobile")}
+                        </label>
+                        <input
+                          type="tel"
+                          value={member.mobilePhone ?? ""}
+                          onChange={(e) =>
+                            setMembers((prev) =>
+                              prev.map((m) =>
+                                m.id === member.id ? { ...m, mobilePhone: e.target.value || null } : m
+                              )
                             )
-                          )
-                        }
-                        className="input-field w-full text-sm"
-                      />
-                    )}
-                  </div>
+                          }
+                          placeholder="+91 98765 43210"
+                          className="input-field w-full text-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                          {titleCase("Exotel number")}
+                        </label>
+                        {availableExotelNumbers.length > 0 ||
+                        member.exotelVirtualNumber?.trim() ? (
+                          <select
+                            value={member.exotelVirtualNumber ?? ""}
+                            onChange={(e) =>
+                              setMembers((prev) =>
+                                prev.map((m) =>
+                                  m.id === member.id
+                                    ? { ...m, exotelVirtualNumber: e.target.value || null }
+                                    : m
+                                )
+                              )
+                            }
+                            className="input-field w-full text-sm"
+                          >
+                            <option value="">{titleCase("Not assigned")}</option>
+                            {exotelNumbersForSelect(
+                              filterAvailableExotelNumbers(
+                                configuredExotelNumbers,
+                                assignedExotelNumbers,
+                                member.exotelVirtualNumber,
+                              ),
+                              member.exotelVirtualNumber,
+                            ).map((n) => (
+                              <option key={n} value={n}>
+                                {n}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            type="tel"
+                            value={member.exotelVirtualNumber ?? ""}
+                            onChange={(e) =>
+                              setMembers((prev) =>
+                                prev.map((m) =>
+                                  m.id === member.id
+                                    ? { ...m, exotelVirtualNumber: e.target.value || null }
+                                    : m
+                                )
+                              )
+                            }
+                            className="input-field w-full text-sm"
+                          />
+                        )}
+                      </div>
+                    </>
+                  )}
 
                   <div>
                     <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">

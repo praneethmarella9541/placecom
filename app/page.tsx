@@ -340,6 +340,12 @@ export default function HomePage() {
                 autoComplete="email"
                 value={staffEmail}
                 onChange={(e) => setStaffEmail(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !staffPwdBusy) {
+                    e.preventDefault();
+                    void signInStaffPassword();
+                  }
+                }}
                 placeholder="you@company.com"
                 className="input-field landing-input"
               />
@@ -347,6 +353,12 @@ export default function HomePage() {
                 autoComplete="current-password"
                 value={staffPassword}
                 onChange={(e) => setStaffPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !staffPwdBusy) {
+                    e.preventDefault();
+                    void signInStaffPassword();
+                  }
+                }}
                 placeholder={titleCase("Password from your admin")}
                 wrapperClassName="mt-3"
                 className="landing-input"

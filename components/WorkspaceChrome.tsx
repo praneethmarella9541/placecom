@@ -8,7 +8,7 @@ import { runLoginPrefetchChain } from "@/lib/workspace-feature-prefetch";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
-import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
+import { useMeMailbox } from "@/lib/use-me-mailbox";
 import { ContactPhotoProvider } from "@/components/ContactPhotoProvider";
 import { ExtractionRunProvider } from "@/components/ExtractionRunProvider";
 import { ExtractionRunBanner } from "@/components/ExtractionRunBanner";
@@ -16,20 +16,7 @@ import { WorkspaceSidebar } from "@/components/WorkspaceSidebar";
 
 export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [me, setMe] = useState<MeMailboxResponse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/me/mailbox")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: MeMailboxResponse | null) => {
-        if (!cancelled && j) setMe(j);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { me } = useMeMailbox();
 
   useEffect(() => {
     if (!me?.hasStoredMailbox) return;

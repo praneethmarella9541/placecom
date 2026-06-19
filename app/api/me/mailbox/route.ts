@@ -75,39 +75,50 @@ export async function GET(request: Request) {
   const mailboxOwnerId =
     role === "admin" ? user.id : (profile.mailbox_owner_id as string | null);
 
-  let group: { name: string; restricted_features: unknown } | null = null;
-  if (profile.group_id) {
-    try {
-      const svc = createServiceSupabase();
-      const { data: g } = await svc
-        .from("team_groups")
-        .select("name, restricted_features")
-        .eq("id", profile.group_id as string)
-        .maybeSingle();
-      if (g) group = g as { name: string; restricted_features: unknown };
-    } catch {
-      /* ignore */
-    }
-  }
+  // The group lookup and mailbox-credential lookup are independent — run them
+  // in parallel so the endpoint isn't gated on two sequential round trips.
+  const groupId = profile.group_id as string | null;
 
-  let mailboxEmail: string | null = null;
-  let hasStoredMailbox = false;
-  if (mailboxOwnerId) {
-    try {
-      const svc = createServiceSupabase();
-      const { data: cred, error: credErr } = await svc
-        .from("google_mailbox_credentials")
-        .select("gmail_address, refresh_token")
-        .eq("owner_user_id", mailboxOwnerId)
-        .maybeSingle();
-      if (!credErr) {
-        mailboxEmail = (cred?.gmail_address as string | null) ?? null;
-        hasStoredMailbox = Boolean(cred?.refresh_token);
-      }
-    } catch {
-      /* service role env missing in dev — ignore mailbox extras */
-    }
-  }
+  const [group, mailbox] = await Promise.all([
+    groupId
+      ? (async (): Promise<{ name: string; restricted_features: unknown } | null> => {
+          try {
+            const svc = createServiceSupabase();
+            const { data: g } = await svc
+              .from("team_groups")
+              .select("name, restricted_features")
+              .eq("id", groupId)
+              .maybeSingle();
+            return (g as { name: string; restricted_features: unknown } | null) ?? null;
+          } catch {
+            return null;
+          }
+        })()
+      : Promise.resolve(null),
+    mailboxOwnerId
+      ? (async (): Promise<{ mailboxEmail: string | null; hasStoredMailbox: boolean }> => {
+          try {
+            const svc = createServiceSupabase();
+            const { data: cred, error: credErr } = await svc
+              .from("google_mailbox_credentials")
+              .select("gmail_address, refresh_token")
+              .eq("owner_user_id", mailboxOwnerId)
+              .maybeSingle();
+            if (!credErr) {
+              return {
+                mailboxEmail: (cred?.gmail_address as string | null) ?? null,
+                hasStoredMailbox: Boolean(cred?.refresh_token),
+              };
+            }
+          } catch {
+            /* service role env missing in dev — ignore mailbox extras */
+          }
+          return { mailboxEmail: null, hasStoredMailbox: false };
+        })()
+      : Promise.resolve({ mailboxEmail: null, hasStoredMailbox: false }),
+  ]);
+
+  const { mailboxEmail, hasStoredMailbox } = mailbox;
 
   const body: MeMailboxResponse = {
     sessionEmail: user.email ?? null,

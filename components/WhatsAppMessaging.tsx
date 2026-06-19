@@ -7,7 +7,7 @@ import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { isValidE164, normalizePhone } from "@/lib/phone";
 import { formatPhone, peerInitials } from "@/lib/wa-contacts-display";
-import { categorizeWhatsAppMedia, mediaFilenameFromMessage } from "@/lib/whatsapp-media-helpers";
+import { categorizeWhatsAppMedia, mediaFilenameFromMessage, type WhatsAppMediaCategory } from "@/lib/whatsapp-media-helpers";
 import { resolveWhatsAppMediaUrl } from "@/lib/whatsapp-media-url-client";
 import { ForwardChatModal } from "@/components/ForwardChatModal";
 import { useWaContacts } from "@/hooks/useWaContacts";
@@ -40,12 +40,17 @@ import { showWhatsAppFailureDetail, WhatsAppTicks } from "@/components/WhatsAppT
 import { titleCase } from "@/lib/title-case";
 import {
   IconCheck,
+  IconChevronLeft,
+  IconChevronRight,
   IconCopy,
   IconDotsVertical,
+  IconDownload,
+  IconFile,
   IconForward,
   IconInfo,
   IconMessageChat,
   IconPin,
+  IconPlay,
   IconRefresh,
   IconReply,
   IconStar,
@@ -221,6 +226,87 @@ export function WhatsAppMessaging({
   const { contacts: contactList, saveContact, deleteContact, resolveName } = useWaContacts();
   const [editingName, setEditingName] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("");
+  // Media gallery drawer (opened by tapping the contact name) + in-chat
+  // media viewer (lightbox) — mirrors WhatsApp Web behaviour.
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryTab, setGalleryTab] = useState<WhatsAppMediaCategory>("image");
+  const [viewer, setViewer] = useState<Msg | null>(null);
+
+  // Group the loaded thread's media by category for the gallery tabs.
+  const mediaGroups = useMemo(() => {
+    const groups: Record<WhatsAppMediaCategory, Msg[]> = {
+      image: [],
+      video: [],
+      audio: [],
+      document: [],
+    };
+    for (const m of messages) {
+      if (!m.media_url) continue;
+      const cat = categorizeWhatsAppMedia(m);
+      if (cat) groups[cat].push(m);
+    }
+    return groups;
+  }, [messages]);
+
+  // Download media with its real filename. The browser ignores an <a download>
+  // filename for cross-origin URLs (and the stored object path is UUID-prefixed
+  // with no extension → it saves as "<uuid>.bin"). Fetching to a blob first
+  // gives us a same-origin URL, so the chosen filename is always honoured.
+  const downloadMedia = useCallback(async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch {
+      // Fallback: open in a new tab so the file is at least reachable.
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  }, []);
+
+  // Step through media within the viewer's own category (prev/next).
+  const navigateViewer = useCallback((dir: 1 | -1) => {
+    setViewer((cur) => {
+      if (!cur) return cur;
+      const cat = categorizeWhatsAppMedia(cur);
+      if (!cat) return cur;
+      const list = mediaGroups[cat];
+      const idx = list.findIndex((x) => x.id === cur.id);
+      if (idx === -1) return cur;
+      const next = idx + dir;
+      return next >= 0 && next < list.length ? list[next] : cur;
+    });
+  }, [mediaGroups]);
+
+  // Close gallery + viewer when switching conversations.
+  useEffect(() => {
+    setGalleryOpen(false);
+    setViewer(null);
+  }, [peer]);
+
+  // Keyboard: Escape closes (viewer first, then gallery); arrows step
+  // through media while the viewer is open.
+  useEffect(() => {
+    if (!viewer && !galleryOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (viewer) setViewer(null);
+        else setGalleryOpen(false);
+        return;
+      }
+      if (viewer && e.key === "ArrowRight") { e.preventDefault(); navigateViewer(1); }
+      else if (viewer && e.key === "ArrowLeft") { e.preventDefault(); navigateViewer(-1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewer, galleryOpen, navigateViewer]);
 
   async function saveName(peer: string, name: string) {
     const trimmed = name.trim();
@@ -1071,10 +1157,19 @@ export function WhatsAppMessaging({
 
         {peer ? (
           <>
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[13px] font-bold text-white">
+            <button
+              type="button"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[13px] font-bold text-white transition-opacity hover:opacity-90"
+              onClick={() => { setGalleryTab("image"); setGalleryOpen(true); }}
+              title={titleCase("View media, links and docs")}
+            >
               {peerInitials(peer, savedContactName(peer))}
-            </span>
-            <div className="min-w-0 flex-1">
+            </button>
+            <div
+              className={cn("min-w-0 flex-1", editingName !== peer && "cursor-pointer")}
+              onClick={() => { if (editingName !== peer) { setGalleryTab("image"); setGalleryOpen(true); } }}
+              title={editingName !== peer ? titleCase("View media, links and docs") : undefined}
+            >
               {editingName === peer ? (
                 <form
                   className="flex items-center gap-1"
@@ -1102,7 +1197,7 @@ export function WhatsAppMessaging({
                   <button
                     type="button"
                     className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-faint)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
-                    onClick={() => { setEditingName(peer); setNameInput(savedContactName(peer) || ""); }}
+                    onClick={(e) => { e.stopPropagation(); setEditingName(peer); setNameInput(savedContactName(peer) || ""); }}
                   >
                     {savedContactName(peer) ? "Edit name" : "Save name"}
                   </button>
@@ -1300,18 +1395,46 @@ export function WhatsAppMessaging({
                       <p className="whitespace-pre-wrap break-words [word-break:break-word]">{m.body}</p>
                     )}
 
-                    {/* Media */}
-                    {m.media_url && (m.content_type === "image" || m.content_type?.startsWith("image") || (!m.content_type && m.num_media)) ? (
-                      <a href={m.media_url} target="_blank" rel="noopener noreferrer" className="mt-1 block">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={m.media_url} alt="" className="max-h-80 w-full rounded-xl object-contain" />
-                      </a>
-                    ) : m.media_url ? (
-                      <a href={m.media_url} target="_blank" rel="noopener noreferrer"
-                        className="mt-1.5 flex items-center gap-1.5 rounded-lg bg-black/5 px-2.5 py-2 text-[13px] font-medium text-zinc-700 hover:bg-black/10">
-                        📎 {titleCase("Open attachment")}
-                      </a>
-                    ) : null}
+                    {/* Media — opens in an in-app viewer (like WhatsApp Web),
+                        not a new browser tab. */}
+                    {(() => {
+                      if (!m.media_url) return null;
+                      const cat = categorizeWhatsAppMedia(m);
+                      const asImage = cat === "image" || (!m.content_type && !!m.num_media);
+                      if (asImage) {
+                        return (
+                          <button type="button" onClick={() => setViewer(m)} className="mt-1 block w-full">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={m.media_url} alt="" className="max-h-80 w-full cursor-pointer rounded-xl object-contain" />
+                          </button>
+                        );
+                      }
+                      if (cat === "video") {
+                        return (
+                          <button type="button" onClick={() => setViewer(m)} className="relative mt-1 block w-full overflow-hidden rounded-xl">
+                            <video src={m.media_url} preload="metadata" className="max-h-80 w-full rounded-xl object-contain" />
+                            <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-black/55 text-white">
+                                <IconPlay className="h-6 w-6" />
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      }
+                      if (cat === "audio") {
+                        return <audio src={m.media_url} controls className="mt-1.5 w-full max-w-[260px]" />;
+                      }
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setViewer(m)}
+                          className="mt-1.5 flex max-w-full items-center gap-2 rounded-lg bg-black/5 px-2.5 py-2 text-left text-[13px] font-medium text-zinc-700 hover:bg-black/10"
+                        >
+                          <IconFile className="h-4 w-4 shrink-0" />
+                          <span className="truncate">{mediaFilenameFromMessage(m)}</span>
+                        </button>
+                      );
+                    })()}
 
                     {/* Timestamp + ticks */}
                     <p className={cn(
@@ -1349,6 +1472,225 @@ export function WhatsAppMessaging({
           </>
         )}
       </div>
+
+      {/* Media gallery drawer — opened by tapping the contact name/avatar.
+          Tabs for Photos / Videos / Audio / Docs, like WhatsApp Web. */}
+      {galleryOpen && peer && typeof document !== "undefined" && createPortal(
+        <>
+          <div className="fixed inset-0 z-[58] bg-black/30" aria-hidden onClick={() => setGalleryOpen(false)} />
+          <div className="fixed inset-y-0 right-0 z-[59] flex w-full max-w-[420px] flex-col bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
+            {/* Header */}
+            <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
+              <button
+                type="button"
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+                onClick={() => setGalleryOpen(false)}
+                aria-label={titleCase("Close")}
+              >
+                <IconX className="h-4 w-4" />
+              </button>
+              <div className="min-w-0">
+                <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">{titleCase("Media, links and docs")}</p>
+                <p className="truncate text-[11px] text-[var(--color-text-faint)]">{displayName(peer)}</p>
+              </div>
+            </div>
+            {/* Tabs */}
+            <div className="flex shrink-0 border-b border-[var(--color-border)]">
+              {([
+                { key: "image", label: titleCase("Photos") },
+                { key: "video", label: titleCase("Videos") },
+                { key: "audio", label: titleCase("Audio") },
+                { key: "document", label: titleCase("Docs") },
+              ] as { key: WhatsAppMediaCategory; label: string }[]).map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setGalleryTab(t.key)}
+                  className={cn(
+                    "flex-1 border-b-2 px-2 py-2.5 text-[12px] font-semibold transition-colors",
+                    galleryTab === t.key
+                      ? "border-[#25d366] text-[var(--color-text)]"
+                      : "border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]",
+                  )}
+                >
+                  {t.label}
+                  <span className="ml-1 text-[10px] opacity-60">{mediaGroups[t.key].length}</span>
+                </button>
+              ))}
+            </div>
+            {/* Content */}
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 scrollbar-thin">
+              {mediaGroups[galleryTab].length === 0 ? (
+                <div className="flex h-full min-h-[160px] flex-col items-center justify-center gap-2 text-center">
+                  <IconFile className="h-8 w-8 text-[var(--color-text-faint)]" />
+                  <p className="text-[13px] text-[var(--color-text-muted)]">{titleCase("Nothing here yet")}</p>
+                </div>
+              ) : galleryTab === "image" || galleryTab === "video" ? (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {mediaGroups[galleryTab].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setViewer(m)}
+                      className="relative aspect-square overflow-hidden rounded-md bg-[var(--color-surface-offset)]"
+                    >
+                      {galleryTab === "image" ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={m.media_url!} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <>
+                          <video src={m.media_url!} preload="metadata" className="h-full w-full object-cover" />
+                          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-white">
+                              <IconPlay className="h-4 w-4" />
+                            </span>
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ) : galleryTab === "audio" ? (
+                <div className="flex flex-col gap-3">
+                  {mediaGroups.audio.map((m) => (
+                    <div key={m.id} className="rounded-lg border border-[var(--color-border)] p-2">
+                      <p className="mb-1 truncate text-[12px] text-[var(--color-text-muted)]">{mediaFilenameFromMessage(m)}</p>
+                      <audio src={m.media_url!} controls className="w-full" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {mediaGroups.document.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setViewer(m)}
+                      className="flex items-center gap-2.5 rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-left hover:bg-[var(--color-surface-offset)]"
+                    >
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]">
+                        <IconFile className="h-4 w-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{mediaFilenameFromMessage(m)}</span>
+                        <span className="block text-[11px] text-[var(--color-text-faint)]">{formatDate(m.created_at)}</span>
+                      </span>
+                      <IconDownload className="h-4 w-4 shrink-0 text-[var(--color-text-faint)]" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>,
+        document.body,
+      )}
+
+      {/* Media viewer (lightbox) — opens media inline instead of a new tab. */}
+      {viewer && viewer.media_url && typeof document !== "undefined" && createPortal(
+        (() => {
+          const url = viewer.media_url!;
+          const cat = categorizeWhatsAppMedia(viewer);
+          const asImage = cat === "image" || (!viewer.content_type && !!viewer.num_media);
+          const filename = mediaFilenameFromMessage(viewer);
+          // Only PDFs render usefully in an <iframe>; Office/zip/etc. would show
+          // a blank frame, so those get a download card instead.
+          const previewable = /\.pdf$/i.test(filename) || (viewer.content_type ?? "").toLowerCase() === "application/pdf";
+          const navList = cat ? mediaGroups[cat] : [];
+          const navIdx = navList.findIndex((x) => x.id === viewer.id);
+          const hasPrev = navIdx > 0;
+          const hasNext = navIdx >= 0 && navIdx < navList.length - 1;
+          return (
+            <div
+              className="fixed inset-0 z-[70] flex flex-col bg-black/90"
+              onClick={() => setViewer(null)}
+            >
+              {/* Top bar */}
+              <div className="flex shrink-0 items-center justify-between gap-3 px-4 py-3 text-white" onClick={(e) => e.stopPropagation()}>
+                <span className="truncate text-[13px] font-medium">{filename}</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="flex h-9 w-9 items-center justify-center rounded-full text-white/90 hover:bg-white/15"
+                    title={titleCase("Download")}
+                    onClick={(e) => { e.stopPropagation(); void downloadMedia(url, filename); }}
+                  >
+                    <IconDownload className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-9 w-9 items-center justify-center rounded-full text-white/90 hover:bg-white/15"
+                    onClick={() => setViewer(null)}
+                    aria-label={titleCase("Close")}
+                  >
+                    <IconX className="h-5 w-5" />
+                  </button>
+                </div>
+              </div>
+              {/* Body */}
+              <div className="relative flex min-h-0 flex-1 items-center justify-center p-4" onClick={(e) => e.stopPropagation()}>
+                {hasPrev && (
+                  <button
+                    type="button"
+                    onClick={() => navigateViewer(-1)}
+                    className="absolute left-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25"
+                    aria-label={titleCase("Previous")}
+                  >
+                    <IconChevronLeft className="h-6 w-6" />
+                  </button>
+                )}
+                {hasNext && (
+                  <button
+                    type="button"
+                    onClick={() => navigateViewer(1)}
+                    className="absolute right-2 top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25"
+                    aria-label={titleCase("Next")}
+                  >
+                    <IconChevronRight className="h-6 w-6" />
+                  </button>
+                )}
+                {asImage ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={url} alt={filename} className="max-h-full max-w-full object-contain" />
+                ) : cat === "video" ? (
+                  <video src={url} controls autoPlay className="max-h-full max-w-full" />
+                ) : cat === "audio" ? (
+                  <audio src={url} controls autoPlay className="w-full max-w-[480px]" />
+                ) : previewable ? (
+                  <div className="flex h-full w-full max-w-3xl flex-col items-stretch">
+                    <iframe src={url} title={filename} className="h-full w-full rounded-lg bg-white" />
+                    <button
+                      type="button"
+                      className="mt-3 self-center rounded-lg bg-white/15 px-4 py-2 text-[13px] font-medium text-white hover:bg-white/25"
+                      onClick={(e) => { e.stopPropagation(); void downloadMedia(url, filename); }}
+                    >
+                      {titleCase("Download")} · {filename}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-4 rounded-2xl bg-white/10 px-8 py-10 text-center">
+                    <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/15 text-white">
+                      <IconFile className="h-8 w-8" />
+                    </span>
+                    <div>
+                      <p className="max-w-[280px] truncate text-[15px] font-medium text-white">{filename}</p>
+                      <p className="mt-1 text-[12px] text-white/60">{titleCase("No preview available")}</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 rounded-lg bg-white px-5 py-2.5 text-[14px] font-semibold text-zinc-900 hover:bg-white/90"
+                      onClick={(e) => { e.stopPropagation(); void downloadMedia(url, filename); }}
+                    >
+                      <IconDownload className="h-4 w-4" /> {titleCase("Download")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })(),
+        document.body,
+      )}
 
       {/* Context menu — portalled to body so overflow:hidden doesn't clip it */}
       {menu && typeof document !== "undefined" && createPortal(

@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
-import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
+import { clearMeMailboxCache, useMeMailbox } from "@/lib/use-me-mailbox";
 import { pathToFeature } from "@/lib/feature-access";
 import { clearSecondaryFeaturePrefetchCache } from "@/lib/workspace-feature-prefetch";
 import {
@@ -64,21 +64,8 @@ function AppHeaderInner() {
   const supabase = createClient();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [me, setMe] = useState<MeMailboxResponse | null>(null);
+  const { me } = useMeMailbox();
   const userMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/me/mailbox")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: MeMailboxResponse | null) => {
-        if (!cancelled && j) setMe(j);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const links = useMemo(() => {
     const restricted = new Set(me?.restrictedFeatures ?? []);
@@ -100,6 +87,7 @@ function AppHeaderInner() {
 
   async function signOut() {
     clearSecondaryFeaturePrefetchCache();
+    clearMeMailboxCache();
     await supabase.auth.signOut();
     window.location.href = "/";
   }

@@ -26,6 +26,7 @@ import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
+import { clearMeMailboxCache, useMeMailbox } from "@/lib/use-me-mailbox";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { formatPhone } from "@/lib/wa-contacts-display";
 
@@ -216,6 +217,22 @@ function UserProfile({
   );
 }
 
+function NavSkeleton({ rows, size = "md" }: { rows: number; size?: "md" | "sm" }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className={cn("flex items-center gap-3 rounded-lg px-3", size === "sm" ? "py-2" : "py-2.5")}>
+          <div className={cn("shrink-0 animate-pulse rounded bg-[var(--sidebar-border)]", size === "sm" ? "h-4 w-4" : "h-[18px] w-[18px]")} />
+          <div
+            className="h-3 animate-pulse rounded bg-[var(--sidebar-border)]"
+            style={{ width: `${[58, 44, 66, 50, 60, 48][i % 6]}%` }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 const SidebarPanel = memo(function SidebarPanel({
   links,
   pathname,
@@ -253,7 +270,18 @@ const SidebarPanel = memo(function SidebarPanel({
         </Link>
       </div>
 
-      <nav className={cn("scrollbar-thin flex flex-1 flex-col overflow-y-auto px-2 py-1", !meLoaded && "invisible")}>
+      {!meLoaded ? (
+        // No profile data yet (first-ever load, no cache). Show a ghost of the
+        // nav rather than a blank column, so it never looks stuck.
+        <nav className="scrollbar-thin flex flex-1 flex-col overflow-y-auto px-2 py-1" aria-hidden>
+          <NavSkeleton rows={6} />
+          <div className="my-3 px-2">
+            <div className="h-px bg-[var(--sidebar-border)]" />
+          </div>
+          <NavSkeleton rows={4} size="sm" />
+        </nav>
+      ) : (
+      <nav className="scrollbar-thin flex flex-1 flex-col overflow-y-auto px-2 py-1">
         <div className="flex flex-col gap-0.5">
           {links.primary.map(({ href, label, Icon }) => (
             <NavItem
@@ -305,6 +333,7 @@ const SidebarPanel = memo(function SidebarPanel({
 
         <div className="flex-1" />
       </nav>
+      )}
 
       <div className="shrink-0 border-t border-[var(--sidebar-border)] px-2 py-2">
         <UserProfile displayName={displayName} email={email} me={me} onSignOut={onSignOut} />
@@ -321,21 +350,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
   const pathname = usePathname();
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
-  const [me, setMe] = useState<MeMailboxResponse | null>(null);
+  const { me } = useMeMailbox();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/me/mailbox")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: MeMailboxResponse | null) => {
-        if (!cancelled && j) setMe(j);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     for (const { href } of [...primaryNav, ...secondaryNav, adminLink]) {
@@ -374,6 +390,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
 
   const signOut = useCallback(async () => {
     clearSecondaryFeaturePrefetchCache();
+    clearMeMailboxCache();
     await supabase.auth.signOut();
     window.location.href = "/";
   }, [supabase]);

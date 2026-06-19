@@ -12,6 +12,7 @@ import {
   clearAdminTeamPrefetchCache,
   type AdminTeamMember,
 } from "@/lib/admin-team-prefetch";
+import { GROUP_MANAGEABLE_FEATURES, type FeatureKey } from "@/lib/feature-access";
 import { titleCase } from "@/lib/title-case";
 import { exotelNumbersForSelect, filterAvailableExotelNumbers } from "@/lib/admin-exotel-select";
 
@@ -63,6 +64,15 @@ export default function AdminTeamPage() {
     () => filterAvailableExotelNumbers(configuredExotelNumbers, assignedExotelNumbers),
     [configuredExotelNumbers, assignedExotelNumbers],
   );
+
+  const allowedFeatures = useMemo<FeatureKey[] | undefined>(() => {
+    const val = process.env.NEXT_PUBLIC_ALLOWED_FEATURES;
+    if (!val?.trim()) return undefined;
+    return val
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => GROUP_MANAGEABLE_FEATURES.includes(s as FeatureKey)) as FeatureKey[];
+  }, []);
 
   const revalidate = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -207,6 +217,7 @@ export default function AdminTeamPage() {
         groupsLoading={loadingMembers}
         onRefresh={() => revalidate({ silent: true })}
         onToast={showToast}
+        allowedFeatures={allowedFeatures}
       />
 
       <div>

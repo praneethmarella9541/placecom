@@ -39,6 +39,21 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
 
 const SET = new Set<string>(FEATURE_KEYS);
 
+/**
+ * Returns the set of features allowed on this deployment, or null if no
+ * restriction is configured (i.e. NEXT_PUBLIC_ALLOWED_FEATURES is not set).
+ * Set NEXT_PUBLIC_ALLOWED_FEATURES=inbox,drive,forms,calendar on subdomain deployments.
+ */
+export function getAllowedFeatures(): Set<FeatureKey> | null {
+  const val = process.env.NEXT_PUBLIC_ALLOWED_FEATURES;
+  if (!val?.trim()) return null;
+  const keys = val
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => SET.has(s)) as FeatureKey[];
+  return keys.length ? new Set(keys) : null;
+}
+
 export function normalizeRestrictedFeatures(value: unknown): FeatureKey[] {
   if (!Array.isArray(value)) return [];
   const uniq = new Set<FeatureKey>();

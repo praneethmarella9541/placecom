@@ -1,7 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import {
+  FEATURE_KEYS,
   firstAccessibleWorkspacePath,
+  getAllowedFeatures,
   requestPathToFeature,
   type FeatureKey,
 } from "@/lib/feature-access";
@@ -42,8 +44,11 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user?.id) return supabaseResponse;
 
+  const allowed = getAllowedFeatures();
+
   const cached = readMiddlewareAccessCache(request, user.id);
-  if (cached?.role === "admin") return supabaseResponse;
+  // Fast-path for admin: skip only when there's no domain-level feature cap
+  if (cached?.role === "admin" && !allowed) return supabaseResponse;
 
   let role = cached?.role ?? "";
   let restricted: FeatureKey[] = cached?.restricted ?? [];
@@ -107,12 +112,37 @@ export async function middleware(request: NextRequest) {
     });
   }
 
-  if (!restricted.length) return supabaseResponse;
-
   const feature = requestPathToFeature(
     request.nextUrl.pathname,
     request.nextUrl.searchParams
   );
+
+  // Domain-level cap: block any feature not in NEXT_PUBLIC_ALLOWED_FEATURES (applies to all roles)
+  if (allowed && feature && !allowed.has(feature)) {
+    if (request.nextUrl.pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { error: "This feature is not available on this portal." },
+        { status: 403 }
+      );
+    }
+    // Redirect to first accessible path within the allowed set
+    const allowedRestricted = Array.from(
+      new Set([...restricted, ...(FEATURE_KEYS as readonly FeatureKey[]).filter((k) => !allowed.has(k))])
+    );
+    const dest = firstAccessibleWorkspacePath(allowedRestricted);
+    const url = request.nextUrl.clone();
+    const parsed = new URL(dest, request.url);
+    if (url.pathname === parsed.pathname && url.search === parsed.search) {
+      url.pathname = "/";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+    url.pathname = parsed.pathname;
+    url.search = parsed.search;
+    return NextResponse.redirect(url);
+  }
+
+  if (!restricted.length) return supabaseResponse;
   if (!feature || !restricted.includes(feature)) return supabaseResponse;
 
   if (request.nextUrl.pathname.startsWith("/api/")) {

@@ -351,12 +351,17 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
 
   const links = useMemo(() => {
     const restricted = new Set(me?.restrictedFeatures ?? []);
+    const allowedEnv = process.env.NEXT_PUBLIC_ALLOWED_FEATURES;
+    const allowed = allowedEnv?.trim()
+      ? new Set(allowedEnv.split(",").map((s) => s.trim()))
+      : null;
     const emptySearch = new URLSearchParams();
     const filter = <T extends { href: string }>(arr: readonly T[]) =>
       arr.filter((l) => {
-        if (me?.role !== "committee") return true;
         const feature = pathToFeature(l.href, emptySearch);
-        return feature ? !restricted.has(feature) : true;
+        if (!feature) return true;
+        if (allowed && !allowed.has(feature)) return false;
+        return !restricted.has(feature);
       });
     return {
       primary: filter(primaryNav) as (typeof primaryNav)[number][],

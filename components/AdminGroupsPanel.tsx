@@ -15,9 +15,10 @@ type Props = {
   groupsLoading?: boolean;
   onRefresh?: () => void | Promise<void>;
   onToast?: (message: string, variant: "info" | "success" | "error") => void;
+  allowedFeatures?: FeatureKey[];
 };
 
-export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onToast }: Props) {
+export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onToast, allowedFeatures }: Props) {
   const [name, setName] = useState("");
   const [blocked, setBlocked] = useState<FeatureKey[]>([]);
   const [busy, setBusy] = useState(false);
@@ -107,9 +108,12 @@ export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onT
     blockedFeatures: FeatureKey[];
     onToggle: (feature: FeatureKey) => void;
   }) {
+    const manageableFeatures = allowedFeatures
+      ? GROUP_MANAGEABLE_FEATURES.filter((f) => allowedFeatures.includes(f))
+      : GROUP_MANAGEABLE_FEATURES;
     return (
       <div className="grid gap-2 sm:grid-cols-2">
-        {GROUP_MANAGEABLE_FEATURES.map((feature) => (
+        {manageableFeatures.map((feature) => (
           <label key={feature} className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
             <input
               type="checkbox"

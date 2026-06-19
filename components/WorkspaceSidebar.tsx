@@ -223,6 +223,7 @@ const SidebarPanel = memo(function SidebarPanel({
   displayName,
   email,
   me,
+  meLoaded,
   onSignOut,
   onClick,
   onAdminHover,
@@ -238,6 +239,7 @@ const SidebarPanel = memo(function SidebarPanel({
   displayName: string;
   email: string;
   me: MeMailboxResponse | null;
+  meLoaded: boolean;
   onSignOut: () => void;
   onClick?: () => void;
   onAdminHover?: () => void;
@@ -251,7 +253,7 @@ const SidebarPanel = memo(function SidebarPanel({
         </Link>
       </div>
 
-      <nav className="scrollbar-thin flex flex-1 flex-col overflow-y-auto px-2 py-1">
+      <nav className={cn("scrollbar-thin flex flex-1 flex-col overflow-y-auto px-2 py-1", !meLoaded && "invisible")}>
         <div className="flex flex-col gap-0.5">
           {links.primary.map(({ href, label, Icon }) => (
             <NavItem
@@ -391,6 +393,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
       displayName={displayName}
       email={email}
       me={me}
+      meLoaded={me !== null}
       onSignOut={() => void signOut()}
       onClick={onCloseMobile}
       onAdminHover={me?.role === "admin" ? () => void prefetchAdminTeamData() : undefined}

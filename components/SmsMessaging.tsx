@@ -240,6 +240,7 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
           </div>
         </div>
         <button
+          data-testid="sms-refresh-btn"
           type="button"
           onClick={() => void loadConversations()}
           className="rounded-lg p-2 text-sky-100 transition hover:bg-white/10"
@@ -340,6 +341,7 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
               conversations.map((c) => (
                 <button
                   key={c.peer_e164}
+                  data-testid={`sms-conversation-item-${c.peer_e164}`}
                   type="button"
                   onClick={() => selectPeer(c.peer_e164)}
                   className={cn(
@@ -365,12 +367,14 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
             <p className="mb-1.5 text-[11px] font-medium text-zinc-500">{titleCase("New number")}</p>
             <div className="flex gap-2">
               <input
+                data-testid="sms-new-phone-input"
                 className="input-field min-w-0 flex-1 text-sm"
                 placeholder="+919876543210"
                 value={newPhone}
                 onChange={(e) => setNewPhone(e.target.value)}
               />
               <button
+                data-testid="sms-open-number-btn"
                 type="button"
                 className="btn-secondary shrink-0 px-3 py-2 text-xs"
                 onClick={() => {
@@ -402,6 +406,7 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
             {peer && editingName === peer ? (
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <input
+                  data-testid="sms-contact-name-input"
                   autoFocus
                   className="input-field min-w-0 flex-1 text-sm"
                   placeholder={titleCase("Contact name")}
@@ -413,6 +418,7 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
                   }}
                 />
                 <button
+                  data-testid="sms-save-name-btn"
                   type="button"
                   className="btn-primary shrink-0 px-3 py-1.5 text-xs"
                   onClick={() => void saveName(peer, nameInput)}
@@ -491,6 +497,7 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
           <div className="shrink-0 border-t border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex gap-2">
               <textarea
+                data-testid="sms-message-composer"
                 rows={2}
                 className="input-field min-h-[44px] flex-1 resize-none text-sm"
                 placeholder={titleCase("Type a message…")}
@@ -504,6 +511,7 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
                 }}
               />
               <button
+                data-testid="sms-send-btn"
                 type="button"
                 disabled={sending || !draft.trim()}
                 onClick={() => void sendMessage()}

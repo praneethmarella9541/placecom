@@ -246,6 +246,7 @@ export default function AdminTeamPage() {
           {titleCase("Work email")}
         </label>
         <input
+          data-testid="team-new-email-input"
           type="email"
           autoComplete="off"
           value={email}
@@ -266,6 +267,7 @@ export default function AdminTeamPage() {
           {titleCase("Display name")}
         </label>
         <input
+          data-testid="team-new-display-name-input"
           value={newDisplayUsername}
           onChange={(e) => setNewDisplayUsername(e.target.value)}
           placeholder="Optional — defaults from email"
@@ -284,6 +286,7 @@ export default function AdminTeamPage() {
           {titleCase("Access group")}
         </label>
         <select
+          data-testid="team-new-group-select"
           value={newGroupId}
           onChange={(e) => setNewGroupId(e.target.value)}
           className="input-field w-full text-sm"
@@ -354,6 +357,7 @@ export default function AdminTeamPage() {
           </>
         )}
         <button
+          data-testid="team-create-staff-btn"
           type="button"
           disabled={busy || !email.trim() || password.length < 8}
           onClick={() => void createStaff()}
@@ -616,6 +620,7 @@ export default function AdminTeamPage() {
                       {titleCase("View analytics →")}
                     </Link>
                     <button
+                      data-testid={`team-save-member-${member.id}`}
                       type="button"
                       onClick={() => void saveMember(member)}
                       disabled={savingMemberId === member.id || deletingMemberId === member.id}
@@ -624,6 +629,7 @@ export default function AdminTeamPage() {
                       {savingMemberId === member.id ? titleCase("Saving...") : titleCase("Save changes")}
                     </button>
                     <button
+                      data-testid={`team-delete-member-${member.id}`}
                       type="button"
                       onClick={() => void deleteMember(member)}
                       disabled={deletingMemberId === member.id || savingMemberId === member.id}

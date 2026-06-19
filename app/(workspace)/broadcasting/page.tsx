@@ -44,14 +44,17 @@ function ChannelTab({
   label,
   active,
   onClick,
+  testId,
 }: {
   icon: React.ElementType;
   label: string;
   active: boolean;
   onClick: () => void;
+  testId?: string;
 }) {
   return (
     <button
+      data-testid={testId}
       type="button"
       onClick={onClick}
       className={cn(
@@ -221,8 +224,8 @@ function BroadcastingPageInner() {
 
       {/* ── Channel tabs ─────────────────────────────────────── */}
       <div className="inline-flex rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1">
-        <ChannelTab icon={IconMail}        label="Mail"      active={channel === "mail"}      onClick={() => selectChannel("mail")} />
-        <ChannelTab icon={IconMessageChat} label="WhatsApp"  active={channel === "whatsapp"}  onClick={() => selectChannel("whatsapp")} />
+        <ChannelTab icon={IconMail}        label="Mail"      active={channel === "mail"}      onClick={() => selectChannel("mail")}      testId="broadcast-tab-mail" />
+        <ChannelTab icon={IconMessageChat} label="WhatsApp"  active={channel === "whatsapp"}  onClick={() => selectChannel("whatsapp")} testId="broadcast-tab-whatsapp" />
       </div>
 
       {/* ── Mail channel ─────────────────────────────────────── */}
@@ -233,6 +236,7 @@ function BroadcastingPageInner() {
             {(["broadcast", "merge"] as const).map((key) => (
               <button
                 key={key}
+                data-testid={`broadcast-mail-subtab-${key}`}
                 type="button"
                 onClick={() => setMailSubView(key)}
                 className={cn(
@@ -270,6 +274,7 @@ function BroadcastingPageInner() {
                       onChange={(e) => void onPickFile(e.target.files)}
                     />
                     <button
+                      data-testid="broadcast-import-csv-btn"
                       type="button"
                       disabled={parseBusy}
                       onClick={() => fileRef.current?.click()}
@@ -288,6 +293,7 @@ function BroadcastingPageInner() {
                       {titleCase("Or paste addresses")}
                     </p>
                     <textarea
+                      data-testid="broadcast-manual-recipients-input"
                       value={manualInput}
                       onChange={(e) => setManualInput(e.target.value)}
                       rows={4}
@@ -295,6 +301,7 @@ function BroadcastingPageInner() {
                       placeholder="a@example.com, b@example.com"
                     />
                     <button
+                      data-testid="broadcast-add-recipients-btn"
                       type="button"
                       onClick={applyManual}
                       className="btn-ghost mt-2 gap-1.5 text-[13px]"
@@ -368,6 +375,7 @@ function BroadcastingPageInner() {
                       {titleCase("Subject")}
                     </p>
                     <input
+                      data-testid="broadcast-subject-input"
                       type="text"
                       value={subject}
                       onChange={(e) => setSubject(e.target.value)}
@@ -381,6 +389,7 @@ function BroadcastingPageInner() {
                       {titleCase("Body")}
                     </p>
                     <textarea
+                      data-testid="broadcast-body-input"
                       value={body}
                       onChange={(e) => setBody(e.target.value)}
                       rows={10}
@@ -465,6 +474,7 @@ function BroadcastingPageInner() {
               {/* ── Send button ──────────────────────────────── */}
               <div className="mt-5 flex flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border)] pt-4">
                 <button
+                  data-testid="broadcast-send-btn"
                   type="button"
                   disabled={sendBusy || recipients.length === 0}
                   onClick={() => void sendBroadcast()}

@@ -1205,6 +1205,7 @@ export default function CalendarPage() {
           {/* "+ Create" button */}
           <div className="px-3 pt-4 pb-2">
             <button
+              data-testid="calendar-create-btn"
               onClick={() => openScheduleModal()}
               className="flex w-full items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-text)] shadow-sm hover:shadow-md transition-shadow"
             >
@@ -1235,6 +1236,7 @@ export default function CalendarPage() {
 
             {/* Today + nav arrows */}
             <button
+              data-testid="calendar-today-btn"
               onClick={goToday}
               className="rounded-md border border-[var(--color-border)] px-3 py-1 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-offset)] transition-colors"
             >
@@ -1242,12 +1244,14 @@ export default function CalendarPage() {
             </button>
             <div className="flex gap-0.5">
               <button
+                data-testid="calendar-prev-btn"
                 onClick={goPrev}
                 className="rounded-full p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
               >
                 <IconChevronLeft className="h-4 w-4" />
               </button>
               <button
+                data-testid="calendar-next-btn"
                 onClick={goNext}
                 className="rounded-full p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
               >
@@ -1264,6 +1268,7 @@ export default function CalendarPage() {
             <div className="relative order-last min-w-[140px] flex-1 basis-full sm:order-none sm:max-w-[260px] sm:basis-auto">
               <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
               <input
+                data-testid="calendar-search-input"
                 type="search"
                 value={calendarSearchInput}
                 onChange={(e) => setCalendarSearchInput(e.target.value)}
@@ -1295,6 +1300,7 @@ export default function CalendarPage() {
 
             {/* Sync */}
             <button
+              data-testid="calendar-sync-btn"
               onClick={() => void handleSync()}
               disabled={syncing || loadingEvents}
               className="rounded-full p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors disabled:opacity-40"
@@ -1314,6 +1320,7 @@ export default function CalendarPage() {
               ).map(({ v, label, short }) => (
                 <button
                   key={v}
+                  data-testid={`calendar-view-${v.replace("timeGrid", "").replace("dayGrid", "").toLowerCase()}`}
                   onClick={() => goView(v)}
                   className={[
                     "px-2.5 py-1 text-xs font-medium transition-colors sm:px-3",
@@ -1497,15 +1504,16 @@ export default function CalendarPage() {
       {/* ── Schedule meeting modal ─────────────────────── */}
       {scheduleOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center animate-fade-in">
-          <div className="card w-full max-w-xl overflow-hidden animate-scale-in">
+          <div data-testid="calendar-schedule-modal" className="card w-full max-w-xl overflow-hidden animate-scale-in">
             <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
               <h3 className="text-base font-semibold text-[var(--color-text)]">Schedule meeting</h3>
-              <button type="button" onClick={() => setScheduleOpen(false)} className="btn-ghost p-1.5">
+              <button data-testid="calendar-schedule-close" type="button" onClick={() => setScheduleOpen(false)} className="btn-ghost p-1.5">
                 <IconX className="h-4 w-4" />
               </button>
             </div>
             <div className="space-y-3 p-5">
               <input
+                data-testid="calendar-event-title-input"
                 type="text"
                 placeholder="Meeting title *"
                 value={title}
@@ -1528,6 +1536,7 @@ export default function CalendarPage() {
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Start</label>
                   <input
+                    data-testid="calendar-start-datetime"
                     type="datetime-local"
                     value={startDateTime}
                     onChange={(e) => {
@@ -1543,6 +1552,7 @@ export default function CalendarPage() {
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">End</label>
                   <input
+                    data-testid="calendar-end-datetime"
                     type="datetime-local"
                     value={endDateTime}
                     onChange={(e) => setEndDateTime(e.target.value)}
@@ -1567,6 +1577,7 @@ export default function CalendarPage() {
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Repeat</span>
                 <select
+                  data-testid="calendar-recurrence-select"
                   value={recurrencePreset}
                   onChange={(e) => setRecurrencePreset(e.target.value as RecurrencePreset)}
                   className="input-field"
@@ -1600,6 +1611,7 @@ export default function CalendarPage() {
 
               {/* Google Meet toggle */}
               <button
+                data-testid="calendar-meet-toggle"
                 type="button"
                 onClick={() => setAddMeet((v) => !v)}
                 className={[
@@ -1648,10 +1660,11 @@ export default function CalendarPage() {
               )}
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-5 py-4">
-              <button type="button" onClick={() => setScheduleOpen(false)} className="btn-ghost">
+              <button data-testid="calendar-schedule-cancel" type="button" onClick={() => setScheduleOpen(false)} className="btn-ghost">
                 Cancel
               </button>
               <button
+                data-testid="calendar-schedule-submit"
                 type="button"
                 disabled={busy || !recruiterEmail || !title || !startDateTime || !endDateTime}
                 onClick={() => void scheduleMeeting()}
@@ -1674,6 +1687,7 @@ export default function CalendarPage() {
                 {selectedEvent.summary || "(untitled)"}
               </h3>
               <button
+                data-testid="calendar-event-close"
                 type="button"
                 onClick={() => setSelectedEvent(null)}
                 className="rounded-full p-1 text-white/80 hover:text-white hover:bg-white/10 transition-colors"
@@ -1814,10 +1828,11 @@ export default function CalendarPage() {
 
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] px-5 py-3">
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => setSelectedEvent(null)} className="btn-ghost">
+                <button data-testid="calendar-event-close-btn" type="button" onClick={() => setSelectedEvent(null)} className="btn-ghost">
                   Close
                 </button>
                 <button
+                  data-testid="calendar-event-edit-btn"
                   type="button"
                   onClick={() => openEdit(selectedEvent)}
                   className="btn-secondary"
@@ -1825,6 +1840,7 @@ export default function CalendarPage() {
                   Edit
                 </button>
                 <button
+                  data-testid="calendar-event-delete-btn"
                   type="button"
                   onClick={() => openDeleteConfirm(selectedEvent)}
                   disabled={deleteBusy}

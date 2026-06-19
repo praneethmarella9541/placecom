@@ -77,9 +77,12 @@ const NavItem = memo(function NavItem({
 }) {
   const router = useRouter();
 
+  const testId = `nav-${href.replace(/^\//, "").replace(/\//g, "-") || "home"}`;
+
   return (
     <a
       href={href}
+      data-testid={testId}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         flushSync(() => onNavigateStart?.(href));
@@ -146,6 +149,7 @@ function UserProfile({
   return (
     <div ref={ref} className="relative">
       <button
+        data-testid="user-menu"
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
@@ -193,6 +197,7 @@ function UserProfile({
             )}
           </div>
           <Link
+            data-testid="nav-profile"
             href="/profile"
             onClick={() => setOpen(false)}
             className="flex w-full items-center gap-2.5 px-4 py-2.5 text-[13px] font-medium text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-offset)]"
@@ -201,6 +206,7 @@ function UserProfile({
             {titleCase("My profile")}
           </Link>
           <button
+            data-testid="signout-btn"
             type="button"
             onClick={() => {
               setOpen(false);

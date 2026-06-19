@@ -566,6 +566,7 @@ export function FormEditor({ formId }: { formId: string }) {
           </div>
         </div>
         <button
+          data-testid="form-editor-save-btn"
           type="button"
           onClick={() => void save()}
           disabled={saveBusy}
@@ -594,6 +595,7 @@ export function FormEditor({ formId }: { formId: string }) {
             {titleCase("Form title")}
           </label>
           <input
+            data-testid="form-editor-title-input"
             className="input-field h-11 w-full text-[15px] font-semibold"
             value={editor.title}
             onChange={(e) => setEditor((s) => ({ ...s, title: e.target.value }))}
@@ -605,6 +607,7 @@ export function FormEditor({ formId }: { formId: string }) {
             {titleCase("Description")}
           </label>
           <textarea
+            data-testid="form-editor-description-input"
             className="input-field min-h-[88px] w-full resize-y py-3 text-[14px] leading-relaxed"
             value={editor.description}
             onChange={(e) => setEditor((s) => ({ ...s, description: e.target.value }))}
@@ -624,6 +627,7 @@ export function FormEditor({ formId }: { formId: string }) {
                 value={responderUri}
               />
               <button
+                data-testid="form-editor-copy-link-btn"
                 type="button"
                 onClick={() => void copyResponderLink()}
                 className="btn-secondary inline-flex h-10 shrink-0 items-center justify-center gap-2 px-4 text-[13px]"
@@ -647,6 +651,7 @@ export function FormEditor({ formId }: { formId: string }) {
         ).map(({ id, label, icon: Icon }) => (
           <button
             key={id}
+            data-testid={`form-editor-tab-${id}`}
             type="button"
             onClick={() => setTab(id)}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-medium transition-colors ${
@@ -771,6 +776,7 @@ export function FormEditor({ formId }: { formId: string }) {
               </span>
               <div className="flex items-center gap-1">
                 <button
+                  data-testid={`form-block-up-${block.key}`}
                   type="button"
                   disabled={i === 0}
                   onClick={() => moveBlock(i, -1)}
@@ -780,6 +786,7 @@ export function FormEditor({ formId }: { formId: string }) {
                   <ChevronUp className="h-4 w-4" strokeWidth={2} />
                 </button>
                 <button
+                  data-testid={`form-block-down-${block.key}`}
                   type="button"
                   disabled={i === editor.blocks.length - 1}
                   onClick={() => moveBlock(i, 1)}
@@ -1035,6 +1042,7 @@ export function FormEditor({ formId }: { formId: string }) {
           {ADD_QUESTION_OPTIONS.map((opt) => (
             <button
               key={opt.label}
+              data-testid={`form-add-block-${opt.label.toLowerCase().replace(/\s+/g, "-")}`}
               type="button"
               onClick={() => addBlock(opt.action)}
               className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2 text-[12px] font-medium text-[var(--color-text)] transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"

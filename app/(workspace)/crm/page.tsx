@@ -292,6 +292,7 @@ export default function CRMPage() {
           </h1>
           <div className="flex items-center gap-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-offset)] p-0.5">
             <button
+              data-testid="crm-funnel-new-lead"
               type="button"
               onClick={() => setActiveFunnel("New Lead")}
               className={`rounded-[var(--radius-md)] px-3 py-1.5 text-[13px] font-semibold transition-colors ${
@@ -303,6 +304,7 @@ export default function CRMPage() {
               {titleCase("New Leads Pipeline")}
             </button>
             <button
+              data-testid="crm-funnel-regular-recruiter"
               type="button"
               onClick={() => setActiveFunnel("Regular Recruiter")}
               className={`rounded-[var(--radius-md)] px-3 py-1.5 text-[13px] font-semibold transition-colors ${
@@ -317,6 +319,7 @@ export default function CRMPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select
+            data-testid="crm-staff-filter"
             className="input-field h-[34px] min-w-[160px] text-[13px]"
             value={staffFilter}
             onChange={(e) => setStaffFilter(e.target.value)}
@@ -329,6 +332,7 @@ export default function CRMPage() {
             ))}
           </select>
           <button
+            data-testid="crm-stalled-toggle"
             type="button"
             role="switch"
             aria-checked={stalledOnly}
@@ -348,11 +352,12 @@ export default function CRMPage() {
             </span>
             {titleCase("Stalled leads")}
           </button>
-          <button type="button" onClick={() => setIsAddLeadOpen(true)} className="btn-primary h-[34px] gap-2 px-3 text-[13px]">
+          <button data-testid="crm-add-lead-btn" type="button" onClick={() => setIsAddLeadOpen(true)} className="btn-primary h-[34px] gap-2 px-3 text-[13px]">
             <UserPlus className="h-4 w-4" strokeWidth={2} />
             {titleCase("Add Lead")}
           </button>
           <button
+            data-testid="crm-refresh-btn"
             type="button"
             disabled={loading}
             onClick={() => void loadLeads()}
@@ -391,7 +396,7 @@ export default function CRMPage() {
             const stageLeads = filteredLeads.filter((l) => l.stage === stage);
             const borderAccent = stageColumnBorder(stage, activeFunnel);
             return (
-              <div key={stage} className="flex min-h-[400px] min-w-[260px] flex-1 flex-col">
+              <div key={stage} data-testid={`crm-stage-column-${stage.toLowerCase().replace(/\s+/g, "-")}`} className="flex min-h-[400px] min-w-[260px] flex-1 flex-col">
                 <div
                   className={`surface-card rounded-b-none border-b-0 px-4 py-3 ${borderAccent} border-l-4`}
                 >
@@ -411,6 +416,7 @@ export default function CRMPage() {
                     return (
                       <div
                         key={lead.id}
+                        data-testid={`crm-lead-card-${lead.id}`}
                         role="button"
                         tabIndex={0}
                         className="surface-card cursor-pointer p-4 transition-all duration-150 hover:-translate-y-px hover:shadow-[var(--shadow-md)]"
@@ -455,14 +461,16 @@ export default function CRMPage() {
                             </span>
                             <div className="flex items-center gap-2">
                               <button
+                                data-testid={`crm-jd-decrement-${lead.id}`}
                                 type="button"
                                 onClick={() => handleUpdateJDCount(lead.id, lead.jd_count - 1)}
                                 className="flex h-6 w-6 items-center justify-center rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"
                               >
                                 −
                               </button>
-                              <span className="w-4 text-center text-xs font-bold">{lead.jd_count}</span>
+                              <span data-testid={`crm-jd-count-${lead.id}`} className="w-4 text-center text-xs font-bold">{lead.jd_count}</span>
                               <button
+                                data-testid={`crm-jd-increment-${lead.id}`}
                                 type="button"
                                 onClick={() => handleUpdateJDCount(lead.id, lead.jd_count + 1)}
                                 className="flex h-6 w-6 items-center justify-center rounded border border-[var(--color-primary-light)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
@@ -484,6 +492,7 @@ export default function CRMPage() {
                           </div>
                           {canAdvance ? (
                             <button
+                              data-testid={`crm-advance-stage-${lead.id}`}
                               type="button"
                               className="btn-ghost h-8 w-8 shrink-0 justify-center p-0"
                               title={titleCase("Advance stage")}
@@ -536,19 +545,21 @@ export default function CRMPage() {
           onClick={() => setIsAddLeadOpen(false)}
         >
           <div
+            data-testid="crm-add-lead-modal"
             className="card animate-scale-in w-full max-w-lg bg-[var(--color-surface)] p-6 shadow-[var(--shadow-lg)]"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 id="add-lead-title" className="font-display mb-4 text-lg font-bold text-[var(--color-text)]">
               {titleCase("Add corporate lead")}
             </h2>
-            <form onSubmit={handleAddLead} className="space-y-4">
+            <form data-testid="crm-add-lead-form" onSubmit={handleAddLead} className="space-y-4">
               <div>
                 <label htmlFor="lead-company" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
                   {titleCase("Company name *")}
                 </label>
                 <input
                   id="lead-company"
+                  data-testid="crm-lead-company-input"
                   required
                   value={newCompany}
                   onChange={(e) => setNewCompany(e.target.value)}
@@ -563,6 +574,7 @@ export default function CRMPage() {
                   </label>
                   <select
                     id="lead-type"
+                    data-testid="crm-lead-type-select"
                     value={newLeadType}
                     onChange={(e) => setNewLeadType(e.target.value as LeadType)}
                     className="input-field"
@@ -625,6 +637,7 @@ export default function CRMPage() {
                   </label>
                   <select
                     id="lead-score"
+                    data-testid="crm-lead-score-select"
                     value={newScore}
                     onChange={(e) => setNewScore(e.target.value as LeadScore)}
                     className="input-field"
@@ -636,10 +649,10 @@ export default function CRMPage() {
                 </div>
               </div>
               <div className="mt-6 flex justify-end gap-3 border-t border-[var(--color-border)] pt-4">
-                <button type="button" onClick={() => setIsAddLeadOpen(false)} className="btn-ghost">
+                <button data-testid="crm-add-lead-cancel" type="button" onClick={() => setIsAddLeadOpen(false)} className="btn-ghost">
                   {titleCase("Cancel")}
                 </button>
-                <button type="submit" className="btn-primary">
+                <button data-testid="crm-add-lead-submit" type="submit" className="btn-primary">
                   {titleCase("Save lead")}
                 </button>
               </div>
@@ -669,15 +682,16 @@ export default function CRMPage() {
                 </p>
                 {activeLead.email && <p className="mt-0.5 truncate text-xs font-medium text-[var(--color-primary)]">{activeLead.email}</p>}
               </div>
-              <button onClick={() => setActiveLead(null)} aria-label={titleCase("Close")} className="btn-ghost shrink-0 rounded-full p-2"><IconX className="h-5 w-5" /></button>
+              <button data-testid="crm-lead-panel-close" onClick={() => setActiveLead(null)} aria-label={titleCase("Close")} className="btn-ghost shrink-0 rounded-full p-2"><IconX className="h-5 w-5" /></button>
             </div>
 
             <div className="flex-1 space-y-6 overflow-y-auto p-5">
               {/* Interaction Form */}
               <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
                 <h3 className="mb-3 text-sm font-semibold text-[var(--color-text)]">{titleCase("Log interaction")}</h3>
-                <form onSubmit={handleAddInteraction} className="space-y-3">
+                <form data-testid="crm-interaction-form" onSubmit={handleAddInteraction} className="space-y-3">
                   <select
+                    data-testid="crm-interaction-type-select"
                     aria-label={titleCase("Interaction type")}
                     value={interactionType}
                     onChange={(e) =>
@@ -691,6 +705,7 @@ export default function CRMPage() {
                     <option value="Meeting">{titleCase("Meeting (e.g. Meet/Zoom)")}</option>
                   </select>
                   <textarea
+                    data-testid="crm-interaction-notes"
                     required
                     rows={3}
                     value={interactionNotes}
@@ -698,7 +713,7 @@ export default function CRMPage() {
                     placeholder={titleCase("Enter details...")}
                     className="input-field h-auto resize-none py-2 text-sm"
                   ></textarea>
-                  <button type="submit" className="btn-primary w-full justify-center py-2 text-sm">
+                  <button data-testid="crm-interaction-submit" type="submit" className="btn-primary w-full justify-center py-2 text-sm">
                     {titleCase("Log activity")}
                   </button>
                 </form>
@@ -708,6 +723,7 @@ export default function CRMPage() {
               <div>
                 <div className="relative mb-4 flex flex-wrap gap-x-1 border-b border-[var(--color-border)]">
                   <button
+                    data-testid="crm-tab-history"
                     type="button"
                     onClick={() => setActivePanelTab("History")}
                     className={`relative px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
@@ -719,6 +735,7 @@ export default function CRMPage() {
                     {titleCase(`History (${interactions.length})`)}
                   </button>
                   <button
+                    data-testid="crm-tab-meetings"
                     type="button"
                     onClick={() => setActivePanelTab("Meetings")}
                     className={`relative flex items-center gap-1.5 px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${

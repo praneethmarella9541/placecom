@@ -1763,6 +1763,7 @@ export default function DrivePage() {
           <div className="relative shrink-0">
             <Filter className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
             <select
+              data-testid="drive-type-filter"
               value={mimeFilter}
               onChange={(e) => setMimeFilter(e.target.value as MimeFilter)}
               className="input-field max-w-[9.5rem] appearance-none py-2 pl-8 pr-8 text-[13px] sm:max-w-none"
@@ -1781,6 +1782,7 @@ export default function DrivePage() {
             <div className="relative">
               <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
               <input
+                data-testid="drive-search-input"
                 type="search"
                 value={driveSearchInput}
                 onChange={(e) => setDriveSearchInput(e.target.value)}
@@ -1817,6 +1819,7 @@ export default function DrivePage() {
             onChange={(e) => void onUploadFolder(e.target.files)}
           />
           <button
+            data-testid="drive-new-folder-btn"
             type="button"
             onClick={() => { setNewFolderOpen(true); setNewFolderName(""); }}
             disabled={!canUploadHere}
@@ -1830,6 +1833,7 @@ export default function DrivePage() {
           {/* Upload dropdown — File upload vs Folder upload, matching Drive */}
           <div className="relative" data-upload-menu>
             <button
+              data-testid="drive-upload-btn"
               type="button"
               onClick={() => setUploadMenuOpen((v) => !v)}
               disabled={uploadBusy || !canUploadHere}
@@ -1861,6 +1865,7 @@ export default function DrivePage() {
             )}
           </div>
           <button
+            data-testid="drive-view-toggle"
             type="button"
             onClick={() => setViewMode((m) => (m === "list" ? "grid" : "list"))}
             className="btn-ghost shrink-0 rounded-lg p-2"
@@ -1870,6 +1875,7 @@ export default function DrivePage() {
             {viewMode === "list" ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
           </button>
           <button
+            data-testid="drive-refresh-btn"
             type="button"
             onClick={() => void handleDriveRefresh()}
             className="btn-ghost shrink-0 rounded-lg p-2"
@@ -2040,6 +2046,7 @@ export default function DrivePage() {
                 const RowMenu = (
                   <div className="relative" data-row-menu>
                     <button
+                      data-testid={`drive-row-menu-${file.id}`}
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -2066,6 +2073,7 @@ export default function DrivePage() {
 
                 const NameOrEditor = isRenaming ? (
                   <input
+                    data-testid={`drive-rename-input-${file.id}`}
                     autoFocus
                     type="text"
                     value={renameValue}
@@ -2100,6 +2108,7 @@ export default function DrivePage() {
                   return (
                     <li
                       key={file.id}
+                      data-testid={`drive-item-${file.id}`}
                       className="group relative flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-[var(--shadow-md)] hover:bg-[var(--color-surface-offset)]/40"
                       onContextMenu={(e) => openRowContextMenu(e, file)}
                       onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
@@ -2374,6 +2383,7 @@ export default function DrivePage() {
                 <p className="mt-0.5 truncate font-mono text-[11px] text-[var(--color-text-faint)]">{previewFile.mimeType}</p>
               </div>
               <button
+                data-testid="drive-preview-close"
                 type="button"
                 onClick={() => setPreviewFile(null)}
                 className="btn-ghost shrink-0 rounded-full p-2"
@@ -2435,6 +2445,7 @@ export default function DrivePage() {
                 </a>
               ) : null}
               <button
+                data-testid="drive-preview-download"
                 type="button"
                 onClick={() => void downloadItem(previewFile)}
                 disabled={downloadingIds.has(previewFile.id)}
@@ -2508,6 +2519,7 @@ export default function DrivePage() {
             </div>
             <div className="px-5 py-4">
               <input
+                data-testid="drive-new-folder-input"
                 autoFocus
                 type="text"
                 value={newFolderName}
@@ -2522,6 +2534,7 @@ export default function DrivePage() {
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-5 py-3">
               <button
+                data-testid="drive-new-folder-cancel"
                 type="button"
                 onClick={() => setNewFolderOpen(false)}
                 disabled={creatingFolder}
@@ -2530,6 +2543,7 @@ export default function DrivePage() {
                 Cancel
               </button>
               <button
+                data-testid="drive-new-folder-create"
                 type="button"
                 onClick={() => void createFolder()}
                 disabled={creatingFolder || !newFolderName.trim()}

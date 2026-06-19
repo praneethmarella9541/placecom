@@ -308,6 +308,7 @@ export function MailSearchBar({
           </div>
         ) : null}
         <input
+          data-testid="inbox-search-input"
           ref={inputRef}
           type="text"
           role="searchbox"

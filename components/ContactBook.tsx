@@ -97,6 +97,7 @@ export function ContactBook() {
         <div className="relative min-w-0 flex-1 sm:max-w-md">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
           <input
+            data-testid="contacts-search-input"
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -104,7 +105,7 @@ export function ContactBook() {
             className="input-field w-full pl-9 text-[13px]"
           />
         </div>
-        <button type="button" className="btn-primary inline-flex items-center gap-2 px-4" onClick={openAdd}>
+        <button data-testid="contacts-add-btn" type="button" className="btn-primary inline-flex items-center gap-2 px-4" onClick={openAdd}>
           <Plus className="h-4 w-4" />
           {titleCase("Add contact")}
         </button>
@@ -155,7 +156,7 @@ export function ContactBook() {
         ) : (
           <ul className="divide-y divide-[var(--color-border)]">
             {filtered.map((c) => (
-              <li key={c.peer_e164} className="flex items-center gap-3 px-4 py-3.5 sm:gap-4">
+              <li key={c.peer_e164} data-testid={`contact-row-${c.peer_e164}`} className="flex items-center gap-3 px-4 py-3.5 sm:gap-4">
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[13px] font-bold text-white">
                   {peerInitials(c.peer_e164, c.name)}
                 </span>
@@ -181,6 +182,7 @@ export function ContactBook() {
                     <MessageSquare className="h-4 w-4" />
                   </Link>
                   <button
+                    data-testid={`contact-edit-${c.peer_e164}`}
                     type="button"
                     disabled={busy}
                     className="btn-ghost inline-flex h-9 w-9 items-center justify-center rounded-lg p-0"
@@ -190,6 +192,7 @@ export function ContactBook() {
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button
+                    data-testid={`contact-delete-${c.peer_e164}`}
                     type="button"
                     disabled={busy}
                     className="btn-ghost inline-flex h-9 w-9 items-center justify-center rounded-lg p-0 text-[var(--color-danger)]"
@@ -219,12 +222,13 @@ export function ContactBook() {
             <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
               Names appear in WhatsApp and SMS chats instead of the raw number.
             </p>
-            <form className="mt-5 space-y-4" onSubmit={(e) => void submitForm(e)}>
+            <form data-testid="contact-form" className="mt-5 space-y-4" onSubmit={(e) => void submitForm(e)}>
               <div>
                 <label className="mb-1.5 block text-[12px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">
                   {titleCase("Name")}
                 </label>
                 <input
+                  data-testid="contact-name-input"
                   autoFocus
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
@@ -237,6 +241,7 @@ export function ContactBook() {
                   {titleCase("Phone")}
                 </label>
                 <input
+                  data-testid="contact-phone-input"
                   value={form.peer}
                   onChange={(e) => setForm((f) => ({ ...f, peer: e.target.value }))}
                   disabled={!!editingPeer}
@@ -245,13 +250,13 @@ export function ContactBook() {
                 />
               </div>
               {formError && (
-                <p className="text-[13px] text-[var(--color-danger)]">{formError}</p>
+                <p data-testid="contact-form-error" className="text-[13px] text-[var(--color-danger)]">{formError}</p>
               )}
               <div className="flex justify-end gap-2 pt-1">
-                <button type="button" className="btn-ghost px-4" onClick={closeForm} disabled={busy}>
+                <button data-testid="contact-form-cancel" type="button" className="btn-ghost px-4" onClick={closeForm} disabled={busy}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary px-4" disabled={busy}>
+                <button data-testid="contact-form-submit" type="submit" className="btn-primary px-4" disabled={busy}>
                   {busy ? "Saving…" : editingPeer ? titleCase("Save changes") : titleCase("Add contact")}
                 </button>
               </div>

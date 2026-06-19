@@ -80,6 +80,7 @@ function MeetingListItem({
 }) {
   return (
     <button
+      data-testid={`meeting-list-item-${m.id}`}
       type="button"
       onClick={onClick}
       className={cn(
@@ -181,6 +182,7 @@ function DeleteModal({
         </p>
         <div className="mt-5 flex gap-2.5">
           <button
+            data-testid="meetings-delete-cancel"
             type="button"
             onClick={onCancel}
             disabled={busy}
@@ -189,6 +191,7 @@ function DeleteModal({
             Cancel
           </button>
           <button
+            data-testid="meetings-delete-confirm"
             type="button"
             onClick={onConfirm}
             disabled={busy}
@@ -254,6 +257,7 @@ function MeetingDetail({
           </a>
           {done && m.summary && m.attendee_email ? (
             <button
+              data-testid="meetings-send-summary-btn"
               type="button"
               onClick={() => onSendEmail(m.id)}
               disabled={sendingId === m.id}
@@ -268,6 +272,7 @@ function MeetingDetail({
             </button>
           ) : null}
           <button
+            data-testid="meetings-delete-btn"
             type="button"
             onClick={() => onDelete(m.id)}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-danger-light)] hover:text-[var(--color-danger)]"
@@ -522,6 +527,7 @@ export default function MeetingsPage() {
               </span>
             )}
             <button
+              data-testid="meetings-refresh-btn"
               type="button"
               onClick={() => void loadMeetings()}
               disabled={loading || syncing}
@@ -531,6 +537,7 @@ export default function MeetingsPage() {
               <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
             </button>
             <button
+              data-testid="meetings-sync-btn"
               type="button"
               onClick={() => void syncTranscripts()}
               disabled={syncing || loading}

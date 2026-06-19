@@ -283,6 +283,7 @@ export default function HomePage() {
 
             {authErrorBanner ? (
               <div
+                data-testid="auth-error-banner"
                 className="mt-6 rounded-[var(--radius-lg)] border border-[rgba(228,0,20,0.3)] bg-[var(--color-danger-light)] px-4 py-3 text-left text-sm text-[var(--color-danger)]"
                 role="alert"
               >
@@ -296,6 +297,7 @@ export default function HomePage() {
                 For Admins
               </p>
               <button
+                data-testid="auth-google-btn"
                 type="button"
                 onClick={() => void signInWithGoogle()}
                 className="flex h-[44px] w-full items-center justify-center gap-2.5 rounded-[var(--radius-md)] border border-[var(--color-border-strong)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] transition-all hover:-translate-y-px hover:border-[var(--color-text-muted)] hover:shadow-sm"
@@ -336,6 +338,7 @@ export default function HomePage() {
                 For Staff & Committee
               </p>
               <input
+                data-testid="auth-email-input"
                 type="email"
                 autoComplete="email"
                 value={staffEmail}
@@ -350,6 +353,7 @@ export default function HomePage() {
                 className="input-field landing-input"
               />
               <PasswordInput
+                data-testid="auth-password-input"
                 autoComplete="current-password"
                 value={staffPassword}
                 onChange={(e) => setStaffPassword(e.target.value)}
@@ -364,6 +368,7 @@ export default function HomePage() {
                 className="landing-input"
               />
               <button
+                data-testid="auth-signin-btn"
                 type="button"
                 disabled={staffPwdBusy}
                 onClick={() => void signInStaffPassword()}
@@ -376,6 +381,7 @@ export default function HomePage() {
               </p>
 
               <button
+                data-testid="auth-magic-toggle"
                 type="button"
                 onClick={() => setMagicOpen((v) => !v)}
                 className="mt-4 w-full text-center text-[13px] font-medium text-[#9a4510] hover:underline"
@@ -384,8 +390,9 @@ export default function HomePage() {
               </button>
 
               {magicOpen ? (
-                <div className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+                <div data-testid="auth-magic-panel" className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
                   <input
+                    data-testid="auth-magic-email-input"
                     type="email"
                     autoComplete="email"
                     value={staffEmail}
@@ -394,6 +401,7 @@ export default function HomePage() {
                     className="input-field landing-input bg-[var(--color-surface)]"
                   />
                   <button
+                    data-testid="auth-magic-send-btn"
                     type="button"
                     disabled={staffBusy}
                     onClick={() => void signInStaffEmail()}
@@ -406,11 +414,11 @@ export default function HomePage() {
 
               {staffMsg ? (
                 staffMsgIsError ? (
-                  <div className="mt-4 rounded-[var(--radius-md)] border border-[rgba(228,0,20,0.3)] bg-[var(--color-danger-light)] px-3 py-2.5 text-center text-sm font-medium text-[var(--color-danger)]">
+                  <div data-testid="auth-staff-error" className="mt-4 rounded-[var(--radius-md)] border border-[rgba(228,0,20,0.3)] bg-[var(--color-danger-light)] px-3 py-2.5 text-center text-sm font-medium text-[var(--color-danger)]">
                     {staffMsg}
                   </div>
                 ) : (
-                  <p className="mt-4 text-center text-xs text-[var(--color-text-muted)]">{staffMsg}</p>
+                  <p data-testid="auth-staff-message" className="mt-4 text-center text-xs text-[var(--color-text-muted)]">{staffMsg}</p>
                 )
               ) : null}
 

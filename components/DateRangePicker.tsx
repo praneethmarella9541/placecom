@@ -63,6 +63,7 @@ export function DateRangePicker({
         {!value.allTime ? (
           <>
             <input
+              data-testid="date-range-from"
               type="date"
               value={value.from}
               max={value.to}
@@ -71,6 +72,7 @@ export function DateRangePicker({
             />
             <span className="text-[10px] text-[var(--color-text-muted)]">to</span>
             <input
+              data-testid="date-range-to"
               type="date"
               value={value.to}
               min={value.from}
@@ -87,6 +89,7 @@ export function DateRangePicker({
         {PRESETS.map((p) => (
           <button
             key={p.label}
+            data-testid={`date-preset-${p.label.toLowerCase().replace(/\s+/g, "-")}`}
             type="button"
             onClick={() => onChange(p.allTime ? allTimeRange() : rangeEndingToday(p.days!))}
             className={

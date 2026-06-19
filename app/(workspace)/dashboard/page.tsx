@@ -32,13 +32,16 @@ function Toggle({
   checked,
   onChange,
   disabled,
+  testId,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  testId?: string;
 }) {
   return (
     <button
+      data-testid={testId}
       type="button"
       role="switch"
       aria-checked={checked}
@@ -115,11 +118,13 @@ function SelectField({
   value,
   onChange,
   options,
+  testId,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: { value: string; label: string }[];
+  testId?: string;
 }) {
   return (
     <label className="block flex-1">
@@ -127,6 +132,7 @@ function SelectField({
         {label}
       </span>
       <select
+        data-testid={testId}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="input-field h-[38px] cursor-pointer appearance-none bg-[image:url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22 fill=%22none%22><path d=%22M6 8l4 4 4-4%22 stroke=%22%2380868b%22 stroke-width=%221.5%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/></svg>')] bg-[right_10px_center] bg-no-repeat pr-8 text-[13px]"
@@ -147,15 +153,17 @@ function ToggleRow({
   onChange,
   title,
   description,
+  testId,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   title: string;
   description: string;
+  testId?: string;
 }) {
   return (
     <div className="flex items-start gap-4">
-      <Toggle checked={checked} onChange={onChange} />
+      <Toggle checked={checked} onChange={onChange} testId={testId} />
       <div className="min-w-0 flex-1">
         <p className="text-[13px] font-medium leading-tight text-[var(--color-text)]">{title}</p>
         <p className="mt-0.5 text-[11px] leading-relaxed text-[var(--color-text-faint)]">
@@ -399,6 +407,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
+              data-testid="extract-run-btn"
               type="button"
               onClick={() => void startRun()}
               disabled={busy}
@@ -417,6 +426,7 @@ export default function DashboardPage() {
               )}
             </button>
             <button
+              data-testid="extract-delete-all-btn"
               type="button"
               onClick={() => void deleteAllExtractions()}
               disabled={busy || deleting}
@@ -430,7 +440,7 @@ export default function DashboardPage() {
 
         {/* Progress / result strip */}
         {busy && (
-          <div className="border-t border-[var(--color-border)] px-5 py-4">
+          <div data-testid="extract-progress-container" className="border-t border-[var(--color-border)] px-5 py-4">
             <ProgressBar
               value={progress}
               max={Math.max(progressMax, 1)}
@@ -443,6 +453,7 @@ export default function DashboardPage() {
 
         {error && (
           <div
+            data-testid="extract-error"
             className="border-t border-red-200 bg-red-50 px-5 py-3 text-[13px] text-red-700 dark:border-red-900/40 dark:bg-red-950/25 dark:text-red-300"
             role="alert"
           >
@@ -489,6 +500,7 @@ export default function DashboardPage() {
               label="Emails to Scan"
               value={maxEmails}
               onChange={(v) => handleMaxEmailsChange(v as MaxEmailsOption)}
+              testId="extract-max-emails-select"
               options={[
                 { value: "10", label: "10 emails" },
                 { value: "50", label: "50 emails" },
@@ -501,6 +513,7 @@ export default function DashboardPage() {
               label="Gmail Label"
               value={label}
               onChange={(v) => handleLabelChange(v as LabelOption)}
+              testId="extract-label-select"
               options={[
                 { value: "inbox", label: "Inbox" },
                 { value: "sent", label: "Sent" },
@@ -514,6 +527,7 @@ export default function DashboardPage() {
             <ToggleRow
               checked={skipExtracted}
               onChange={handleSkipExtractedChange}
+              testId="extract-skip-toggle"
               title={titleCase("Skip already extracted emails")}
               description={titleCase(
                 "Keeps scanning Gmail until the selected count of new emails is found. Re-runs update existing rows instead of duplicating."
@@ -522,6 +536,7 @@ export default function DashboardPage() {
             <ToggleRow
               checked={notifyOnComplete}
               onChange={(v) => void handleNotifyChange(v)}
+              testId="extract-notify-toggle"
               title={titleCase("Notify when extraction completes")}
               description={titleCase(
                 "Browser notification when finished. Runs continue in the background while you navigate."
@@ -541,6 +556,7 @@ export default function DashboardPage() {
 
       {/* ── Results table ────────────────────────────────────── */}
       <div
+        data-testid="extract-results-container"
         className="animate-fade-up surface-card overflow-hidden rounded-2xl"
         style={{ animationDelay: "280ms", animationFillMode: "both" }}
       >
@@ -573,6 +589,7 @@ export default function DashboardPage() {
               {titleCase("Configure settings above and run your first extraction.")}
             </p>
             <button
+              data-testid="extract-run-btn-empty"
               type="button"
               onClick={() => void startRun()}
               disabled={busy}

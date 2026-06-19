@@ -319,6 +319,7 @@ export function WhatsAppComposerBar({
           <>
             <div className="relative shrink-0 pb-1">
               <button
+                data-testid="wa-emoji-btn"
                 ref={emojiBtnRef}
                 type="button"
                 className={cn(
@@ -345,6 +346,7 @@ export function WhatsAppComposerBar({
 
             <div className="relative shrink-0 pb-1">
               <button
+                data-testid="wa-attach-btn"
                 type="button"
                 className="flex h-10 w-10 items-center justify-center rounded-full text-[#54656f] transition hover:bg-black/[0.04] disabled:opacity-40"
                 disabled={hasAttachments && attachments.length >= WHATSAPP_MAX_ATTACHMENTS}
@@ -381,6 +383,7 @@ export function WhatsAppComposerBar({
         {!hasAttachments ? (
           <div className="mb-0.5 flex min-h-[42px] min-w-0 flex-1 items-end rounded-3xl border border-[var(--color-border)] bg-white px-3 py-1.5 shadow-[var(--shadow-sm)]">
             <textarea
+              data-testid="wa-message-composer"
               ref={resolvedTextareaRef}
               className={cn(
                 "min-h-[24px] w-full flex-1 resize-none border-0 bg-transparent py-1 text-[15px] leading-snug text-[var(--color-text)] outline-none ring-0 focus:ring-0",
@@ -410,6 +413,7 @@ export function WhatsAppComposerBar({
         )}
 
         <button
+          data-testid="wa-send-btn"
           type="button"
           className={cn(
             "mb-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition shadow-sm",

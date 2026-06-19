@@ -180,12 +180,13 @@ export default function FormsPage() {
       </div>
 
       <div className="surface-card rounded-[var(--radius-xl)] border border-[var(--color-border)] p-6 shadow-[var(--shadow-sm)]">
-        <form onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <form data-testid="forms-create-form" onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="min-w-0 flex-1">
             <label htmlFor="new-form-title" className="mb-1.5 block text-[13px] font-semibold text-[var(--color-text)]">
               {titleCase("New form")}
             </label>
             <input
+              data-testid="forms-new-title-input"
               id="new-form-title"
               type="text"
               value={title}
@@ -197,6 +198,7 @@ export default function FormsPage() {
             />
           </div>
           <button
+            data-testid="forms-create-btn"
             type="submit"
             disabled={creating || !title.trim()}
             className={cn(
@@ -220,7 +222,7 @@ export default function FormsPage() {
       </div>
 
       <div className="surface-card rounded-[var(--radius-xl)] border border-[var(--color-border)] p-6 shadow-[var(--shadow-sm)]">
-        <form onSubmit={(e) => void handleOpenExisting(e)} className="space-y-3">
+        <form data-testid="forms-open-existing-form" onSubmit={(e) => void handleOpenExisting(e)} className="space-y-3">
           <div>
             <label htmlFor="open-form-input" className="mb-1.5 block text-[13px] font-semibold text-[var(--color-text)]">
               {titleCase("Open existing form")}
@@ -229,6 +231,7 @@ export default function FormsPage() {
               {titleCase("Paste a Google Form link or form ID to open responses from an older form.")}
             </p>
             <input
+              data-testid="forms-open-url-input"
               id="open-form-input"
               type="text"
               value={openInput}
@@ -240,6 +243,7 @@ export default function FormsPage() {
             />
           </div>
           <button
+            data-testid="forms-open-btn"
             type="submit"
             disabled={opening || !openInput.trim()}
             className={cn(
@@ -267,6 +271,7 @@ export default function FormsPage() {
           <div className="relative max-w-sm flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" strokeWidth={2} />
             <input
+              data-testid="forms-search-input"
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -293,6 +298,7 @@ export default function FormsPage() {
             {forms.map((f) => (
               <li
                 key={f.id}
+                data-testid={`forms-list-item-${f.id}`}
                 className="flex items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-[var(--color-surface-offset)]"
               >
                 <Link href={`/forms/${encodeURIComponent(f.id)}/edit`} className="min-w-0 flex-1">

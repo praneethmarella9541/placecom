@@ -3789,6 +3789,7 @@ export default function InboxPage() {
         {/* Compose + Refresh — Gmail pill compose button */}
         <div className="flex items-center gap-2 px-3 py-2">
           <button
+            data-testid="inbox-compose-btn"
             type="button"
             onClick={() => openNewCompose()}
             className="inline-flex h-12 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-[var(--gmail-compose-pill)] px-4 text-[14px] font-medium text-[var(--gmail-compose-pill-text)] shadow-sm transition hover:brightness-95 hover:shadow-md"
@@ -3797,6 +3798,7 @@ export default function InboxPage() {
             {titleCase("Compose")}
           </button>
           <button
+            data-testid="inbox-refresh-btn"
             type="button"
             onClick={() => void handleMailListRefresh()}
             className="btn-ghost flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full p-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -3819,6 +3821,7 @@ export default function InboxPage() {
             return (
               <button
                 key={key}
+                data-testid={`inbox-folder-${key}`}
                 type="button"
                 onClick={() => switchMailFolder(key)}
                 className={cn(
@@ -4202,6 +4205,7 @@ export default function InboxPage() {
                   </div>
                   <div className="flex items-center justify-end gap-2 border-t border-[#dadce0] bg-[#f8f9fa] px-4 py-3">
                     <button
+                      data-testid="inbox-filter-clear-btn"
                       type="button"
                       onClick={clearFilter}
                       className="btn-ghost h-9 text-[13px]"
@@ -4209,6 +4213,7 @@ export default function InboxPage() {
                       Clear
                     </button>
                     <button
+                      data-testid="inbox-filter-cancel-btn"
                       type="button"
                       onClick={() => setFilterOpen(false)}
                       className="btn-ghost h-9 text-[13px]"
@@ -4216,6 +4221,7 @@ export default function InboxPage() {
                       Cancel
                     </button>
                     <button
+                      data-testid="inbox-filter-search-btn"
                       type="button"
                       onClick={applyFilter}
                       className="h-9 rounded bg-[#0b57d0] px-5 text-[13px] font-medium text-white transition hover:bg-[#0842a0]"
@@ -4232,6 +4238,7 @@ export default function InboxPage() {
             {threads.length > 0 && (
               <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--gmail-border-light)] bg-[var(--color-bg)] px-3 text-[12px]">
                 <input
+                  data-testid="inbox-select-all-checkbox"
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleSelectAll}
@@ -4414,6 +4421,7 @@ export default function InboxPage() {
                   return (
                     <li
                       key={t.draftId ?? t.id}
+                      data-testid={`inbox-thread-${t.id}`}
                       onPointerDown={() => {
                         if (t.draftId) prefetchDraft(t.draftId);
                         else prefetchThread(t.id);
@@ -4775,7 +4783,7 @@ export default function InboxPage() {
               </div>
             ) : threadError ? (
               <div className="flex flex-1 flex-col gap-4 p-6">
-                <button type="button" onClick={closeThread} className="btn-ghost inline-flex h-9 w-fit items-center gap-2 px-3 text-[13px]">
+                <button data-testid="inbox-close-thread-btn" type="button" onClick={closeThread} className="btn-ghost inline-flex h-9 w-fit items-center gap-2 px-3 text-[13px]">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
                   {titleCase("Back")}
                 </button>
@@ -4858,7 +4866,7 @@ export default function InboxPage() {
               </>
             ) : (
               <div className="flex flex-1 flex-col gap-4 p-6">
-                <button type="button" onClick={closeThread} className="btn-ghost inline-flex h-9 w-fit items-center gap-2 px-3 text-[13px]">
+                <button data-testid="inbox-close-thread-btn" type="button" onClick={closeThread} className="btn-ghost inline-flex h-9 w-fit items-center gap-2 px-3 text-[13px]">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6" /></svg>
                   {titleCase("Back")}
                 </button>
@@ -4993,6 +5001,7 @@ function ThreadPaneNavButton({
   const label = variant === "back" ? titleCase("Back to list") : titleCase("Close");
   return (
     <button
+      data-testid={variant === "back" ? "inbox-back-btn" : "inbox-close-thread-btn"}
       type="button"
       onClick={onClick}
       className={cn(

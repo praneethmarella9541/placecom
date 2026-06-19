@@ -911,6 +911,7 @@ export function WhatsAppMessaging({
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3">
         <p className="text-[13px] font-semibold text-[var(--color-text)]">{titleCase("Chats")}</p>
         <button
+          data-testid="wa-new-chat-btn"
           type="button"
           onClick={() => setNewPhoneInput((v) => !v)}
           className={cn(
@@ -934,6 +935,7 @@ export function WhatsAppMessaging({
           </p>
           <div className="flex gap-2">
             <input
+              data-testid="wa-new-phone-input"
               className="input-field min-w-0 flex-1 text-[13px]"
               placeholder="+91… or 10-digit"
               value={newPhone}
@@ -947,6 +949,7 @@ export function WhatsAppMessaging({
               autoFocus
             />
             <button
+              data-testid="wa-open-phone-btn"
               type="button"
               className="btn-primary shrink-0 px-3 text-[13px]"
               onClick={() => {
@@ -967,6 +970,7 @@ export function WhatsAppMessaging({
               onChange={(e) => void onPickImportFile(e.target.files)}
             />
             <button
+              data-testid="wa-import-csv-btn"
               type="button"
               disabled={importBusy}
               onClick={() => importFileRef.current?.click()}
@@ -1079,6 +1083,7 @@ export function WhatsAppMessaging({
             return (
             <button
               key={c.peer_e164}
+              data-testid={`wa-conversation-${c.peer_e164}`}
               type="button"
               onClick={() => selectPeer(c.peer_e164)}
               onMouseEnter={() => prefetchWhatsAppThreadIntent(c.peer_e164)}
@@ -1147,6 +1152,7 @@ export function WhatsAppMessaging({
       <div className="flex shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5">
         {/* Mobile back */}
         <button
+          data-testid="wa-back-btn"
           type="button"
           className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] lg:hidden"
           onClick={() => setMobileShowThread(false)}
@@ -1176,6 +1182,7 @@ export function WhatsAppMessaging({
                   onSubmit={(e) => { e.preventDefault(); void saveName(peer, nameInput); }}
                 >
                   <input
+                    data-testid="wa-contact-name-input"
                     autoFocus
                     value={nameInput}
                     onChange={(e) => setNameInput(e.target.value)}
@@ -1183,8 +1190,8 @@ export function WhatsAppMessaging({
                     className="input-field h-7 flex-1 text-[13px]"
                     onKeyDown={(e) => { if (e.key === "Escape") { setEditingName(null); setNameInput(""); } }}
                   />
-                  <button type="submit" className="btn-primary h-7 px-2.5 text-[12px]">Save</button>
-                  <button type="button" className="btn-ghost h-7 px-2 text-[12px]" onClick={() => { setEditingName(null); setNameInput(""); }}>✕</button>
+                  <button data-testid="wa-save-name-btn" type="submit" className="btn-primary h-7 px-2.5 text-[12px]">Save</button>
+                  <button data-testid="wa-cancel-name-btn" type="button" className="btn-ghost h-7 px-2 text-[12px]" onClick={() => { setEditingName(null); setNameInput(""); }}>✕</button>
                 </form>
               ) : (
                 <div className="flex items-center gap-2">
@@ -1195,6 +1202,7 @@ export function WhatsAppMessaging({
                     )}
                   </div>
                   <button
+                    data-testid="wa-edit-name-btn"
                     type="button"
                     className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-faint)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
                     onClick={(e) => { e.stopPropagation(); setEditingName(peer); setNameInput(savedContactName(peer) || ""); }}
@@ -1244,6 +1252,7 @@ export function WhatsAppMessaging({
           <div className="flex items-center gap-1">
             {peer && (
               <button
+                data-testid="wa-select-messages-btn"
                 type="button"
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
                 onClick={() => { setSelectMode(true); setSelectedIds([]); }}
@@ -1253,6 +1262,7 @@ export function WhatsAppMessaging({
               </button>
             )}
             <button
+              data-testid="wa-refresh-btn"
               type="button"
               onClick={() => void loadConversations()}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"

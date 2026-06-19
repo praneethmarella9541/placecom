@@ -147,6 +147,7 @@ export function ProfileSettings() {
               {titleCase("Display name")}
             </label>
             <input
+              data-testid="profile-display-name-input"
               className="input-field w-full text-sm"
               value={displayUsername}
               onChange={(e) => setDisplayUsername(e.target.value)}
@@ -158,6 +159,7 @@ export function ProfileSettings() {
               {titleCase("Job title")}
             </label>
             <input
+              data-testid="profile-job-title-input"
               className="input-field w-full text-sm"
               value={jobTitle}
               onChange={(e) => setJobTitle(e.target.value)}
@@ -169,6 +171,7 @@ export function ProfileSettings() {
               {titleCase("Bio")}
             </label>
             <textarea
+              data-testid="profile-bio-input"
               className="input-field min-h-[80px] w-full text-sm"
               value={bio}
               onChange={(e) => setBio(e.target.value)}
@@ -180,7 +183,7 @@ export function ProfileSettings() {
               {titleCase("Access group")}: <span className="font-medium">{profile.groupName}</span>
             </p>
           )}
-          <button type="submit" className="btn-primary" disabled={busy}>
+          <button data-testid="profile-save-btn" type="submit" className="btn-primary" disabled={busy}>
             {busy ? titleCase("Saving…") : titleCase("Save profile")}
           </button>
         </form>
@@ -243,7 +246,7 @@ export function ProfileSettings() {
                 onChange={(e) => setConfirmPassword(e.target.value)}
               />
             </div>
-            <button type="submit" className="btn-secondary" disabled={busy || !currentPassword || newPassword.length < 8}>
+            <button data-testid="profile-change-password-btn" type="submit" className="btn-secondary" disabled={busy || !currentPassword || newPassword.length < 8}>
               {busy ? titleCase("Updating…") : titleCase("Update password")}
             </button>
           </form>

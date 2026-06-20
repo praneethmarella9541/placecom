@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { MessageSquare, MessagesSquare, Pencil, Plus, Search, Trash2, UserRound } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, UserRound } from "lucide-react";
+import { IconWhatsApp } from "@/components/Icons";
 import { useWaContacts } from "@/hooks/useWaContacts";
 import { formatPhone, peerInitials } from "@/lib/wa-contacts-display";
 import { isValidE164, normalizePhone } from "@/lib/phone";
@@ -34,12 +35,12 @@ export function ContactBook() {
     window.setTimeout(() => setToast((cur) => (cur === t ? null : cur)), 5000);
   }
 
-  async function syncToGoogle(peer: string, name: string) {
+  async function syncToGoogle(peer: string, name: string, previousPhone?: string) {
     try {
       const res = await fetch("/api/google/contacts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, phone: peer }),
+        body: JSON.stringify({ name, phone: peer, ...(previousPhone ? { previousPhone } : {}) }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
@@ -94,13 +95,17 @@ export function ContactBook() {
       setFormError("Enter a valid mobile number, e.g. +918489431508 or 10 digits");
       return;
     }
+    const numberChanged = !!editingPeer && editingPeer !== peer;
     setBusy(true);
     setFormError(null);
     try {
+      // If the number changed while editing, the old row keys on the old peer —
+      // remove it so we don't leave a stale duplicate behind.
+      if (numberChanged) await deleteContact(editingPeer);
       await saveContact(peer, name);
       const shouldSync = form.syncGoogle;
       closeForm();
-      if (shouldSync) void syncToGoogle(peer, name);
+      if (shouldSync) void syncToGoogle(peer, name, numberChanged ? editingPeer : undefined);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Could not save contact");
     } finally {
@@ -200,15 +205,7 @@ export function ContactBook() {
                     title={titleCase("Message on WhatsApp")}
                     aria-label={titleCase("Message on WhatsApp")}
                   >
-                    <MessagesSquare className="h-4 w-4" />
-                  </Link>
-                  <Link
-                    href={`/sms?peer=${encodeURIComponent(c.peer_e164)}`}
-                    className="btn-ghost inline-flex h-9 w-9 items-center justify-center rounded-lg p-0 text-[var(--color-primary)]"
-                    title={titleCase("Send SMS")}
-                    aria-label={titleCase("Send SMS")}
-                  >
-                    <MessageSquare className="h-4 w-4" />
+                    <IconWhatsApp className="h-4 w-4" />
                   </Link>
                   <button
                     data-testid={`contact-edit-${c.peer_e164}`}
@@ -273,8 +270,7 @@ export function ContactBook() {
                   data-testid="contact-phone-input"
                   value={form.peer}
                   onChange={(e) => setForm((f) => ({ ...f, peer: e.target.value }))}
-                  disabled={!!editingPeer}
-                  className={cn("input-field w-full text-[13px]", editingPeer && "opacity-60")}
+                  className="input-field w-full text-[13px]"
                   placeholder="+91… or 10-digit mobile"
                 />
               </div>

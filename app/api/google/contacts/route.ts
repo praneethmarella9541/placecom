@@ -26,14 +26,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
 
-  const body = (await request.json().catch(() => null)) as { name?: string; phone?: string } | null;
+  const body = (await request.json().catch(() => null)) as {
+    name?: string;
+    phone?: string;
+    previousPhone?: string;
+  } | null;
   const name = body?.name?.trim();
   const phone = body?.phone?.trim();
+  const previousPhone = body?.previousPhone?.trim() || undefined;
   if (!name || !phone) {
     return NextResponse.json({ error: "name and phone are required" }, { status: 400 });
   }
 
-  const result = await syncContactToGoogle(auth.accessToken, name, phone);
+  const result = await syncContactToGoogle(auth.accessToken, name, phone, previousPhone);
   if (!result.ok) {
     return NextResponse.json({ error: result.message }, { status: result.status });
   }

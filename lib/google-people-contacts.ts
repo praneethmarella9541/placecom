@@ -318,45 +318,63 @@ const CONTACTS_SCOPE_ERROR: GoogleContactSyncResult = {
     "Google Contacts write access isn't granted yet. The mailbox owner must sign out and sign in with Google again, then accept Contacts access.",
 };
 
-/** Find an existing contact whose phone matches, so we update instead of duplicating. */
-async function findGoogleContactByPhone(
+function phonesMatch(a: string, b: string): boolean {
+  const x = a.replace(/\D/g, "");
+  const y = b.replace(/\D/g, "");
+  if (!x || !y) return false;
+  return x === y || x.endsWith(y) || y.endsWith(x);
+}
+
+/**
+ * Find an existing contact whose phone matches any of `phones`, so we update in
+ * place instead of duplicating. Uses people/me/connections (the authoritative,
+ * immediately-consistent list) rather than people:searchContacts, which has an
+ * indexing delay and misses contacts created/edited moments ago.
+ */
+async function findConnectionByPhones(
   accessToken: string,
-  phoneE164: string,
+  phones: string[],
 ): Promise<{ resourceName: string; etag: string } | null> {
-  const digits = phoneE164.replace(/\D/g, "");
-  if (!digits) return null;
+  const targets = phones.map((p) => p.replace(/\D/g, "")).filter(Boolean);
+  if (!targets.length) return null;
 
-  const url = new URL(`${PEOPLE_API}/people:searchContacts`);
-  url.searchParams.set("query", phoneE164);
-  url.searchParams.set("readMask", "names,phoneNumbers");
-  url.searchParams.set("pageSize", "10");
+  let pageToken: string | undefined;
+  let pages = 0;
+  while (pages < MAX_PAGES) {
+    pages++;
+    const url = new URL(`${PEOPLE_API}/people/me/connections`);
+    url.searchParams.set("personFields", "phoneNumbers");
+    url.searchParams.set("pageSize", "1000");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-  let res: Response;
-  try {
-    res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
-  } catch {
-    return null;
-  }
-  if (!res.ok) return null;
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+    } catch {
+      return null;
+    }
+    if (!res.ok) return null;
 
-  const data = (await res.json()) as {
-    results?: {
-      person?: {
+    const data = (await res.json()) as {
+      connections?: {
         resourceName?: string;
         etag?: string;
         phoneNumbers?: { value?: string; canonicalForm?: string }[];
-      };
-    }[];
-  };
+      }[];
+      nextPageToken?: string;
+    };
 
-  for (const r of data.results ?? []) {
-    const p = r.person;
-    if (!p?.resourceName || !p.etag) continue;
-    const match = (p.phoneNumbers ?? []).some((pn) => {
-      const c = (pn.canonicalForm ?? pn.value ?? "").replace(/\D/g, "");
-      return !!c && (c === digits || c.endsWith(digits) || digits.endsWith(c));
-    });
-    if (match) return { resourceName: p.resourceName, etag: p.etag };
+    for (const p of data.connections ?? []) {
+      if (!p.resourceName || !p.etag) continue;
+      const match = (p.phoneNumbers ?? []).some((pn) => {
+        const c = pn.canonicalForm ?? pn.value ?? "";
+        return targets.some((t) => phonesMatch(c, t));
+      });
+      if (match) return { resourceName: p.resourceName, etag: p.etag };
+    }
+
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
   }
   return null;
 }
@@ -370,18 +388,27 @@ export async function syncContactToGoogle(
   accessToken: string,
   name: string,
   phoneE164: string,
+  previousPhone?: string,
 ): Promise<GoogleContactSyncResult> {
-  const existing = await findGoogleContactByPhone(accessToken, phoneE164);
+  // Match on the old number (covers a renumber edit) or the new one, in one pass.
+  const existing = await findConnectionByPhones(
+    accessToken,
+    previousPhone ? [previousPhone, phoneE164] : [phoneE164],
+  );
 
   if (existing) {
     const url = new URL(`${PEOPLE_API}/${existing.resourceName}:updateContact`);
-    url.searchParams.set("updatePersonFields", "names");
+    url.searchParams.set("updatePersonFields", "names,phoneNumbers");
     let res: Response;
     try {
       res = await fetch(url.toString(), {
         method: "PATCH",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ etag: existing.etag, names: [{ givenName: name }] }),
+        body: JSON.stringify({
+          etag: existing.etag,
+          names: [{ givenName: name }],
+          phoneNumbers: [{ value: phoneE164 }],
+        }),
       });
     } catch {
       return { ok: false, status: 502, message: "Could not reach Google to update the contact." };

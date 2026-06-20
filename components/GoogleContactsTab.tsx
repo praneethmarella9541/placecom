@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Mail, MessagesSquare, Search, UserRound } from "lucide-react";
+import { Mail, Search, UserRound } from "lucide-react";
+import { IconWhatsApp } from "@/components/Icons";
 import { normalizePhone, isValidE164 } from "@/lib/phone";
 import { titleCase } from "@/lib/title-case";
 
@@ -53,11 +54,31 @@ export function GoogleContactsTab() {
   const router = useRouter();
 
   useEffect(() => {
-    fetch("/api/google/contacts")
-      .then((r) => r.json() as Promise<ApiResult>)
-      .then(setData)
-      .catch(() => setData({ error: "Failed to load Google contacts" }))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+
+    const load = (showSpinner: boolean) => {
+      if (showSpinner) setLoading(true);
+      fetch("/api/google/contacts", { cache: "no-store" })
+        .then((r) => r.json() as Promise<ApiResult>)
+        .then((d) => {
+          if (!cancelled) setData(d);
+        })
+        .catch(() => {
+          if (!cancelled) setData({ error: "Failed to load Google contacts" });
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+    };
+
+    // Fetch on mount (every time the tab is opened) and refresh silently on focus.
+    load(true);
+    const onFocus = () => load(false);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   const contacts = data?.contacts ?? [];
@@ -162,7 +183,7 @@ export function GoogleContactsTab() {
                         title={titleCase("Message on WhatsApp")}
                         aria-label={titleCase("Message on WhatsApp")}
                       >
-                        <MessagesSquare className="h-4 w-4" />
+                        <IconWhatsApp className="h-4 w-4" />
                       </Link>
                     )}
                     {email && (

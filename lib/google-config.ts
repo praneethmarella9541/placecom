@@ -29,7 +29,9 @@ export function getGoogleOAuthClientId(): string {
  *   permission-write on files the app didn't itself create. After adding
  *   this scope, users must sign out and sign in again so the granted-scope
  *   list refreshes.
- * - contacts.readonly + contacts.other.readonly: People API — saved contacts & “Other contacts” for compose suggestions
+ * - contacts (read-write) + contacts.other.readonly: People API — read saved contacts & “Other contacts”
+ *   for compose suggestions, AND create/update contacts when users sync from the in-app contact book.
+ *   contacts supersedes contacts.readonly; admins must re-consent (sign out / sign in) after this change.
  * - forms.body: create and edit Google Forms via Forms API (/forms workspace)
  * - forms.responses.readonly: list and read form responses in Placecom
  * Enable **People API** in the same Google Cloud project (APIs & Services → Enable APIs).
@@ -51,7 +53,7 @@ export const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/drive",
-  "https://www.googleapis.com/auth/contacts.readonly",
+  "https://www.googleapis.com/auth/contacts",
   "https://www.googleapis.com/auth/contacts.other.readonly",
   "https://www.googleapis.com/auth/forms.body",
   "https://www.googleapis.com/auth/forms.responses.readonly",

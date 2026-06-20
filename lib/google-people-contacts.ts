@@ -307,6 +307,105 @@ export async function fetchGoogleContactsDirectory(accessToken: string): Promise
   };
 }
 
+export type GoogleContactSyncResult =
+  | { ok: true; action: "created" | "updated" }
+  | { ok: false; status: number; message: string };
+
+const CONTACTS_SCOPE_ERROR: GoogleContactSyncResult = {
+  ok: false,
+  status: 403,
+  message:
+    "Google Contacts write access isn't granted yet. The mailbox owner must sign out and sign in with Google again, then accept Contacts access.",
+};
+
+/** Find an existing contact whose phone matches, so we update instead of duplicating. */
+async function findGoogleContactByPhone(
+  accessToken: string,
+  phoneE164: string,
+): Promise<{ resourceName: string; etag: string } | null> {
+  const digits = phoneE164.replace(/\D/g, "");
+  if (!digits) return null;
+
+  const url = new URL(`${PEOPLE_API}/people:searchContacts`);
+  url.searchParams.set("query", phoneE164);
+  url.searchParams.set("readMask", "names,phoneNumbers");
+  url.searchParams.set("pageSize", "10");
+
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
+  } catch {
+    return null;
+  }
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as {
+    results?: {
+      person?: {
+        resourceName?: string;
+        etag?: string;
+        phoneNumbers?: { value?: string; canonicalForm?: string }[];
+      };
+    }[];
+  };
+
+  for (const r of data.results ?? []) {
+    const p = r.person;
+    if (!p?.resourceName || !p.etag) continue;
+    const match = (p.phoneNumbers ?? []).some((pn) => {
+      const c = (pn.canonicalForm ?? pn.value ?? "").replace(/\D/g, "");
+      return !!c && (c === digits || c.endsWith(digits) || digits.endsWith(c));
+    });
+    if (match) return { resourceName: p.resourceName, etag: p.etag };
+  }
+  return null;
+}
+
+/**
+ * Create (or update if the phone already exists) a contact in the resolved
+ * Google account. Used to push in-app contacts into the shared Google address
+ * book so it becomes a central hub for everyone on the mailbox.
+ */
+export async function syncContactToGoogle(
+  accessToken: string,
+  name: string,
+  phoneE164: string,
+): Promise<GoogleContactSyncResult> {
+  const existing = await findGoogleContactByPhone(accessToken, phoneE164);
+
+  if (existing) {
+    const url = new URL(`${PEOPLE_API}/${existing.resourceName}:updateContact`);
+    url.searchParams.set("updatePersonFields", "names");
+    let res: Response;
+    try {
+      res = await fetch(url.toString(), {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ etag: existing.etag, names: [{ givenName: name }] }),
+      });
+    } catch {
+      return { ok: false, status: 502, message: "Could not reach Google to update the contact." };
+    }
+    if (res.status === 403) return CONTACTS_SCOPE_ERROR;
+    if (!res.ok) return { ok: false, status: 502, message: `Google contact update failed (${res.status}).` };
+    return { ok: true, action: "updated" };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${PEOPLE_API}/people:createContact`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ names: [{ givenName: name }], phoneNumbers: [{ value: phoneE164 }] }),
+    });
+  } catch {
+    return { ok: false, status: 502, message: "Could not reach Google to create the contact." };
+  }
+  if (res.status === 403) return CONTACTS_SCOPE_ERROR;
+  if (!res.ok) return { ok: false, status: 502, message: `Google contact creation failed (${res.status}).` };
+  return { ok: true, action: "created" };
+}
+
 /** Resolve profile photos for specific emails (on-demand when opening a thread). */
 export async function lookupContactPhotosByEmails(
   accessToken: string,

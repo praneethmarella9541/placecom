@@ -12,9 +12,12 @@ import { cn } from "@/lib/utils";
 type FormState = {
   peer: string;
   name: string;
+  syncGoogle: boolean;
 };
 
-const emptyForm: FormState = { peer: "", name: "" };
+const emptyForm: FormState = { peer: "", name: "", syncGoogle: true };
+
+type Toast = { kind: "success" | "error"; text: string };
 
 export function ContactBook() {
   const { contacts, loading, error, reload, saveContact, deleteContact } = useWaContacts();
@@ -24,6 +27,30 @@ export function ContactBook() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<Toast | null>(null);
+
+  function showToast(t: Toast) {
+    setToast(t);
+    window.setTimeout(() => setToast((cur) => (cur === t ? null : cur)), 5000);
+  }
+
+  async function syncToGoogle(peer: string, name: string) {
+    try {
+      const res = await fetch("/api/google/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, phone: peer }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        showToast({ kind: "error", text: data.error || "Could not sync to Google Contacts" });
+        return;
+      }
+      showToast({ kind: "success", text: `${name} synced to Google Contacts` });
+    } catch {
+      showToast({ kind: "error", text: "Could not reach Google to sync the contact" });
+    }
+  }
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -43,7 +70,7 @@ export function ContactBook() {
 
   function openEdit(peer: string, name: string) {
     setEditingPeer(peer);
-    setForm({ peer, name });
+    setForm({ peer, name, syncGoogle: true });
     setFormError(null);
     setFormOpen(true);
   }
@@ -71,7 +98,9 @@ export function ContactBook() {
     setFormError(null);
     try {
       await saveContact(peer, name);
+      const shouldSync = form.syncGoogle;
       closeForm();
+      if (shouldSync) void syncToGoogle(peer, name);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "Could not save contact");
     } finally {
@@ -249,6 +278,21 @@ export function ContactBook() {
                   placeholder="+91… or 10-digit mobile"
                 />
               </div>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2.5">
+                <input
+                  data-testid="contact-sync-google"
+                  type="checkbox"
+                  checked={form.syncGoogle}
+                  onChange={(e) => setForm((f) => ({ ...f, syncGoogle: e.target.checked }))}
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-primary)]"
+                />
+                <span className="text-[13px] text-[var(--color-text)]">
+                  {titleCase("Also save to shared Google Contacts")}
+                  <span className="mt-0.5 block text-[12px] font-normal text-[var(--color-text-muted)]">
+                    Adds this contact to the team&apos;s Google account so everyone shares one address book.
+                  </span>
+                </span>
+              </label>
               {formError && (
                 <p data-testid="contact-form-error" className="text-[13px] text-[var(--color-danger)]">{formError}</p>
               )}
@@ -262,6 +306,20 @@ export function ContactBook() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className={cn(
+            "fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-xl px-4 py-3 text-[13px] font-medium shadow-lg",
+            toast.kind === "success"
+              ? "border border-[#25d366]/30 bg-[#25d366]/10 text-[#1a8a45]"
+              : "border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 text-[var(--color-danger)]",
+          )}
+          role="status"
+        >
+          {toast.text}
         </div>
       )}
     </div>

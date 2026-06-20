@@ -12,7 +12,23 @@
     "category": "promotional",
     "languageCode": "en",
     "bodyParamCount": 2,
-    "label": "Short intro (PlaceCom)",
+    "label": "Short intro",
     "preview": "Hi {{1}}, this is {{2}} from PlaceCom"
+  },
+  {
+    "name": "utility_message2",
+    "category": "utility",
+    "languageCode": "en",
+    "bodyParamCount": 2,
+    "label": "Coordinator Intro",
+    "preview": "Hi {{1}}, I'm {{2}}, your assigned coordinator from..."
+  },
+  {
+    "name": "utility_message",
+    "category": "marketing",
+    "languageCode": "en",
+    "bodyParamCount": 2,
+    "label": "Quick Intro",
+    "preview": "Hi {{1}}, this is {{2}}. How are you..."
   }
 ]

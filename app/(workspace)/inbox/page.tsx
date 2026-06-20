@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
 import { LabelChip, labelAccentStyle, buildLabelColorMap } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
 import { LabelSidebarItem } from "@/components/LabelSidebarItem";
@@ -959,6 +960,7 @@ export default function InboxPage() {
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeFullscreen, setComposeFullscreen] = useState(false);
   const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+
   // In-flight guard for openDraft. A ref (vs state) keeps the useCallback
   // identity stable so click handlers don't rebind on every flip.
   const draftLoadingRef = useRef(false);
@@ -1335,6 +1337,29 @@ export default function InboxPage() {
       setComposeCcBccOpen(true);
     }
   }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer]);
+
+  // Auto-open compose when navigated here with ?composeTo=email (e.g. from Google Contacts).
+  // Must be registered AFTER the reset effect above so this runs last and wins.
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const to = searchParams.get("composeTo");
+    if (!to) return;
+    setComposeKind("new");
+    setComposeThreadId(null);
+    setComposeInReplyToId(null);
+    setComposeTo(to);
+    setComposeCc("");
+    setComposeBcc("");
+    setComposeSubject("");
+    setComposeBody("");
+    setComposeFiles([]);
+    setComposeDraftId(null);
+    setComposeCcBccOpen(false);
+    setComposeMinimized(false);
+    setComposeFullscreen(false);
+    setComposeOpen(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Debounced auto-save — status chip only shows while saving / saved / error.
   useEffect(() => {

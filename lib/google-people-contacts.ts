@@ -5,6 +5,7 @@ import { normalizeGooglePhotoUrl } from "@/lib/google-photo-url";
 type PersonLike = {
   names?: { displayName?: string }[];
   emailAddresses?: { value?: string; metadata?: { primary?: boolean } }[];
+  phoneNumbers?: { value?: string; canonicalForm?: string; metadata?: { primary?: boolean } }[];
   photos?: { url?: string; default?: boolean; metadata?: { primary?: boolean } }[];
 };
 
@@ -228,6 +229,80 @@ export async function fetchGoogleContactsForCompose(accessToken: string): Promis
     contacts,
     photoByEmail,
     mePhotoUrl: mePhotoUrl ? normalizeGooglePhotoUrl(mePhotoUrl) : undefined,
+    hint: warnings.length ? warnings.join(" ") : undefined,
+  };
+}
+
+export type GoogleDirectoryContact = {
+  name: string;
+  emails: string[];
+  phones: string[];
+  photoUrl?: string;
+};
+
+export type GoogleDirectoryResult = {
+  contacts: GoogleDirectoryContact[];
+  hint?: string;
+};
+
+export async function fetchGoogleContactsDirectory(accessToken: string): Promise<GoogleDirectoryResult> {
+  const contacts: GoogleDirectoryContact[] = [];
+  const warnings: string[] = [];
+  let pageToken: string | undefined;
+  let pages = 0;
+
+  while (pages < MAX_PAGES) {
+    pages++;
+    const url = new URL(`${PEOPLE_API}/people/me/connections`);
+    url.searchParams.set("personFields", "names,emailAddresses,phoneNumbers,photos");
+    url.searchParams.set("pageSize", "500");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (res.status === 403) {
+      warnings.push(
+        "Google Contacts access was denied. Sign out and sign in with Google again, then accept Contacts access.",
+      );
+      break;
+    }
+    if (!res.ok) {
+      warnings.push(`Failed to load Google Contacts (${res.status}).`);
+      break;
+    }
+
+    const data = (await res.json()) as {
+      connections?: PersonLike[];
+      nextPageToken?: string;
+    };
+
+    for (const p of data.connections ?? []) {
+      const name = p.names?.[0]?.displayName?.trim();
+      if (!name) continue;
+
+      const emails = (p.emailAddresses ?? [])
+        .map((ea) => ea.value?.trim().toLowerCase())
+        .filter((e): e is string => !!e && e.includes("@"));
+
+      const phones = (p.phoneNumbers ?? [])
+        .map((pn) => (pn.canonicalForm ?? pn.value)?.trim())
+        .filter((ph): ph is string => !!ph);
+
+      if (emails.length === 0 && phones.length === 0) continue;
+
+      contacts.push({ name, emails, phones, photoUrl: extractPhotoUrl(p) });
+    }
+
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+
+  contacts.sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    contacts,
     hint: warnings.length ? warnings.join(" ") : undefined,
   };
 }

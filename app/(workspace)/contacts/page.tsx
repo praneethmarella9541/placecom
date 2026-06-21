@@ -16,9 +16,6 @@ export default function ContactsPage() {
         <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--color-text)]">
           {titleCase("Contact book")}
         </h1>
-        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          {titleCase("Save contact names once — they show in WhatsApp and SMS instead of phone numbers.")}
-        </p>
       </div>
 
       <div className="flex gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1">

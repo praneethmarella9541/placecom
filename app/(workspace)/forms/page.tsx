@@ -157,27 +157,9 @@ export default function FormsPage() {
           <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--color-text)]">
             {titleCase("Forms")}
           </h1>
-          <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
-            {titleCase("Synced with your Google account — including forms you created earlier in Google Forms.")}
-          </p>
         </div>
       </div>
 
-      <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3 text-[13px] text-[var(--color-text-muted)]">
-        <p>
-          {connectedEmail ? (
-            <>
-              {titleCase("Connected account")}:{" "}
-              <span className="font-medium text-[var(--color-text)]">{connectedEmail}</span>
-            </>
-          ) : (
-            titleCase("Loading Google account…")
-          )}
-        </p>
-        <p className="mt-1 text-[12px] text-[var(--color-text-faint)]">
-          {titleCase("All forms in this Google Drive appear here. Open any form to view responses from Google.")}
-        </p>
-      </div>
 
       <div className="surface-card rounded-[var(--radius-xl)] border border-[var(--color-border)] p-6 shadow-[var(--shadow-sm)]">
         <form data-testid="forms-create-form" onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-3 sm:flex-row sm:items-end">

@@ -311,9 +311,6 @@ export default function AdminTeamPage() {
               placeholder="Leave empty for unlimited"
               className="input-field w-full text-sm"
             />
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-              {titleCase("Total input + output tokens allowed for email extraction. User is blocked once exceeded.")}
-            </p>
             <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
               {titleCase("Personal mobile (for incoming call transfer)")}
             </label>
@@ -325,7 +322,7 @@ export default function AdminTeamPage() {
               className="input-field w-full text-sm"
             />
             <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              {titleCase("Assigned Exotel number")}
+              {titleCase("Assigned virtual number")}
             </label>
             {availableExotelNumbers.length > 0 ? (
               <select
@@ -349,11 +346,6 @@ export default function AdminTeamPage() {
                 className="input-field w-full text-sm"
               />
             )}
-            <p className="text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-              {titleCase(
-                "Inbound calls to this Exotel line ring their mobile. Outbound calls dial this Exotel number from the app.",
-              )}
-            </p>
           </>
         )}
         <button

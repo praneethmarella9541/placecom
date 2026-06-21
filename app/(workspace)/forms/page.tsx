@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ClipboardList, ExternalLink, Loader2, Plus, Search } from "lucide-react";
+import { ClipboardList, Loader2, Plus, Search } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
@@ -32,8 +32,6 @@ export default function FormsPage() {
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
   const [connectedEmail, setConnectedEmail] = useState<string | null>(null);
-  const [openInput, setOpenInput] = useState("");
-  const [opening, setOpening] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
@@ -119,31 +117,6 @@ export default function FormsPage() {
     }
   }
 
-  async function handleOpenExisting(e: React.FormEvent) {
-    e.preventDefault();
-    const input = openInput.trim();
-    if (!input || opening) return;
-    setOpening(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/forms/lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input }),
-      });
-      const data = (await res.json()) as { error?: string; message?: string; formId?: string };
-      if (!res.ok) {
-        throw new Error(data.message || data.error || "Could not open form");
-      }
-      if (!data.formId) throw new Error("Invalid response");
-      setOpenInput("");
-      router.push(`/forms/${encodeURIComponent(data.formId)}/edit?tab=responses`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open form");
-    } finally {
-      setOpening(false);
-    }
-  }
 
   const empty = useMemo(() => !loading && forms.length === 0, [loading, forms.length]);
 
@@ -203,41 +176,6 @@ export default function FormsPage() {
         </form>
       </div>
 
-      <div className="surface-card rounded-[var(--radius-xl)] border border-[var(--color-border)] p-6 shadow-[var(--shadow-sm)]">
-        <form data-testid="forms-open-existing-form" onSubmit={(e) => void handleOpenExisting(e)} className="space-y-3">
-          <div>
-            <label htmlFor="open-form-input" className="mb-1.5 block text-[13px] font-semibold text-[var(--color-text)]">
-              {titleCase("Open existing form")}
-            </label>
-            <p className="mb-2 text-[12px] text-[var(--color-text-faint)]">
-              {titleCase("Paste a Google Form link or form ID to open responses from an older form.")}
-            </p>
-            <input
-              data-testid="forms-open-url-input"
-              id="open-form-input"
-              type="text"
-              value={openInput}
-              onChange={(e) => setOpenInput(e.target.value)}
-              placeholder="https://docs.google.com/forms/d/…/edit"
-              className="input-field h-11 w-full text-[14px]"
-              autoComplete="off"
-              disabled={opening}
-            />
-          </div>
-          <button
-            data-testid="forms-open-btn"
-            type="submit"
-            disabled={opening || !openInput.trim()}
-            className={cn(
-              "btn-secondary inline-flex h-10 items-center gap-2 px-4 text-[13px]",
-              (!openInput.trim() || opening) && "opacity-60",
-            )}
-          >
-            {opening ? <Loader2 className="h-4 w-4 animate-spin" /> : <ExternalLink className="h-4 w-4" />}
-            {titleCase("Open & view responses")}
-          </button>
-        </form>
-      </div>
 
       {error ? (
         <div className="rounded-[var(--radius-md)] border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3 text-[13px] text-[var(--color-danger)]">

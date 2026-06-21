@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Mail, Search, UserRound } from "lucide-react";
 import { IconWhatsApp } from "@/components/Icons";
@@ -32,11 +33,14 @@ function Avatar({ name, photoUrl }: { name: string; photoUrl?: string }) {
 
   if (photoUrl && !broken) {
     return (
-      <img
+      <Image
         src={photoUrl}
         alt={name}
+        width={44}
+        height={44}
         className="h-11 w-11 shrink-0 rounded-full object-cover"
         onError={() => setBroken(true)}
+        unoptimized
       />
     );
   }

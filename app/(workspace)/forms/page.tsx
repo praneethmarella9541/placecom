@@ -31,7 +31,6 @@ export default function FormsPage() {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
-  const [connectedEmail, setConnectedEmail] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setSearchDebounced(search.trim()), 300);
@@ -63,12 +62,10 @@ export default function FormsPage() {
         error?: string;
         forms?: FormRow[];
         nextPageToken?: string;
-        connectedEmail?: string | null;
       };
       if (!res.ok) throw new Error(data.error || "Failed to load forms");
       setForms((prev) => (opts.append ? [...prev, ...(data.forms || [])] : data.forms || []));
       setNextPageToken(data.nextPageToken);
-      if (typeof data.connectedEmail === "string") setConnectedEmail(data.connectedEmail);
       if (!opts.append && !searchDebounced) {
         setFormsPrefetchCache({
           forms: data.forms || [],

@@ -62,6 +62,7 @@ import {
   formatMessageRecipientsLine,
 } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
+import { MailAssistantPanel } from "@/components/MailAssistantPanel";
 import {
   buildMailListCacheKey,
   clearMailListSessionCache,
@@ -3792,6 +3793,12 @@ export default function InboxPage() {
 
   return (
     <>
+    {/* Floating "Ask your mail" AI assistant (option 1: tool-calling over Gmail). */}
+    <MailAssistantPanel
+      onOpenEmail={(source) => {
+        if (source.threadId) void openThread(source.threadId);
+      }}
+    />
     {/* ── Gmail-style three-column layout ────────────────────────────────────
         Left rail  : Compose + Inbox/Sent/Drafts + Labels  (desktop only)
         Right area : Category tabs (top) + search + thread list OR thread detail

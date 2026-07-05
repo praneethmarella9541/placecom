@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import Link from "next/link";
 import { UserPlus, ChevronRight, Users2, RefreshCw } from "lucide-react";
 import { IconPhone, IconMail, IconMenu, IconX, IconCalendar, IconUser } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
+import { CONNECTION_STRENGTH_DOT } from "@/lib/connection-strength-ui";
+import type { EmailConnectionStrength } from "@/lib/email-connection-strength";
 
 type LeadScore = "Hot" | "Warm" | "Cold";
 type LeadType = "New Lead" | "Regular Recruiter";
@@ -23,6 +26,8 @@ type LeadRow = {
   stage_updated_at: string;
   last_interaction_at: string;
   created_at: string;
+  email_last_interaction_at: string | null;
+  email_connection_strength: EmailConnectionStrength | null;
 };
 
 type InteractionRow = {
@@ -47,6 +52,7 @@ const REG_RECRUITER_STAGES: LeadStage[] = ["Relationship Mgt", "JD Expected", "J
 function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
 
 function stageColumnBorder(stage: LeadStage, funnel: LeadType): string {
   if (funnel === "New Lead") {
@@ -105,6 +111,11 @@ export default function CRMPage() {
   const [interactionType, setInteractionType] = useState<InteractionRow["interaction_type"]>("Note");
   const [interactionNotes, setInteractionNotes] = useState("");
   const [activePanelTab, setActivePanelTab] = useState<"History" | "Meetings">("History");
+  const [emailConnection, setEmailConnection] = useState<{
+    lastInteractionAt: string | null;
+    connectionStrength: EmailConnectionStrength;
+  } | null>(null);
+  const [loadingEmailConnection, setLoadingEmailConnection] = useState(false);
 
   const loadLeads = useCallback(async () => {
     setLoading(true);
@@ -261,6 +272,32 @@ export default function CRMPage() {
     }
   }
 
+  async function loadEmailConnection(lead: LeadRow, force = false) {
+    if (!lead.email) {
+      setEmailConnection(null);
+      return;
+    }
+    setLoadingEmailConnection(true);
+    try {
+      const res = await fetch(
+        `/api/crm/leads/${lead.id}/email-connection${force ? "?force=1" : ""}`
+      );
+      if (!res.ok) {
+        setEmailConnection(null);
+        return;
+      }
+      const json = await res.json();
+      setEmailConnection({
+        lastInteractionAt: json.lastInteractionAt ?? null,
+        connectionStrength: json.connectionStrength,
+      });
+    } catch {
+      setEmailConnection(null);
+    } finally {
+      setLoadingEmailConnection(false);
+    }
+  }
+
   async function handleAddInteraction(e: React.FormEvent) {
     e.preventDefault();
     if (!activeLead) return;
@@ -284,7 +321,8 @@ export default function CRMPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <>
+      <div className="space-y-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           <h1 className="font-display text-[17px] font-bold text-[var(--color-text)]">
@@ -315,6 +353,13 @@ export default function CRMPage() {
             >
               {titleCase("Regular Recruiters")}
             </button>
+            <Link
+              data-testid="crm-funnel-companies"
+              href="/crm/companies"
+              className="rounded-[var(--radius-md)] px-3 py-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-text)]"
+            >
+              {titleCase("Companies")}
+            </Link>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -422,12 +467,16 @@ export default function CRMPage() {
                         className="surface-card cursor-pointer p-4 transition-all duration-150 hover:-translate-y-px hover:shadow-[var(--shadow-md)]"
                         onClick={() => {
                           setActiveLead(lead);
+                          setEmailConnection(null);
                           void loadInteractions(lead);
+                          void loadEmailConnection(lead);
                         }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             setActiveLead(lead);
+                            setEmailConnection(null);
                             void loadInteractions(lead);
+                            void loadEmailConnection(lead);
                           }
                         }}
                       >
@@ -534,8 +583,11 @@ export default function CRMPage() {
           })}
         </div>
       </div>
+      </div>
 
-      {/* Add Lead Modal */}
+      {/* Add Lead Modal — rendered outside the space-y-5 container above so Tailwind's
+          sibling margin utility doesn't push this fixed-position overlay down from the
+          true viewport top (it did — see the CRM companies panel top-gap bug). */}
       {isAddLeadOpen && (
         <div
           className="animate-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-[var(--nucleus-deep)]/50 p-4 backdrop-blur-sm"
@@ -685,6 +737,45 @@ export default function CRMPage() {
               <button data-testid="crm-lead-panel-close" onClick={() => setActiveLead(null)} aria-label={titleCase("Close")} className="btn-ghost shrink-0 rounded-full p-2"><IconX className="h-5 w-5" /></button>
             </div>
 
+            {activeLead.email && (
+              <div
+                data-testid="crm-email-connection"
+                className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-2.5"
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${
+                      loadingEmailConnection
+                        ? "animate-pulse bg-[var(--color-text-faint)]"
+                        : CONNECTION_STRENGTH_DOT[emailConnection?.connectionStrength ?? "No communication"]
+                    }`}
+                  />
+                  <span className="text-xs font-medium text-[var(--color-text)]">
+                    {loadingEmailConnection
+                      ? titleCase("Checking email history...")
+                      : emailConnection
+                        ? titleCase(emailConnection.connectionStrength)
+                        : titleCase("Not synced yet")}
+                  </span>
+                  {emailConnection?.lastInteractionAt && (
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      · {new Date(emailConnection.lastInteractionAt).toLocaleDateString()}
+                    </span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  data-testid="crm-email-connection-refresh"
+                  onClick={() => void loadEmailConnection(activeLead, true)}
+                  disabled={loadingEmailConnection}
+                  aria-label={titleCase("Refresh email connection")}
+                  className="btn-ghost shrink-0 rounded-full p-1.5 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loadingEmailConnection ? "animate-spin" : ""}`} />
+                </button>
+              </div>
+            )}
+
             <div className="flex-1 space-y-6 overflow-y-auto p-5">
               {/* Interaction Form */}
               <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
@@ -823,6 +914,6 @@ export default function CRMPage() {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

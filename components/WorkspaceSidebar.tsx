@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  Building2,
   Calendar,
   ChevronDown,
   Contact,
@@ -42,6 +43,7 @@ const secondaryNav = [
   { href: "/drive", label: "Drive", Icon: HardDrive },
   { href: "/forms", label: "Forms", Icon: FileSpreadsheet },
   { href: "/broadcasting", label: "Broadcasting", Icon: Rss },
+  { href: "/crm", label: "CRM", Icon: Building2 },
   { href: "/whatsapp", label: "WhatsApp", Icon: MessagesSquare },
   { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;

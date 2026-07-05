@@ -18,6 +18,8 @@ export function buildListQuery(label: GmailLabelFilter): string {
 
 export type GmailMessageSummary = {
   id: string;
+  /** Gmail thread id this message belongs to (used to deep-link/open the thread). */
+  threadId?: string;
   subject: string;
   from: string;
   body: string;
@@ -177,6 +179,52 @@ function collectPlainTextParts(payload: Record<string, unknown>): string[] {
   return chunks;
 }
 
+/** Collect raw text/html parts (used as a fallback when an email has no text/plain). */
+function collectHtmlParts(payload: Record<string, unknown>): string[] {
+  const mimeType = String(payload.mimeType || "");
+  const body = payload.body as { data?: string } | undefined;
+  const parts = payload.parts as Record<string, unknown>[] | undefined;
+
+  const chunks: string[] = [];
+
+  if (mimeType === "text/html" && body?.data) {
+    chunks.push(decodeBase64Url(body.data));
+  }
+
+  if (Array.isArray(parts)) {
+    for (const p of parts) {
+      chunks.push(...collectHtmlParts(p as Record<string, unknown>));
+    }
+  }
+
+  return chunks;
+}
+
+/** Lightweight HTML → readable plain text. Not a full parser, but enough for
+ *  newsletter/marketing/transactional mail that ships HTML-only bodies. */
+function htmlToPlainText(html: string): string {
+  return html
+    // Drop non-content blocks entirely.
+    .replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, " ")
+    // Turn common block/break boundaries into newlines.
+    .replace(/<\/(p|div|tr|li|h[1-6]|table)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    // Strip all remaining tags.
+    .replace(/<[^>]+>/g, " ")
+    // Decode the few entities that actually matter for readability.
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    // Collapse whitespace runs while preserving paragraph breaks.
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .replace(/^[ \t]+|[ \t]+$/gm, "")
+    .trim();
+}
+
 export async function fetchGmailMessage(
   accessToken: string,
   messageId: string
@@ -212,6 +260,7 @@ export async function fetchGmailMessage(
 
   const data = (await res.json()) as {
     id: string;
+    threadId?: string;
     internalDate?: string;
     payload?: Record<string, unknown>;
   };
@@ -230,13 +279,20 @@ export async function fetchGmailMessage(
     }
   }
 
-  const body = collectPlainTextParts(payload).join("\n\n").trim();
+  // Prefer the text/plain body; fall back to stripped HTML for HTML-only mail
+  // (newsletters, receipts, OTPs) so the body isn't silently empty.
+  let body = collectPlainTextParts(payload).join("\n\n").trim();
+  if (!body) {
+    const html = collectHtmlParts(payload).join("\n").trim();
+    if (html) body = htmlToPlainText(html);
+  }
   const internalMs = data.internalDate ? parseInt(data.internalDate, 10) : 0;
 
   const images = await collectImageDataUrlsFromPayload(accessToken, data.id, payload);
 
   return {
     id: data.id,
+    threadId: data.threadId,
     subject,
     from,
     body,
@@ -244,6 +300,95 @@ export async function fetchGmailMessage(
     internalDate: Number.isNaN(internalMs) ? 0 : internalMs,
     ...(images.length > 0 ? { images } : {}),
   };
+}
+
+export type GmailMessageHeaders = {
+  id: string;
+  threadId?: string;
+  from: string;
+  to: string;
+  cc: string;
+  internalDate: number;
+};
+
+/**
+ * Header-only fetch (format=metadata) — skips Google's body/attachment walk entirely,
+ * so it's materially cheaper than fetchGmailMessage() when bulk-scanning for
+ * sender/recipient addresses (e.g. company auto-population) rather than content.
+ */
+export async function fetchGmailMessageHeaders(
+  accessToken: string,
+  messageId: string
+): Promise<GmailMessageHeaders> {
+  const params = new URLSearchParams({ format: "metadata" });
+  params.append("metadataHeaders", "From");
+  params.append("metadataHeaders", "To");
+  params.append("metadataHeaders", "Cc");
+  params.append("metadataHeaders", "Date");
+  const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?${params.toString()}`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(
+        e,
+        "Gmail API (message headers) — your server must reach https://gmail.googleapis.com"
+      )
+    );
+  }
+
+  if (res.status === 401) {
+    const err = new Error("Gmail access token expired or invalid") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail API error ${res.status}: ${text}`);
+  }
+
+  const data = (await res.json()) as {
+    id: string;
+    threadId?: string;
+    internalDate?: string;
+    payload?: { headers?: GmailHeader[] };
+  };
+
+  const headers = data.payload?.headers;
+  const internalMs = data.internalDate ? parseInt(data.internalDate, 10) : 0;
+
+  return {
+    id: data.id,
+    threadId: data.threadId,
+    from: getHeader(headers, "From"),
+    to: getHeader(headers, "To"),
+    cc: getHeader(headers, "Cc"),
+    internalDate: Number.isNaN(internalMs) ? 0 : internalMs,
+  };
+}
+
+export async function fetchGmailMessageHeadersByIds(
+  accessToken: string,
+  ids: string[],
+  opts?: { onProgress?: (fetched: number, target: number) => void; concurrency?: number }
+): Promise<GmailMessageHeaders[]> {
+  if (ids.length === 0) return [];
+  const concurrency = opts?.concurrency ?? gmailFetchConcurrency();
+  const total = ids.length;
+  let done = 0;
+  return mapWithConcurrency(
+    ids,
+    concurrency,
+    (id) => fetchGmailMessageHeaders(accessToken, id),
+    () => {
+      done += 1;
+      opts?.onProgress?.(done, total);
+    }
+  );
 }
 
 export type ListMessagesResult = {

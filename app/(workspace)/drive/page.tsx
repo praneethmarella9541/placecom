@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { Upload } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
+import { useWorkspaceTopbarActionsNode } from "@/lib/workspace-topbar-context";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import {
@@ -52,7 +54,6 @@ import { patchDriveStarInSessionCache } from "@/lib/drive-star-session-sync";
 import {
   Share2,
   HardDrive,
-  Users,
   Star,
   FolderPlus,
   MoreVertical,
@@ -66,7 +67,6 @@ import {
   LayoutGrid,
   List,
   Loader2,
-  Clock,
   Copy,
   Info,
   Menu,
@@ -151,6 +151,7 @@ type DriveListCacheEntry = { files: DriveFileRow[]; nextPageToken?: string };
 type SortKey = "name" | "modifiedTime" | "size";
 
 export default function DrivePage() {
+  const topbarActionsNode = useWorkspaceTopbarActionsNode();
   /** Top-level sidebar selection. "shared-drive" is internal — the actual
    *  drive id is held separately in currentSharedDrive. */
   const [view, setView] = useState<DriveView | "shared-drive">("my-drive");
@@ -1554,7 +1555,7 @@ export default function DrivePage() {
     const pctLabel = pct.toFixed(2);
     const isHigh = pct >= 90;
     const isMedium = pct >= 75;
-    const barColor = isHigh ? "bg-red-500" : isMedium ? "bg-yellow-400" : "bg-[var(--color-primary)]";
+    const barColor = isHigh ? "bg-red-500" : isMedium ? "bg-yellow-400" : "bg-[var(--color-copper)]";
     return (
       <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3">
         <div className="mb-1.5 flex items-center justify-between gap-1">
@@ -1564,7 +1565,7 @@ export default function DrivePage() {
           </span>
           <span className={cn(
             "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-            isHigh ? "bg-red-100 text-red-600" : isMedium ? "bg-yellow-100 text-yellow-700" : "bg-[var(--color-primary-tint)] text-[var(--color-primary)]"
+            isHigh ? "bg-red-100 text-red-600" : isMedium ? "bg-yellow-100 text-yellow-700" : "bg-[var(--color-copper-tint)] text-[var(--color-copper)]"
           )}>
             {pctLabel}%
           </span>
@@ -1584,29 +1585,25 @@ export default function DrivePage() {
 
   const sidebarNav = (
     <>
-        <p className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
+        <p className="font-mono px-3 pb-2 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-text-whisper)]">
           Drive
         </p>
         <SidebarItem
-          icon={<HardDrive className="h-4 w-4" />}
           label="My Drive"
           active={view === "my-drive"}
           onClick={() => { switchView("my-drive"); setMobileNavOpen(false); }}
         />
         <SidebarItem
-          icon={<Clock className="h-4 w-4" />}
           label="Recent"
           active={view === "recent"}
           onClick={() => { switchView("recent"); setMobileNavOpen(false); }}
         />
         <SidebarItem
-          icon={<Users className="h-4 w-4" />}
           label="Shared with me"
           active={view === "shared-with-me"}
           onClick={() => { switchView("shared-with-me"); setMobileNavOpen(false); }}
         />
         <SidebarItem
-          icon={<Star className="h-4 w-4" />}
           label="Starred"
           active={view === "starred"}
           onClick={() => { switchView("starred"); setMobileNavOpen(false); }}
@@ -1614,7 +1611,7 @@ export default function DrivePage() {
 
         {sharedDrives.length > 0 && (
           <>
-            <p className="px-3 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
+            <p className="font-mono px-3 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-text-whisper)]">
               Shared drives
             </p>
             {sharedDrives.map((d) => (
@@ -1631,8 +1628,63 @@ export default function DrivePage() {
     </>
   );
 
+  const topbarActions = topbarActionsNode
+    ? createPortal(
+        <>
+          <div className="relative hidden w-[260px] md:block">
+            <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <input
+              data-testid="drive-search-input"
+              type="search"
+              value={driveSearchInput}
+              onChange={(e) => setDriveSearchInput(e.target.value)}
+              placeholder={titleCase("Search Drive")}
+              className="h-9 w-full rounded-[10px] border border-transparent bg-[var(--color-surface-2)] pl-8 pr-3 text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
+              autoComplete="off"
+            />
+          </div>
+          <div className="relative" data-upload-menu>
+            <button
+              data-testid="drive-upload-btn"
+              type="button"
+              onClick={() => setUploadMenuOpen((v) => !v)}
+              disabled={uploadBusy || !canUploadHere}
+              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[10px] bg-[var(--color-copper)] px-4 text-[13px] font-semibold text-white transition hover:bg-[var(--color-copper-hover)] disabled:opacity-40"
+              title={titleCase("Upload to this folder")}
+              aria-haspopup="menu"
+              aria-expanded={uploadMenuOpen}
+            >
+              <Upload className="h-4 w-4 shrink-0" strokeWidth={2} />
+              {uploadBusy ? titleCase("Uploading…") : titleCase("Upload")}
+              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2.5} />
+            </button>
+            {uploadMenuOpen && (
+              <div
+                className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-md)]"
+                role="menu"
+              >
+                <RowMenuItem
+                  icon={<FileUp className="h-3.5 w-3.5" />}
+                  label="File upload"
+                  onClick={triggerFileUpload}
+                />
+                <RowMenuItem
+                  icon={<FolderUp className="h-3.5 w-3.5" />}
+                  label="Folder upload"
+                  onClick={triggerFolderUpload}
+                />
+              </div>
+            )}
+          </div>
+        </>,
+        topbarActionsNode,
+      )
+    : null;
+
   return (
-    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100dvh-56px-24px)] min-h-0 overflow-hidden md:-mx-6 md:-mt-6 md:h-[calc(100dvh-48px)]">
+    <>
+    {topbarActions}
+    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100dvh-56px-24px)] min-h-0 overflow-hidden md:-mx-6 md:-mt-6 md:h-[calc(100dvh-104px)]">
       {mobileNavOpen && (
         <button
           type="button"
@@ -1643,7 +1695,7 @@ export default function DrivePage() {
       )}
       <aside
         className={cn(
-          "z-50 flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)]",
+          "z-50 flex shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-bg)]",
           "fixed inset-y-0 left-0 w-[min(208px,85vw)] shadow-xl transition-transform md:static md:w-[208px] md:shadow-none",
           mobileNavOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         )}
@@ -1656,8 +1708,8 @@ export default function DrivePage() {
 
       <div
         className={cn(
-          "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--color-surface)]",
-          isDragOver && "ring-2 ring-inset ring-[var(--color-primary)]"
+          "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--color-bg)]",
+          isDragOver && "ring-2 ring-inset ring-[var(--color-copper)]"
         )}
         onDragEnter={(e) => {
           e.preventDefault();
@@ -1674,7 +1726,7 @@ export default function DrivePage() {
         }}
       >
         {isDragOver && (
-          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[var(--color-primary)]/10">
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-[var(--color-copper)]/10">
             <p className="rounded-xl bg-[var(--color-surface)] px-4 py-2 text-sm font-medium shadow-[var(--shadow-lg)]">
               {titleCase("Drop files to upload")}
             </p>
@@ -1683,7 +1735,7 @@ export default function DrivePage() {
         {/* Slim progress bar at top — visible only while loading more pages */}
         <div
           className={cn(
-            "absolute inset-x-0 top-0 z-10 h-[2px] origin-left bg-[var(--color-primary)] transition-all duration-300",
+            "absolute inset-x-0 top-0 z-10 h-[2px] origin-left bg-[var(--color-copper)] transition-all duration-300",
             loadingMore ? "animate-progress-bar opacity-100" : "w-0 opacity-0"
           )}
           aria-hidden
@@ -1699,7 +1751,7 @@ export default function DrivePage() {
             <button
               type="button"
               onClick={() => navigateToDepth(0)}
-              className="rounded-md px-2 py-1 font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-tint)]"
+              className="rounded-md px-2 py-1 font-medium text-[var(--color-copper)] hover:bg-[var(--color-copper-tint)]"
             >
               {viewRootLabel}
             </button>
@@ -1743,14 +1795,14 @@ export default function DrivePage() {
                 setDriveSearchInput("");
                 setDriveSearch("");
               }}
-              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-tint)]"
+              className="rounded-md px-2 py-1 text-xs font-medium text-[var(--color-copper)] hover:bg-[var(--color-copper-tint)]"
             >
               {titleCase("Clear search")}
             </button>
           </div>
         )}
 
-        <div className="flex flex-col gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 md:flex-row md:items-center md:justify-between">
           <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
@@ -1761,12 +1813,12 @@ export default function DrivePage() {
             <Menu className="h-4 w-4" />
           </button>
           <div className="relative shrink-0">
-            <Filter className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <Filter className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
             <select
               data-testid="drive-type-filter"
               value={mimeFilter}
               onChange={(e) => setMimeFilter(e.target.value as MimeFilter)}
-              className="input-field max-w-[9.5rem] appearance-none py-2 pl-8 pr-8 text-[13px] sm:max-w-none"
+              className="h-10 max-w-[10.5rem] appearance-none rounded-xl border-0 bg-[var(--color-surface-2)] py-2 pl-9 pr-8 text-[14px] font-medium text-[var(--color-text-muted)] outline-none sm:max-w-none"
               aria-label={titleCase("Filter by type")}
             >
               <option value="all">All types</option>
@@ -1777,20 +1829,6 @@ export default function DrivePage() {
               <option value="videos">Videos</option>
               <option value="pdfs">PDFs</option>
             </select>
-          </div>
-          <div className="min-w-0 flex-1 py-0.5 md:px-2">
-            <div className="relative">
-              <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
-              <input
-                data-testid="drive-search-input"
-                type="search"
-                value={driveSearchInput}
-                onChange={(e) => setDriveSearchInput(e.target.value)}
-                placeholder={titleCase("Search Drive")}
-                className="input-field w-full py-2 pl-9 pr-3 text-sm"
-                autoComplete="off"
-              />
-            </div>
           </div>
           </div>
           <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-2">
@@ -1823,47 +1861,13 @@ export default function DrivePage() {
             type="button"
             onClick={() => { setNewFolderOpen(true); setNewFolderName(""); }}
             disabled={!canUploadHere}
-            className="btn-ghost shrink-0 gap-2 px-2 py-2 text-[13px] disabled:opacity-40 sm:px-3"
+            className="inline-flex h-10 shrink-0 items-center gap-2 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 text-[14px] font-semibold text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-offset)] disabled:opacity-40"
             title="New folder"
           >
             <FolderPlus className="h-4 w-4 shrink-0" strokeWidth={2} />
             <span className="hidden sm:inline">{titleCase("New folder")}</span>
           </button>
 
-          {/* Upload dropdown — File upload vs Folder upload, matching Drive */}
-          <div className="relative" data-upload-menu>
-            <button
-              data-testid="drive-upload-btn"
-              type="button"
-              onClick={() => setUploadMenuOpen((v) => !v)}
-              disabled={uploadBusy || !canUploadHere}
-              className="btn-secondary shrink-0 gap-1.5 px-2 py-2 text-[13px] disabled:opacity-40 sm:gap-2 sm:px-3"
-              title={titleCase("Upload to this folder")}
-              aria-haspopup="menu"
-              aria-expanded={uploadMenuOpen}
-            >
-              <Upload className="h-4 w-4 shrink-0" strokeWidth={2} />
-              <span className="hidden sm:inline">{uploadBusy ? titleCase("Uploading…") : titleCase("Upload")}</span>
-              <ChevronDown className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2.5} />
-            </button>
-            {uploadMenuOpen && (
-              <div
-                className="absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-[var(--shadow-md)]"
-                role="menu"
-              >
-                <RowMenuItem
-                  icon={<FileUp className="h-3.5 w-3.5" />}
-                  label="File upload"
-                  onClick={triggerFileUpload}
-                />
-                <RowMenuItem
-                  icon={<FolderUp className="h-3.5 w-3.5" />}
-                  label="Folder upload"
-                  onClick={triggerFolderUpload}
-                />
-              </div>
-            )}
-          </div>
           <button
             data-testid="drive-view-toggle"
             type="button"
@@ -1889,7 +1893,7 @@ export default function DrivePage() {
 
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {refreshingDrive && !loadingDrive ? (
-          <div className="h-[2px] shrink-0 origin-left animate-progress-bar bg-[var(--color-primary)]" aria-hidden />
+          <div className="h-[2px] shrink-0 origin-left animate-progress-bar bg-[var(--color-copper)]" aria-hidden />
         ) : null}
         {loadingDrive ? (
           <div className="scrollbar-thin flex-1 space-y-2 overflow-y-auto p-4">
@@ -1927,11 +1931,11 @@ export default function DrivePage() {
             )}
           </div>
         ) : (
-          <div className={cn("flex min-h-0 flex-1 overflow-hidden", refreshingDrive && "opacity-70")}>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className={cn("flex min-h-0 flex-1 overflow-hidden p-3", refreshingDrive && "opacity-70")}>
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-[var(--color-border)] bg-[var(--color-surface)]">
             {/* Column headers — frozen above the scrolling file list (list view only). */}
             {viewMode === "list" && (
-            <div className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-offset)]/50 px-4 py-2 text-[12px] font-medium text-[var(--color-text-muted)]">
+            <div className="flex shrink-0 items-center gap-3.5 border-b border-[var(--color-border)] px-5 py-3.5">
               <SortHeader
                 label="Name"
                 active={sortKey === "name"}
@@ -1939,23 +1943,23 @@ export default function DrivePage() {
                 onClick={() => toggleSort("name")}
                 className="min-w-0 flex-1"
               />
+              <span className="font-mono hidden w-[140px] shrink-0 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--sidebar-text-whisper)] md:block">
+                {titleCase("Owner")}
+              </span>
               {showLocationColumn && (
-                <span className="w-[160px] shrink-0 text-[12px] font-medium text-[var(--color-text-muted)]">
+                <span className="font-mono w-[160px] shrink-0 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--sidebar-text-whisper)]">
                   {titleCase("Location")}
                 </span>
               )}
-              <span className="hidden w-[140px] shrink-0 text-[12px] font-medium text-[var(--color-text-muted)] md:block">
-                {titleCase("Owner")}
-              </span>
               <SortHeader
-                label="Date modified"
+                label="Modified"
                 active={sortKey === "modifiedTime"}
                 dir={sortDir}
                 onClick={() => toggleSort("modifiedTime")}
-                className="hidden w-[140px] shrink-0 sm:flex"
+                className="hidden w-[150px] shrink-0 sm:flex"
               />
               <SortHeader
-                label="File size"
+                label="Size"
                 active={sortKey === "size"}
                 dir={sortDir}
                 onClick={() => toggleSort("size")}
@@ -1971,7 +1975,7 @@ export default function DrivePage() {
                 "scrollbar-thin min-h-0 flex-1 overflow-y-auto",
                 viewMode === "list"
                   ? "divide-y divide-[var(--color-border)]"
-                  : "grid grid-cols-2 content-start gap-3 p-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
+                  : "grid grid-cols-2 content-start gap-4 p-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5"
               )}
             >
               {displayFiles.map((file) => {
@@ -2090,10 +2094,10 @@ export default function DrivePage() {
                       if (!isFolder && dot > 0) e.currentTarget.setSelectionRange(0, dot);
                       else e.currentTarget.select();
                     }}
-                    className="w-full rounded-md border border-[var(--color-primary)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[13px] text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-primary)]/20"
+                    className="w-full rounded-md border border-[var(--color-copper)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[13px] text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-copper)]/20"
                   />
                 ) : (
-                  <span className="truncate text-[13px] text-[var(--color-text)]">
+                  <span className="truncate text-[14.5px] font-medium text-[var(--color-text)]">
                     {file.name}
                   </span>
                 );
@@ -2109,13 +2113,13 @@ export default function DrivePage() {
                     <li
                       key={file.id}
                       data-testid={`drive-item-${file.id}`}
-                      className="group relative flex flex-col gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--color-primary)]/40 hover:shadow-[var(--shadow-md)] hover:bg-[var(--color-surface-offset)]/40"
+                      className="group relative flex flex-col gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--color-copper)]/40 hover:shadow-[var(--shadow-md)] hover:bg-[var(--color-surface-offset)]/40"
                       onContextMenu={(e) => openRowContextMenu(e, file)}
                       onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                       onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                     >
                       {/* Kebab — top-right corner */}
-                      <div className="absolute right-1.5 top-1.5 z-10">{RowMenu}</div>
+                      <div className="absolute right-2 top-2 z-10">{RowMenu}</div>
 
                       <button
                         type="button"
@@ -2126,13 +2130,14 @@ export default function DrivePage() {
                           mimeType={file.mimeType}
                           name={file.name}
                           thumbnailLink={file.thumbnailLink}
-                          className="h-12 w-12"
-                          iconClassName="h-6 w-6"
+                          flat
+                          className="h-10 w-10"
+                          iconClassName="h-10 w-10"
                         />
                         {file.starred && (
                           <Star className="absolute left-2 top-2 h-3.5 w-3.5 fill-amber-500 text-amber-500" />
                         )}
-                        <span className="line-clamp-2 w-full break-words px-1 text-[13px] text-[var(--color-text)]">
+                        <span className="line-clamp-2 w-full break-words px-1 text-[14px] font-medium text-[var(--color-text)]">
                           {isRenaming ? NameOrEditor : file.name}
                         </span>
                       </button>
@@ -2143,25 +2148,26 @@ export default function DrivePage() {
                             e.stopPropagation();
                             openFileLocation(file.location!);
                           }}
-                          className="max-w-full truncate px-1 text-center text-[11px] text-[var(--color-primary)] hover:underline"
+                          className="max-w-full truncate px-1 text-center text-[12px] text-[var(--color-copper)] hover:underline"
                           title={titleCase("Open folder")}
                         >
                           {file.location.label}
                         </button>
                       )}
-                      <span className="flex items-center justify-center gap-1.5 truncate text-center text-[11px] text-[var(--color-text-muted)]">
+                      <span className="flex items-center justify-center gap-2 truncate text-center text-[12px] text-[var(--color-text-muted)]">
                         {owner && (
                           <GmailAvatar
                             seed={ownerSeed}
                             name={ownerName}
                             email={ownerEmail}
                             isMe={Boolean(owner.me)}
-                            size={20}
+                            monochrome
+                            size={22}
                           />
                         )}
                         <span className="truncate">{ownerLabel}</span>
                       </span>
-                      <span className="mt-auto truncate text-center text-[11px] text-[var(--color-text-faint)]">
+                      <span className="font-mono mt-auto truncate text-center text-[11.5px] text-[var(--color-text-faint)]">
                         {isFolder ? dateLabel : `${sizeLabel} · ${dateLabel}`}
                       </span>
                     </li>
@@ -2175,7 +2181,7 @@ export default function DrivePage() {
                     tabIndex={0}
                     onClick={rowOnClick}
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); rowOnClick(); } }}
-                    className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--color-surface-offset)]"
+                    className="group flex cursor-pointer items-center gap-3.5 px-5 py-4 transition-colors hover:bg-[var(--color-surface-offset)]"
                     onContextMenu={(e) => openRowContextMenu(e, file)}
                     onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                     onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
@@ -2186,8 +2192,9 @@ export default function DrivePage() {
                         mimeType={file.mimeType}
                         name={file.name}
                         thumbnailLink={file.thumbnailLink}
-                        className="h-8 w-8"
-                        iconClassName="h-4 w-4"
+                        flat
+                        className="h-[22px] w-[22px]"
+                        iconClassName="h-[22px] w-[22px]"
                       />
                       <span className="min-w-0 flex-1 flex items-center gap-1.5">
                         {NameOrEditor}
@@ -2196,6 +2203,23 @@ export default function DrivePage() {
                         )}
                       </span>
                     </div>
+
+                    <span
+                      className="hidden w-[140px] shrink-0 items-center gap-2.5 text-[13.5px] text-[var(--color-text-muted)] md:flex"
+                      title={ownerLabel}
+                    >
+                      {owner && (
+                        <GmailAvatar
+                          seed={ownerSeed}
+                          name={ownerName}
+                          email={ownerEmail}
+                          isMe={Boolean(owner.me)}
+                          monochrome
+                          size={28}
+                        />
+                      )}
+                      <span className="min-w-0 truncate">{ownerLabel}</span>
+                    </span>
 
                     {showLocationColumn && (
                       <span className="w-[160px] shrink-0">
@@ -2206,10 +2230,10 @@ export default function DrivePage() {
                               e.stopPropagation();
                               openFileLocation(file.location!);
                             }}
-                            className="flex max-w-full items-center gap-1 truncate text-left text-[13px] text-[var(--color-primary)] hover:underline"
+                            className="flex max-w-full items-center gap-1 truncate text-left text-[13px] text-[var(--color-copper)] hover:underline"
                             title={`Open folder: ${file.location.label}`}
                           >
-                            <IconFolder className="h-3.5 w-3.5 shrink-0 text-[var(--color-gold)]" />
+                            <IconFolder className="h-3.5 w-3.5 shrink-0 text-[var(--color-copper)]" />
                             <span className="truncate">{file.location.label}</span>
                           </button>
                         ) : (
@@ -2218,29 +2242,13 @@ export default function DrivePage() {
                       </span>
                     )}
 
-                    <span
-                      className="hidden w-[140px] shrink-0 items-center gap-2 text-[13px] text-[var(--color-text-muted)] md:flex"
-                      title={ownerLabel}
-                    >
-                      {owner && (
-                        <GmailAvatar
-                          seed={ownerSeed}
-                          name={ownerName}
-                          email={ownerEmail}
-                          isMe={Boolean(owner.me)}
-                          size={24}
-                        />
-                      )}
-                      <span className="min-w-0 truncate">{ownerLabel}</span>
-                    </span>
-
-                    {/* Date modified */}
-                    <span className="hidden w-[140px] shrink-0 text-[13px] text-[var(--color-text-muted)] sm:block">
+                    {/* Modified date */}
+                    <span className="font-mono hidden w-[150px] shrink-0 text-[13px] text-[var(--color-text-muted)] sm:block">
                       {dateLabel}
                     </span>
 
                     {/* File size */}
-                    <span className="hidden w-[90px] shrink-0 text-[13px] text-[var(--color-text-muted)] sm:block">
+                    <span className="hidden w-[90px] shrink-0 text-[13px] text-[var(--color-text-faint)] sm:block">
                       {sizeLabel}
                     </span>
 
@@ -2255,18 +2263,18 @@ export default function DrivePage() {
               {/* Skeleton placeholders while loading the next page. */}
               {loadingMore && [0, 1, 2, 3].map((i) =>
                 viewMode === "grid" ? (
-                  <li key={`skel-${i}`} className="flex flex-col items-center gap-3 rounded-xl border border-[var(--color-border)] p-3">
-                    <Skeleton className="skeleton-shimmer h-12 w-12 rounded-lg" />
+                  <li key={`skel-${i}`} className="flex flex-col items-center gap-3 rounded-2xl border border-[var(--color-border)] p-4">
+                    <Skeleton className="skeleton-shimmer h-10 w-10 rounded-lg" />
                     <Skeleton className="skeleton-shimmer h-3 w-[70%] rounded" />
                   </li>
                 ) : (
-                  <li key={`skel-${i}`} className="flex items-center gap-3 px-4 py-2">
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <Skeleton className="skeleton-shimmer h-6 w-6 shrink-0 rounded" />
+                  <li key={`skel-${i}`} className="flex items-center gap-3.5 px-5 py-4">
+                    <div className="flex min-w-0 flex-1 items-center gap-3.5">
+                      <Skeleton className="skeleton-shimmer h-[22px] w-[22px] shrink-0 rounded" />
                       <Skeleton className="skeleton-shimmer h-3.5 w-[55%] rounded" />
                     </div>
                     <Skeleton className="skeleton-shimmer hidden h-3 w-[100px] shrink-0 rounded md:block" />
-                    <Skeleton className="skeleton-shimmer hidden h-3 w-[100px] shrink-0 rounded sm:block" />
+                    <Skeleton className="skeleton-shimmer hidden h-3 w-[110px] shrink-0 rounded sm:block" />
                     <Skeleton className="skeleton-shimmer hidden h-3 w-[60px] shrink-0 rounded sm:block" />
                     <Skeleton className="skeleton-shimmer h-4 w-4 shrink-0 rounded" />
                   </li>
@@ -2401,7 +2409,7 @@ export default function DrivePage() {
                       className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-bg)]"
                       aria-live="polite"
                     >
-                      <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+                      <Loader2 className="h-8 w-8 animate-spin text-[var(--color-copper)]" />
                       <p className="text-sm font-medium text-[var(--color-text-muted)]">
                         {titleCase("Opening file")}
                       </p>
@@ -2556,6 +2564,7 @@ export default function DrivePage() {
         </div>
       ) : null}
     </div>
+    </>
   );
 }
 
@@ -2583,8 +2592,8 @@ function SortHeader({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex items-center gap-1 rounded px-1.5 py-0.5 text-left transition-colors hover:bg-[var(--color-surface-offset)]",
-        active ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]",
+        "font-mono flex items-center gap-1 rounded px-1.5 py-0.5 text-left text-[10px] font-semibold uppercase tracking-[0.1em] transition-colors hover:bg-[var(--color-surface-offset)]",
+        active ? "text-[var(--color-text-muted)]" : "text-[var(--sidebar-text-whisper)]",
         className,
       )}
     >
@@ -2635,7 +2644,7 @@ function SidebarItem({
   active,
   onClick,
 }: {
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   label: string;
   active: boolean;
   onClick: () => void;
@@ -2645,13 +2654,13 @@ function SidebarItem({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-3 rounded-lg py-[6px] pl-3 pr-3 text-left text-[13px] font-medium transition-colors",
+        "flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-[14.5px] transition-colors",
         active
-          ? "bg-[var(--color-primary-light)] text-[var(--color-primary)] border-l-2 border-[var(--color-primary)]"
-          : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+          ? "bg-[rgba(196,92,26,0.14)] font-semibold text-[var(--color-copper)]"
+          : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
       )}
     >
-      <span className="shrink-0">{icon}</span>
+      {icon && <span className="shrink-0">{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{label}</span>
     </button>
   );

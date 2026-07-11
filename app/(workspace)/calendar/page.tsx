@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useWorkspaceTopbarActionsNode } from "@/lib/workspace-topbar-context";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -72,12 +74,6 @@ type SendUpdates = "all" | "externalOnly" | "none";
 type ViewType = "timeGridWeek" | "timeGridDay" | "dayGridMonth";
 
 /* ─── Helpers ───────────────────────────────────────────────── */
-const DAYS_SHORT = ["S", "M", "T", "W", "T", "F", "S"];
-const MONTHS = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
-];
-
 function parseMs(iso?: string): number | null {
   if (!iso) return null;
   const t = Date.parse(iso);
@@ -88,49 +84,9 @@ function eventStartMs(e: EventRow): number | null {
   return parseMs(e.start?.dateTime || e.start?.date);
 }
 
-function eventEndMs(e: EventRow): number | null {
-  return parseMs(e.end?.dateTime || e.end?.date);
-}
-
-function isUpcoming(e: EventRow, now: number): boolean {
-  const end = eventEndMs(e);
-  if (end !== null) return end >= now;
-  const start = eventStartMs(e);
-  return start !== null ? start >= now : false;
-}
-
 function toInputValue(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** Returns array of day-of-month values for a 6×7 mini calendar grid.
- *  null = days spilling from prev/next month (greyed out). */
-function buildMiniGrid(year: number, month: number): (null | { d: number; month: number; year: number })[] {
-  const first = new Date(year, month, 1).getDay(); // 0=Sun
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const prevMonthDays = new Date(year, month, 0).getDate();
-  const cells: (null | { d: number; month: number; year: number })[] = [];
-
-  for (let i = first - 1; i >= 0; i--) {
-    const prevMonth = month === 0 ? 11 : month - 1;
-    const prevYear = month === 0 ? year - 1 : year;
-    cells.push({ d: prevMonthDays - i, month: prevMonth, year: prevYear });
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
-    cells.push({ d, month, year });
-  }
-  const remaining = 42 - cells.length;
-  const nextMonth = month === 11 ? 0 : month + 1;
-  const nextYear = month === 11 ? year + 1 : year;
-  for (let d = 1; d <= remaining; d++) {
-    cells.push({ d, month: nextMonth, year: nextYear });
-  }
-  return cells;
-}
-
-function sameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
 const USER_TZ =
@@ -177,166 +133,9 @@ function formatEventWhen(ev: EventRow): string {
   return end ? `${start} – ${end}` : start;
 }
 
-/* ─── Sub-components ────────────────────────────────────────── */
-
-/** Google-Calendar-style mini month picker in the left rail. */
-function MiniMonthPicker({
-  viewDate,
-  onSelectDay,
-}: {
-  viewDate: Date;
-  onSelectDay: (d: Date) => void;
-}) {
-  const today = new Date();
-  const [navYear, setNavYear] = useState(viewDate.getFullYear());
-  const [navMonth, setNavMonth] = useState(viewDate.getMonth());
-
-  // Keep nav in sync when the main calendar navigates
-  useEffect(() => {
-    setNavYear(viewDate.getFullYear());
-    setNavMonth(viewDate.getMonth());
-  }, [viewDate]);
-
-  const grid = buildMiniGrid(navYear, navMonth);
-
-  function prev() {
-    if (navMonth === 0) { setNavYear(y => y - 1); setNavMonth(11); }
-    else setNavMonth(m => m - 1);
-  }
-  function next() {
-    if (navMonth === 11) { setNavYear(y => y + 1); setNavMonth(0); }
-    else setNavMonth(m => m + 1);
-  }
-
-  return (
-    <div className="px-3 pt-2 pb-1">
-      {/* month/year header */}
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-sm font-medium text-[var(--color-text)]">
-          {MONTHS[navMonth]} {navYear}
-        </span>
-        <div className="flex gap-0.5">
-          <button
-            onClick={prev}
-            className="rounded-full p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
-          >
-            <IconChevronLeft className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={next}
-            className="rounded-full p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
-          >
-            <IconChevronRight className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* day-of-week headers */}
-      <div className="grid grid-cols-7 mb-0.5">
-        {DAYS_SHORT.map((d, i) => (
-          <div key={i} className="text-center text-[10px] font-medium text-[var(--color-text-faint)] py-0.5">
-            {d}
-          </div>
-        ))}
-      </div>
-
-      {/* day cells */}
-      <div className="grid grid-cols-7">
-        {grid.map((cell, i) => {
-          if (!cell) return <div key={i} />;
-          const cellDate = new Date(cell.year, cell.month, cell.d);
-          const isCurrent = cell.month === navMonth;
-          const isToday = sameDay(cellDate, today);
-          const isSelected = sameDay(cellDate, viewDate);
-
-          return (
-            <button
-              key={i}
-              onClick={() => onSelectDay(cellDate)}
-              className={[
-                "flex items-center justify-center rounded-full w-7 h-7 mx-auto my-0.5",
-                "text-[11px] transition-colors",
-                isToday && !isSelected
-                  ? "font-bold text-[var(--color-primary)]"
-                  : "",
-                isSelected
-                  ? "bg-[var(--color-primary)] text-white font-bold"
-                  : isCurrent
-                  ? "text-[var(--color-text)] hover:bg-[var(--color-surface-offset)]"
-                  : "text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)]",
-              ].join(" ")}
-            >
-              {cell.d}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/** Mini agenda — next N upcoming events in the left rail. */
-function MiniAgenda({ events, onSelect }: { events: EventRow[]; onSelect: (e: EventRow) => void }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(t);
-  }, []);
-
-  const upcoming = useMemo(
-    () =>
-      events
-        .filter((e) => isUpcoming(e, now))
-        .sort((a, b) => (eventStartMs(a) ?? 0) - (eventStartMs(b) ?? 0))
-        .slice(0, 8),
-    [events, now]
-  );
-
-  if (upcoming.length === 0) return null;
-
-  return (
-    <div className="px-3 pt-3 pb-2 border-t border-[var(--color-border)]">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-faint)] mb-2">
-        Upcoming
-      </p>
-      <ul className="space-y-1.5">
-        {upcoming.map((e) => {
-          const start = eventStartMs(e);
-          const startDate = start ? new Date(start) : null;
-          const timeStr = startDate
-            ? startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-            : "";
-          const dateStr = startDate
-            ? startDate.toLocaleDateString([], { month: "short", day: "numeric" })
-            : "";
-          return (
-            <li key={e.id}>
-              <button
-                onClick={() => onSelect(e)}
-                className="w-full text-left rounded-lg px-2 py-1.5 hover:bg-[var(--color-surface-offset)] transition-colors group"
-              >
-                <div className="flex items-start gap-2">
-                  <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-[var(--color-primary)] mt-1" />
-                  <div className="min-w-0">
-                    <p className="truncate text-[11px] font-medium text-[var(--color-text)] leading-tight">
-                      {e.summary || "(untitled)"}
-                    </p>
-                    <p className="text-[10px] text-[var(--color-text-faint)]">
-                      {dateStr} {timeStr}
-                    </p>
-                  </div>
-                </div>
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </div>
-  );
-}
-
 /* ─── Main Page ─────────────────────────────────────────────── */
 export default function CalendarPage() {
+  const topbarActionsNode = useWorkspaceTopbarActionsNode();
   const calendarRef = useRef<FullCalendar>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -358,7 +157,6 @@ export default function CalendarPage() {
 
   // View state
   const [currentView, setCurrentView] = useState<ViewType>("timeGridWeek");
-  const [viewDate, setViewDate] = useState(new Date());
   const [viewTitle, setViewTitle] = useState("");
   const [rangeStartIso, setRangeStartIso] = useState<string | null>(null);
   const [rangeEndIso, setRangeEndIso] = useState<string | null>(null);
@@ -567,19 +365,6 @@ export default function CalendarPage() {
   function goNext() { getApi()?.next(); }
   function goToday() { getApi()?.today(); }
 
-  function navigateToDay(d: Date) {
-    const api = getApi();
-    if (!api) return;
-    api.gotoDate(d);
-    if (currentView === "timeGridWeek") {
-      // stay in week view — just jump to that week
-    } else if (currentView === "dayGridMonth") {
-      // stay in month
-    } else {
-      api.changeView("timeGridDay");
-      setCurrentView("timeGridDay");
-    }
-  }
 
   function openScheduleModal(prefill?: { start?: string; end?: string }) {
     const defaults = defaultMeetingTimes();
@@ -648,7 +433,6 @@ export default function CalendarPage() {
     if (startMs) {
       const d = new Date(startMs);
       getApi()?.gotoDate(d);
-      setViewDate(d);
     }
     setEvents((prev) => (prev.some((e) => e.id === ev.id) ? prev : [...prev, ev]));
     clearCalendarSearch();
@@ -1018,9 +802,48 @@ export default function CalendarPage() {
     editStart && !editAllDay ? new Date(editStart).toISOString() : null;
   const editEndIso = editEnd && !editAllDay ? new Date(editEnd).toISOString() : null;
 
+  const topbarActions = topbarActionsNode
+    ? createPortal(
+        <>
+          <div className="relative hidden w-[260px] md:block">
+            <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <input
+              data-testid="calendar-search-input"
+              type="search"
+              value={calendarSearchInput}
+              onChange={(e) => setCalendarSearchInput(e.target.value)}
+              placeholder="Search Calendar…"
+              className="h-9 w-full rounded-[10px] border border-transparent bg-[var(--color-surface-2)] pl-8 pr-8 text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
+              autoComplete="off"
+            />
+            {calendarSearchInput ? (
+              <button
+                type="button"
+                onClick={clearCalendarSearch}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)]"
+                aria-label="Clear search"
+              >
+                <IconX className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => openScheduleModal()}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[10px] bg-[var(--color-copper)] px-4 text-[13px] font-semibold text-white transition hover:bg-[var(--color-copper-hover)]"
+          >
+            <IconPlus className="h-4 w-4 shrink-0" strokeWidth={2} />
+            New
+          </button>
+        </>,
+        topbarActionsNode,
+      )
+    : null;
+
   /* ── Render ──────────────────────────────────────────── */
   return (
     <>
+      {topbarActions}
       {/* ── Google-Calendar CSS overrides injected here ── */}
       <style>{`
         /* Wrapper */
@@ -1038,12 +861,12 @@ export default function CalendarPage() {
           font-size: 11px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase;
         }
         .gc-surface .fc-col-header-cell.fc-day-today .fc-col-header-cell-cushion {
-          color: var(--color-primary) !important;
+          color: var(--color-copper) !important;
         }
 
         /* Today "circle" on day number in week view */
         .gc-surface .fc-col-header-cell.fc-day-today .gc-day-num {
-          background: var(--color-primary);
+          background: var(--color-copper);
           color: white;
           border-radius: 50%;
           width: 26px; height: 26px;
@@ -1079,51 +902,59 @@ export default function CalendarPage() {
         /* ── FullCalendar CSS variables — must be set for overlap shadows ── */
         .gc-surface {
           --fc-page-bg-color: var(--color-surface);
-          --fc-today-bg-color: rgba(79, 70, 229, 0.04);
+          --fc-today-bg-color: rgba(196, 92, 26, 0.04);
           --fc-now-indicator-color: #ea4335;
           --fc-small-font-size: 11px;
           --fc-border-color: var(--color-border);
+          /* FullCalendar's own base CSS sets .fc-event-main/.fc-h-event text color from
+             this var (default #fff, meant for the old solid-fill events) — override it
+             so the inner elements don't render invisible white-on-cream text. */
+          --fc-event-text-color: var(--color-copper);
         }
 
         /* ── Event harness — DO NOT override position/size, FC sets those ── */
         /* Only style the inner .fc-timegrid-event, not the harness wrapper   */
         .gc-surface .fc-timegrid-event {
-          border-radius: 4px !important;
+          border-radius: 6px !important;
           border: none !important;
-          background: var(--color-primary) !important;
-          color: white !important;
+          border-left: 3px solid var(--color-copper) !important;
+          background: var(--color-copper-tint) !important;
+          color: var(--color-copper) !important;
           font-size: 11px !important;
-          padding: 2px 4px !important;
+          padding: 2px 6px !important;
           cursor: pointer;
-          box-shadow: 0 1px 2px rgba(0,0,0,.18);
+          box-shadow: none;
           transition: filter .15s;
           overflow: hidden;
         }
-        .gc-surface .fc-timegrid-event:hover { filter: brightness(1.1); }
+        .gc-surface .fc-timegrid-event:hover { filter: brightness(0.97); }
 
-        /* Inset (overlapping) events get a white border so they visually separate */
+        /* Inset (overlapping) events get a surface-color border so they visually separate */
         .gc-surface .fc-timegrid-event-harness-inset .fc-timegrid-event {
-          box-shadow: inset 0 0 0 1.5px var(--color-surface), 0 1px 2px rgba(0,0,0,.18) !important;
+          box-shadow: inset 0 0 0 1.5px var(--color-surface) !important;
         }
 
         /* Generic .fc-event (covers daygrid month view + any other context) */
         .gc-surface .fc-event:not(.fc-timegrid-event) {
-          border-radius: 4px !important;
+          border-radius: 6px !important;
           border: none !important;
-          background: var(--color-primary) !important;
-          color: white !important;
+          border-left: 3px solid var(--color-copper) !important;
+          background: var(--color-copper-tint) !important;
+          color: var(--color-copper) !important;
           font-size: 11px !important;
           cursor: pointer;
         }
-        .gc-surface .fc-event-title { font-weight: 600 !important; }
-        .gc-surface .fc-event-time { opacity: .85 !important; font-size: 10px !important; }
+        .gc-surface .fc-event-main { color: var(--color-copper) !important; }
+        .gc-surface .fc-event-title { color: var(--color-copper) !important; font-weight: 600 !important; }
+        .gc-surface .fc-event-time { color: var(--color-copper) !important; opacity: .85 !important; font-size: 10px !important; }
 
         /* All-day events */
         .gc-surface .fc-daygrid-event {
-          border-radius: 4px !important;
+          border-radius: 6px !important;
           border: none !important;
-          background: var(--color-primary) !important;
-          color: white !important;
+          border-left: 3px solid var(--color-copper) !important;
+          background: var(--color-copper-tint) !important;
+          color: var(--color-copper) !important;
           font-size: 11px !important;
           margin: 1px 2px !important;
         }
@@ -1175,13 +1006,13 @@ export default function CalendarPage() {
           text-decoration: none !important;
         }
         .gc-surface .fc-day-today .fc-daygrid-day-number {
-          background: var(--color-primary); color: white; font-weight: 700;
+          background: var(--color-copper); color: white; font-weight: 700;
         }
         .gc-surface .fc-daygrid-day { min-height: 80px !important; }
 
         /* ── Select mirror ── */
         .gc-surface .fc-highlight {
-          background: rgba(79, 70, 229, 0.12) !important;
+          background: rgba(196, 92, 26, 0.12) !important;
           border-radius: 4px !important;
         }
 
@@ -1195,105 +1026,79 @@ export default function CalendarPage() {
         .gc-surface .fc-scroller::-webkit-scrollbar-thumb {
           background: var(--color-border-strong); border-radius: 3px;
         }
+
+        /* ── Calendar modals — retint the shared .btn-primary/.input-field/.btn-ghost
+             classes from the app-wide blue accent to copper, scoped to this page only. ── */
+        .gc-modal .btn-primary {
+          background: var(--color-copper);
+        }
+        .gc-modal .btn-primary:hover:not(:disabled) {
+          background: var(--color-copper-hover);
+          box-shadow: 0 2px 6px rgba(196, 92, 26, 0.30), 0 1px 2px rgba(196, 92, 26, 0.20);
+        }
+        .gc-modal .btn-primary:active:not(:disabled) {
+          background: var(--color-copper-hover);
+        }
+        .gc-modal .btn-ghost:active:not(:disabled) {
+          background: var(--color-copper-tint);
+        }
+        .gc-modal .input-field:hover:not(:focus) {
+          border-color: rgba(196, 92, 26, 0.35);
+        }
+        .gc-modal .input-field:focus {
+          border-color: var(--color-copper);
+          box-shadow: 0 0 0 3px var(--color-copper-tint);
+        }
       `}</style>
 
       {/* ── Full-bleed master layout ───────────────────── */}
-      <div className="-mx-4 -mt-[calc(56px+16px)] -mb-6 flex h-[calc(100dvh-56px-24px)] min-h-0 overflow-hidden md:-mx-6 md:-mt-6 md:h-[calc(100dvh-48px)]">
+      <div className="-mx-4 -mt-[calc(56px+16px)] -mb-6 flex h-[calc(100dvh-56px-24px)] min-h-0 overflow-hidden md:-mx-6 md:-mt-6 md:h-[calc(100dvh-104px)]">
 
-        {/* ── Left rail ─────────────────────────────── */}
-        <aside className="hidden md:flex w-[220px] shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] overflow-y-auto">
-          {/* "+ Create" button */}
-          <div className="px-3 pt-4 pb-2">
-            <button
-              data-testid="calendar-create-btn"
-              onClick={() => openScheduleModal()}
-              className="flex w-full items-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm font-medium text-[var(--color-text)] shadow-sm hover:shadow-md transition-shadow"
-            >
-              <IconPlus className="h-5 w-5 text-[var(--color-primary)]" />
-              Create
-            </button>
-          </div>
-
-          {/* Mini month picker */}
-          <MiniMonthPicker viewDate={viewDate} onSelectDay={navigateToDay} />
-
-          {/* Mini agenda */}
-          <MiniAgenda events={events} onSelect={setSelectedEvent} />
-        </aside>
-
-        {/* ── Right pane — calendar ─────────────────── */}
+        {/* ── Calendar pane ─────────────────── */}
         <div className="flex flex-1 flex-col min-w-0 bg-[var(--color-surface)]">
 
-          {/* ── Custom Google-Calendar-style toolbar ── */}
-          <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 sm:gap-3 sm:px-4 md:h-14 md:flex-nowrap md:py-0">
-            {/* Mobile: "Create" button */}
+          {/* ── Toolbar: Today + nav + title + view switcher (search & New live in the workspace topbar on desktop) ── */}
+          <header className="flex min-h-[64px] shrink-0 flex-wrap items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 sm:flex-nowrap">
+            {/* Mobile-only: "New" button (topbar action is desktop-only) */}
             <button
               onClick={() => openScheduleModal()}
-              className="md:hidden flex items-center gap-1.5 rounded-xl bg-[var(--color-primary)] px-3 py-1.5 text-xs font-semibold text-white"
+              className="md:hidden flex shrink-0 items-center gap-1.5 rounded-xl bg-[var(--color-copper)] px-3 py-1.5 text-xs font-semibold text-white"
             >
-              <IconPlus className="h-3.5 w-3.5" /> Create
+              <IconPlus className="h-3.5 w-3.5" /> New
             </button>
 
-            {/* Today + nav arrows */}
             <button
               data-testid="calendar-today-btn"
               onClick={goToday}
-              className="rounded-md border border-[var(--color-border)] px-3 py-1 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-offset)] transition-colors"
+              className="h-9 shrink-0 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 text-[14px] font-semibold text-[var(--color-text)] transition-colors hover:bg-[var(--color-surface-offset)]"
             >
               Today
             </button>
-            <div className="flex gap-0.5">
+            <div className="flex shrink-0 gap-0.5">
               <button
                 data-testid="calendar-prev-btn"
                 onClick={goPrev}
-                className="rounded-full p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
+                className="rounded-full p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
               >
                 <IconChevronLeft className="h-4 w-4" />
               </button>
               <button
                 data-testid="calendar-next-btn"
                 onClick={goNext}
-                className="rounded-full p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
+                className="rounded-full p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
               >
                 <IconChevronRight className="h-4 w-4" />
               </button>
             </div>
 
             {/* Title */}
-            <h1 className="hidden sm:block flex-1 text-lg font-normal text-[var(--color-text)] truncate">
-              {viewTitle}
-            </h1>
-
-            {/* Search — Google Calendar full-text via API */}
-            <div className="relative order-last min-w-[140px] flex-1 basis-full sm:order-none sm:max-w-[260px] sm:basis-auto">
-              <IconSearch className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
-              <input
-                data-testid="calendar-search-input"
-                type="search"
-                value={calendarSearchInput}
-                onChange={(e) => setCalendarSearchInput(e.target.value)}
-                placeholder="Search events"
-                className="input-field h-8 w-full pl-8 pr-8 text-xs"
-              />
-              {calendarSearchInput ? (
-                <button
-                  type="button"
-                  onClick={clearCalendarSearch}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)]"
-                  aria-label="Clear search"
-                >
-                  <IconX className="h-3.5 w-3.5" />
-                </button>
-              ) : null}
-            </div>
-
-            <h1 className="min-w-0 flex-1 truncate text-base font-normal text-[var(--color-text)] sm:hidden">
+            <h1 className="font-display min-w-0 flex-1 basis-full truncate text-[19px] font-bold tracking-tight text-[var(--color-text)] sm:basis-auto sm:text-[22px]">
               {viewTitle}
             </h1>
 
             {/* Error badge */}
             {error ? (
-              <span className="max-w-[200px] truncate rounded-full bg-red-100 px-2.5 py-0.5 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
+              <span className="max-w-[200px] shrink-0 truncate rounded-full bg-red-100 px-2.5 py-0.5 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
                 {error}
               </span>
             ) : null}
@@ -1303,14 +1108,14 @@ export default function CalendarPage() {
               data-testid="calendar-sync-btn"
               onClick={() => void handleSync()}
               disabled={syncing || loadingEvents}
-              className="rounded-full p-1.5 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors disabled:opacity-40"
+              className="shrink-0 rounded-full p-2 text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors disabled:opacity-40"
               title="Refresh events"
             >
               <IconRefresh className={`h-4 w-4 ${syncing || loadingEvents ? "animate-spin" : ""}`} />
             </button>
 
             {/* View switcher */}
-            <div className="flex shrink-0 overflow-hidden rounded-lg border border-[var(--color-border)]">
+            <div className="flex shrink-0 gap-0.5 rounded-xl bg-[var(--color-surface-2)] p-1">
               {(
                 [
                   { v: "timeGridDay" as ViewType, label: "Day", short: "D" },
@@ -1323,9 +1128,9 @@ export default function CalendarPage() {
                   data-testid={`calendar-view-${v.replace("timeGrid", "").replace("dayGrid", "").toLowerCase()}`}
                   onClick={() => goView(v)}
                   className={[
-                    "px-2.5 py-1 text-xs font-medium transition-colors sm:px-3",
+                    "rounded-lg px-3.5 py-1.5 text-[13.5px] font-semibold transition-colors sm:px-4",
                     currentView === v
-                      ? "bg-[var(--color-primary)] text-white"
+                      ? "bg-[var(--color-copper)] text-white"
                       : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
                   ].join(" ")}
                 >
@@ -1426,7 +1231,6 @@ export default function CalendarPage() {
               dayMaxEvents={5}
               moreLinkClick="popover"
               datesSet={(arg) => {
-                setViewDate(arg.view.currentStart);
                 setViewTitle(arg.view.title);
                 setRangeStartIso(arg.start.toISOString());
                 setRangeEndIso(arg.end.toISOString());
@@ -1443,7 +1247,7 @@ export default function CalendarPage() {
                       className={[
                         "flex h-7 w-7 items-center justify-center rounded-full text-[13px] font-semibold",
                         isToday
-                          ? "bg-[var(--color-primary)] text-white"
+                          ? "bg-[var(--color-copper)] text-white"
                           : "text-[var(--color-text)]",
                       ].join(" ")}
                     >
@@ -1477,7 +1281,7 @@ export default function CalendarPage() {
                 href={createdMeetLink}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-lg bg-[var(--color-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[var(--color-primary-hover)] transition-colors"
+                className="rounded-lg bg-[var(--color-copper)] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[var(--color-copper-hover)] transition-colors"
               >
                 Join
               </a>
@@ -1504,7 +1308,7 @@ export default function CalendarPage() {
       {/* ── Schedule meeting modal ─────────────────────── */}
       {scheduleOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center animate-fade-in">
-          <div data-testid="calendar-schedule-modal" className="card w-full max-w-xl overflow-hidden animate-scale-in">
+          <div data-testid="calendar-schedule-modal" className="card gc-modal w-full max-w-xl overflow-hidden animate-scale-in">
             <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
               <h3 className="text-base font-semibold text-[var(--color-text)]">Schedule meeting</h3>
               <button data-testid="calendar-schedule-close" type="button" onClick={() => setScheduleOpen(false)} className="btn-ghost p-1.5">
@@ -1617,7 +1421,7 @@ export default function CalendarPage() {
                 className={[
                   "flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
                   addMeet
-                    ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                    ? "border-[var(--color-copper)] bg-[var(--color-copper-tint)]"
                     : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-offset)]",
                 ].join(" ")}
               >
@@ -1639,7 +1443,7 @@ export default function CalendarPage() {
                 {/* Toggle pill */}
                 <span className={[
                   "relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200",
-                  addMeet ? "bg-[var(--color-primary)]" : "bg-[var(--color-border-strong)]",
+                  addMeet ? "bg-[var(--color-copper)]" : "bg-[var(--color-border-strong)]",
                 ].join(" ")}>
                   <span className={[
                     "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 mt-0.5",
@@ -1680,9 +1484,9 @@ export default function CalendarPage() {
       {/* ── Event detail modal ─────────────────────────── */}
       {selectedEvent ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center animate-fade-in">
-          <div className="card w-full max-w-lg overflow-hidden animate-scale-in">
+          <div className="card gc-modal w-full max-w-lg overflow-hidden animate-scale-in">
             {/* Colored header strip */}
-            <div className="flex items-center justify-between bg-[var(--color-primary)] px-5 py-3">
+            <div className="flex items-center justify-between bg-[var(--color-copper)] px-5 py-3">
               <h3 className="text-base font-semibold text-white truncate pr-4">
                 {selectedEvent.summary || "(untitled)"}
               </h3>
@@ -1737,7 +1541,7 @@ export default function CalendarPage() {
                           href={selectedEvent.location}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-[var(--color-primary)] hover:underline break-all"
+                          className="text-[var(--color-copper)] hover:underline break-all"
                         >
                           {selectedEvent.location}
                         </a>
@@ -1774,7 +1578,7 @@ export default function CalendarPage() {
                           let rsvpColor: string;
                           let rsvpLabel: string;
                           if (isOrg) {
-                            rsvpIcon = "★"; rsvpColor = "text-[var(--color-primary)]"; rsvpLabel = "Organizer";
+                            rsvpIcon = "★"; rsvpColor = "text-[var(--color-copper)]"; rsvpLabel = "Organizer";
                           } else if (rs === "accepted") {
                             rsvpIcon = "✓"; rsvpColor = "text-[var(--color-success)]"; rsvpLabel = "Accepted";
                           } else if (rs === "declined") {
@@ -1788,7 +1592,7 @@ export default function CalendarPage() {
                           return (
                             <li key={i} className="flex items-center gap-2.5">
                               {/* Avatar */}
-                              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-tint)] text-[10px] font-bold text-[var(--color-primary)]">
+                              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper-tint)] text-[10px] font-bold text-[var(--color-copper)]">
                                 {initials || "?"}
                               </span>
                               {/* Name / email */}
@@ -1879,7 +1683,7 @@ export default function CalendarPage() {
       {/* ── Edit event modal ───────────────────────────────── */}
       {editEvent ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center animate-fade-in">
-          <div className="card w-full max-w-xl overflow-hidden animate-scale-in">
+          <div className="card gc-modal w-full max-w-xl overflow-hidden animate-scale-in">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
               <h3 className="text-base font-semibold text-[var(--color-text)]">Edit event</h3>
@@ -1965,14 +1769,14 @@ export default function CalendarPage() {
                   className={[
                     "flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
                     editAddMeet
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]"
+                      ? "border-[var(--color-copper)] bg-[var(--color-copper-tint)]"
                       : "border-[var(--color-border)] hover:bg-[var(--color-surface-offset)]",
                   ].join(" ")}
                 >
                   <span className="text-sm font-medium text-[var(--color-text)]">Add Google Meet</span>
                   <span className={[
                     "ml-auto relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors",
-                    editAddMeet ? "bg-[var(--color-primary)]" : "bg-[var(--color-border-strong)]",
+                    editAddMeet ? "bg-[var(--color-copper)]" : "bg-[var(--color-border-strong)]",
                   ].join(" ")}>
                     <span className={[
                       "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5",
@@ -2018,14 +1822,14 @@ export default function CalendarPage() {
                     className={[
                       "flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors last:pb-3",
                       editNotify === value
-                        ? "bg-[var(--color-primary-light)]"
+                        ? "bg-[var(--color-copper-tint)]"
                         : "hover:bg-[var(--color-surface-offset)]",
                     ].join(" ")}
                   >
                     <span className={[
                       "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
                       editNotify === value
-                        ? "border-[var(--color-primary)] bg-[var(--color-primary)]"
+                        ? "border-[var(--color-copper)] bg-[var(--color-copper)]"
                         : "border-[var(--color-border-strong)]",
                     ].join(" ")}>
                       {editNotify === value && (
@@ -2083,7 +1887,7 @@ export default function CalendarPage() {
       {/* ── Delete confirmation modal (with optional note) ──── */}
       {deleteTarget ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in">
-          <div className="card w-full max-w-md overflow-hidden animate-scale-in">
+          <div className="card gc-modal w-full max-w-md overflow-hidden animate-scale-in">
             <div className="border-b border-[var(--color-border)] px-5 py-4">
               <h3 className="text-base font-semibold text-[var(--color-text)]">
                 Delete meeting?

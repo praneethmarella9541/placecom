@@ -102,7 +102,7 @@ function SummaryBar({ label, count, max }: { label: string; count: number; max: 
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-[var(--color-surface-offset)]">
         <div
-          className="h-full rounded-full bg-[var(--color-primary)] transition-all"
+          className="h-full rounded-full bg-[var(--color-copper)] transition-all"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -185,7 +185,7 @@ function ResponsesTab({
   if (loading && responses.length === 0) {
     return (
       <div className="flex min-h-[200px] items-center justify-center gap-2 text-[var(--color-text-muted)]">
-        <Loader2 className="h-5 w-5 animate-spin text-[var(--color-primary)]" />
+        <Loader2 className="h-5 w-5 animate-spin text-[var(--color-copper)]" />
         <span className="text-[13px]">{titleCase("Loading responses…")}</span>
       </div>
     );
@@ -214,7 +214,7 @@ function ResponsesTab({
                 }}
                 className={`rounded-[var(--radius-sm)] px-3 py-1.5 text-[12px] font-medium transition-colors ${
                   view === v
-                    ? "bg-[var(--color-primary-light)] text-[var(--color-primary)]"
+                    ? "bg-[var(--color-copper-tint)] text-[var(--color-copper)]"
                     : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 }`}
               >
@@ -244,7 +244,7 @@ function ResponsesTab({
               className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[var(--color-bg)]"
               aria-live="polite"
             >
-              <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+              <Loader2 className="h-8 w-8 animate-spin text-[var(--color-copper)]" />
               <p className="text-sm font-medium text-[var(--color-text-muted)]">
                 {titleCase("Opening spreadsheet")}
               </p>
@@ -341,7 +341,7 @@ function ResponsesTab({
                       onClick={() => toggleExpand(resp.responseId)}
                       className="flex w-full items-center gap-2 px-4 py-3 text-left"
                     >
-                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[11px] font-bold text-[var(--color-primary)]">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper-tint)] text-[11px] font-bold text-[var(--color-copper)]">
                         {idx + 1}
                       </span>
                       <span className="min-w-0 flex-1">
@@ -356,7 +356,7 @@ function ResponsesTab({
                           </span>
                         ) : null}
                         {isQuiz && resp.totalScore != null ? (
-                          <span className="block text-[11px] font-medium text-[var(--color-primary)]">
+                          <span className="block text-[11px] font-medium text-[var(--color-copper)]">
                             {titleCase("Score")}: {resp.totalScore}
                           </span>
                         ) : null}
@@ -534,7 +534,7 @@ export function FormEditor({ formId }: { formId: string }) {
   if (loading) {
     return (
       <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 text-[var(--color-text-muted)]">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-primary)]" />
+        <Loader2 className="h-8 w-8 animate-spin text-[var(--color-copper)]" />
         <p className="text-sm">{titleCase("Loading form…")}</p>
       </div>
     );
@@ -552,10 +552,10 @@ export function FormEditor({ formId }: { formId: string }) {
             <ArrowLeft className="h-5 w-5" strokeWidth={2} />
           </Link>
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
+            <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-copper)]">
               {titleCase("Form builder")}
             </p>
-            <h1 className="font-display text-xl font-bold text-[var(--color-text)]">
+            <h1 className="font-display text-[22px] font-bold tracking-tight text-[var(--color-text)]">
               {titleCase("Edit form")}
             </h1>
             <p className="mt-1 text-[13px] text-[var(--color-text-muted)]">
@@ -656,7 +656,7 @@ export function FormEditor({ formId }: { formId: string }) {
             onClick={() => setTab(id)}
             className={`flex items-center gap-1.5 px-4 py-2.5 text-[13px] font-medium transition-colors ${
               tab === id
-                ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]"
+                ? "border-b-2 border-[var(--color-copper)] text-[var(--color-copper)]"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}
           >
@@ -683,7 +683,7 @@ export function FormEditor({ formId }: { formId: string }) {
               onChange={(e) =>
                 setEditor((s) => ({ ...s, acceptingResponses: e.target.checked }))
               }
-              className="h-4 w-4 rounded border-[var(--color-border)]"
+              className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-copper)]"
             />
             {titleCase("Accepting responses")}
           </label>
@@ -692,7 +692,7 @@ export function FormEditor({ formId }: { formId: string }) {
               type="checkbox"
               checked={editor.isQuiz}
               onChange={(e) => setEditor((s) => ({ ...s, isQuiz: e.target.checked }))}
-              className="h-4 w-4 rounded border-[var(--color-border)]"
+              className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-copper)]"
             />
             {titleCase("Make this a quiz")}
           </label>
@@ -755,7 +755,7 @@ export function FormEditor({ formId }: { formId: string }) {
       <>
       <div className="space-y-3">
         <h2 className="flex items-center gap-2 font-display text-[15px] font-bold text-[var(--color-text)]">
-          <ClipboardList className="h-4 w-4 text-[var(--color-primary)]" strokeWidth={2} />
+          <ClipboardList className="h-4 w-4 text-[var(--color-copper)]" strokeWidth={2} />
           {titleCase("Questions & content")}
         </h2>
 
@@ -771,7 +771,7 @@ export function FormEditor({ formId }: { formId: string }) {
             className="surface-card rounded-[var(--radius-lg)] border border-[var(--color-border)] p-4 shadow-[var(--shadow-sm)]"
           >
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <span className="rounded-full bg-[var(--color-primary-light)] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-primary)]">
+              <span className="rounded-full bg-[var(--color-copper-tint)] px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-copper)]">
                 {titleCase(blockLabel(block))}
               </span>
               <div className="flex items-center gap-1">
@@ -870,7 +870,7 @@ export function FormEditor({ formId }: { formId: string }) {
                   onChange={(e) =>
                     updateBlock(i, { required: e.target.checked } as Partial<EditorBlock>)
                   }
-                  className="h-4 w-4 rounded border-[var(--color-border)]"
+                  className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-copper)]"
                 />
                 {titleCase("Required")}
               </label>
@@ -908,7 +908,7 @@ export function FormEditor({ formId }: { formId: string }) {
                 ))}
                 <button
                   type="button"
-                  className="text-[12px] font-medium text-[var(--color-primary)] hover:underline"
+                  className="text-[12px] font-medium text-[var(--color-copper)] hover:underline"
                   onClick={() =>
                     updateBlock(i, {
                       choiceOptions: [...(block.choiceOptions || []), `Option ${(block.choiceOptions?.length || 0) + 1}`],
@@ -924,6 +924,7 @@ export function FormEditor({ formId }: { formId: string }) {
                     onChange={(e) =>
                       updateBlock(i, { shuffle: e.target.checked } as Partial<EditorBlock>)
                     }
+                    className="accent-[var(--color-copper)]"
                   />
                   {titleCase("Shuffle option order")}
                 </label>
@@ -1000,6 +1001,7 @@ export function FormEditor({ formId }: { formId: string }) {
                         dateIncludeYear: e.target.checked,
                       } as Partial<EditorBlock>)
                     }
+                    className="accent-[var(--color-copper)]"
                   />
                   {titleCase("Include year")}
                 </label>
@@ -1012,6 +1014,7 @@ export function FormEditor({ formId }: { formId: string }) {
                         dateIncludeTime: e.target.checked,
                       } as Partial<EditorBlock>)
                     }
+                    className="accent-[var(--color-copper)]"
                   />
                   {titleCase("Include time")}
                 </label>
@@ -1026,6 +1029,7 @@ export function FormEditor({ formId }: { formId: string }) {
                   onChange={(e) =>
                     updateBlock(i, { timeDuration: e.target.checked } as Partial<EditorBlock>)
                   }
+                  className="accent-[var(--color-copper)]"
                 />
                 {titleCase("Duration (elapsed time)")}
               </label>
@@ -1045,7 +1049,7 @@ export function FormEditor({ formId }: { formId: string }) {
               data-testid={`form-add-block-${opt.label.toLowerCase().replace(/\s+/g, "-")}`}
               type="button"
               onClick={() => addBlock(opt.action)}
-              className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2 text-[12px] font-medium text-[var(--color-text)] transition-colors hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-light)]"
+              className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2 text-[12px] font-medium text-[var(--color-text)] transition-colors hover:border-[var(--color-copper)] hover:bg-[var(--color-copper-tint)]"
             >
               <Plus className="h-3.5 w-3.5" strokeWidth={2} />
               {titleCase(opt.label)}

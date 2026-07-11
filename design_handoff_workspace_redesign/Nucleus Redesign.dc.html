@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <style>
+    @keyframes shimmer { 100% { transform: translateX(100%); } }
+    .skel::after {
+      content: "";
+      position: absolute; inset: 0;
+      transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent);
+      animation: shimmer 1.4s ease-in-out infinite;
+    }
+  </style>
+</helmet>
+
+<div style="font-family: 'Plus Jakarta Sans', ui-sans-serif, sans-serif; background: #F5F3EF; min-height: 100vh; color: #1A1612; display: flex;">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside style="width: 240px; flex-shrink: 0; height: 100vh; position: sticky; top: 0; display: flex; flex-direction: column; background: #FDFCFA; border-right: 1px solid rgba(20,18,14,0.09); background-image: radial-gradient(ellipse 120% 80% at 0% 0%, rgba(196,92,26,0.05), transparent 55%);">
+
+    <div style="height: 56px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid rgba(20,18,14,0.09); flex-shrink: 0;">
+      <svg width="26" height="26" viewBox="0 0 64 64" fill="none">
+        <circle cx="32" cy="32" r="27" stroke="#C45C1A" stroke-width="2.2"/>
+        <ellipse cx="32" cy="32" rx="27" ry="11" stroke="#C45C1A" stroke-width="2.2" transform="rotate(60 32 32)"/>
+        <ellipse cx="32" cy="32" rx="27" ry="11" stroke="#C45C1A" stroke-width="2.2" transform="rotate(-60 32 32)"/>
+        <circle cx="32" cy="32" r="6" fill="#C45C1A"/>
+      </svg>
+      <span style="font-family: 'Sora', sans-serif; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; color: #1A1612;">The Nucleus</span>
+    </div>
+
+    <nav style="flex: 1; overflow-y: auto; padding: 14px 10px; display: flex; flex-direction: column; gap: 18px;">
+      <sc-for list="{{ navGroups }}" as="group" hint-placeholder-count="3">
+        <div>
+          <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #A39A8C; margin: 0 0 6px 10px;">{{ group.label }}</p>
+          <div style="display: flex; flex-direction: column; gap: 2px;">
+            <sc-for list="{{ group.items }}" as="item" hint-placeholder-count="3">
+              <div onClick="{{ selectNav }}" data-key="{{ item.key }}" style="cursor: pointer; position: relative; display: flex; align-items: center; gap: 11px; padding: 8px 12px; border-radius: 10px; font-size: 13.5px; font-weight: 500; color: #4A443C;" class="{{ item.active }}">
+                <sc-if value="{{ item.activeBool }}" hint-placeholder-val="{{ false }}">
+                  <span style="position: absolute; left: 0; top: 50%; transform: translateY(-50%); height: 58%; width: 3px; border-radius: 0 3px 3px 0; background: #c45c1a;"></span>
+                </sc-if>
+                <span style="width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;" dangerouslysetinnerhtml="{{ item.iconHtml }}"></span>
+                <span>{{ item.label }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </nav>
+
+    <div style="border-top: 1px solid rgba(20,18,14,0.09); padding: 10px;">
+      <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px;">
+        <span style="width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, #e8a04c, #c45c1a); color: white; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex-shrink: 0;">P</span>
+        <div style="min-width: 0; flex: 1;">
+          <p style="margin: 0; font-size: 13px; font-weight: 600; color: #1A1612; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Praneeth</p>
+          <p style="margin: 0; font-size: 11px; color: #8C857B; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">praneeth@thenucleus.in</p>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main style="flex: 1; min-width: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden;">
+
+    <!-- content topbar: breadcrumb + search, separated from nav -->
+    <div style="height: 56px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 24px; border-bottom: 1px solid rgba(20,18,14,0.09); background: rgba(245,243,239,0.85); backdrop-filter: blur(8px);">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span style="font-family: 'Sora', sans-serif; font-weight: 700; font-size: 16px; letter-spacing: -0.01em;">{{ activeGroupLabel }}</span>
+        <span style="color: #C4BCAE;">/</span>
+        <span style="font-size: 14px; color: #4A443C; font-weight: 500;">{{ activeLabel }}</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 10px; background: #EDE9E1; width: 260px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#8C857B" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span style="font-size: 13px; color: #8C857B;">Search {{ activeLabel }}…</span>
+        </div>
+        <button style="height: 36px; padding: 0 16px; border-radius: 10px; background: #c45c1a; color: white; font-size: 13px; font-weight: 600; border: none; cursor: pointer;">+ New</button>
+      </div>
+    </div>
+
+    <!-- swappable module content -->
+    <div style="flex: 1; overflow-y: auto; padding: 22px 24px;">
+
+      <!-- MAIL VIEW -->
+      <sc-if value="{{ isMail }}" hint-placeholder-val="{{ true }}">
+        <div style="display: flex; gap: 20px; height: 100%; align-items: stretch;">
+          <div style="width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px;">
+            <sc-for list="{{ threads }}" as="t" hint-placeholder-count="6">
+              <div onClick="{{ selectThread }}" data-tid="{{ t.id }}" style="cursor: pointer; border-radius: 12px; padding: 12px; display: flex; gap: 10px; align-items: flex-start; background: #FFFFFF; border: 1px solid rgba(20,18,14,0.08);" class="{{ t.selectedClass }}">
+                <span style="width: 34px; height: 34px; border-radius: 50%; background: #EDE9E1; color: #4A443C; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; flex-shrink: 0;">{{ t.initial }}</span>
+                <div style="min-width: 0; flex: 1;">
+                  <div style="display: flex; justify-content: space-between; gap: 8px;">
+                    <span style="font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ t.from }}</span>
+                    <span style="font-size: 11px; color: #A39A8C; flex-shrink: 0;">{{ t.time }}</span>
+                  </div>
+                  <p style="margin: 3px 0 0; font-size: 12.5px; color: #6B6459; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ t.subject }}</p>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="flex: 1; background: #FFFFFF; border-radius: 16px; border: 1px solid rgba(20,18,14,0.08); padding: 32px; overflow-y: auto;">
+            <p style="font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #C45C1A; margin: 0 0 8px;">Placement operations</p>
+            <h2 style="font-family: 'Sora', sans-serif; font-size: 22px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.02em;">{{ selectedThreadObj.subject }}</h2>
+            <p style="margin: 0 0 20px; font-size: 13px; color: #8C857B;">{{ selectedThreadObj.from }} · {{ selectedThreadObj.time }}</p>
+            <p style="font-size: 14.5px; line-height: 1.7; color: #4A443C; max-width: 60ch;">{{ selectedThreadObj.body }}</p>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- CRM VIEW -->
+      <sc-if value="{{ isCrm }}" hint-placeholder-val="{{ false }}">
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+          <sc-for list="{{ crmStages }}" as="stage" hint-placeholder-count="3">
+            <div style="background: #FFFFFF; border-radius: 16px; border: 1px solid rgba(20,18,14,0.08); padding: 16px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <span style="font-size: 13px; font-weight: 700;">{{ stage.name }}</span>
+                <span style="font-size: 11px; font-weight: 600; color: #8C857B; background: #EDE9E1; padding: 2px 8px; border-radius: 999px;">{{ stage.count }}</span>
+              </div>
+              <sc-for list="{{ stage.cards }}" as="card" hint-placeholder-count="2">
+                <div style="border-radius: 12px; border: 1px solid rgba(20,18,14,0.07); padding: 10px 12px; background: #FDFCFA;">
+                  <p style="margin: 0; font-size: 13px; font-weight: 600;">{{ card.name }}</p>
+                  <p style="margin: 3px 0 0; font-size: 11.5px; color: #8C857B;">{{ card.company }}</p>
+                </div>
+              </sc-for>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <!-- CALENDAR VIEW -->
+      <sc-if value="{{ isCalendar }}" hint-placeholder-val="{{ false }}">
+        <div style="background: #FFFFFF; border-radius: 16px; border: 1px solid rgba(20,18,14,0.08); padding: 20px; display: flex; flex-direction: column; gap: 10px;">
+          <sc-for list="{{ calendarEvents }}" as="ev" hint-placeholder-count="4">
+            <div style="display: flex; align-items: center; gap: 14px; padding: 12px; border-radius: 12px; background: #FDFCFA; border: 1px solid rgba(20,18,14,0.06);">
+              <div style="width: 3px; height: 34px; border-radius: 2px; background: #c45c1a; flex-shrink: 0;"></div>
+              <div style="min-width: 64px;">
+                <p style="margin:0; font-size: 12px; font-weight: 700; font-family: 'JetBrains Mono', monospace; color: #4A443C;">{{ ev.time }}</p>
+              </div>
+              <div style="flex: 1;">
+                <p style="margin: 0; font-size: 13.5px; font-weight: 600;">{{ ev.title }}</p>
+                <p style="margin: 2px 0 0; font-size: 12px; color: #8C857B;">{{ ev.with }}</p>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </sc-if>
+
+    </div>
+  </main>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    active: "mail",
+    selectedThread: "t1",
+  };
+
+  navData = {
+    comms: {
+      label: "Comms",
+      items: [
+        { key: "mail", label: "Mail", icon: "mail" },
+        { key: "whatsapp", label: "WhatsApp", icon: "chat" },
+        { key: "sms", label: "SMS", icon: "sms" },
+        { key: "broadcasting", label: "Broadcasting", icon: "broadcast" },
+      ],
+    },
+    pipeline: {
+      label: "Pipeline",
+      items: [
+        { key: "crm", label: "CRM", icon: "user" },
+        { key: "extraction", label: "Extraction", icon: "scan" },
+      ],
+    },
+    ops: {
+      label: "Ops",
+      items: [
+        { key: "drive", label: "Drive", icon: "folder" },
+        { key: "calendar", label: "Calendar", icon: "calendar" },
+        { key: "meetings", label: "Meetings", icon: "calendar" },
+        { key: "forms", label: "Forms", icon: "form" },
+      ],
+    },
+  };
+
+  icons = {
+    mail: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>',
+    chat: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg>',
+    sms: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+    broadcast: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11 6a7 7 0 0 1 7 7"/><path d="M11 10a3 3 0 0 1 3 3"/><path d="M6.5 6.5 3 3"/><path d="M6.5 17.5 3 21"/></svg>',
+    user: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+    scan: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>',
+    folder: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
+    calendar: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
+    form: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="16" y1="17" y2="17"/></svg>',
+  };
+
+  threads = [
+    { id: "t1", from: "Rakesh Iyer", subject: "Re: Campus drive schedule — IIT Bombay", time: "9:41 AM", body: "Hi team, confirming the placement drive dates for next week. We'll need the room booked from 9am to 5pm both days, and the recruiter badges printed by Thursday. Let me know if the calendar invite needs adjusting." },
+    { id: "t2", from: "Meera Shah", subject: "Recruiter contact — TCS Digital", time: "8:15 AM", body: "Extracted the new recruiter contact from TCS Digital's inbound email. Added to CRM under Pipeline > Sourcing. Flagging for follow-up call this week." },
+    { id: "t3", from: "Arjun Patel", subject: "Offer letter batch — Round 2", time: "Yesterday", body: "Sending over the round 2 offer letters for signature. 14 candidates total, split across 3 companies." },
+    { id: "t4", from: "Divya Nair", subject: "WhatsApp follow-up needed", time: "Yesterday", body: "Candidate hasn't responded to the interview slot on WhatsApp. Could someone give them a call today?" },
+    { id: "t5", from: "Karthik Rao", subject: "Meeting notes — Infosys sync", time: "Mon", body: "Auto-summary attached from the call recording. Action items: confirm intern stipend, share JD by Friday." },
+    { id: "t6", from: "Sana Sheikh", subject: "Broadcast sent — 240 recipients", time: "Mon", body: "The placement update broadcast went out to all registered students. Delivery rate 98%." },
+  ];
+
+  crmStages = [
+    { name: "Sourcing", count: 3, cards: [{ name: "Rakesh Iyer", company: "TCS Digital" }, { name: "Meera Shah", company: "Infosys" }] },
+    { name: "In Talks", count: 2, cards: [{ name: "Arjun Patel", company: "Wipro" }, { name: "Divya Nair", company: "Cognizant" }] },
+    { name: "Closed", count: 4, cards: [{ name: "Karthik Rao", company: "Accenture" }, { name: "Sana Sheikh", company: "Deloitte" }] },
+  ];
+
+  calendarEvents = [
+    { time: "9:00 AM", title: "Campus drive — IIT Bombay", with: "Recruiting team" },
+    { time: "11:30 AM", title: "Recruiter sync — TCS Digital", with: "Rakesh Iyer" },
+    { time: "2:00 PM", title: "Offer review", with: "Placement committee" },
+    { time: "4:30 PM", title: "Mock interview slot", with: "3 candidates" },
+  ];
+
+  selectNav = (e) => {
+    const key = e.currentTarget.getAttribute("data-key");
+    this.setState({ active: key });
+  };
+
+  selectThread = (e) => {
+    const id = e.currentTarget.getAttribute("data-tid");
+    this.setState({ selectedThread: id });
+  };
+
+  renderVals() {
+    const active = this.state.active;
+    const navGroups = Object.values(this.navData).map((g) => ({
+      label: g.label,
+      items: g.items.map((it) => ({
+        key: it.key,
+        label: it.label,
+        activeBool: it.key === active,
+        iconHtml: { __html: this.icons[it.icon] },
+        active: it.key === active ? "" : "",
+      })),
+    }));
+
+    let activeGroupLabel = "";
+    let activeLabel = "";
+    for (const g of Object.values(this.navData)) {
+      const found = g.items.find((it) => it.key === active);
+      if (found) {
+        activeGroupLabel = g.label;
+        activeLabel = found.label;
+      }
+    }
+
+    const selectedThreadObj = this.threads.find((t) => t.id === this.state.selectedThread) || this.threads[0];
+    const threads = this.threads.map((t) => ({
+      ...t,
+      initial: t.from.slice(0, 1),
+      selectedClass: "",
+    }));
+
+    return {
+      navGroups,
+      activeGroupLabel,
+      activeLabel,
+      isMail: active === "mail",
+      isCrm: active === "crm",
+      isCalendar: active === "calendar" || active === "meetings",
+      threads,
+      selectedThreadObj,
+      crmStages: this.crmStages,
+      calendarEvents: this.calendarEvents,
+      selectNav: this.selectNav,
+      selectThread: this.selectThread,
+    };
+  }
+}
+
+</script>
+</body>
+</html>

@@ -301,7 +301,7 @@ export function MailSearchBar({
             className="pointer-events-none absolute inset-0 z-10 flex items-center overflow-hidden rounded-full pl-10 pr-[4.5rem] text-[16px] md:text-[14px]"
           >
             <span className="invisible whitespace-pre">{inputValue}</span>
-            <span className="whitespace-pre text-[#9aa0a6]">{completionSuffix}</span>
+            <span className="whitespace-pre text-[var(--color-text-faint)]">{completionSuffix}</span>
             <span className="ml-2 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-faint)]">
               tab
             </span>
@@ -320,8 +320,8 @@ export function MailSearchBar({
           className={cn(
             "relative z-[11] w-full pl-10 text-[16px] text-[var(--color-text)] outline-none transition md:text-[14px]",
             filterOpen
-              ? "h-11 rounded-none border-0 border-b border-[#dadce0] bg-white shadow-none focus:border-b-[#dadce0] focus:bg-white focus:shadow-none"
-              : "h-[46px] rounded-full border border-transparent bg-[var(--gmail-search-bg)] focus:border-[var(--color-primary)] focus:bg-[var(--color-surface)] focus:shadow-[0_1px_3px_rgba(60,64,67,0.3)]",
+              ? "h-11 rounded-none border-0 border-b border-[var(--color-border)] bg-white shadow-none focus:border-b-[var(--color-border)] focus:bg-white focus:shadow-none"
+              : "h-[46px] rounded-full border border-transparent bg-[var(--color-surface-2)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)] focus:shadow-[0_1px_3px_rgba(20, 18, 14, 0.3)]",
             inputValue.trim() ? "pr-[4.5rem]" : "pr-10",
           )}
           autoComplete="off"
@@ -355,10 +355,10 @@ export function MailSearchBar({
 
       {showDropdown ? (
         <div
-          className="absolute left-0 right-0 top-full z-30 mt-0.5 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+          className="absolute left-0 right-0 top-full z-30 mt-0.5 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[0_4px_16px_rgba(20, 18, 14,0.28)]"
           role="listbox"
         >
-          <div className="flex flex-wrap gap-2 border-b border-[var(--gmail-border-row)] px-3 py-2">
+          <div className="flex flex-wrap gap-2 border-b border-[var(--color-border)] px-3 py-2">
             {QUICK_FILTERS.map(({ label, modifier }) => (
               <button
                 key={modifier}
@@ -390,8 +390,8 @@ export function MailSearchBar({
                 aria-selected={active && highlight >= 0}
                 className={cn(
                   "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
-                  i > 0 && "border-t border-[var(--gmail-border-row)]",
-                  active ? "bg-[var(--color-primary-tint)]" : "hover:bg-[var(--color-surface-offset)]",
+                  i > 0 && "border-t border-[var(--color-border)]",
+                  active ? "bg-[var(--color-copper-tint)]" : "hover:bg-[var(--color-surface-offset)]",
                 )}
                 onMouseEnter={() => setHighlight(idx)}
                 onClick={() => {
@@ -427,7 +427,7 @@ export function MailSearchBar({
           })}
 
           {threads.length > 0 && mergedContacts.length > 0 ? (
-            <div className="border-t border-[var(--gmail-border-light)]" aria-hidden />
+            <div className="border-t border-[var(--color-border)]" aria-hidden />
           ) : null}
 
           {threads.map((t) => {
@@ -442,7 +442,7 @@ export function MailSearchBar({
                 aria-selected={active && highlight >= 0}
                 className={cn(
                   "flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors",
-                  active ? "bg-[var(--color-primary-tint)]" : "hover:bg-[var(--color-surface-offset)]",
+                  active ? "bg-[var(--color-copper-tint)]" : "hover:bg-[var(--color-surface-offset)]",
                 )}
                 onMouseEnter={() => setHighlight(idx)}
                 onClick={() => {
@@ -481,7 +481,7 @@ export function MailSearchBar({
             aria-selected={highlight === itemCount - 1}
             className={cn(
               "flex w-full items-center justify-between gap-2 border-t border-[var(--color-border)] px-4 py-3 text-left text-[13px] transition-colors",
-              highlight === itemCount - 1 ? "bg-[var(--color-primary-tint)]" : "hover:bg-[var(--color-surface-offset)]",
+              highlight === itemCount - 1 ? "bg-[var(--color-copper-tint)]" : "hover:bg-[var(--color-surface-offset)]",
             )}
             onMouseEnter={() => setHighlight(itemCount - 1)}
             onClick={() => submitSearch(inputValue)}

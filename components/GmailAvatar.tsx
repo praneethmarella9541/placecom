@@ -18,6 +18,8 @@ type GmailAvatarProps = {
   email?: string;
   /** When true, use the signed-in user's Google profile photo. */
   isMe?: boolean;
+  /** Flat neutral bg + muted text instead of the seed-based color palette (Drive owner column). */
+  monochrome?: boolean;
 };
 
 /** Gmail-style avatar — Google profile photo when available, else colored initial. */
@@ -29,6 +31,7 @@ export function GmailAvatar({
   photoUrl: photoUrlProp,
   email,
   isMe = false,
+  monochrome = false,
 }: GmailAvatarProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const lookupEmail = (email ?? seed).trim().toLowerCase();
@@ -64,13 +67,14 @@ export function GmailAvatar({
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-full font-medium text-white select-none",
+        "flex shrink-0 items-center justify-center rounded-full font-medium select-none",
+        monochrome ? "bg-[var(--color-surface-2)] text-[var(--color-text-muted)]" : "text-white",
         className,
       )}
       style={{
         width: size,
         height: size,
-        backgroundColor: bg,
+        backgroundColor: monochrome ? undefined : bg,
         fontSize,
         lineHeight: 1,
       }}

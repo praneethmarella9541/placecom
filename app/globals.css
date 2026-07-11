@@ -54,14 +54,23 @@
     --color-blue: #2563EB;
     --color-gold: #D97706;
 
+    /* ── Copper accent (workspace shell — sidebar/topbar only) ── */
+    --color-copper: #C45C1A;
+    --color-copper-hover: #A94E16;
+    --color-copper-tint: rgba(196, 92, 26, 0.10);
+    --color-copper-grad-from: #E8A04C;
+    --color-copper-grad-to: #C45C1A;
+    --color-hairline: #C4BCAE;
+
     /* ── Sidebar (warm light — matches app shell) ─────────────── */
     --sidebar-bg: #FDFCFA;
     --sidebar-border: rgba(20, 18, 14, 0.09);
     --sidebar-text: var(--color-text-muted);
     --sidebar-text-faint: var(--color-text-faint);
+    --sidebar-text-whisper: #A39A8C;
     --sidebar-hover: var(--color-surface-offset);
-    --sidebar-active-bg: var(--color-primary-tint);
-    --sidebar-active-text: var(--color-primary);
+    --sidebar-active-bg: transparent;
+    --sidebar-active-text: var(--color-copper);
 
     /* ── Radii ───────────────────────────────────────────────── */
     --radius-sm: 4px;
@@ -94,37 +103,6 @@
     --accent: var(--color-primary);
     --accent-fg: #ffffff;
     --accent-soft: var(--color-primary-light);
-  }
-
-  /* /inbox mail UI — Gmail light palette (white surfaces, not warm grey) */
-  [data-gmail-mail] {
-    --gmail-border-light: #e8eaed;
-    --gmail-border-row: #f1f3f4;
-    --gmail-compose-pill: #c2e7ff;
-    --gmail-compose-pill-text: #001d35;
-    --gmail-nav-active-text: #0b57d0;
-    --gmail-search-bg: #eaf1fb;
-    --gmail-row-hover: #f2f6fc;
-    --gmail-row-selected: #d3e3fd;
-    --color-bg: #ffffff;
-    --color-surface: #ffffff;
-    --color-surface-2: #f1f3f4;
-    --color-surface-offset: #f1f3f4;
-    --color-border: #dadce0;
-    --color-border-strong: #bdc1c6;
-    --color-text: #202124;
-    --color-text-muted: #444746;
-    --color-text-faint: #5f6368;
-    --color-primary: #0b57d0;
-    --color-primary-hover: #0842a0;
-    --color-primary-light: #d3e3fd;
-    --color-primary-tint: #e8f0fe;
-    --color-blue: #0b57d0;
-    --color-success: #137333;
-    --color-success-light: #e6f4ea;
-    --color-danger: #d93025;
-    --color-danger-light: #fce8e6;
-    --shadow-glow: 0 0 0 1px rgba(11, 87, 208, 0.18), 0 4px 16px rgba(11, 87, 208, 0.12);
   }
 
   *,
@@ -241,7 +219,7 @@
     background: var(--sidebar-bg);
     border-color: var(--sidebar-border);
     background-image:
-      radial-gradient(ellipse 120% 80% at 0% 0%, rgba(37, 99, 235, 0.04), transparent 55%),
+      radial-gradient(ellipse 120% 80% at 0% 0%, rgba(196, 92, 26, 0.05), transparent 55%),
       linear-gradient(180deg, #ffffff 0%, var(--sidebar-bg) 100%);
   }
 

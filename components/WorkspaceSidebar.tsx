@@ -8,15 +8,17 @@ import {
   Calendar,
   ChevronDown,
   Contact,
-  FileSpreadsheet,
-  HardDrive,
-  Inbox,
+  FileText,
+  Folder,
   LogOut,
-  MessagesSquare,
-  Rss,
-  ScanText,
-  UserRound,
+  Mail,
+  MessageCircle,
+  MessageSquare,
+  Radio,
+  ScanLine,
+  User,
   Users,
+  Video,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
@@ -32,18 +34,30 @@ import { formatPhone } from "@/lib/wa-contacts-display";
 
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 
-const primaryNav = [
-  { href: "/inbox", label: "Mail", Icon: Inbox },
-  { href: "/dashboard", label: "Extraction", Icon: ScanText },
-  { href: "/calendar", label: "Calendar", Icon: Calendar },
+const commsNav = [
+  { href: "/inbox", label: "Mail", Icon: Mail },
+  { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
+  { href: "/sms", label: "SMS", Icon: MessageSquare },
+  { href: "/broadcasting", label: "Broadcasting", Icon: Radio },
 ] as const;
 
-const secondaryNav = [
-  { href: "/drive", label: "Drive", Icon: HardDrive },
-  { href: "/forms", label: "Forms", Icon: FileSpreadsheet },
-  { href: "/broadcasting", label: "Broadcasting", Icon: Rss },
-  { href: "/whatsapp", label: "WhatsApp", Icon: MessagesSquare },
-  { href: "/contacts", label: "Contacts", Icon: UserRound },
+const pipelineNav = [
+  { href: "/crm", label: "CRM", Icon: User },
+  { href: "/dashboard", label: "Extraction", Icon: ScanLine },
+] as const;
+
+const opsNav = [
+  { href: "/drive", label: "Drive", Icon: Folder },
+  { href: "/calendar", label: "Calendar", Icon: Calendar },
+  { href: "/meetings", label: "Meetings", Icon: Video },
+  { href: "/forms", label: "Forms", Icon: FileText },
+] as const;
+
+/** Sidebar nav regrouped into Comms / Pipeline / Ops — also used by WorkspaceChrome for the breadcrumb. */
+export const workspaceNavGroups = [
+  { label: "Comms", items: commsNav },
+  { label: "Pipeline", items: pipelineNav },
+  { label: "Ops", items: opsNav },
 ] as const;
 
 function isNavActive(href: string, pathname: string): boolean {
@@ -61,7 +75,6 @@ const NavItem = memo(function NavItem({
   label,
   Icon,
   selected,
-  size = "md",
   onClick,
   onMouseEnter,
   onNavigateStart,
@@ -70,7 +83,6 @@ const NavItem = memo(function NavItem({
   label: string;
   Icon: React.ElementType;
   selected: boolean;
-  size?: "md" | "sm";
   onClick?: () => void;
   onMouseEnter?: () => void;
   onNavigateStart?: (href: string) => void;
@@ -98,25 +110,23 @@ const NavItem = memo(function NavItem({
         onMouseEnter?.();
       }}
       className={cn(
-        "group relative flex cursor-pointer items-center gap-3 rounded-xl px-3 select-none",
-        size === "md" ? "py-2.5 text-[13.5px]" : "py-2 text-[13px]",
+        "group relative flex cursor-pointer items-center gap-[11px] rounded-[10px] px-3 py-2 text-[13.5px] select-none",
         selected
-          ? "bg-[var(--sidebar-active-bg)] font-semibold text-[var(--sidebar-active-text)] shadow-[inset_0_0_0_1px_rgba(37,99,235,0.12)]"
+          ? "font-semibold text-[var(--sidebar-active-text)]"
           : "font-medium text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--color-text)]",
       )}
     >
       {selected && (
-        <span className="absolute left-0 top-1/2 h-[58%] w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--color-primary)]" />
+        <span className="absolute left-0 top-1/2 h-[58%] w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--sidebar-active-text)]" />
       )}
       <Icon
         className={cn(
-          "shrink-0",
-          size === "md" ? "h-[17px] w-[17px]" : "h-[16px] w-[16px]",
+          "h-[18px] w-[18px] shrink-0",
           selected
-            ? "text-[var(--color-primary)]"
+            ? "text-[var(--sidebar-active-text)]"
             : "text-[var(--sidebar-text-faint)] group-hover:text-[var(--color-text-muted)]",
         )}
-        strokeWidth={selected ? 2.5 : 2}
+        strokeWidth={1.75}
       />
       <span className="truncate leading-normal">{label}</span>
     </a>
@@ -223,12 +233,12 @@ function UserProfile({
   );
 }
 
-function NavSkeleton({ rows, size = "md" }: { rows: number; size?: "md" | "sm" }) {
+function NavSkeleton({ rows }: { rows: number }) {
   return (
     <div className="flex flex-col gap-0.5">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className={cn("flex items-center gap-3 rounded-lg px-3", size === "sm" ? "py-2" : "py-2.5")}>
-          <div className={cn("shrink-0 animate-pulse rounded bg-[var(--sidebar-border)]", size === "sm" ? "h-4 w-4" : "h-[18px] w-[18px]")} />
+        <div key={i} className="flex items-center gap-[11px] rounded-[10px] px-3 py-2">
+          <div className="h-[18px] w-[18px] shrink-0 animate-pulse rounded bg-[var(--sidebar-border)]" />
           <div
             className="h-3 animate-pulse rounded bg-[var(--sidebar-border)]"
             style={{ width: `${[58, 44, 66, 50, 60, 48][i % 6]}%` }}
@@ -239,8 +249,10 @@ function NavSkeleton({ rows, size = "md" }: { rows: number; size?: "md" | "sm" }
   );
 }
 
+type NavGroupLinks = { label: string; items: { href: string; label: string; Icon: React.ElementType }[] };
+
 const SidebarPanel = memo(function SidebarPanel({
-  links,
+  groups,
   pathname,
   pendingHref,
   displayName,
@@ -252,11 +264,7 @@ const SidebarPanel = memo(function SidebarPanel({
   onAdminHover,
   onNavigateStart,
 }: {
-  links: {
-    primary: (typeof primaryNav)[number][];
-    secondary: (typeof secondaryNav)[number][];
-    admin: typeof adminLink | null;
-  };
+  groups: NavGroupLinks[];
   pathname: string;
   pendingHref: string | null;
   displayName: string;
@@ -279,69 +287,42 @@ const SidebarPanel = memo(function SidebarPanel({
       {!meLoaded ? (
         // No profile data yet (first-ever load, no cache). Show a ghost of the
         // nav rather than a blank column, so it never looks stuck.
-        <nav className="scrollbar-thin flex flex-1 flex-col overflow-y-auto px-2 py-1" aria-hidden>
-          <NavSkeleton rows={6} />
-          <div className="my-3 px-2">
-            <div className="h-px bg-[var(--sidebar-border)]" />
-          </div>
-          <NavSkeleton rows={4} size="sm" />
+        <nav className="scrollbar-thin flex flex-1 flex-col gap-[18px] overflow-y-auto px-[10px] py-3.5" aria-hidden>
+          <NavSkeleton rows={4} />
+          <NavSkeleton rows={2} />
+          <NavSkeleton rows={4} />
         </nav>
       ) : (
-      <nav className="scrollbar-thin flex flex-1 flex-col overflow-y-auto px-2 py-1">
-        <div className="flex flex-col gap-0.5">
-          {links.primary.map(({ href, label, Icon }) => (
-            <NavItem
-              key={href}
-              href={href}
-              label={label}
-              Icon={Icon}
-              selected={navItemSelected(href, pathname, pendingHref)}
-              onClick={onClick}
-              onNavigateStart={onNavigateStart}
-            />
-          ))}
-        </div>
-
-        <div className="my-3 px-2">
-          <div className="h-px bg-[var(--sidebar-border)]" />
-        </div>
-
-        <div className="flex flex-col gap-0.5">
-          {links.secondary.map(({ href, label, Icon }) => (
-            <NavItem
-              key={href}
-              href={href}
-              label={label}
-              Icon={Icon}
-              selected={navItemSelected(href, pathname, pendingHref)}
-              size="sm"
-              onClick={onClick}
-              onNavigateStart={onNavigateStart}
-            />
-          ))}
-          {links.admin && (
-            <NavItem
-              href={links.admin.href}
-              label={links.admin.label}
-              Icon={links.admin.Icon}
-              selected={
-                pendingHref
-                  ? pendingHref === links.admin.href
-                  : pathname.startsWith(links.admin.href)
-              }
-              size="sm"
-              onClick={onClick}
-              onMouseEnter={onAdminHover}
-              onNavigateStart={onNavigateStart}
-            />
-          )}
-        </div>
+      <nav className="scrollbar-thin flex flex-1 flex-col gap-[18px] overflow-y-auto px-[10px] py-3.5">
+        {groups.map((group) =>
+          group.items.length ? (
+            <div key={group.label}>
+              <p className="font-mono mb-1.5 ml-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-text-whisper)]">
+                {group.label}
+              </p>
+              <div className="flex flex-col gap-0.5">
+                {group.items.map(({ href, label, Icon }) => (
+                  <NavItem
+                    key={href}
+                    href={href}
+                    label={label}
+                    Icon={Icon}
+                    selected={navItemSelected(href, pathname, pendingHref)}
+                    onClick={onClick}
+                    onMouseEnter={href === adminLink.href ? onAdminHover : undefined}
+                    onNavigateStart={onNavigateStart}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null,
+        )}
 
         <div className="flex-1" />
       </nav>
       )}
 
-      <div className="shrink-0 border-t border-[var(--sidebar-border)] px-2 py-2">
+      <div className="shrink-0 border-t border-[var(--sidebar-border)] px-2.5 py-2.5">
         <UserProfile displayName={displayName} email={email} me={me} onSignOut={onSignOut} />
       </div>
     </aside>
@@ -360,7 +341,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
   useEffect(() => {
-    for (const { href } of [...primaryNav, ...secondaryNav, adminLink]) {
+    for (const { href } of [...commsNav, ...pipelineNav, ...opsNav, adminLink]) {
       router.prefetch(href);
     }
   }, [router]);
@@ -373,25 +354,28 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
     onCloseMobile?.();
   }, [pathname, onCloseMobile]);
 
-  const links = useMemo(() => {
+  const groups = useMemo<NavGroupLinks[]>(() => {
     const restricted = new Set(me?.restrictedFeatures ?? []);
     const allowedEnv = process.env.NEXT_PUBLIC_ALLOWED_FEATURES;
     const allowed = allowedEnv?.trim()
       ? new Set(allowedEnv.split(",").map((s) => s.trim()))
       : null;
     const emptySearch = new URLSearchParams();
-    const filter = <T extends { href: string }>(arr: readonly T[]) =>
+    const filter = (arr: readonly { href: string; label: string; Icon: React.ElementType }[]) =>
       arr.filter((l) => {
         const feature = pathToFeature(l.href, emptySearch);
         if (!feature) return true;
         if (allowed && !allowed.has(feature)) return false;
         return !restricted.has(feature);
       });
-    return {
-      primary: filter(primaryNav) as (typeof primaryNav)[number][],
-      secondary: filter(secondaryNav) as (typeof secondaryNav)[number][],
-      admin: me?.role === "admin" ? adminLink : null,
-    };
+    const result = workspaceNavGroups.map((group) => ({
+      label: group.label,
+      items: filter(group.items),
+    }));
+    if (me?.role === "admin") {
+      result[result.length - 1].items = [...result[result.length - 1].items, adminLink];
+    }
+    return result;
   }, [me?.role, me?.restrictedFeatures]);
 
   const signOut = useCallback(async () => {
@@ -410,7 +394,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
 
   return (
     <SidebarPanel
-      links={links}
+      groups={groups}
       pathname={pathname}
       pendingHref={pendingHref}
       displayName={displayName}

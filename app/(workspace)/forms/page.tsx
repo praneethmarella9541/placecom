@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ClipboardList, Loader2, Plus, Search } from "lucide-react";
+import { FileText, Loader2, Plus, Search, TrendingUp } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
@@ -118,43 +118,34 @@ export default function FormsPage() {
   const empty = useMemo(() => !loading && forms.length === 0, [loading, forms.length]);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
-      <div className="flex items-start gap-4">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[var(--radius-lg)] bg-[var(--color-primary-light)] text-[var(--color-primary)]">
-          <ClipboardList className="h-6 w-6" strokeWidth={2} />
-        </div>
-        <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--color-text)]">
-            {titleCase("Forms")}
+    <div className="mx-auto max-w-3xl space-y-6">
+      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-copper-tint)] text-[var(--color-copper)]">
+            <FileText className="h-5 w-5" strokeWidth={2} />
+          </div>
+          <h1 className="font-display text-[17px] font-bold tracking-tight text-[var(--color-text)]">
+            {titleCase("New form")}
           </h1>
         </div>
-      </div>
-
-
-      <div className="surface-card rounded-[var(--radius-xl)] border border-[var(--color-border)] p-6 shadow-[var(--shadow-sm)]">
-        <form data-testid="forms-create-form" onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="min-w-0 flex-1">
-            <label htmlFor="new-form-title" className="mb-1.5 block text-[13px] font-semibold text-[var(--color-text)]">
-              {titleCase("New form")}
-            </label>
-            <input
-              data-testid="forms-new-title-input"
-              id="new-form-title"
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder={titleCase("Form title")}
-              className="input-field h-11 w-full text-[14px]"
-              autoComplete="off"
-              disabled={creating}
-            />
-          </div>
+        <form data-testid="forms-create-form" onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <input
+            data-testid="forms-new-title-input"
+            id="new-form-title"
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Form title, e.g. Campus Drive Feedback"
+            className="h-12 w-full min-w-0 flex-1 rounded-xl border border-transparent bg-[var(--color-surface-2)] px-4 text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
+            autoComplete="off"
+            disabled={creating}
+          />
           <button
             data-testid="forms-create-btn"
             type="submit"
             disabled={creating || !title.trim()}
             className={cn(
-              "btn-primary inline-flex h-11 shrink-0 items-center justify-center gap-2 px-6 text-[14px]",
+              "inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-copper)] px-6 text-[14px] font-semibold text-white transition hover:bg-[var(--color-copper-hover)]",
               (!title.trim() || creating) && "opacity-60",
             )}
           >
@@ -173,7 +164,6 @@ export default function FormsPage() {
         </form>
       </div>
 
-
       {error ? (
         <div className="rounded-[var(--radius-md)] border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3 text-[13px] text-[var(--color-danger)]">
           {error}
@@ -182,8 +172,11 @@ export default function FormsPage() {
 
       <div>
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">
+          <h2 className="flex items-baseline gap-2 font-display text-[17px] font-bold text-[var(--color-text)]">
             {titleCase("Your forms")}
+            <span className="font-mono text-[12px] font-medium text-[var(--color-text-faint)]">
+              {forms.length} {forms.length === 1 ? "form" : "forms"}
+            </span>
           </h2>
           <div className="relative max-w-sm flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" strokeWidth={2} />
@@ -193,7 +186,7 @@ export default function FormsPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={titleCase("Search by form title")}
-              className="input-field h-10 w-full pl-9 text-[13px]"
+              className="h-10 w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] pl-9 pr-4 text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
               autoComplete="off"
             />
           </div>
@@ -201,41 +194,47 @@ export default function FormsPage() {
         {loading ? (
           <div className="space-y-2">
             {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} className="skeleton-shimmer h-16 w-full rounded-[var(--radius-lg)]" />
+              <Skeleton key={i} className="skeleton-shimmer h-16 w-full rounded-2xl" />
             ))}
           </div>
         ) : empty ? (
-          <p className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">
+          <p className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">
             {searchDebounced
               ? titleCase("No forms match your search.")
               : titleCase("No forms found in your Google account. Create one above or open an existing form by link.")}
           </p>
         ) : (
-          <ul className="divide-y divide-[var(--color-border)] rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+          <ul className="divide-y divide-[var(--color-border)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
             {forms.map((f) => (
               <li
                 key={f.id}
                 data-testid={`forms-list-item-${f.id}`}
-                className="flex items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-[var(--color-surface-offset)]"
+                className="flex items-center justify-between gap-4 px-5 py-4 transition-colors hover:bg-[var(--color-surface-offset)]"
               >
-                <Link href={`/forms/${encodeURIComponent(f.id)}/edit`} className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-[var(--color-text)]">
-                    {f.formTitle?.trim() || f.name?.trim() || titleCase("Untitled")}
-                  </p>
-                  <p className="mt-0.5 text-[12px] text-[var(--color-text-faint)]">
-                    {titleCase("Modified")} {formatDate(f.modifiedTime)}
-                  </p>
+                <Link href={`/forms/${encodeURIComponent(f.id)}/edit`} className="flex min-w-0 flex-1 items-center gap-3.5">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
+                    <FileText className="h-[18px] w-[18px]" strokeWidth={2} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-[14.5px] font-semibold text-[var(--color-text)]">
+                      {f.formTitle?.trim() || f.name?.trim() || titleCase("Untitled")}
+                    </p>
+                    <p className="font-mono mt-0.5 text-[11.5px] text-[var(--color-text-faint)]">
+                      {titleCase("Modified")} {formatDate(f.modifiedTime)}
+                    </p>
+                  </div>
                 </Link>
-                <div className="flex shrink-0 items-center gap-3">
+                <div className="flex shrink-0 items-center gap-4">
                   <Link
                     href={`/forms/${encodeURIComponent(f.id)}/edit?tab=responses`}
-                    className="text-[13px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
+                    className="flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-copper)]"
                   >
+                    <TrendingUp className="h-3.5 w-3.5" strokeWidth={2} />
                     {titleCase("Responses")}
                   </Link>
                   <Link
                     href={`/forms/${encodeURIComponent(f.id)}/edit`}
-                    className="text-[13px] font-semibold text-[var(--color-primary)]"
+                    className="rounded-xl bg-[var(--color-copper-tint)] px-4 py-1.5 text-[13px] font-semibold text-[var(--color-copper)] hover:bg-[var(--color-copper)] hover:text-white transition-colors"
                   >
                     {titleCase("Edit")}
                   </Link>
@@ -248,7 +247,7 @@ export default function FormsPage() {
         {nextPageToken ? (
           <button
             type="button"
-            className="mt-4 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] py-3 text-[13px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-surface-offset)]"
+            className="mt-4 w-full rounded-xl border border-[var(--color-border)] py-3 text-[13px] font-medium text-[var(--color-copper)] hover:bg-[var(--color-surface-offset)]"
             onClick={() => void load({ append: true, pageToken: nextPageToken })}
           >
             {titleCase("Load more")}

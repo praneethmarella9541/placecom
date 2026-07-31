@@ -5,7 +5,7 @@
  */
 export default function DriveLoading() {
   return (
-    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-screen">
+    <div className="-mx-4 -mt-[calc(56px+16px)] flex h-[calc(100vh-56px)] overflow-hidden md:-mx-6 md:-mt-6 md:h-[calc(100dvh-56px)]">
       {/* Sidebar */}
       <aside className="hidden w-[208px] shrink-0 flex-col gap-1 overflow-hidden border-r border-[var(--color-border)] bg-[var(--color-bg)] p-2 sm:flex">
         <div className="skeleton-shimmer mx-3 mb-1 mt-3 h-2.5 w-16 rounded" />
@@ -25,7 +25,7 @@ export default function DriveLoading() {
       </aside>
 
       {/* Main column */}
-      <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-surface)]">
+      <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--color-bg)]">
         {/* Breadcrumbs */}
         <nav className="flex items-center gap-1 border-b border-[var(--color-border)] px-3 py-2.5">
           <div className="skeleton-shimmer h-6 w-20 rounded-md" />

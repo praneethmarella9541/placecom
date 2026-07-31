@@ -41,6 +41,7 @@ import {
   writeSessionInboxUnread,
 } from "@/lib/inbox-unread-session";
 import { createPortal } from "react-dom";
+import { useWorkspaceTopbarActionsNode } from "@/lib/workspace-topbar-context";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
@@ -245,8 +246,8 @@ function makePendingLabel(name: string): GmailLabel {
 function FilterRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid grid-cols-[108px_minmax(0,1fr)] items-center gap-x-4">
-      <label className="text-[13px] text-[#5f6368]">{label}</label>
-      <div className="min-w-0 [&_.input-field]:rounded [&_.input-field]:border-[#dadce0] [&_.input-field]:shadow-none [&_.input-field]:focus:border-[#0b57d0] [&_.input-field]:focus:shadow-none [&_.input-field]:focus:ring-1 [&_.input-field]:focus:ring-[#0b57d0] [&_[role=group]]:rounded [&_[role=group]]:border-[#dadce0] [&_[role=group]]:focus-within:border-[#0b57d0] [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-1 [&_[role=group]]:focus-within:ring-[#0b57d0]">
+      <label className="text-[13px] text-[var(--color-text-faint)]">{label}</label>
+      <div className="min-w-0 [&_.input-field]:rounded [&_.input-field]:border-[var(--color-border)] [&_.input-field]:shadow-none [&_.input-field]:focus:border-[var(--color-copper)] [&_.input-field]:focus:shadow-none [&_.input-field]:focus:ring-1 [&_.input-field]:focus:ring-[var(--color-copper)] [&_[role=group]]:rounded [&_[role=group]]:border-[var(--color-border)] [&_[role=group]]:focus-within:border-[var(--color-copper)] [&_[role=group]]:focus-within:shadow-none [&_[role=group]]:focus-within:ring-1 [&_[role=group]]:focus-within:ring-[var(--color-copper)]">
         {children}
       </div>
     </div>
@@ -380,8 +381,8 @@ function MessageBubble({
     <>
       <article
         className={cn(
-          "border-b border-[var(--gmail-border-row)]",
-          isCollapsed && "cursor-pointer hover:bg-[var(--gmail-row-hover)]"
+          "border-b border-[var(--color-border)]",
+          isCollapsed && "cursor-pointer hover:bg-[var(--color-surface-offset)]"
         )}
         onClick={isCollapsed ? () => setExpanded(true) : undefined}
       >
@@ -535,7 +536,7 @@ function PaneResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) 
       aria-orientation="vertical"
       aria-label="Resize pane"
       onMouseDown={onMouseDown}
-      className="absolute right-0 top-0 z-20 h-full w-1.5 -translate-x-1/2 cursor-col-resize touch-none bg-transparent hover:bg-[#0b57d0]/25 active:bg-[#0b57d0]/40"
+      className="absolute right-0 top-0 z-20 h-full w-1.5 -translate-x-1/2 cursor-col-resize touch-none bg-transparent hover:bg-[var(--color-copper)]/25 active:bg-[var(--color-copper)]/40"
     />
   );
 }
@@ -587,6 +588,7 @@ const INBOX_CATEGORY_LABEL: Record<InboxCategoryKey, string> = {
 };
 
 export default function InboxPage() {
+  const topbarActionsNode = useWorkspaceTopbarActionsNode();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
@@ -3790,14 +3792,150 @@ export default function InboxPage() {
   const mobileMoreFolders = FOLDER_NAV.filter((f) => !MOBILE_PRIMARY_FOLDER_KEYS.has(f.key));
   const mobileMoreFolderActive = mobileMoreFolders.some((f) => f.key === folder);
 
+  const topbarActions = topbarActionsNode
+    ? createPortal(
+        <div ref={filterPanelRef} className="relative flex items-center gap-2.5">
+          <div className="w-[260px]">
+            <MailSearchBar
+              inputValue={mailSearchInput}
+              onInputChange={setMailSearchInput}
+              onSearch={handleMailSearch}
+              onReset={resetMailSearch}
+              filterOpen={filterOpen}
+              onFilterOpenChange={handleFilterOpenChange}
+              localContacts={composeRecipientSuggestions}
+              onOpenThread={(threadId) => void openThread(threadId)}
+              onSuggestingChange={setMailSearchSuggesting}
+            />
+          </div>
+
+          {/* Advanced filter panel — dropdown anchored under the topbar search field */}
+          {filterOpen && (
+            <div className="absolute right-[124px] top-[calc(100%+8px)] z-40 max-h-[80vh] w-[440px] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+              <div className="grid gap-3.5 px-4 py-4">
+                {/* From / To use the same RecipientField as Compose so the
+                    typeahead behaviour is identical — narrows the dropdown
+                    as the user types instead of dumping the whole list. */}
+                <FilterRow label="From">
+                  <RecipientField
+                    placeholder="sender@example.com"
+                    value={filterFrom}
+                    onChange={setFilterFrom}
+                    suggestions={composeRecipientSuggestions}
+                  />
+                </FilterRow>
+                <FilterRow label="To">
+                  <RecipientField
+                    placeholder="recipient@example.com"
+                    value={filterTo}
+                    onChange={setFilterTo}
+                    suggestions={composeRecipientSuggestions}
+                  />
+                </FilterRow>
+                <FilterRow label="Subject">
+                  <input
+                    type="text"
+                    value={filterSubject}
+                    onChange={(e) => setFilterSubject(e.target.value)}
+                    className="input-field h-9 w-full text-[13px]"
+                  />
+                </FilterRow>
+                <FilterRow label="Has the words">
+                  <input
+                    type="text"
+                    value={filterHasWords}
+                    onChange={(e) => setFilterHasWords(e.target.value)}
+                    className="input-field h-9 w-full text-[13px]"
+                  />
+                </FilterRow>
+                <FilterRow label="Doesn't have">
+                  <input
+                    type="text"
+                    value={filterDoesntHave}
+                    onChange={(e) => setFilterDoesntHave(e.target.value)}
+                    className="input-field h-9 w-full text-[13px]"
+                    placeholder="word(s) to exclude"
+                  />
+                </FilterRow>
+                <FilterRow label="Date within">
+                  <div className="flex min-w-0 gap-2">
+                    <select
+                      value={filterDateWithin}
+                      onChange={(e) => setFilterDateWithin(e.target.value as DateWithin)}
+                      className="input-field h-9 min-w-0 flex-1 text-[13px]"
+                    >
+                      {DATE_WITHIN_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <GmailDatePicker
+                      value={filterDateAnchor}
+                      onChange={setFilterDateAnchor}
+                      className="min-w-0 flex-1"
+                    />
+                  </div>
+                </FilterRow>
+                <label className="flex cursor-pointer items-center gap-2 pl-[108px] text-[13px] text-[var(--color-text)]">
+                  <input
+                    type="checkbox"
+                    checked={filterHasAttachment}
+                    onChange={(e) => setFilterHasAttachment(e.target.checked)}
+                    className="h-4 w-4 accent-[var(--color-copper)]"
+                  />
+                  Has attachment
+                </label>
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3">
+                <button
+                  data-testid="inbox-filter-clear-btn"
+                  type="button"
+                  onClick={clearFilter}
+                  className="btn-ghost h-9 text-[13px]"
+                >
+                  Clear
+                </button>
+                <button
+                  data-testid="inbox-filter-cancel-btn"
+                  type="button"
+                  onClick={() => setFilterOpen(false)}
+                  className="btn-ghost h-9 text-[13px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  data-testid="inbox-filter-search-btn"
+                  type="button"
+                  onClick={applyFilter}
+                  className="h-9 rounded bg-[var(--color-copper)] px-5 text-[13px] font-medium text-white transition hover:bg-[var(--color-copper-hover)]"
+                >
+                  Search
+                </button>
+              </div>
+            </div>
+          )}
+
+          <button
+            data-testid="inbox-topbar-compose-btn"
+            type="button"
+            onClick={() => openNewCompose()}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-[10px] bg-[var(--color-copper)] px-4 text-[13px] font-semibold text-white transition hover:bg-[var(--color-copper-hover)]"
+          >
+            <PencilLine className="h-4 w-4" strokeWidth={2} />
+            {titleCase("Compose")}
+          </button>
+        </div>,
+        topbarActionsNode,
+      )
+    : null;
+
   return (
     <>
+    {topbarActions}
     {/* ── Gmail-style three-column layout ────────────────────────────────────
         Left rail  : Compose + Inbox/Sent/Drafts + Labels  (desktop only)
         Right area : Category tabs (top) + search + thread list OR thread detail
     ──────────────────────────────────────────────────────────────────────── */}
     <div
-      data-gmail-mail
       className={cn(
         "flex min-h-0 overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]",
         /* Mobile: stay below WorkspaceChrome header (no negative top margin). Desktop: full-bleed. */
@@ -3808,7 +3946,7 @@ export default function InboxPage() {
 
       {/* ══ LEFT RAIL — desktop only ══ */}
       <aside
-        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--gmail-border-light)] bg-[var(--color-bg)] md:flex"
+        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] md:flex"
         style={{ width: sidebarWidth }}
       >
         {/* Compose + Refresh — Gmail pill compose button */}
@@ -3817,7 +3955,7 @@ export default function InboxPage() {
             data-testid="inbox-compose-btn"
             type="button"
             onClick={() => openNewCompose()}
-            className="inline-flex h-12 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-[var(--gmail-compose-pill)] px-4 text-[14px] font-medium text-[var(--gmail-compose-pill-text)] shadow-sm transition hover:brightness-95 hover:shadow-md"
+            className="inline-flex h-12 flex-1 items-center justify-center gap-2.5 rounded-2xl bg-[var(--color-copper)] px-4 text-[14px] font-medium text-white shadow-sm transition hover:bg-[var(--color-copper-hover)] hover:shadow-md"
           >
             <PencilLine className="h-[18px] w-[18px] shrink-0" strokeWidth={2} />
             {titleCase("Compose")}
@@ -3852,7 +3990,7 @@ export default function InboxPage() {
                 className={cn(
                   "flex w-full items-center gap-3 rounded-r-full py-[6px] pl-3 pr-3 text-[14px] transition-colors",
                   active
-                    ? "bg-[var(--color-primary-light)] font-semibold text-[var(--gmail-nav-active-text)]"
+                    ? "bg-[var(--color-copper-tint)] font-semibold text-[var(--color-copper)]"
                     : "font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]",
                 )}
               >
@@ -3867,7 +4005,7 @@ export default function InboxPage() {
                 {badge !== null && (
                   <span className={cn(
                     "min-w-[20px] rounded-full px-1.5 py-[1px] text-center text-[11px] font-bold tabular-nums",
-                    active ? "text-[var(--color-primary)]" : "text-[var(--color-text-faint)]"
+                    active ? "text-[var(--color-copper)]" : "text-[var(--color-text-faint)]"
                   )}>
                     {badge > 9999 ? `${Math.floor(badge / 1000)}k` : badge}
                   </span>
@@ -3919,7 +4057,7 @@ export default function InboxPage() {
               <button
                 type="submit"
                 disabled={!newLabelInput.trim()}
-                className="shrink-0 text-[11px] font-semibold text-[var(--color-primary)] disabled:opacity-40"
+                className="shrink-0 text-[11px] font-semibold text-[var(--color-copper)] disabled:opacity-40"
               >
                 Create
               </button>
@@ -3966,12 +4104,12 @@ export default function InboxPage() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
 
         {/* Mobile mail nav — compose + primary folders (replaces left rail) */}
-        <div className="z-20 flex shrink-0 flex-col border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] md:hidden">
-          <div className="flex items-center gap-2 border-b border-[var(--gmail-border-light)] px-3 py-2">
+        <div className="z-20 flex shrink-0 flex-col border-b border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
+          <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
             <button
               type="button"
               onClick={() => openNewCompose()}
-              className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-2xl bg-[var(--gmail-compose-pill)] px-4 text-[14px] font-medium text-[var(--gmail-compose-pill-text)] shadow-sm"
+              className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-2xl bg-[var(--color-copper)] px-4 text-[14px] font-medium text-white shadow-sm"
             >
               <PencilLine className="h-4 w-4 shrink-0" strokeWidth={2} />
               {titleCase("Compose")}
@@ -4002,7 +4140,7 @@ export default function InboxPage() {
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors",
                     active
-                      ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                      ? "border-[var(--color-copper)] text-[var(--color-copper)]"
                       : "border-transparent text-[var(--color-text-muted)]",
                   )}
                 >
@@ -4023,7 +4161,7 @@ export default function InboxPage() {
                 className={cn(
                   "flex h-full items-center gap-1 border-b-2 px-4 py-2.5 text-[13px] font-medium transition-colors",
                   mobileMoreFolderActive || mobileFolderMenuOpen
-                    ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                    ? "border-[var(--color-copper)] text-[var(--color-copper)]"
                     : "border-transparent text-[var(--color-text-muted)]",
                 )}
               >
@@ -4046,7 +4184,7 @@ export default function InboxPage() {
                           onClick={() => switchMailFolder(key)}
                           className={cn(
                             "flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors hover:bg-[var(--color-surface-offset)]",
-                            folder === key && "bg-[var(--color-primary-light)] font-medium text-[var(--color-primary)]",
+                            folder === key && "bg-[var(--color-copper-tint)] font-medium text-[var(--color-copper)]",
                           )}
                         >
                           <Icon className="h-4 w-4 shrink-0" />
@@ -4066,7 +4204,7 @@ export default function InboxPage() {
 
         {/* ── Category tabs (Primary / Promotions / Social…) — top of right area, only on Inbox ── */}
         {folder === "inbox" && !filterLabelId && (
-          <div className="flex shrink-0 gap-0 overflow-x-auto border-b border-[var(--gmail-border-light)] bg-[var(--color-bg)]">
+          <div className="flex shrink-0 gap-0 overflow-x-auto border-b border-[var(--color-border)] bg-[var(--color-bg)]">
             {(
               [
                 { key: "primary"    as const, label: "Primary"    },
@@ -4086,7 +4224,7 @@ export default function InboxPage() {
                   className={cn(
                     "flex shrink-0 items-center gap-1.5 border-b-2 px-5 py-3 text-[13px] font-medium transition-colors",
                     active
-                      ? "border-[var(--color-primary)] font-semibold text-[var(--color-primary)]"
+                      ? "border-[var(--color-copper)] font-semibold text-[var(--color-copper)]"
                       : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
                   )}
                 >
@@ -4101,9 +4239,9 @@ export default function InboxPage() {
         <div className="flex min-h-0 flex-1 overflow-hidden">
           <div
             className={cn(
-                "relative flex min-h-0 flex-col overflow-hidden bg-[var(--color-surface)]",
+                "relative flex min-h-0 flex-col overflow-hidden bg-[var(--color-bg)]",
               selectedId
-                ? "hidden w-full shrink-0 border-[var(--gmail-border-light)] md:flex md:border-r"
+                ? "hidden w-full shrink-0 border-[var(--color-border)] md:flex md:border-r"
                 : "flex flex-1",
             )}
             style={selectedId ? { width: listPaneWidth } : undefined}
@@ -4120,154 +4258,23 @@ export default function InboxPage() {
               aria-busy={listRefreshing || loadingMore}
             >
               {listRefreshing ? (
-                <div className="h-full w-1/4 animate-gmail-refresh-indeterminate bg-[var(--color-primary)]" />
+                <div className="h-full w-1/4 animate-gmail-refresh-indeterminate bg-[var(--color-copper)]" />
               ) : loadingMore ? (
-                <div className="h-full w-full origin-left animate-progress-bar bg-[var(--color-primary)]" />
+                <div className="h-full w-full origin-left animate-progress-bar bg-[var(--color-copper)]" />
               ) : null}
             </div>
 
-            {/* Search bar + advanced filter popover trigger — fixed; only the list scrolls */}
-            <div
-              ref={filterPanelRef}
-              className={cn(
-                "relative shrink-0 bg-[var(--color-surface)] px-3 pt-2",
-                filterOpen ? "pb-3" : "border-b border-[var(--gmail-border-light)] pb-2",
-              )}
-            >
-              <div
-                className={cn(
-                  filterOpen &&
-                    "overflow-hidden rounded-lg border border-[#dadce0] bg-white shadow-[0_1px_2px_rgba(60,64,67,0.1),0_2px_6px_rgba(60,64,67,0.08)]",
-                )}
-              >
-                <MailSearchBar
-                  inputValue={mailSearchInput}
-                  onInputChange={setMailSearchInput}
-                  onSearch={handleMailSearch}
-                  onReset={resetMailSearch}
-                  filterOpen={filterOpen}
-                  onFilterOpenChange={handleFilterOpenChange}
-                  localContacts={composeRecipientSuggestions}
-                  onOpenThread={(threadId) => void openThread(threadId)}
-                  onSuggestingChange={setMailSearchSuggesting}
-                />
-
-                {/* Advanced filter panel — one card with the search bar (Gmail-style) */}
-                {filterOpen && (
-                  <div>
-                    <div className="grid gap-3.5 px-4 py-4">
-                    {/* From / To use the same RecipientField as Compose so the
-                        typeahead behaviour is identical — narrows the dropdown
-                        as the user types instead of dumping the whole list. */}
-                    <FilterRow label="From">
-                      <RecipientField
-                        placeholder="sender@example.com"
-                        value={filterFrom}
-                        onChange={setFilterFrom}
-                        suggestions={composeRecipientSuggestions}
-                      />
-                    </FilterRow>
-                    <FilterRow label="To">
-                      <RecipientField
-                        placeholder="recipient@example.com"
-                        value={filterTo}
-                        onChange={setFilterTo}
-                        suggestions={composeRecipientSuggestions}
-                      />
-                    </FilterRow>
-                    <FilterRow label="Subject">
-                      <input
-                        type="text"
-                        value={filterSubject}
-                        onChange={(e) => setFilterSubject(e.target.value)}
-                        className="input-field h-9 w-full text-[13px]"
-                      />
-                    </FilterRow>
-                    <FilterRow label="Has the words">
-                      <input
-                        type="text"
-                        value={filterHasWords}
-                        onChange={(e) => setFilterHasWords(e.target.value)}
-                        className="input-field h-9 w-full text-[13px]"
-                      />
-                    </FilterRow>
-                    <FilterRow label="Doesn't have">
-                      <input
-                        type="text"
-                        value={filterDoesntHave}
-                        onChange={(e) => setFilterDoesntHave(e.target.value)}
-                        className="input-field h-9 w-full text-[13px]"
-                        placeholder="word(s) to exclude"
-                      />
-                    </FilterRow>
-                    <FilterRow label="Date within">
-                      <div className="flex min-w-0 gap-2">
-                        <select
-                          value={filterDateWithin}
-                          onChange={(e) => setFilterDateWithin(e.target.value as DateWithin)}
-                          className="input-field h-9 min-w-0 flex-1 text-[13px]"
-                        >
-                          {DATE_WITHIN_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
-                        </select>
-                        <GmailDatePicker
-                          value={filterDateAnchor}
-                          onChange={setFilterDateAnchor}
-                          className="min-w-0 flex-1"
-                        />
-                      </div>
-                    </FilterRow>
-                    <label className="flex cursor-pointer items-center gap-2 pl-[108px] text-[13px] text-[#202124]">
-                      <input
-                        type="checkbox"
-                        checked={filterHasAttachment}
-                        onChange={(e) => setFilterHasAttachment(e.target.checked)}
-                        className="h-4 w-4 accent-[#0b57d0]"
-                      />
-                      Has attachment
-                    </label>
-                  </div>
-                  <div className="flex items-center justify-end gap-2 border-t border-[#dadce0] bg-[#f8f9fa] px-4 py-3">
-                    <button
-                      data-testid="inbox-filter-clear-btn"
-                      type="button"
-                      onClick={clearFilter}
-                      className="btn-ghost h-9 text-[13px]"
-                    >
-                      Clear
-                    </button>
-                    <button
-                      data-testid="inbox-filter-cancel-btn"
-                      type="button"
-                      onClick={() => setFilterOpen(false)}
-                      className="btn-ghost h-9 text-[13px]"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      data-testid="inbox-filter-search-btn"
-                      type="button"
-                      onClick={applyFilter}
-                      className="h-9 rounded bg-[#0b57d0] px-5 text-[13px] font-medium text-white transition hover:bg-[#0842a0]"
-                    >
-                      Search
-                    </button>
-                  </div>
-                </div>
-                )}
-              </div>
-            </div>
+            {/* Search bar + Compose now render in the WorkspaceChrome topbar — see topbarActions below. */}
 
             {/* Bulk-action / select-all toolbar */}
             {threads.length > 0 && (
-              <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--gmail-border-light)] bg-[var(--color-bg)] px-3 text-[12px]">
+              <div className="flex h-12 shrink-0 items-center gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg)] px-3 text-[12px]">
                 <input
                   data-testid="inbox-select-all-checkbox"
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleSelectAll}
-                  className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-primary)]"
+                  className="h-3.5 w-3.5 cursor-pointer accent-[var(--color-copper)]"
                   aria-label="Select all"
                   title={allSelected ? "Deselect all" : "Select all"}
                 />
@@ -4368,7 +4375,7 @@ export default function InboxPage() {
 
             {/* Thread rows */}
             {loadingList ? (
-              <ul className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+              <ul className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3">
                 {[...Array(20)].map((_, i) => {
                   // Vary widths slightly per row so the skeleton looks like
                   // a real list (different sender name lengths + subject lengths)
@@ -4377,25 +4384,16 @@ export default function InboxPage() {
                   const subjectW = i % 4 === 0 ? "w-[70%]" : i % 4 === 1 ? "w-[55%]" : i % 4 === 2 ? "w-[85%]" : "w-[40%]";
                   const dateW = i % 2 === 0 ? "w-[58px]" : "w-[72px]";
                   return (
-                    <li key={i} className="flex h-[57px] items-center overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface-offset)]">
-                      {/* Checkbox slot — matches w-10 in real row */}
-                      <span className="flex w-10 shrink-0 items-center justify-center">
-                        <Skeleton className="skeleton-shimmer h-3.5 w-3.5 rounded" />
-                      </span>
-                      {/* Star slot stays empty by default in real rows (only shown on hover); leave blank */}
-                      <span className="w-6 shrink-0" />
-                      {/* Sender name — fixed 160px slot in real row, padding px-2 */}
-                      <span className="w-[160px] shrink-0 px-2">
-                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", senderW)} />
-                      </span>
-                      {/* Subject + snippet — fills remaining space, pr-3 in real row */}
-                      <span className="flex min-w-0 flex-1 items-center pr-3">
-                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", subjectW)} />
-                      </span>
-                      {/* Date slot — w-[155px] with pr-4 in real row */}
-                      <span className="flex w-[155px] shrink-0 items-center justify-end pr-4">
-                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", dateW)} />
-                      </span>
+                    <li key={i} className="flex items-start gap-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
+                      <Skeleton className="skeleton-shimmer h-[34px] w-[34px] shrink-0 rounded-full" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <Skeleton className={cn("skeleton-shimmer h-3 rounded", senderW)} />
+                          <span className="flex-1" />
+                          <Skeleton className={cn("skeleton-shimmer h-2.5 rounded", dateW)} />
+                        </div>
+                        <Skeleton className={cn("skeleton-shimmer mt-2 h-2.5 rounded", subjectW)} />
+                      </div>
                     </li>
                   );
                 })}
@@ -4431,9 +4429,13 @@ export default function InboxPage() {
                 </p>
               </div>
             ) : (
-              <ul ref={listScrollRef} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+              <ul
+                ref={listScrollRef}
+                className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-3"
+              >
                 {threads.map((t) => {
                   const name = senderName(t.from);
+                  const fromEmail = extractEmailAddress(t.from || "");
                   const isSelected = selectedThreadIds.has(t.id);
                   const isActiveThread = selectedId === t.id;
                   const isUnread = Boolean(t.unread);
@@ -4458,22 +4460,20 @@ export default function InboxPage() {
                         else void openThread(t.id);
                       }}
                       className={cn(
-                        "group relative cursor-pointer border-b border-[var(--gmail-border-row)] text-[13px] transition-colors",
+                        "group relative cursor-pointer rounded-xl border text-[13px] transition-all",
                         isActiveThread
-                          ? "bg-[var(--gmail-row-selected)] shadow-[inset_3px_0_0_0_var(--color-primary)]"
+                          ? "border-transparent bg-[var(--color-copper-tint)] shadow-[0_0_0_1.5px_var(--color-copper)]"
                           : isSelected
-                            ? "bg-[var(--color-primary-light)]"
-                            : isUnread
-                              ? "bg-[var(--color-surface)] font-semibold"
-                              : "bg-[var(--color-surface)] font-normal",
-                        !isActiveThread && "hover:bg-[var(--gmail-row-hover)] hover:shadow-sm",
+                            ? "border-transparent bg-[var(--color-copper-tint)]"
+                            : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)] hover:shadow-md",
+                        isUnread && !isActiveThread && !isSelected && "font-semibold",
                       )}
                     >
                       {/* Mobile — compact two-line row (desktop layout unchanged below). */}
                       <div className="flex flex-col gap-0.5 px-3 py-2.5 md:hidden">
                         <div className="flex min-w-0 items-center gap-2">
                           {isUnread && (
-                            <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-primary)]" />
+                            <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-copper)]" />
                           )}
                           <button
                             type="button"
@@ -4535,195 +4535,196 @@ export default function InboxPage() {
                         </p>
                       </div>
 
-                      <div className="hidden h-[40px] w-full items-center overflow-hidden md:flex">
-                      {/* Checkbox — fixed 40px slot. An unread dot shows by
-                          default for at-a-glance scanning; on row hover (or once
-                          selected) it yields to the checkbox for bulk actions. */}
-                      <span className="relative flex w-10 shrink-0 items-center justify-center">
-                        {isUnread && !isSelected && (
-                          <span
-                            aria-hidden
-                            className="pointer-events-none absolute h-2 w-2 rounded-full bg-[var(--color-primary)] transition-opacity group-hover:opacity-0"
+                      <div className="hidden items-start gap-3 overflow-hidden px-3.5 py-3 md:flex">
+                        {/* Checkbox — overlaps the avatar's top-left corner. An unread
+                            dot shows there by default; on row hover (or once selected)
+                            it yields to the checkbox for bulk actions. */}
+                        <span className="relative mt-0.5 shrink-0">
+                          <GmailAvatar
+                            seed={fromEmail || name}
+                            name={name}
+                            email={fromEmail || undefined}
+                            size={34}
                           />
-                        )}
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => toggleRowSelection(t.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          className={cn(
-                            "h-3.5 w-3.5 cursor-pointer accent-[var(--color-primary)] transition-opacity",
-                            isUnread && !isSelected
-                              ? "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
-                              : "opacity-100",
-                          )}
-                          aria-label="Select"
-                        />
-                      </span>
-
-                      {/* Important marker — Gmail-style filled/outlined label bookmark.
-                          Always visible (not hover-gated) so users can scan importance
-                          at a glance exactly like in Gmail's own list view. */}
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); void toggleThreadImportant(t.id, !t.important); }}
-                        disabled={isBusy}
-                        className={cn(
-                          "flex w-5 shrink-0 items-center justify-center transition-colors",
-                          t.important
-                            ? "text-yellow-400 hover:text-yellow-300"
-                            : "text-[var(--color-text-faint)] hover:text-yellow-400"
-                        )}
-                        aria-label={t.important ? "Mark not important" : "Mark as important"}
-                        title={t.important ? "Mark not important" : "Mark as important"}
-                      >
-                        {/* Gmail's importance marker is a right-pointing label/bookmark shape */}
-                        <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
-                          {t.important ? (
-                            <path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
-                          ) : (
-                            <path fill="none" stroke="currentColor" strokeWidth="2" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
-                          )}
-                        </svg>
-                      </button>
-
-                      {/* Star — always visible; filled/yellow when starred, faint outline when not */}
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); void toggleThreadStar(t.id, !isStarred); }}
-                        disabled={isBusy}
-                        className={cn(
-                          "flex w-6 shrink-0 items-center justify-center text-[15px] leading-none transition-colors",
-                          isStarred
-                            ? "text-yellow-500 hover:text-yellow-400"
-                            : "text-[var(--color-text-faint)] hover:text-yellow-500"
-                        )}
-                        aria-label={isStarred ? "Unstar" : "Star"}
-                        title={isStarred ? "Unstar" : "Star"}
-                      >
-                        {isStarred ? "★" : "☆"}
-                      </button>
-
-                      {/* Sender name — fixed 160px, truncated */}
-                      <button
-                        type="button"
-                        onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
-                        className={cn(
-                          "w-[160px] shrink-0 truncate px-2 text-left text-[13px]",
-                          isUnread ? "font-bold text-[var(--color-text)]" : "font-normal text-[var(--color-text)]"
-                        )}
-                      >
-                        {searchHighlight.length > 0 ? (
-                          <SearchHighlight text={name} terms={searchHighlight} />
-                        ) : (
-                          name
-                        )}
-                      </button>
-
-                      {/* Subject + snippet — fills remaining space, single line, truncated before date */}
-                      <button
-                        type="button"
-                        onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
-                        className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden text-left pr-3"
-                      >
-                        {chips.length > 0 && (
-                          <span className="flex shrink-0 items-center gap-1">
-                            {chips.map((l) => (
-                              <LabelChip key={l.id} label={l} accent={labelColorMap.get(l.id)} />
-                            ))}
-                          </span>
-                        )}
-                        <span className="min-w-0 flex-1 truncate">
-                          <span className={cn(isUnread ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]")}>
-                            {searchHighlight.length > 0 ? (
-                              <SearchHighlight text={t.subject || "(no subject)"} terms={searchHighlight} />
-                            ) : (
-                              t.subject || "(no subject)"
+                          <span className="absolute -left-1 -top-1 flex h-4 w-4 items-center justify-center">
+                            {isUnread && !isSelected && (
+                              <span
+                                aria-hidden
+                                className="pointer-events-none absolute h-2.5 w-2.5 rounded-full border-2 border-[var(--color-surface)] bg-[var(--color-copper)] transition-opacity group-hover:opacity-0"
+                              />
                             )}
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleRowSelection(t.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              className={cn(
+                                "h-3.5 w-3.5 cursor-pointer accent-[var(--color-copper)] transition-opacity",
+                                isUnread && !isSelected
+                                  ? "opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                                  : "opacity-100",
+                              )}
+                              aria-label="Select"
+                            />
                           </span>
-                          {t.snippet ? (
-                            <span className="font-normal text-[var(--color-text-faint)]">
-                              {" — "}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => t.draftId ? void openDraft(t.draftId) : void openThread(t.id)}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <span className="flex items-center gap-2">
+                            <span
+                              className={cn(
+                                "min-w-0 flex-1 truncate text-[13px]",
+                                isUnread ? "font-bold text-[var(--color-text)]" : "font-semibold text-[var(--color-text)]",
+                              )}
+                            >
                               {searchHighlight.length > 0 ? (
-                                <SearchHighlight text={t.snippet} terms={searchHighlight} />
+                                <SearchHighlight text={name} terms={searchHighlight} />
                               ) : (
-                                t.snippet
+                                name
                               )}
                             </span>
-                          ) : null}
-                        </span>
-                      </button>
-
-                      {/* Right-side: calendar / attachment icon + date */}
-                      <span className="flex w-[155px] shrink-0 items-center justify-end gap-1.5 pr-4">
-                        {(() => {
-                          const isCal =
-                            t.hasCalendarInvite ??
-                            isCalendarInviteThread({
-                              subject: t.subject,
-                              from: t.from,
-                              snippet: t.snippet,
-                            });
-                          return isCal ? (
-                            <span title={titleCase("Calendar event")} className="inline-flex shrink-0">
-                              <IconCalendar className="h-[15px] w-[15px] text-[var(--color-text-faint)]" />
+                            <time className={cn(
+                              "shrink-0 whitespace-nowrap text-[11.5px] tabular-nums",
+                              isUnread ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-faint)]"
+                            )}>
+                              {t.date ? formatDate(t.date) : ""}
+                            </time>
+                          </span>
+                          <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
+                            {chips.length > 0 && (
+                              <span className="flex shrink-0 items-center gap-1">
+                                {chips.map((l) => (
+                                  <LabelChip key={l.id} label={l} accent={labelColorMap.get(l.id)} />
+                                ))}
+                              </span>
+                            )}
+                            <span className="min-w-0 flex-1 truncate text-[12.5px]">
+                              <span className={cn(isUnread ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]")}>
+                                {searchHighlight.length > 0 ? (
+                                  <SearchHighlight text={t.subject || "(no subject)"} terms={searchHighlight} />
+                                ) : (
+                                  t.subject || "(no subject)"
+                                )}
+                              </span>
+                              {t.snippet ? (
+                                <span className="font-normal text-[var(--color-text-faint)]">
+                                  {" — "}
+                                  {searchHighlight.length > 0 ? (
+                                    <SearchHighlight text={t.snippet} terms={searchHighlight} />
+                                  ) : (
+                                    t.snippet
+                                  )}
+                                </span>
+                              ) : null}
                             </span>
-                          ) : null;
-                        })()}
-                        {t.hasAttachments &&
-                          !(t.hasCalendarInvite ??
-                            isCalendarInviteThread({
-                              subject: t.subject,
-                              from: t.from,
-                              snippet: t.snippet,
-                            })) && (
-                          <svg
-                            width="13"
-                            height="13"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            className="shrink-0 text-[var(--color-text-faint)]"
-                            aria-label={titleCase("Has attachment")}
+                          </span>
+                        </button>
+
+                        {/* Right-side controls: calendar/attachment icon, important marker, star */}
+                        <span className="flex shrink-0 items-center gap-1.5 pt-0.5">
+                          {(() => {
+                            const isCal =
+                              t.hasCalendarInvite ??
+                              isCalendarInviteThread({
+                                subject: t.subject,
+                                from: t.from,
+                                snippet: t.snippet,
+                              });
+                            return isCal ? (
+                              <span title={titleCase("Calendar event")} className="inline-flex shrink-0">
+                                <IconCalendar className="h-[15px] w-[15px] text-[var(--color-text-faint)]" />
+                              </span>
+                            ) : null;
+                          })()}
+                          {t.hasAttachments &&
+                            !(t.hasCalendarInvite ??
+                              isCalendarInviteThread({
+                                subject: t.subject,
+                                from: t.from,
+                                snippet: t.snippet,
+                              })) && (
+                            <svg
+                              width="13"
+                              height="13"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              className="shrink-0 text-[var(--color-text-faint)]"
+                              aria-label={titleCase("Has attachment")}
+                            >
+                              <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.49" />
+                            </svg>
+                          )}
+                          {/* Important marker — Gmail-style filled/outlined label bookmark.
+                              Always visible (not hover-gated) so users can scan importance
+                              at a glance exactly like in Gmail's own list view. */}
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); void toggleThreadImportant(t.id, !t.important); }}
+                            disabled={isBusy}
+                            className={cn(
+                              "flex w-4 shrink-0 items-center justify-center transition-colors",
+                              t.important
+                                ? "text-yellow-400 hover:text-yellow-300"
+                                : "text-[var(--color-text-faint)] hover:text-yellow-400"
+                            )}
+                            aria-label={t.important ? "Mark not important" : "Mark as important"}
+                            title={t.important ? "Mark not important" : "Mark as important"}
                           >
-                            <path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66L9.41 17.41a2 2 0 0 1-2.83-2.83l8.49-8.49" />
-                          </svg>
-                        )}
-                        <time className={cn(
-                          "shrink-0 whitespace-nowrap text-[12px] tabular-nums",
-                          isUnread ? "font-bold text-[var(--color-text)]" : "text-[var(--color-text-faint)]"
-                        )}>
-                          {t.date ? formatDate(t.date) : ""}
-                        </time>
-                      </span>
+                            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden="true">
+                              {t.important ? (
+                                <path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+                              ) : (
+                                <path fill="none" stroke="currentColor" strokeWidth="2" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/>
+                              )}
+                            </svg>
+                          </button>
+
+                          {/* Star — always visible; filled/yellow when starred, faint outline when not */}
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); void toggleThreadStar(t.id, !isStarred); }}
+                            disabled={isBusy}
+                            className={cn(
+                              "flex w-4 shrink-0 items-center justify-center text-[14px] leading-none transition-colors",
+                              isStarred
+                                ? "text-yellow-500 hover:text-yellow-400"
+                                : "text-[var(--color-text-faint)] hover:text-yellow-500"
+                            )}
+                            aria-label={isStarred ? "Unstar" : "Star"}
+                            title={isStarred ? "Unstar" : "Star"}
+                          >
+                            {isStarred ? "★" : "☆"}
+                          </button>
+                        </span>
                       </div>
                     </li>
                   );
                 })}
 
                 {/* Skeleton rows appended inside the scroll list while loading more.
-                    Mirrors the real row layout (checkbox slot, fixed-160 sender,
-                    fluid subject, fixed-155 date) so the swap-in is seamless. */}
+                    Mirrors the real card layout (avatar, sender + date, subject line)
+                    so the swap-in is seamless. */}
                 {loadingMore && [0,1,2,3].map((i) => {
                   const senderW = i % 3 === 0 ? "w-[120px]" : i % 3 === 1 ? "w-[95px]" : "w-[140px]";
                   const subjectW = i % 4 === 0 ? "w-[70%]" : i % 4 === 1 ? "w-[55%]" : i % 4 === 2 ? "w-[85%]" : "w-[40%]";
                   const dateW = i % 2 === 0 ? "w-[58px]" : "w-[72px]";
                   return (
-                    <li key={`skel-${i}`} className="flex h-[57px] items-center overflow-hidden border-b border-[var(--color-border)] bg-[var(--color-surface-offset)]">
-                      <span className="flex w-10 shrink-0 items-center justify-center">
-                        <Skeleton className="skeleton-shimmer h-3.5 w-3.5 rounded" />
-                      </span>
-                      <span className="w-6 shrink-0" />
-                      <span className="w-[160px] shrink-0 px-2">
-                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", senderW)} />
-                      </span>
-                      <span className="flex min-w-0 flex-1 items-center pr-3">
-                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", subjectW)} />
-                      </span>
-                      <span className="flex w-[155px] shrink-0 items-center justify-end pr-4">
-                        <Skeleton className={cn("skeleton-shimmer h-3 rounded", dateW)} />
-                      </span>
+                    <li key={`skel-${i}`} className="flex items-start gap-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
+                      <Skeleton className="skeleton-shimmer h-[34px] w-[34px] shrink-0 rounded-full" />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <Skeleton className={cn("skeleton-shimmer h-3 rounded", senderW)} />
+                          <span className="flex-1" />
+                          <Skeleton className={cn("skeleton-shimmer h-2.5 rounded", dateW)} />
+                        </div>
+                        <Skeleton className={cn("skeleton-shimmer mt-2 h-2.5 rounded", subjectW)} />
+                      </div>
                     </li>
                   );
                 })}
@@ -4743,8 +4744,8 @@ export default function InboxPage() {
             {loadingThread ? (
               <div className="flex h-full flex-col">
                 {/* Header skeleton — mirrors the real subject row + sender meta */}
-                <div className="border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] px-2 py-2 md:px-4">
-                  <div className="mb-3 flex items-center gap-1 border-b border-[var(--gmail-border-row)] pb-2">
+                <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-2 md:px-4">
+                  <div className="mb-3 flex items-center gap-1 border-b border-[var(--color-border)] pb-2">
                     <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
                     <LabelPicker
                       allLabels={allLabels}
@@ -4777,7 +4778,7 @@ export default function InboxPage() {
                   {[0, 1].map((idx) => (
                     <article
                       key={idx}
-                      className="rounded-lg border border-[var(--gmail-border-light)] bg-[var(--color-surface)] p-5 md:p-6"
+                      className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-5 md:p-6"
                     >
                       {/* Top row: avatar + from/to + date */}
                       <div className="flex items-start justify-between gap-2">
@@ -4817,8 +4818,8 @@ export default function InboxPage() {
             ) : messages && messages.length ? (
               <>
                 {/* Thread header — subject + actions only, no redundant sender info */}
-                <div className="border-b border-[var(--gmail-border-light)] bg-[var(--color-surface)] px-2 py-2 md:px-4">
-                  <div className="mb-2 flex items-center gap-1 border-b border-[var(--gmail-border-row)] pb-2">
+                <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-2 md:px-4">
+                  <div className="mb-2 flex items-center gap-1 border-b border-[var(--color-border)] pb-2">
                     <ThreadPaneNavButton variant="back" onClick={closeThread} className="md:hidden" />
                     <LabelPicker
                       allLabels={allLabels}
@@ -4835,8 +4836,11 @@ export default function InboxPage() {
                       className="ml-auto hidden md:inline-flex"
                     />
                   </div>
+                  <p className="mb-1 px-2 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--color-copper)] md:px-0">
+                    {titleCase(folder === "allmail" ? "All mail" : folder)}
+                  </p>
                   <div className="flex items-center gap-2 px-2 md:px-0">
-                    <h2 className="min-w-0 flex-1 text-[18px] font-semibold leading-snug text-[var(--color-text)]">
+                    <h2 className="font-display min-w-0 flex-1 text-[20px] font-bold leading-snug tracking-tight text-[var(--color-text)] md:text-[22px]">
                       {messages[0]?.subject || "(no subject)"}
                     </h2>
                     {messages.length > 1 && (
@@ -4911,7 +4915,7 @@ export default function InboxPage() {
             "fixed bottom-6 left-6 z-[1100] flex items-center gap-3 rounded-lg px-4 py-3 text-[13px] font-medium text-white shadow-xl transition-all",
             sendSnack.phase === "error"
               ? "bg-[var(--color-danger)]"
-              : "bg-[#202124]"
+              : "bg-[var(--color-text)]"
           )}
           role="status"
           aria-live="polite"

@@ -39,8 +39,36 @@ export function linkifyPlainTextToHtml(text: string): string {
 }
 
 /**
+ * Wrap bare URLs in a text node that is already HTML (may contain entities like
+ * &nbsp; or &amp;) in anchor tags — without re-escaping the surrounding text,
+ * since it's already valid HTML, not raw plain text.
+ */
+function linkifyUrlsInHtmlTextNode(text: string): string {
+  if (!text) return "";
+
+  let out = "";
+  let lastIndex = 0;
+
+  for (const match of Array.from(text.matchAll(PLAIN_URL_RE))) {
+    const start = match.index ?? 0;
+    const raw = match[0];
+    out += text.slice(lastIndex, start);
+
+    const { href, trailing } = trimTrailingPunctuation(raw);
+    const safeHref = href.replace(/"/g, "&quot;");
+    out += `<a href="${safeHref}" target="_blank" rel="noopener noreferrer">${href}</a>`;
+    if (trailing) out += trailing;
+    lastIndex = start + raw.length;
+  }
+
+  out += text.slice(lastIndex);
+  return out;
+}
+
+/**
  * Linkify bare http(s) URLs in HTML fragments without touching tag attributes.
- * Skips text that is already inside an anchor tag.
+ * Skips text that is already inside an anchor tag. The input is already HTML,
+ * so text nodes are left as-is (not re-escaped) — only bare URLs get wrapped.
  */
 export function linkifyBareUrlsInHtml(html: string): string {
   if (!html || !PLAIN_URL_RE.test(html)) return html;
@@ -56,7 +84,7 @@ export function linkifyBareUrlsInHtml(html: string): string {
         return part;
       }
       if (insideAnchor) return part;
-      return linkifyPlainTextToHtml(part);
+      return linkifyUrlsInHtmlTextNode(part);
     })
     .join("");
 }

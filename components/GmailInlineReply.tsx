@@ -20,7 +20,7 @@ export function GmailInlineReply({
   onForward,
 }: GmailInlineReplyProps) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-[var(--gmail-border-light)] bg-[var(--color-surface)] px-4 py-4 md:px-8">
+    <div className="flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4 md:px-8">
       <button type="button" onClick={onStartReply} className={replyActionClass}>
         <IconReply className="h-[18px] w-[18px] shrink-0 text-[var(--color-text-faint)]" />
         <span>{titleCase("Reply")}</span>

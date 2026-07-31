@@ -10,6 +10,7 @@ import {
   Music,
   Archive,
   Code,
+  Folder,
 } from "lucide-react";
 
 const ARCHIVE_EXTENSIONS = new Set([
@@ -45,6 +46,8 @@ type Props = {
   thumbnailLink?: string;
   className?: string;
   iconClassName?: string;
+  /** Bare icon, no colored badge background — matches the Drive list-view row style. */
+  flat?: boolean;
 };
 
 type IconConfig = {
@@ -222,6 +225,7 @@ export function DriveMimeIcon({
   thumbnailLink,
   className,
   iconClassName = "h-4 w-4",
+  flat,
 }: Props) {
   const isFolder = mimeType === "application/vnd.google-apps.folder";
 
@@ -251,6 +255,20 @@ export function DriveMimeIcon({
   }
 
   const cfg = getConfig(mimeType, name, iconClassName);
+
+  if (flat) {
+    return (
+      <span
+        className={cn(
+          "flex shrink-0 items-center justify-center",
+          isFolder ? "text-[var(--color-copper)]" : cfg.iconColor,
+          className ?? "h-8 w-8",
+        )}
+      >
+        {isFolder ? <Folder className={iconClassName} strokeWidth={1.75} /> : cfg.icon}
+      </span>
+    );
+  }
 
   return (
     <span

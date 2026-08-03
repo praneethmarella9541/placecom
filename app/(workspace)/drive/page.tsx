@@ -15,7 +15,7 @@ import {
   IconDownload,
   IconX,
 } from "@/components/Icons";
-import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
+import { supportsInAppPreview, isOfficeMimeType, isEditableSpreadsheetMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
 import { DriveDetailsPanel } from "@/components/DriveDetailsPanel";
@@ -2441,6 +2441,18 @@ export default function DrivePage() {
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] p-4">
+              {isEditableSpreadsheetMimeType(previewFile.mimeType) ? (
+                <a
+                  href={`/drive/sheet/${encodeURIComponent(previewFile.id)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary gap-2"
+                  title={titleCase("Edit spreadsheet in-app")}
+                >
+                  <Pencil className="h-4 w-4" />
+                  {titleCase("Edit")}
+                </a>
+              ) : null}
               {isOfficeMimeType(previewFile.mimeType) && previewFile.webViewLink ? (
                 <a
                   href={previewFile.webViewLink}

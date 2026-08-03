@@ -24,6 +24,14 @@ export function isOfficeMimeType(mimeType: string): boolean {
   return OFFICE_MIME_TYPES.has(mimeType);
 }
 
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet";
+
+/** Spreadsheet types the in-app grid editor (`/drive/sheet/[id]`) can open and save. */
+export function isEditableSpreadsheetMimeType(mimeType: string): boolean {
+  return mimeType === XLSX_MIME || mimeType === GOOGLE_SHEET_MIME;
+}
+
 /** CSV uploads — browsers download raw text/csv in iframes; we render as HTML instead. */
 export function isCsvMimeType(mimeType: string, filename?: string): boolean {
   if (mimeType === "text/csv" || mimeType === "application/csv") return true;

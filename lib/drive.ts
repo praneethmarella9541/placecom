@@ -913,6 +913,49 @@ export async function renameDriveFile(
   return (await res.json()) as DriveFileRow;
 }
 
+const DRIVE_UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
+
+/**
+ * Replace a file's content in place via media upload. For native Google
+ * Workspace files (e.g. a Google Sheet), uploading Office-format bytes here
+ * converts them in place — the same mechanism as "File > Import > Replace"
+ * in the Drive UI. For ordinary binary files (e.g. an uploaded .xlsx) it's
+ * a straight byte replace; the file's mimeType is unchanged either way.
+ */
+export async function updateDriveFileContent(
+  accessToken: string,
+  fileId: string,
+  bytes: ArrayBuffer | Buffer,
+  contentType: string,
+): Promise<{ id: string; modifiedTime: string }> {
+  const params = new URLSearchParams({
+    uploadType: "media",
+    fields: "id,modifiedTime",
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_UPLOAD_API}/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": contentType,
+        },
+        body: bytes as BodyInit,
+      },
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (update content)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwDriveApiError(res.status, text, "Drive update-content");
+  }
+  return (await res.json()) as { id: string; modifiedTime: string };
+}
+
 /**
  * Move a file/folder from one parent to another. Drive's API uses
  * addParents / removeParents query params on PATCH (a file can have

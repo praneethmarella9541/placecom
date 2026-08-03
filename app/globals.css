@@ -962,4 +962,84 @@
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
   }
+
+  /* Drive sheet editor — flags cells holding a live formula */
+  .sheet-editor-formula-cell {
+    background-color: var(--color-copper-tint);
+  }
+
+  /* Drive sheet editor — find-in-sheet match highlighting */
+  .sheet-editor-search-match {
+    background-color: var(--color-warning-light);
+    outline: 1px solid var(--color-warning);
+    outline-offset: -1px;
+  }
+  .sheet-editor-search-match--current {
+    background-color: var(--color-copper-tint);
+    outline: 2px solid var(--color-copper);
+    outline-offset: -2px;
+  }
+
+  /* Drive sheet editor — point-mode reference highlight (portal-rendered, fixed position) */
+  .sheet-editor-point-mode-highlight {
+    pointer-events: none;
+    z-index: 60;
+    border: 2px solid var(--color-copper);
+    background-color: var(--color-copper-tint);
+    box-sizing: border-box;
+  }
+
+  /* Drive sheet editor — fill handle + drag preview (portal/fixed position) */
+  .sheet-editor-fill-handle {
+    z-index: 60;
+    width: 8px;
+    height: 8px;
+    background-color: var(--color-copper);
+    border: 1px solid var(--color-surface);
+    cursor: crosshair;
+  }
+  .sheet-editor-fill-preview {
+    pointer-events: none;
+    z-index: 55;
+    border: 1px dashed var(--color-copper);
+    box-sizing: border-box;
+  }
+
+  /* Drive sheet editor — formula-function autocomplete dropdown (portal/fixed position) */
+  .sheet-editor-formula-suggestions {
+    z-index: 70;
+    max-height: 220px;
+    overflow-y: auto;
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: 0 8px 24px rgba(20, 18, 14, 0.16);
+    padding: 4px;
+  }
+  .sheet-editor-formula-suggestion {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .sheet-editor-formula-suggestion--active {
+    background-color: var(--color-copper-tint);
+  }
+  .sheet-editor-formula-suggestion-name {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+  .sheet-editor-formula-suggestion-desc {
+    font-size: 11px;
+    color: var(--color-text-faint);
+  }
 }

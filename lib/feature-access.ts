@@ -32,7 +32,6 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "drive",
   "forms",
   "broadcasting",
-  "dashboard",
   "calendar",
   "whatsapp",
 ];

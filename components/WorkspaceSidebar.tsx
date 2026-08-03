@@ -13,12 +13,9 @@ import {
   LogOut,
   Mail,
   MessageCircle,
-  MessageSquare,
   Radio,
-  ScanLine,
-  User,
+  UserRound,
   Users,
-  Video,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
@@ -37,19 +34,15 @@ const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 const commsNav = [
   { href: "/inbox", label: "Mail", Icon: Mail },
   { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
-  { href: "/sms", label: "SMS", Icon: MessageSquare },
   { href: "/broadcasting", label: "Broadcasting", Icon: Radio },
+  { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;
 
-const pipelineNav = [
-  { href: "/crm", label: "CRM", Icon: User },
-  { href: "/dashboard", label: "Extraction", Icon: ScanLine },
-] as const;
+const pipelineNav: readonly { href: string; label: string; Icon: React.ElementType }[] = [];
 
 const opsNav = [
   { href: "/drive", label: "Drive", Icon: Folder },
   { href: "/calendar", label: "Calendar", Icon: Calendar },
-  { href: "/meetings", label: "Meetings", Icon: Video },
   { href: "/forms", label: "Forms", Icon: FileText },
 ] as const;
 

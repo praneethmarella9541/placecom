@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { titleCase } from "@/lib/title-case";
 import { DateRangePicker, rangeEndingToday, type DateRange } from "@/components/DateRangePicker";
-import { Phone, MessageSquare, TrendingDown, PhoneIncoming, PhoneOutgoing, IndianRupee } from "lucide-react";
+import { Phone, MessageSquare, PhoneIncoming, PhoneOutgoing, IndianRupee } from "lucide-react";
 
 type UsageCosts = {
   callsInr: number;
@@ -73,15 +73,6 @@ type ExotelBalance = {
   debug?: { hasSid: boolean; hasKey: boolean; hasToken: boolean; sidHint?: string | null; keyHint?: string | null; tokenHint?: string | null };
 };
 
-type OpenAIBalance = {
-  balance: number | null;
-  currency: string;
-  totalGranted: number | null;
-  dateUpdated: string | null;
-  error?: string;
-  debug?: { hasKey: boolean };
-};
-
 function formatNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -145,28 +136,21 @@ export default function AdminAnalyticsPage() {
   const [users, setUsers] = useState<UserAnalytics[]>([]);
   const [accountTotals, setAccountTotals] = useState<AccountTotals | null>(null);
   const [balance, setBalance] = useState<ExotelBalance | null>(null);
-  const [openaiBalance, setOpenaiBalance] = useState<OpenAIBalance | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState(14);
   const [range, setRange] = useState<DateRange>(() => rangeEndingToday(14));
 
-  // Fetch Exotel and OpenAI balances once on mount
+  // Fetch Exotel balance once on mount
   useEffect(() => {
     void (async () => {
       try {
-        const [exoRes, openaiRes] = await Promise.all([
-          fetch("/api/admin/exotel-balance"),
-          fetch("/api/admin/openai-balance"),
-        ]);
+        const exoRes = await fetch("/api/admin/exotel-balance");
         const exoData = (await exoRes.json()) as ExotelBalance;
-        const openaiData = (await openaiRes.json()) as OpenAIBalance;
         setBalance(exoData);
-        setOpenaiBalance(openaiData);
       } catch {
         setBalance(null);
-        setOpenaiBalance(null);
       } finally {
         setBalanceLoading(false);
       }
@@ -272,7 +256,7 @@ export default function AdminAnalyticsPage() {
             {[...Array(2)].map((_, i) => <div key={i} className="skeleton-shimmer h-16 flex-1 rounded-xl" />)}
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3">
             {balance?.error || !balance || balance.balance === null ? (
               <div className="flex flex-col gap-1 rounded-xl bg-[var(--color-surface-offset)]/60 px-4 py-4 ring-1 ring-[var(--color-border)]">
                 <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Exotel Wallet</p>
@@ -287,25 +271,6 @@ export default function AdminAnalyticsPage() {
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Exotel Wallet</p>
                   <p className="font-display text-[24px] font-extrabold leading-none text-[var(--color-success)]">
                     ₹{balance.balance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {openaiBalance?.error || !openaiBalance || openaiBalance.balance === null ? (
-              <div className="flex flex-col gap-1 rounded-xl bg-[var(--color-surface-offset)]/60 px-4 py-4 ring-1 ring-[var(--color-border)]">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">OpenAI API</p>
-                <p className="text-[12px] text-[var(--color-text-muted)]">{openaiBalance?.error ?? "Not configured"}</p>
-              </div>
-            ) : (
-              <div className="flex items-center gap-4 rounded-xl bg-[#f0fdf4] px-4 py-4 ring-1 ring-[#bbf7d0]/60">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white text-[#10a37f] shadow-sm">
-                  <TrendingDown className="h-5 w-5" strokeWidth={2} />
-                </div>
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">OpenAI API</p>
-                  <p className="font-display text-[24px] font-extrabold leading-none text-[#10a37f]">
-                    ${openaiBalance.balance.toFixed(2)}
                   </p>
                 </div>
               </div>
@@ -326,7 +291,6 @@ export default function AdminAnalyticsPage() {
             <KpiCard icon={MessageSquare}  label="WA Sent"         value={accountTotals.whatsappSent}      accent="#25d366" />
             <KpiCard icon={Phone}          label="WA Received"     value={accountTotals.whatsappReceived}  accent="#128c7e" sub={`${accountTotals.costs.whatsappSessionMsgs + accountTotals.costs.whatsappUtilityMsgs + accountTotals.costs.whatsappPromotionalMsgs} billed msgs`} />
             <KpiCard icon={IndianRupee}    label="Telephony Cost"  value={formatInr(accountTotals.costs.totalInr)} accent="#e37400" sub={`Calls ${formatInr(accountTotals.costs.callsInr)} · WA ${formatInr(accountTotals.costs.whatsappInr)}`} />
-            <KpiCard icon={TrendingDown}   label="AI Cost"         value={`$${accountTotals.costUsd.toFixed(4)}`} accent="#d93025" sub="OpenAI extraction" />
           </div>
           <p className="mt-2 text-[11px] text-[var(--color-text-faint)]">
             Call ₹0.60/min (rounded up per call) · WA utility ₹0.11 · promotional ₹0.86 · session ₹0.06 per message (in + out).

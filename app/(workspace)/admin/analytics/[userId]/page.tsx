@@ -193,12 +193,6 @@ export default function AdminUserAnalyticsPage() {
               <StatCard label="WA cost" value={formatInr(user.totals.costs.whatsappInr)} sub={`${user.totals.costs.whatsappUtilityMsgs} utility · ${user.totals.costs.whatsappPromotionalMsgs} promo · ${user.totals.costs.whatsappSessionMsgs} session`} accent="#128c7e" />
             </div>
           </SectionBlock>
-
-          <SectionBlock title="AI usage">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <StatCard label="AI cost (USD)" value={`$${user.totals.costUsd.toFixed(2)}`} sub="OpenAI extraction" accent="#8b5cf6" />
-            </div>
-          </SectionBlock>
         </>
       )}
     </div>

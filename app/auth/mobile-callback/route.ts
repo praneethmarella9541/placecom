@@ -47,15 +47,16 @@ export async function GET(request: Request) {
   const cookieStore = cookies();
   const cookieReturn = cookieStore.get(MOBILE_OAUTH_RETURN_COOKIE)?.value ?? "";
   const queryReturn = searchParams.get("return") ?? "";
-  const handoffNative = searchParams.get("handoff") === "native";
 
-  let mobileReturn = "";
+  // This route only exists for the mobile app's OAuth handoff, so when there's
+  // no cookie/query signal telling us otherwise, default to the native scheme
+  // rather than leaving mobileReturn empty (which would strand the user on
+  // this page with no redirect at all — the historical bug here).
+  let mobileReturn = "thenucleus://auth/callback";
   if (isAllowedMobileOAuthReturnUri(cookieReturn)) {
     mobileReturn = cookieReturn;
   } else if (isAllowedMobileOAuthReturnUri(queryReturn)) {
     mobileReturn = queryReturn;
-  } else if (handoffNative) {
-    mobileReturn = "thenucleus://auth/callback";
   }
 
   let expFallback = "";

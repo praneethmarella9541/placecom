@@ -114,11 +114,12 @@ export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onT
     return (
       <div className="grid gap-2 sm:grid-cols-2">
         {manageableFeatures.map((feature) => (
-          <label key={feature} className="flex items-center gap-2 text-xs text-zinc-700 dark:text-zinc-300">
+          <label key={feature} className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
             <input
               type="checkbox"
               checked={!blockedFeatures.includes(feature)}
               onChange={() => onToggle(feature)}
+              className="h-4 w-4 rounded border-[var(--color-border)] accent-[var(--color-copper)]"
             />
             {titleCase(FEATURE_LABELS[feature])}
           </label>
@@ -128,27 +129,27 @@ export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onT
   }
 
   return (
-    <div className="card space-y-4 p-5">
+    <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">{titleCase("Access groups")}</h2>
+        <h2 className="font-display text-[17px] font-bold text-[var(--color-text)]">{titleCase("Access groups")}</h2>
       </div>
 
-      <div className="space-y-2 rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
-        <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">{titleCase("New group name")}</label>
+      <div className="space-y-2 rounded-xl border border-[var(--color-border)] p-4">
+        <label className="block text-[12px] font-semibold text-[var(--color-text)]">{titleCase("New group name")}</label>
         <input
-          className="input-field w-full text-sm"
+          className="h-10 w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] px-3 text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Placement Team, Interns"
         />
-        <p className="text-[11px] text-zinc-500">{titleCase("Allowed features (unchecked = blocked)")}</p>
+        <p className="text-[11px] text-[var(--color-text-faint)]">{titleCase("Allowed features (unchecked = blocked)")}</p>
         <FeatureChecklist
           blockedFeatures={blocked}
           onToggle={(f) => toggleBlocked(blocked, f, setBlocked)}
         />
         <button
           type="button"
-          className="btn-primary w-full"
+          className="inline-flex h-10 w-full items-center justify-center rounded-xl bg-[var(--color-copper)] text-[14px] font-semibold text-white transition hover:bg-[var(--color-copper-hover)] disabled:opacity-50"
           disabled={busy || !name.trim()}
           onClick={() => void createGroup()}
         >
@@ -157,25 +158,38 @@ export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onT
       </div>
 
       {groupsLoading ? (
-        <p className="text-sm text-zinc-500">{titleCase("Loading groups…")}</p>
+        <p className="text-[13px] text-[var(--color-text-faint)]">{titleCase("Loading groups…")}</p>
       ) : groups.length === 0 ? (
-        <p className="text-sm text-zinc-500">{titleCase("No custom groups yet. Full access = leave group unassigned when adding members.")}</p>
+        <p className="text-[13px] text-[var(--color-text-faint)]">{titleCase("No custom groups yet. Full access = leave group unassigned when adding members.")}</p>
       ) : (
         <ul className="space-y-3">
           {groups.map((g) => (
-            <li key={g.id} className="rounded-xl border border-zinc-200 p-3 dark:border-zinc-700">
+            <li key={g.id} className="rounded-xl border border-[var(--color-border)] p-4">
               {editingId === g.id ? (
                 <div className="space-y-2">
-                  <input className="input-field w-full text-sm" value={editName} onChange={(e) => setEditName(e.target.value)} />
+                  <input
+                    className="h-10 w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] px-3 text-[14px] text-[var(--color-text)] outline-none focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                  />
                   <FeatureChecklist
                     blockedFeatures={editBlocked}
                     onToggle={(f) => toggleBlocked(editBlocked, f, setEditBlocked)}
                   />
                   <div className="flex gap-2">
-                    <button type="button" className="btn-primary flex-1" disabled={busy} onClick={() => void saveEdit(g.id)}>
+                    <button
+                      type="button"
+                      className="inline-flex h-10 flex-1 items-center justify-center rounded-xl bg-[var(--color-copper)] text-[13px] font-semibold text-white transition hover:bg-[var(--color-copper-hover)] disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => void saveEdit(g.id)}
+                    >
                       {titleCase("Save")}
                     </button>
-                    <button type="button" className="btn-ghost flex-1" onClick={() => setEditingId(null)}>
+                    <button
+                      type="button"
+                      className="inline-flex h-10 flex-1 items-center justify-center rounded-xl text-[13px] font-medium text-[var(--color-text-muted)] transition hover:bg-[var(--color-surface-offset)]"
+                      onClick={() => setEditingId(null)}
+                    >
                       {titleCase("Cancel")}
                     </button>
                   </div>
@@ -183,18 +197,26 @@ export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onT
               ) : (
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{g.name}</p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-[14px] font-semibold text-[var(--color-text)]">{g.name}</p>
+                    <p className="font-mono text-[11.5px] text-[var(--color-text-faint)]">
                       {g.restrictedFeatures.length
                         ? `${g.restrictedFeatures.length} feature(s) blocked`
                         : titleCase("Full access")}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2">
-                    <button type="button" className="btn-ghost px-2 py-1 text-xs" onClick={() => startEdit(g)}>
+                    <button
+                      type="button"
+                      className="rounded-lg px-2 py-1 text-[13px] font-medium text-[var(--color-text-muted)] transition hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+                      onClick={() => startEdit(g)}
+                    >
                       {titleCase("Edit")}
                     </button>
-                    <button type="button" className="btn-ghost px-2 py-1 text-xs text-red-600" onClick={() => void deleteGroup(g.id, g.name)}>
+                    <button
+                      type="button"
+                      className="rounded-lg px-2 py-1 text-[13px] font-medium text-[var(--color-danger)] transition hover:bg-[var(--color-danger-light)]"
+                      onClick={() => void deleteGroup(g.id, g.name)}
+                    >
                       {titleCase("Delete")}
                     </button>
                   </div>

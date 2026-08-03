@@ -222,24 +222,24 @@ export default function AdminTeamPage() {
 
       <div>
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--color-text)]">
             {titleCase("Team & shared mailbox")}
           </h1>
           <Link
             href="/admin/analytics"
-            className="shrink-0 rounded-lg border border-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="shrink-0 rounded-xl border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1.5 text-xs font-semibold text-[var(--color-text)] transition hover:bg-[var(--color-surface-offset)]"
           >
             {titleCase("View analytics →")}
           </Link>
         </div>
       </div>
 
-      <details className="team-member-details card group p-0">
+      <details className="team-member-details rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] group p-0">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-5 [&::-webkit-details-marker]:hidden">
-          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+          <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">
             {titleCase("Add staff member")}
           </h2>
-          <IconChevronDown className="team-member-chevron h-4 w-4 shrink-0 text-zinc-400" aria-hidden />
+          <IconChevronDown className="team-member-chevron h-4 w-4 shrink-0 text-[var(--color-text-faint)]" aria-hidden />
         </summary>
         <div className="space-y-3 border-t border-zinc-100 px-5 pb-5 pt-4 dark:border-zinc-800">
         <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">

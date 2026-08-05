@@ -80,13 +80,13 @@ export function ResultsTable({ rows, className }: Props) {
       icon: IconUsers,
       value: totals.contacts,
       label: titleCase("Contacts"),
-      iconWrap: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300",
+      iconWrap: "bg-[var(--color-copper)]/15 text-[var(--color-copper)]",
     },
     {
       icon: IconUser,
       value: totals.names,
       label: titleCase("Names"),
-      iconWrap: "bg-indigo-100/90 text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300",
+      iconWrap: "bg-[var(--color-copper)]/10 text-[var(--color-copper-hover)]",
     },
     {
       icon: IconPhone,
@@ -98,7 +98,7 @@ export function ResultsTable({ rows, className }: Props) {
       icon: IconAtSign,
       value: totals.emails,
       label: titleCase("Emails"),
-      iconWrap: "bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300",
+      iconWrap: "bg-[var(--color-copper)]/20 text-[var(--color-copper-hover)]",
     },
   ] as const;
 
@@ -250,7 +250,7 @@ export function ResultsTable({ rows, className }: Props) {
                       r.emails.map((em, i) => (
                         <span
                           key={i}
-                          className="inline-flex max-w-full items-center whitespace-nowrap rounded-md border border-violet-200/80 bg-violet-50 px-2 py-0.5 text-[11px] leading-none text-violet-800 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-200"
+                          className="inline-flex max-w-full items-center whitespace-nowrap rounded-md border border-[var(--color-copper)]/25 bg-[var(--color-copper)]/10 px-2 py-0.5 text-[11px] leading-none text-[var(--color-copper-hover)]"
                           title={em}
                         >
                           {em}

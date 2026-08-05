@@ -36,7 +36,6 @@ export default function AdminTeamPage() {
   const [newDisplayUsername, setNewDisplayUsername] = useState("");
   const [newJobTitle, setNewJobTitle] = useState("");
   const [newGroupId, setNewGroupId] = useState("");
-  const [newTokenLimit, setNewTokenLimit] = useState("");
   const [groups, setGroups] = useState<TeamGroup[]>(boot.groups);
   const [toast, setToast] = useState<AdminToastState>(null);
   const [busy, setBusy] = useState(false);
@@ -112,7 +111,6 @@ export default function AdminTeamPage() {
           groupId: newGroupId || null,
           displayUsername: newDisplayUsername.trim() || undefined,
           jobTitle: newJobTitle.trim() || null,
-          openaiTokenLimit: newTokenLimit.trim() ? Number(newTokenLimit) : null,
           mobilePhone: newMobilePhone.trim() || null,
           exotelVirtualNumber: newExotelNumber.trim() || null,
         }),
@@ -135,7 +133,6 @@ export default function AdminTeamPage() {
       setNewDisplayUsername("");
       setNewJobTitle("");
       setNewGroupId("");
-      setNewTokenLimit("");
       setNewMobilePhone("");
       setNewExotelNumber("");
       void revalidate({ silent: true });
@@ -301,17 +298,6 @@ export default function AdminTeamPage() {
         {!allowedFeatures && (
           <>
             <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-              {titleCase("OpenAI token limit")}
-            </label>
-            <input
-              type="number"
-              min={0}
-              value={newTokenLimit}
-              onChange={(e) => setNewTokenLimit(e.target.value)}
-              placeholder="Leave empty for unlimited"
-              className="input-field w-full text-sm"
-            />
-            <label className="mt-2 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
               {titleCase("Personal mobile (for incoming call transfer)")}
             </label>
             <input
@@ -476,39 +462,6 @@ export default function AdminTeamPage() {
 
                   {!allowedFeatures && (
                     <>
-                      <div>
-                        <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-                          {titleCase("OpenAI token limit")}
-                        </label>
-                        <input
-                          type="number"
-                          min={0}
-                          value={member.openaiTokenLimit ?? ""}
-                          onChange={(e) =>
-                            setMembers((prev) =>
-                              prev.map((m) =>
-                                m.id === member.id
-                                  ? {
-                                      ...m,
-                                      openaiTokenLimit: e.target.value
-                                        ? Math.max(0, Number(e.target.value) || 0)
-                                        : null,
-                                    }
-                                  : m
-                              )
-                            )
-                          }
-                          placeholder="Unlimited"
-                          className="input-field w-full text-sm"
-                        />
-                        <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                          {titleCase("Used")}: {member.tokensUsed.toLocaleString()}
-                          {member.openaiTokenLimit != null
-                            ? ` / ${member.openaiTokenLimit.toLocaleString()}`
-                            : ""}
-                        </p>
-                      </div>
-
                       <div>
                         <label className="mb-1 block text-xs font-medium text-zinc-600 dark:text-zinc-400">
                           {titleCase("Personal mobile")}

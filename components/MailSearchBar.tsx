@@ -112,6 +112,7 @@ export function MailSearchBar({
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fetchRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const q = inputValue.trim();
   const showDropdown = focused && q.length >= 1 && !filterOpen;
@@ -121,7 +122,14 @@ export function MailSearchBar({
   }, [showDropdown, onSuggestingChange]);
 
   useEffect(() => {
+    // Query text changed — drop the previous query's server results immediately
+    // instead of leaving them on screen until the new fetch resolves. Without
+    // this, backspacing/retyping shows contacts/threads that matched the old
+    // text (e.g. still seeing "sai bharath" hits while the box reads "pr").
     setHighlight(-1);
+    setContacts([]);
+    setThreads([]);
+    setCompletionEmail(undefined);
   }, [q, showDropdown]);
 
   const localHits = useMemo(() => {
@@ -165,7 +173,14 @@ export function MailSearchBar({
   }, [effectiveCompletion, q]);
 
   useEffect(() => {
-    if (!showDropdown) return;
+    if (!showDropdown || q.length < 2) return;
+    // Cancel any suggest request still in flight from a previous keystroke —
+    // without this, stale requests pile up (browsers cap concurrent connections
+    // per host), so each new keystroke queues behind earlier ones and typing
+    // feels like it gets progressively slower.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     const id = ++fetchRef.current;
     setLoading(true);
     const t = setTimeout(() => {
@@ -173,7 +188,7 @@ export function MailSearchBar({
         try {
           const res = await fetch(
             `/api/gmail/search/suggest?${new URLSearchParams({ q }).toString()}`,
-            { cache: "no-store" },
+            { cache: "no-store", signal: controller.signal },
           );
           const data = (await res.json()) as {
             contacts?: SearchSuggestContact[];
@@ -184,7 +199,8 @@ export function MailSearchBar({
           setContacts(data.contacts ?? []);
           setThreads(data.threads ?? []);
           setCompletionEmail(data.completionEmail);
-        } catch {
+        } catch (e) {
+          if (e instanceof DOMException && e.name === "AbortError") return;
           if (fetchRef.current !== id) return;
           setContacts([]);
           setThreads([]);
@@ -192,7 +208,7 @@ export function MailSearchBar({
           if (fetchRef.current === id) setLoading(false);
         }
       })();
-    }, 180);
+    }, 250);
     return () => clearTimeout(t);
   }, [q, showDropdown]);
 

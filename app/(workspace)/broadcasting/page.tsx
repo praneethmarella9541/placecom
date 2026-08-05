@@ -60,7 +60,7 @@ function ChannelTab({
       className={cn(
         "inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium transition-all duration-150",
         active
-          ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-[var(--shadow-sm)]"
+          ? "bg-[var(--color-surface)] text-[var(--color-copper)] shadow-[var(--shadow-sm)]"
           : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]"
       )}
     >
@@ -242,7 +242,7 @@ function BroadcastingPageInner() {
                 className={cn(
                   "rounded-md px-4 py-1.5 text-[13px] font-medium transition-all duration-150",
                   mailSubView === key
-                    ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-[var(--shadow-sm)]"
+                    ? "bg-[var(--color-surface)] text-[var(--color-copper)] shadow-[var(--shadow-sm)]"
                     : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                 )}
               >
@@ -317,7 +317,7 @@ function BroadcastingPageInner() {
                       <p className="text-[12px] font-medium text-[var(--color-text-muted)]">
                         {titleCase("List")}
                         {recipients.length > 0 && (
-                          <span className="ml-1.5 rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+                          <span className="ml-1.5 rounded-full bg-[var(--color-copper)]/15 px-2 py-0.5 text-[10px] font-semibold text-[var(--color-copper)]">
                             {recipients.length}
                           </span>
                         )}
@@ -450,8 +450,8 @@ function BroadcastingPageInner() {
                 </div>
               )}
               {sendResult && (
-                <div className="mt-4 rounded-xl border border-[var(--color-primary-light)] bg-[var(--color-primary-tint)] px-4 py-3 text-[13px]">
-                  <p className="font-semibold text-[var(--color-primary)]">
+                <div className="mt-4 rounded-xl border border-[var(--color-copper)]/30 bg-[var(--color-copper)]/10 px-4 py-3 text-[13px]">
+                  <p className="font-semibold text-[var(--color-copper-hover)]">
                     {titleCase(`Sent: ${sendResult.sent}`)}
                     {sendResult.failed.length > 0 && (
                       <span className="ml-2 text-[var(--color-danger)]">
@@ -478,7 +478,7 @@ function BroadcastingPageInner() {
                   type="button"
                   disabled={sendBusy || recipients.length === 0}
                   onClick={() => void sendBroadcast()}
-                  className="btn-primary min-w-[160px] justify-center gap-2"
+                  className="btn-primary-copper min-w-[160px] justify-center gap-2"
                 >
                   {sendBusy ? (
                     <>

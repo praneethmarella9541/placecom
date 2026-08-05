@@ -12,6 +12,20 @@ export type MailboxTokenResult =
   | { ok: true; accessToken: string; sessionUserId: string; mailboxOwnerId: string; gmailAddress?: string }
   | { ok: false; status: number; message: string };
 
+/**
+ * Short-lived per-user cache for the resolved token, keyed by session user id.
+ * Search-suggest and similar typeahead endpoints call this on every keystroke;
+ * without a cache each call pays 2 Supabase round-trips (profile + credentials
+ * lookup) before it can even reach Gmail/People — this shaves that off for
+ * rapid repeat calls within the same few seconds.
+ */
+const RESOLVED_CACHE_MS = 15_000;
+const resolvedCache = new Map<string, { result: MailboxTokenResult; expiresAt: number }>();
+
+function cacheKeyFor(authed?: AuthedRequest | null): string | null {
+  return authed?.user.id ?? null;
+}
+
 /** Same behavior as pre–shared-mailbox code: Google access token from the cookie session only. */
 async function legacyGoogleAccessFromSession(
   supabase: ReturnType<typeof createServerSupabaseClient>,
@@ -41,6 +55,22 @@ async function legacyGoogleAccessFromSession(
  * If omitted, falls back to cookie-based auth (web).
  */
 export async function resolveMailboxGoogleAccessToken(
+  authed?: AuthedRequest | null
+): Promise<MailboxTokenResult> {
+  const cacheKey = cacheKeyFor(authed);
+  if (cacheKey) {
+    const cached = resolvedCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+  }
+
+  const result = await resolveMailboxGoogleAccessTokenUncached(authed);
+  if (cacheKey && result.ok) {
+    resolvedCache.set(cacheKey, { result, expiresAt: Date.now() + RESOLVED_CACHE_MS });
+  }
+  return result;
+}
+
+async function resolveMailboxGoogleAccessTokenUncached(
   authed?: AuthedRequest | null
 ): Promise<MailboxTokenResult> {
   let userId: string;

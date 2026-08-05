@@ -288,7 +288,7 @@ export function WhatsAppBroadcastPanel() {
             className={cn(
               "flex-1 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all duration-150",
               mode === m
-                ? "bg-[var(--color-surface)] text-[var(--color-primary)] shadow-[var(--shadow-sm)]"
+                ? "bg-[var(--color-surface)] text-[var(--color-copper)] shadow-[var(--shadow-sm)]"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             )}
           >
@@ -370,7 +370,7 @@ export function WhatsAppBroadcastPanel() {
           type="button"
           disabled={!canSend}
           onClick={() => void sendBroadcast()}
-          className="btn-primary min-w-[180px] justify-center"
+          className="btn-primary-copper min-w-[180px] justify-center"
         >
           {sendBusy ? (
             <>
@@ -577,7 +577,7 @@ function TemplateMergeSection({
                 </p>
                 {varLabels.map((label, vi) => (
                   <div key={vi} className="flex items-center gap-2">
-                    <span className="w-6 shrink-0 rounded bg-[var(--color-primary)]/10 text-center text-[11px] font-bold text-[var(--color-primary)]">
+                    <span className="w-6 shrink-0 rounded bg-[var(--color-copper)]/10 text-center text-[11px] font-bold text-[var(--color-copper)]">
                       {vi + 1}
                     </span>
                     <span className="w-28 shrink-0 truncate text-xs text-[var(--color-text-muted)]">{label}</span>
@@ -631,7 +631,7 @@ function TemplateMergeSection({
                       className={cn(
                         "cursor-pointer transition-colors",
                         ri === previewIdx
-                          ? "bg-[var(--color-primary)]/5"
+                          ? "bg-[var(--color-copper)]/5"
                           : "hover:bg-[var(--color-bg-subtle)]"
                       )}
                     >
@@ -724,7 +724,7 @@ function SessionMessageSection({
 
         <div>
           <label className="mb-1.5 block text-xs font-semibold text-[var(--color-text-muted)]">
-            Or paste numbers (E.164, comma/newline separated)
+            Or paste numbers (comma/newline separated)
           </label>
           <textarea
             value={manualInput}

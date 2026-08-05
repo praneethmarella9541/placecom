@@ -36,6 +36,19 @@ function isIndiaNumber(e164: string): boolean {
   return normalizePhone(e164).startsWith("+91");
 }
 
+/**
+ * Only these lines are shown/assignable — the Exotel account can carry old/
+ * deprovisioned numbers that still show up in the API listing but no longer
+ * route calls. Add to this list (no env var needed) as new lines go live.
+ */
+const ACTIVE_VIRTUAL_NUMBERS = ["+917314624915"];
+
+function applyActiveNumberFilter(numbers: string[]): string[] {
+  if (ACTIVE_VIRTUAL_NUMBERS.length === 0) return numbers;
+  const active = ACTIVE_VIRTUAL_NUMBERS.map((s) => normalizePhone(s)).filter(Boolean);
+  return numbers.filter((n) => active.some((a) => phoneMatches(a, n)));
+}
+
 function mergeUniqueNumbers(lists: string[][]): string[] {
   const out: string[] = [];
   for (const list of lists) {
@@ -170,7 +183,7 @@ export async function getExotelVirtualNumbers(opts?: {
         );
       }
       const env = listEnvExotelNumbers();
-      const numbers = mergeUniqueNumbers([fromApi, env]);
+      const numbers = applyActiveNumberFilter(mergeUniqueNumbers([fromApi, env]));
       cache = { numbers, expiresAt: Date.now() + CACHE_MS };
       return numbers;
     } finally {
@@ -187,5 +200,5 @@ export async function getExotelVirtualNumbers(opts?: {
  */
 export function listConfiguredExotelNumbers(): string[] {
   if (cache && cache.expiresAt > Date.now()) return cache.numbers;
-  return mergeUniqueNumbers([listEnvExotelNumbers()]);
+  return applyActiveNumberFilter(mergeUniqueNumbers([listEnvExotelNumbers()]));
 }

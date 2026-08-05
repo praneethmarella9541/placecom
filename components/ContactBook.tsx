@@ -139,7 +139,7 @@ export function ContactBook() {
             className="input-field w-full pl-9 text-[13px]"
           />
         </div>
-        <button data-testid="contacts-add-btn" type="button" className="btn-primary inline-flex items-center gap-2 px-4" onClick={openAdd}>
+        <button data-testid="contacts-add-btn" type="button" className="btn-primary-copper inline-flex items-center gap-2 px-4" onClick={openAdd}>
           <Plus className="h-4 w-4" />
           {titleCase("Add contact")}
         </button>
@@ -181,7 +181,7 @@ export function ContactBook() {
                 : "Try a different search term."}
             </p>
             {contacts.length === 0 && (
-              <button type="button" className="btn-primary mt-5 inline-flex items-center gap-2" onClick={openAdd}>
+              <button type="button" className="btn-primary-copper mt-5 inline-flex items-center gap-2" onClick={openAdd}>
                 <Plus className="h-4 w-4" />
                 {titleCase("Add your first contact")}
               </button>
@@ -280,7 +280,7 @@ export function ContactBook() {
                   type="checkbox"
                   checked={form.syncGoogle}
                   onChange={(e) => setForm((f) => ({ ...f, syncGoogle: e.target.checked }))}
-                  className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-primary)]"
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-copper)]"
                 />
                 <span className="text-[13px] text-[var(--color-text)]">
                   {titleCase("Also save to shared Google Contacts")}
@@ -296,7 +296,7 @@ export function ContactBook() {
                 <button data-testid="contact-form-cancel" type="button" className="btn-ghost px-4" onClick={closeForm} disabled={busy}>
                   Cancel
                 </button>
-                <button data-testid="contact-form-submit" type="submit" className="btn-primary px-4" disabled={busy}>
+                <button data-testid="contact-form-submit" type="submit" className="btn-primary-copper px-4" disabled={busy}>
                   {busy ? "Saving…" : editingPeer ? titleCase("Save changes") : titleCase("Add contact")}
                 </button>
               </div>

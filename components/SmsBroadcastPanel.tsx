@@ -123,7 +123,7 @@ export function SmsBroadcastPanel() {
 
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-500">
-              {titleCase("Or paste numbers (comma, newline; E.164 +country)")}
+              {titleCase("Or paste numbers (comma, newline separated)")}
             </label>
             <textarea
               value={manualInput}
@@ -205,7 +205,7 @@ export function SmsBroadcastPanel() {
         </div>
       ) : null}
       {sendResult ? (
-        <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 px-4 py-3 text-sm text-indigo-900 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-100">
+        <div className="rounded-lg border border-[var(--color-copper)]/30 bg-[var(--color-copper)]/10 px-4 py-3 text-sm text-[var(--color-copper-hover)]">
           <p className="font-medium">
             {titleCase(`Sent: ${sendResult.sent}`)}
             {sendResult.failed.length > 0 ? ` · ${titleCase(`Failed: ${sendResult.failed.length}`)}` : ""}
@@ -227,7 +227,7 @@ export function SmsBroadcastPanel() {
           type="button"
           disabled={sendBusy || recipients.length === 0 || !body.trim()}
           onClick={() => void sendBroadcast()}
-          className="btn-primary min-w-[160px] justify-center"
+          className="btn-primary-copper min-w-[160px] justify-center"
         >
           {sendBusy ? (
             <>

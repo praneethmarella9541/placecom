@@ -254,6 +254,30 @@
     transform: translateY(0);
   }
 
+  /* Copper variant of .btn-primary — used where the blue brand primary
+     would clash with the copper accent (Broadcasting, Contact Book). */
+  .btn-primary-copper {
+    @apply inline-flex items-center justify-center gap-2 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50;
+    height: 36px;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+    border-radius: var(--radius-xl);
+    background: var(--color-copper);
+    font-size: 13.5px;
+    letter-spacing: 0.01em;
+    transition: background 0.13s ease, box-shadow 0.13s ease, transform 0.12s ease;
+  }
+  .btn-primary-copper:hover:not(:disabled) {
+    background: var(--color-copper-hover);
+    box-shadow: 0 2px 6px rgba(196, 92, 26, 0.30), 0 1px 2px rgba(196, 92, 26, 0.20);
+    transform: translateY(-0.5px);
+  }
+  .btn-primary-copper:active:not(:disabled) {
+    background: var(--color-copper-hover);
+    box-shadow: none;
+    transform: translateY(0);
+  }
+
   .btn-secondary {
     @apply inline-flex items-center justify-center gap-2 font-semibold disabled:opacity-50;
     height: 36px;
@@ -262,17 +286,17 @@
     border-radius: var(--radius-xl);
     border: 1px solid var(--color-border-strong);
     background: var(--color-surface);
-    color: var(--color-primary);
+    color: var(--color-copper);
     font-size: 13.5px;
     transition: background 0.13s ease, box-shadow 0.13s ease, border-color 0.13s ease;
   }
   .btn-secondary:hover:not(:disabled) {
-    background: var(--color-primary-tint);
-    border-color: rgba(37, 99, 235, 0.30);
-    box-shadow: 0 1px 4px rgba(37, 99, 235, 0.12);
+    background: var(--color-copper-tint);
+    border-color: rgba(196, 92, 26, 0.30);
+    box-shadow: 0 1px 4px rgba(196, 92, 26, 0.12);
   }
   .btn-secondary:active:not(:disabled) {
-    background: var(--color-primary-light);
+    background: rgba(196, 92, 26, 0.16);
   }
 
   .btn-ghost {
@@ -320,13 +344,13 @@
     transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
   }
   .input-field:hover:not(:focus) {
-    border-color: rgba(37, 99, 235, 0.35);
+    border-color: rgba(196, 92, 26, 0.35);
     background: var(--color-bg);
   }
   .input-field:focus {
-    border-color: var(--color-primary);
+    border-color: var(--color-copper);
     background: var(--color-surface);
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    box-shadow: 0 0 0 3px var(--color-copper-tint);
   }
 
   /* ── Badges (status pills) ─────────────────────────────────── */

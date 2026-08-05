@@ -221,7 +221,7 @@ export function MailMergePanel() {
               <p className="mt-2 text-xs text-red-600 dark:text-red-400">{parseError}</p>
             ) : null}
             {importInfo ? (
-              <p className="mt-2 text-xs text-indigo-700 dark:text-indigo-400">{importInfo}</p>
+              <p className="mt-2 text-xs text-[var(--color-copper)]">{importInfo}</p>
             ) : null}
           </div>
 
@@ -393,7 +393,7 @@ export function MailMergePanel() {
         </div>
       ) : null}
       {sendResult ? (
-        <div className="rounded-lg border border-indigo-200 bg-indigo-50/80 px-4 py-3 text-sm text-indigo-900 dark:border-indigo-900/40 dark:bg-indigo-950/30 dark:text-indigo-100">
+        <div className="rounded-lg border border-[var(--color-copper)]/30 bg-[var(--color-copper)]/10 px-4 py-3 text-sm text-[var(--color-copper-hover)]">
           <p className="font-medium">
             {titleCase(`Sent: ${sendResult.sent}`)}
             {sendResult.failed.length > 0
@@ -417,7 +417,7 @@ export function MailMergePanel() {
           type="button"
           disabled={sendBusy || rows.length === 0}
           onClick={() => void sendMailMerge()}
-          className="btn-primary min-w-[160px] justify-center"
+          className="btn-primary-copper min-w-[160px] justify-center"
         >
           {sendBusy ? (
             <>

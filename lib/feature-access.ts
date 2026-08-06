@@ -2,6 +2,8 @@ export const FEATURE_KEYS = [
   "inbox",
   "drive",
   "forms",
+  "sheets",
+  "docs",
   "broadcasting",
   "dashboard",
   "crm",
@@ -17,6 +19,8 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   inbox: "Mail",
   drive: "Drive",
   forms: "Forms",
+  sheets: "Sheets",
+  docs: "Docs",
   broadcasting: "Broadcasting",
   dashboard: "Extraction",
   crm: "CRM",
@@ -31,6 +35,8 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "inbox",
   "drive",
   "forms",
+  "sheets",
+  "docs",
   "broadcasting",
   "calendar",
   "whatsapp",
@@ -67,6 +73,8 @@ export function pathToFeature(pathname: string, search: URLSearchParams): Featur
   if (pathname.startsWith("/inbox")) return "inbox";
   if (pathname.startsWith("/drive")) return "drive";
   if (pathname.startsWith("/forms")) return "forms";
+  if (pathname.startsWith("/sheets")) return "sheets";
+  if (pathname.startsWith("/docs")) return "docs";
   if (pathname.startsWith("/dashboard")) return "dashboard";
   if (pathname.startsWith("/crm")) return "crm";
   if (pathname.startsWith("/calendar")) return "calendar";
@@ -106,6 +114,10 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/api/drive")) return "drive";
 
   if (pathname.startsWith("/api/forms")) return "forms";
+
+  if (pathname.startsWith("/api/sheets")) return "sheets";
+
+  if (pathname.startsWith("/api/docs")) return "docs";
 
   if (
     pathname.startsWith("/api/extract") ||
@@ -149,6 +161,8 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
     { path: "/inbox" },
     { path: "/drive" },
     { path: "/forms" },
+    { path: "/sheets" },
+    { path: "/docs" },
     { path: "/broadcasting" },
     { path: "/dashboard" },
     { path: "/calendar" },

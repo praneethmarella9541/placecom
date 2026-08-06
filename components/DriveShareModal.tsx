@@ -36,10 +36,11 @@ type Props = {
   onClose: () => void;
 };
 
-const ROLE_LABEL: Record<Role, string> = {
-  reader: "Viewer",
-  commenter: "Commenter",
-  writer: "Editor",
+/** Verb form for the "Anyone with the link can ___" sentence, e.g. "can edit". */
+const ROLE_VERB: Record<Role, string> = {
+  reader: "view",
+  commenter: "comment",
+  writer: "edit",
 };
 
 export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) {
@@ -409,7 +410,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
                 </select>
                 <p className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
                   {anyonePermission
-                    ? `Anyone on the internet with the link can ${ROLE_LABEL[anyonePermission.role as Role].toLowerCase()}`
+                    ? `Anyone on the internet with the link can ${ROLE_VERB[anyonePermission.role as Role]}`
                     : "Only people with access can open with the link"}
                 </p>
               </div>

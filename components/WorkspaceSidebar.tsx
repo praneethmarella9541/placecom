@@ -5,11 +5,13 @@ import { flushSync } from "react-dom";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  BookText,
   Calendar,
   ChevronDown,
   Contact,
   FileText,
   Folder,
+  Frame,
   LogOut,
   Mail,
   MessageCircle,
@@ -44,6 +46,8 @@ const opsNav = [
   { href: "/drive", label: "Drive", Icon: Folder },
   { href: "/calendar", label: "Calendar", Icon: Calendar },
   { href: "/forms", label: "Forms", Icon: FileText },
+  { href: "/sheets", label: "Sheets", Icon: Frame },
+  { href: "/docs", label: "Docs", Icon: BookText },
 ] as const;
 
 /** Sidebar nav regrouped into Comms / Pipeline / Ops — also used by WorkspaceChrome for the breadcrumb. */

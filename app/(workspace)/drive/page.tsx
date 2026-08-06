@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { Upload } from "lucide-react";
 import { cn, formatDate } from "@/lib/utils";
 import { useWorkspaceTopbarActionsNode } from "@/lib/workspace-topbar-context";
@@ -15,7 +16,7 @@ import {
   IconDownload,
   IconX,
 } from "@/components/Icons";
-import { supportsInAppPreview, isOfficeMimeType } from "@/lib/drive-file-proxy";
+import { supportsInAppPreview, isOfficeMimeType, isSheetConvertibleMimeType } from "@/lib/drive-file-proxy";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
 import { DriveDetailsPanel } from "@/components/DriveDetailsPanel";
@@ -71,6 +72,7 @@ import {
   Info,
   Menu,
   Filter,
+  Frame,
 } from "lucide-react";
 
 const DRIVE_SIMPLE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
@@ -151,6 +153,7 @@ type DriveListCacheEntry = { files: DriveFileRow[]; nextPageToken?: string };
 type SortKey = "name" | "modifiedTime" | "size";
 
 export default function DrivePage() {
+  const router = useRouter();
   const topbarActionsNode = useWorkspaceTopbarActionsNode();
   /** Top-level sidebar selection. "shared-drive" is internal — the actual
    *  drive id is held separately in currentSharedDrive. */
@@ -198,6 +201,8 @@ export default function DrivePage() {
 
   const [previewFile, setPreviewFile] = useState<DriveFileRow | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [openingInSheetsId, setOpeningInSheetsId] = useState<string | null>(null);
+  const [openInSheetsError, setOpenInSheetsError] = useState<string | null>(null);
   // Target file/folder for the share modal — null means modal closed.
   const [shareTarget, setShareTarget] = useState<DriveFileRow | null>(null);
   // Target file/folder for the move modal.
@@ -309,6 +314,10 @@ export default function DrivePage() {
   }, [driveSearchInput]);
 
   const previewFileId = previewFile?.id ?? null;
+
+  useEffect(() => {
+    setOpenInSheetsError(null);
+  }, [previewFileId]);
 
   useEffect(() => {
     if (!previewFileId) {
@@ -1441,6 +1450,27 @@ export default function DrivePage() {
     }
   }
 
+  /** Convert a CSV/XLSX/ODS file to a native Google Sheet and open it in /sheets. */
+  async function openInSheets(file: DriveFileRow) {
+    if (openingInSheetsId) return; // already in flight
+    setOpeningInSheetsId(file.id);
+    setOpenInSheetsError(null);
+    try {
+      const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}/open-in-sheets`, {
+        method: "POST",
+      });
+      const data = (await res.json()) as { error?: string; spreadsheetId?: string };
+      if (!res.ok || !data.spreadsheetId) {
+        throw new Error(data.error || "Could not open this file in Sheets");
+      }
+      router.push(`/sheets/${encodeURIComponent(data.spreadsheetId)}`);
+    } catch (e) {
+      setOpenInSheetsError(e instanceof Error ? e.message : "Could not open this file in Sheets");
+    } finally {
+      setOpeningInSheetsId(null);
+    }
+  }
+
   /** Create a new folder under the current location and refresh. */
   async function createFolder() {
     const name = newFolderName.trim();
@@ -2440,6 +2470,11 @@ export default function DrivePage() {
               )}
             </div>
 
+            {openInSheetsError ? (
+              <div className="border-t border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-2 text-[12.5px] text-[var(--color-danger)]">
+                {openInSheetsError}
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] p-4">
               {isOfficeMimeType(previewFile.mimeType) && previewFile.webViewLink ? (
                 <a
@@ -2451,6 +2486,21 @@ export default function DrivePage() {
                 >
                   {titleCase("Open in Drive")}
                 </a>
+              ) : null}
+              {isSheetConvertibleMimeType(previewFile.mimeType, previewFile.name) ? (
+                <button
+                  data-testid="drive-preview-open-in-sheets"
+                  type="button"
+                  onClick={() => void openInSheets(previewFile)}
+                  disabled={openingInSheetsId === previewFile.id}
+                  className="btn-secondary gap-2 disabled:opacity-60"
+                  title={titleCase("Convert to a Google Sheet and open in our Sheets editor")}
+                >
+                  {openingInSheetsId === previewFile.id
+                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                    : <Frame className="h-4 w-4" />}
+                  {openingInSheetsId === previewFile.id ? titleCase("Opening…") : titleCase("Open in Sheets")}
+                </button>
               ) : null}
               <button
                 data-testid="drive-preview-download"

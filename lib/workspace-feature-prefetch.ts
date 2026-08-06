@@ -1,5 +1,5 @@
 /**
- * Session-scoped prefetch for WhatsApp, Calendar, and Forms.
+ * Session-scoped prefetch for WhatsApp, Calendar, Forms, and Sheets.
  * Runs after mail + drive warm on login; pages read caches for instant paint (SWR).
  */
 
@@ -212,7 +212,89 @@ async function prefetchFormsData(signal?: AbortSignal): Promise<void> {
   });
 }
 
-/* ─── Login chain (mail + drive, then WhatsApp → Calendar → Forms) ─ */
+/* ─── Sheets ───────────────────────────────────────────────── */
+
+export type SheetsPrefetchSheet = {
+  id: string;
+  name: string;
+  mimeType: string;
+  modifiedTime: string;
+};
+
+export type SheetsPrefetchSnapshot = {
+  sheets: SheetsPrefetchSheet[];
+  nextPageToken?: string;
+};
+
+let sheetsCache: SheetsPrefetchSnapshot | null = null;
+
+export function getSheetsPrefetchCache(): SheetsPrefetchSnapshot | null {
+  return sheetsCache;
+}
+
+export function setSheetsPrefetchCache(snapshot: SheetsPrefetchSnapshot): void {
+  sheetsCache = snapshot;
+}
+
+async function prefetchSheetsData(signal?: AbortSignal): Promise<void> {
+  const res = await fetch("/api/sheets?pageSize=30", { cache: "no-store", signal });
+  if (signal?.aborted) return;
+  if (!res.ok) return;
+
+  const data = (await res.json()) as {
+    sheets?: SheetsPrefetchSheet[];
+    nextPageToken?: string;
+  };
+
+  if (signal?.aborted) return;
+  setSheetsPrefetchCache({
+    sheets: data.sheets ?? [],
+    nextPageToken: data.nextPageToken,
+  });
+}
+
+/* ─── Docs ─────────────────────────────────────────────────── */
+
+export type DocsPrefetchDoc = {
+  id: string;
+  name: string;
+  mimeType: string;
+  modifiedTime: string;
+};
+
+export type DocsPrefetchSnapshot = {
+  docs: DocsPrefetchDoc[];
+  nextPageToken?: string;
+};
+
+let docsCache: DocsPrefetchSnapshot | null = null;
+
+export function getDocsPrefetchCache(): DocsPrefetchSnapshot | null {
+  return docsCache;
+}
+
+export function setDocsPrefetchCache(snapshot: DocsPrefetchSnapshot): void {
+  docsCache = snapshot;
+}
+
+async function prefetchDocsData(signal?: AbortSignal): Promise<void> {
+  const res = await fetch("/api/docs?pageSize=30", { cache: "no-store", signal });
+  if (signal?.aborted) return;
+  if (!res.ok) return;
+
+  const data = (await res.json()) as {
+    docs?: DocsPrefetchDoc[];
+    nextPageToken?: string;
+  };
+
+  if (signal?.aborted) return;
+  setDocsPrefetchCache({
+    docs: data.docs ?? [],
+    nextPageToken: data.nextPageToken,
+  });
+}
+
+/* ─── Login chain (mail + drive, then WhatsApp → Calendar → Forms → Sheets → Docs) ─ */
 
 export async function prefetchSecondaryFeaturesInOrder(opts?: {
   restrictedFeatures?: readonly string[];
@@ -233,6 +315,16 @@ export async function prefetchSecondaryFeaturesInOrder(opts?: {
 
   if (!restricted.has("forms")) {
     await prefetchFormsData(signal);
+  }
+  if (signal?.aborted) return;
+
+  if (!restricted.has("sheets")) {
+    await prefetchSheetsData(signal);
+  }
+  if (signal?.aborted) return;
+
+  if (!restricted.has("docs")) {
+    await prefetchDocsData(signal);
   }
 }
 
@@ -281,6 +373,8 @@ export function clearSecondaryFeaturePrefetchCache(): void {
   whatsappCache = null;
   calendarCache = null;
   formsCache = null;
+  sheetsCache = null;
+  docsCache = null;
   clearWorkspacePrefetchSession();
   clearAdminTeamPrefetchCache();
   clearMailThreadPrefetchCache();

@@ -1,6 +1,8 @@
 import "server-only";
 
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
+import { buildDriveContentFetch } from "@/lib/drive-file-proxy";
+import { getDriveFileMeta, getDriveFileParent } from "@/lib/drive";
 
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 
@@ -198,4 +200,96 @@ export async function uploadBinaryToDrive(
     }
     throw e;
   }
+}
+
+/** Matches the read-side cap in app/api/drive/file/[id]/route.ts — conversion source files above this need a different (resumable) upload path, not built here since CSV/XLSX previewed in-browser are rarely this large. */
+const CONVERT_SOURCE_MAX_BYTES = 20 * 1024 * 1024;
+
+export type ConvertToSheetResult = {
+  spreadsheetId: string;
+};
+
+/**
+ * Converts a CSV/XLSX/ODS Drive file into a native Google Sheet, placed
+ * alongside the source file. Downloads the original bytes, then re-uploads
+ * them as a new file with `mimeType: application/vnd.google-apps.spreadsheet`
+ * — Drive's import pipeline auto-converts recognized formats when the
+ * target metadata mimeType is a Google-native type (the same mechanism
+ * behind Drive's own "Open with Google Sheets").
+ */
+export async function convertFileToGoogleSheet(
+  accessToken: string,
+  fileId: string
+): Promise<ConvertToSheetResult> {
+  const meta = await getDriveFileMeta(accessToken, fileId);
+
+  const contentFetch = buildDriveContentFetch(fileId, meta.mimeType, "download");
+  if ("error" in contentFetch) {
+    throw new Error(contentFetch.error);
+  }
+
+  let sourceRes: Response;
+  try {
+    sourceRes = await fetch(contentFetch.url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (download for conversion)"));
+  }
+  if (!sourceRes.ok) {
+    const text = await sourceRes.text();
+    throw new Error(`Drive download for conversion ${sourceRes.status}: ${text}`);
+  }
+
+  const contentLength = Number(sourceRes.headers.get("content-length") || 0);
+  if (contentLength > CONVERT_SOURCE_MAX_BYTES) {
+    throw new Error("File is too large to convert to Google Sheets (max 20MB).");
+  }
+
+  const bytes = Buffer.from(await sourceRes.arrayBuffer());
+  if (bytes.length > CONVERT_SOURCE_MAX_BYTES) {
+    throw new Error("File is too large to convert to Google Sheets (max 20MB).");
+  }
+
+  // Best-effort — land the converted copy next to the source file rather
+  // than My Drive root; a failed lookup just falls back to root.
+  const parentId = await getDriveFileParent(accessToken, fileId).catch(() => null);
+
+  const driveMeta: Record<string, unknown> = {
+    name: meta.name,
+    mimeType: "application/vnd.google-apps.spreadsheet",
+  };
+  if (parentId) driveMeta.parents = [parentId];
+
+  const { payload, contentType } = buildMultipartBody(driveMeta, meta.mimeType, bytes);
+
+  let res: Response;
+  try {
+    res = await fetch(`${UPLOAD_API}/files?uploadType=multipart&fields=id`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": contentType,
+        "Content-Length": String(payload.length),
+      },
+      body: new Uint8Array(payload),
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive upload (convert to Sheet)"));
+  }
+
+  const text = await res.text();
+  if (!res.ok) throw driveUploadScopeError(res, text);
+
+  let data: { id?: string };
+  try {
+    data = JSON.parse(text) as { id?: string };
+  } catch {
+    throw new Error("Drive convert-to-Sheet: invalid JSON response");
+  }
+  if (!data.id) {
+    throw new Error("Drive convert-to-Sheet: no file id in response");
+  }
+
+  return { spreadsheetId: data.id };
 }

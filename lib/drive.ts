@@ -511,6 +511,192 @@ export async function listGoogleFormsPage(
   };
 }
 
+const SHEET_MIME = "application/vnd.google-apps.spreadsheet";
+
+/**
+ * List native Google Sheets files from Drive (same account as the access
+ * token — mailbox admin when using Placecom mailbox). Drive's `name` is
+ * already the spreadsheet title, so unlike forms this needs no separate
+ * per-item title lookup.
+ */
+export async function listGoogleSheetsPage(
+  accessToken: string,
+  options: {
+    pageSize: number;
+    pageToken?: string;
+    search?: string;
+  }
+): Promise<DriveListPage> {
+  const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
+  const base = `mimeType='${SHEET_MIME}' and trashed=false`;
+  const t = (options.search || "").trim();
+  const q = t ? `${base} and name contains '${escapeDriveQFragment(t)}'` : base;
+
+  const params = new URLSearchParams({
+    pageSize: String(pageSize),
+    fields: "nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)",
+    orderBy: "modifiedTime desc,name_natural",
+    q,
+    corpora: "allDrives",
+    includeItemsFromAllDrives: "true",
+    supportsAllDrives: "true",
+  });
+  if (options.pageToken) params.set("pageToken", options.pageToken);
+
+  const url = `${DRIVE_API}/files?${params.toString()}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (sheets list)"));
+  }
+
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive sheets list ${res.status}: ${text}`) as Error & {
+      code?: string;
+    };
+    if (
+      res.status === 403 &&
+      (text.includes("ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
+        (text.includes("insufficientPermissions") && text.includes("drive.googleapis.com")))
+    ) {
+      err.code = "DRIVE_INSUFFICIENT_SCOPE";
+      err.message =
+        "Drive access was not granted for this Google account. In Google Cloud Console: enable the Google Drive API and add the https://www.googleapis.com/auth/drive scope to your OAuth client; then sign out and sign in with Google again.";
+    }
+    throw err;
+  }
+
+  const data = (await res.json()) as {
+    files?: DriveFileRow[];
+    nextPageToken?: string;
+  };
+
+  return {
+    files: data.files || [],
+    nextPageToken: data.nextPageToken,
+  };
+}
+
+const DOC_MIME = "application/vnd.google-apps.document";
+
+/**
+ * List native Google Docs files from Drive (same account as the access
+ * token — mailbox admin when using Placecom mailbox).
+ */
+export async function listGoogleDocsPage(
+  accessToken: string,
+  options: {
+    pageSize: number;
+    pageToken?: string;
+    search?: string;
+  }
+): Promise<DriveListPage> {
+  const pageSize = Math.min(Math.max(options.pageSize, 1), 100);
+  const base = `mimeType='${DOC_MIME}' and trashed=false`;
+  const t = (options.search || "").trim();
+  const q = t ? `${base} and name contains '${escapeDriveQFragment(t)}'` : base;
+
+  const params = new URLSearchParams({
+    pageSize: String(pageSize),
+    fields: "nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)",
+    orderBy: "modifiedTime desc,name_natural",
+    q,
+    corpora: "allDrives",
+    includeItemsFromAllDrives: "true",
+    supportsAllDrives: "true",
+  });
+  if (options.pageToken) params.set("pageToken", options.pageToken);
+
+  const url = `${DRIVE_API}/files?${params.toString()}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (docs list)"));
+  }
+
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    const err = new Error(`Drive docs list ${res.status}: ${text}`) as Error & {
+      code?: string;
+    };
+    if (
+      res.status === 403 &&
+      (text.includes("ACCESS_TOKEN_SCOPE_INSUFFICIENT") ||
+        (text.includes("insufficientPermissions") && text.includes("drive.googleapis.com")))
+    ) {
+      err.code = "DRIVE_INSUFFICIENT_SCOPE";
+      err.message =
+        "Drive access was not granted for this Google account. In Google Cloud Console: enable the Google Drive API and add the https://www.googleapis.com/auth/drive scope to your OAuth client; then sign out and sign in with Google again.";
+    }
+    throw err;
+  }
+
+  const data = (await res.json()) as {
+    files?: DriveFileRow[];
+    nextPageToken?: string;
+  };
+
+  return {
+    files: data.files || [],
+    nextPageToken: data.nextPageToken,
+  };
+}
+
+/**
+ * Creates a blank Google Doc. Rides entirely on the `drive` scope — Drive's
+ * `files.create` auto-creates an empty native Doc when given this mimeType,
+ * no separate Docs API scope needed (same trick as `createDriveFolder`).
+ */
+export async function createBlankGoogleDoc(
+  accessToken: string,
+  title: string
+): Promise<DriveFileRow> {
+  const params = new URLSearchParams({
+    fields: LIST_FILE_FIELDS.replace(/ /g, ""),
+    supportsAllDrives: "true",
+  });
+  let res: Response;
+  try {
+    res = await fetch(`${DRIVE_API}/files?${params.toString()}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: title,
+        mimeType: DOC_MIME,
+      }),
+    });
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Google Drive API (create doc)"));
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwDriveApiError(res.status, text, "Drive create-doc");
+  }
+  return (await res.json()) as DriveFileRow;
+}
+
 /* ───────────────────────────── Permissions ─────────────────────────── */
 
 export type DriveRole = "reader" | "commenter" | "writer";

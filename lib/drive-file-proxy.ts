@@ -31,6 +31,18 @@ export function isCsvMimeType(mimeType: string, filename?: string): boolean {
   return false;
 }
 
+const SHEET_CONVERTIBLE_MIME_TYPES = new Set([
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.oasis.opendocument.spreadsheet",
+]);
+
+/** CSV/XLSX/ODS — formats Drive can convert into a native Google Sheet on import. */
+export function isSheetConvertibleMimeType(mimeType: string, filename?: string): boolean {
+  if (isCsvMimeType(mimeType, filename)) return true;
+  return SHEET_CONVERTIBLE_MIME_TYPES.has(mimeType);
+}
+
 /** Types we can reasonably show inside an iframe. */
 export function supportsInAppPreview(mimeType: string, filename?: string): boolean {
   if (!mimeType || mimeType === "application/vnd.google-apps.folder") return false;

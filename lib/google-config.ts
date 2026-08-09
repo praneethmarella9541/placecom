@@ -34,8 +34,16 @@ export function getGoogleOAuthClientId(): string {
  *   contacts supersedes contacts.readonly; admins must re-consent (sign out / sign in) after this change.
  * - forms.body: create and edit Google Forms via Forms API (/forms workspace)
  * - forms.responses.readonly: list and read form responses in Placecom
+ * - spreadsheets: read/write Google Sheets cell values via Sheets API v4
+ *   (/sheets workspace's in-app grid editor). Broader than drive.file but
+ *   narrower than full drive — only grants spreadsheet content access, not
+ *   file management (that's covered separately by the drive scope above,
+ *   which /sheets also uses to list and locate spreadsheet files).
+ *   Admins must sign out and sign in again after this is added so the
+ *   granted-scope list refreshes.
  * Enable **People API** in the same Google Cloud project (APIs & Services → Enable APIs).
  * Enable **Google Forms API** for programmatic form creation.
+ * Enable **Google Sheets API** for the in-app spreadsheet editor.
  * Google must allow these scopes for your OAuth client or tokens will lack Gmail access
  * (403 ACCESS_TOKEN_SCOPE_INSUFFICIENT). Configure: Google Cloud Console → Google Auth
  * Platform → Data access (Scopes) — add the same Gmail URLs; enable Gmail API for the project.
@@ -57,6 +65,7 @@ export const GOOGLE_OAUTH_SCOPES = [
   "https://www.googleapis.com/auth/contacts.other.readonly",
   "https://www.googleapis.com/auth/forms.body",
   "https://www.googleapis.com/auth/forms.responses.readonly",
+  "https://www.googleapis.com/auth/spreadsheets",
 ].join(" ");
 
 /** Last few characters for UI diagnostics (not sensitive, but avoids full dump). */

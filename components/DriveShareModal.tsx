@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconX } from "@/components/Icons";
+import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
+import { parseRecipientValue } from "@/lib/email-recipients";
 
 /**
  * Gmail-style "Share" modal for a Drive file or folder.
@@ -54,6 +56,23 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
   const [pendingRole, setPendingRole] = useState<Role>("writer");
   const [pendingNote, setPendingNote] = useState("");
   const [adding, setAdding] = useState(false);
+  // Two layers: `contactsCache` loads once and lets RecipientField filter
+  // instantly on every keystroke (no network round-trip), `liveSuggestions`
+  // is the debounced Google-fuzzy-search refinement that fills in anything
+  // the local cache missed (e.g. contacts not yet synced locally).
+  const [contactsCache, setContactsCache] = useState<RecipientSuggestion[]>([]);
+  const [liveSuggestions, setLiveSuggestions] = useState<RecipientSuggestion[]>([]);
+  const suggestions = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: RecipientSuggestion[] = [];
+    for (const c of [...liveSuggestions, ...contactsCache]) {
+      const em = c.email.toLowerCase();
+      if (seen.has(em)) continue;
+      seen.add(em);
+      merged.push(c);
+    }
+    return merged;
+  }, [liveSuggestions, contactsCache]);
 
   // Action busy state per-permission for inline operations
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -81,6 +100,54 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
   }, [fileId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Loaded once, up front — same Google-contacts source Compose uses — so
+  // RecipientField has something to filter against instantly on the very
+  // first keystroke, with no network wait. Best-effort: a failure here just
+  // means the first keystroke has no suggestions until the live search below
+  // catches up.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/gmail/contacts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled) return;
+        const contacts = (j as { contacts?: RecipientSuggestion[] } | null)?.contacts;
+        if (Array.isArray(contacts)) setContactsCache(contacts);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  // Same live suggest endpoint the mail search bar uses (Google People API's
+  // own fuzzy contact search), queried as-you-type — lightly debounced so it
+  // doesn't fire a request per keystroke, but short enough to feel instant.
+  // Fills in fuzzy/partial-name matches (e.g. "saibharath" -> "Sai Bharath")
+  // and contacts the one-time cache above missed.
+  const suggestFetchRef = useRef(0);
+  useEffect(() => {
+    const draft = parseRecipientValue(emailInput).draft.trim();
+    if (draft.length < 1) {
+      setLiveSuggestions([]);
+      return;
+    }
+    const id = ++suggestFetchRef.current;
+    const t = setTimeout(() => {
+      fetch(`/api/gmail/search/suggest?${new URLSearchParams({ q: draft }).toString()}`, {
+        cache: "no-store",
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (suggestFetchRef.current !== id) return;
+          const contacts = (j as { contacts?: RecipientSuggestion[] } | null)?.contacts;
+          setLiveSuggestions(Array.isArray(contacts) ? contacts : []);
+        })
+        .catch(() => {
+          if (suggestFetchRef.current === id) setLiveSuggestions([]);
+        });
+    }, 120);
+    return () => clearTimeout(t);
+  }, [emailInput]);
 
   /** Add a user permission for the email(s) in the input. Splits on comma/space. */
   async function handleAddPeople() {
@@ -271,13 +338,12 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
           {/* Add people */}
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <input
-                type="text"
-                placeholder="Add people by email"
+              <RecipientField
                 value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void handleAddPeople(); } }}
-                className="input-field h-9 flex-1 text-[13px]"
+                onChange={setEmailInput}
+                placeholder="Add people by email"
+                suggestions={suggestions}
+                className="min-w-[200px] flex-1 text-[13px]"
               />
               <select
                 value={pendingRole}
@@ -292,7 +358,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
                 type="button"
                 onClick={() => void handleAddPeople()}
                 disabled={adding || !emailInput.trim()}
-                className="btn-primary h-9 px-4 text-[13px] disabled:opacity-50"
+                className="btn-primary-copper h-9 px-4 text-[13px] disabled:opacity-50"
               >
                 {adding ? "Sharing…" : "Send"}
               </button>
@@ -345,32 +411,34 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
                           </p>
                         )}
                       </div>
-                      {p.role === "owner" ? (
-                        <span className="text-[12px] text-[var(--color-text-muted)]">Owner</span>
-                      ) : (
-                        <>
-                          <select
-                            value={p.role}
-                            disabled={busyId === p.id}
-                            onChange={(e) => void handleChangeRole(p, e.target.value as Role)}
-                            className="input-field h-7 w-28 text-[12px]"
-                          >
-                            <option value="writer">Editor</option>
-                            <option value="commenter">Commenter</option>
-                            <option value="reader">Viewer</option>
-                          </select>
-                          <button
-                            type="button"
-                            onClick={() => void handleRemove(p)}
-                            disabled={busyId === p.id}
-                            className="btn-ghost p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
-                            title="Remove access"
-                            aria-label="Remove access"
-                          >
-                            <IconX className="h-3.5 w-3.5" />
-                          </button>
-                        </>
-                      )}
+                      <div className="flex w-[140px] shrink-0 items-center justify-end gap-1">
+                        {p.role === "owner" ? (
+                          <span className="text-[12px] text-[var(--color-text-muted)]">Owner</span>
+                        ) : (
+                          <>
+                            <select
+                              value={p.role}
+                              disabled={busyId === p.id}
+                              onChange={(e) => void handleChangeRole(p, e.target.value as Role)}
+                              className="input-field h-7 w-28 text-[12px]"
+                            >
+                              <option value="writer">Editor</option>
+                              <option value="commenter">Commenter</option>
+                              <option value="reader">Viewer</option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => void handleRemove(p)}
+                              disabled={busyId === p.id}
+                              className="btn-ghost p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
+                              title="Remove access"
+                              aria-label="Remove access"
+                            >
+                              <IconX className="h-3.5 w-3.5" />
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </li>
                   ))}
                 {permissions.filter((p) => p.type === "user" || p.type === "group").length === 0 && (
@@ -444,7 +512,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
             </svg>
             {linkCopied ? "Copied!" : isFolder ? "Copy folder link" : "Copy link"}
           </button>
-          <button type="button" onClick={onClose} className="btn-primary text-[13px]">
+          <button type="button" onClick={onClose} className="btn-primary-copper text-[13px]">
             Done
           </button>
         </div>

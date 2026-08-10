@@ -72,11 +72,16 @@ export function RecipientField({
   const filtered = useMemo(() => {
     const q = draft.trim().toLowerCase();
     if (!q) return [];
+    // Also compare with whitespace stripped, so a run-together query like
+    // "saibharath" still matches a display name like "Sai Bharath" — the
+    // plain substring check below would otherwise miss it over the space.
+    const qCompact = q.replace(/\s+/g, "");
     return suggestions
       .filter((s) => {
         const em = s.email.toLowerCase();
         const name = (s.displayName || "").toLowerCase();
-        return em.includes(q) || name.includes(q);
+        if (em.includes(q) || name.includes(q)) return true;
+        return qCompact.length > 0 && name.replace(/\s+/g, "").includes(qCompact);
       })
       .slice(0, 10);
   }, [draft, suggestions]);

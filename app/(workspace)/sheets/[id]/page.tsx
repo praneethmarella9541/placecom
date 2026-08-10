@@ -31,6 +31,12 @@ export default function SheetPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [errorWebViewLink, setErrorWebViewLink] = useState<string | null>(null);
+  // Set instead of `error` when the connected account can view the sheet but
+  // isn't allowed to manage its sharing (so we can't grant the anonymous
+  // "anyone with the link can edit" access the live editor needs). Rather
+  // than dead-ending on an error, we fall back to the same read-only PDF
+  // export + proxy preview the Drive tab uses for files it can't edit inline.
+  const [readOnlyNotice, setReadOnlyNotice] = useState<string | null>(null);
   const [fileName, setFileName] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const grantRef = useRef<GrantState | null>(null);
@@ -43,6 +49,7 @@ export default function SheetPage() {
       setLoading(true);
       setError(null);
       setErrorWebViewLink(null);
+      setReadOnlyNotice(null);
       try {
         const res = await fetch(`/api/sheets/${encodeURIComponent(spreadsheetId)}/link-share`, {
           method: "POST",
@@ -56,8 +63,12 @@ export default function SheetPage() {
           webViewLink?: string;
         };
         if (!res.ok) {
+          if (data.error === "DRIVE_NO_SHARE_PERMISSION") {
+            if (!cancelled) setReadOnlyNotice(data.message || "You can view this sheet, but only its owner can grant edit access here.");
+            return;
+          }
           if (!cancelled) setErrorWebViewLink(data.webViewLink ?? null);
-          throw new Error(data.error === "DRIVE_NO_SHARE_PERMISSION" && data.message ? data.message : data.error || data.message || "Failed to open sheet");
+          throw new Error(data.error || data.message || "Failed to open sheet");
         }
         if (cancelled) return;
         const state: GrantState = {
@@ -130,7 +141,7 @@ export default function SheetPage() {
   if (!spreadsheetId) return null;
 
   return (
-    <div className="mx-auto flex h-full max-w-[1400px] flex-col gap-4">
+    <div className="mx-auto flex h-full max-w-[1400px] flex-col gap-2">
       <div className="flex items-center gap-3">
         <Link
           href="/sheets"
@@ -183,11 +194,23 @@ export default function SheetPage() {
             </a>
           ) : null}
         </div>
+      ) : readOnlyNotice ? (
+        <div className="flex min-h-[80vh] flex-1 flex-col gap-2 overflow-hidden">
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-2.5 text-[12.5px] text-[var(--color-text-muted)]">
+            {titleCase("Read-only")} — {readOnlyNotice}
+          </div>
+          <iframe
+            data-testid="sheet-frame-readonly"
+            src={`/api/drive/file/${encodeURIComponent(spreadsheetId)}?mode=preview`}
+            className="flex-1 rounded-2xl border border-[var(--color-border)] bg-white"
+            title={titleCase("Google Sheets (read-only preview)")}
+          />
+        </div>
       ) : (
         <iframe
           data-testid="sheet-frame"
           src={`https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/edit?embedded=true`}
-          className="min-h-[70vh] flex-1 rounded-2xl border border-[var(--color-border)]"
+          className="min-h-[80vh] flex-1 rounded-2xl border border-[var(--color-border)]"
           title={titleCase("Google Sheets")}
         />
       )}

@@ -32,7 +32,7 @@ export function GmailComposeFooter({
           disabled={sendDisabled || sending}
           onClick={onSend}
           className={cn(
-            "shrink-0 rounded-full bg-[#0b57d0] px-6 py-[7px] text-[14px] font-medium leading-none text-white hover:bg-[#1765cc] disabled:pointer-events-none disabled:opacity-50",
+            "shrink-0 rounded-full bg-[var(--color-copper)] px-6 py-[7px] text-[14px] font-medium leading-none text-white hover:bg-[var(--color-copper-hover)] disabled:pointer-events-none disabled:opacity-50",
           )}
         >
           {label}

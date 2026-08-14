@@ -1,6 +1,6 @@
 export default function ContactsLoading() {
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <div className="skeleton-shimmer h-8 w-48 rounded" />
         <div className="skeleton-shimmer mt-2 h-4 w-full max-w-md rounded" />

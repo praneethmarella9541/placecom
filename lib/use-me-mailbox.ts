@@ -22,6 +22,13 @@ let inFlight: Promise<MeMailboxResponse | null> | null = null;
 let memoryCache: MeMailboxResponse | null = null;
 const subscribers = new Set<(me: MeMailboxResponse) => void>();
 
+/**
+ * Bumped whenever the cache is edited locally (patched or cleared). A response
+ * that started before the bump describes a pre-edit server state, so it is
+ * dropped instead of overwriting the newer local value.
+ */
+let epoch = 0;
+
 export function readCachedMe(): MeMailboxResponse | null {
   if (memoryCache) return memoryCache;
   if (typeof window === "undefined") return null;
@@ -47,6 +54,7 @@ function writeCache(me: MeMailboxResponse) {
 }
 
 export function clearMeMailboxCache() {
+  epoch++;
   memoryCache = null;
   inFlight = null;
   try {
@@ -56,11 +64,29 @@ export function clearMeMailboxCache() {
   }
 }
 
+/**
+ * Merges a partial update (e.g. a just-saved display name) into the cached
+ * profile and notifies every `useMeMailbox` subscriber — the sidebar, the
+ * chrome header, etc. — so they reflect it immediately instead of waiting on
+ * their next full `/api/me/mailbox` refetch.
+ */
+export function patchMeMailboxCache(patch: Partial<MeMailboxResponse>) {
+  const base = memoryCache ?? readCachedMe();
+  if (!base) return;
+  epoch++;
+  inFlight = null;
+  writeCache({ ...base, ...patch });
+}
+
 export function fetchMeMailbox(): Promise<MeMailboxResponse | null> {
   if (inFlight) return inFlight;
+  const startedAt = epoch;
   inFlight = fetch("/api/me/mailbox")
     .then((r) => (r.ok ? (r.json() as Promise<MeMailboxResponse>) : null))
     .then((j) => {
+      // The cache was edited locally while this was in flight — the response
+      // is already out of date, so keep the newer local value.
+      if (startedAt !== epoch) return memoryCache;
       if (j) writeCache(j);
       return j;
     })
@@ -69,6 +95,12 @@ export function fetchMeMailbox(): Promise<MeMailboxResponse | null> {
       inFlight = null;
     });
   return inFlight;
+}
+
+/** Forces a fresh `/api/me/mailbox` read, bypassing the in-flight dedupe. */
+export function refreshMeMailbox(): Promise<MeMailboxResponse | null> {
+  inFlight = null;
+  return fetchMeMailbox();
 }
 
 /**

@@ -32,12 +32,23 @@ function useContentBreadcrumb(pathname: string) {
   }, [pathname]);
 }
 
-function ContentTopbar({ actionsNode }: { actionsNode: (node: HTMLDivElement | null) => void }) {
+function ContentTopbar({
+  actionsNode,
+  collapsed,
+}: {
+  actionsNode: (node: HTMLDivElement | null) => void;
+  collapsed: boolean;
+}) {
   const pathname = usePathname();
   const breadcrumb = useContentBreadcrumb(pathname);
 
   return (
-    <div className="nucleus-backdrop fixed top-0 right-0 left-[220px] z-20 hidden h-14 items-center justify-between gap-4 border-b border-[var(--color-border)] px-6 md:flex">
+    <div
+      className={cn(
+        "nucleus-backdrop fixed top-0 right-0 z-20 hidden h-14 items-center justify-between gap-4 border-b border-[var(--color-border)] px-6 transition-[left] duration-200 md:flex",
+        collapsed ? "left-[72px]" : "left-[220px]",
+      )}
+    >
       <div className="flex items-center gap-2">
         <span className="font-display text-[16px] font-bold tracking-[-0.01em] text-[var(--color-text)]">
           {breadcrumb.group}
@@ -50,10 +61,28 @@ function ContentTopbar({ actionsNode }: { actionsNode: (node: HTMLDivElement | n
   );
 }
 
+const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed";
+
 export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [actionsPortalNode, setActionsPortalNode] = useState<HTMLDivElement | null>(null);
   const { me } = useMeMailbox();
+
+  // Read the saved preference after mount (not in the initializer) so the
+  // server-rendered and first client-rendered markup match — avoids a
+  // hydration mismatch.
+  useEffect(() => {
+    if (window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1") setCollapsed(true);
+  }, []);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0");
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!me?.hasStoredMailbox) return;
@@ -99,13 +128,16 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-[var(--color-bg)]">
       <aside
-        className="workspace-sidebar fixed inset-y-0 left-0 z-40 hidden w-[220px] border-r md:block"
+        className={cn(
+          "workspace-sidebar fixed inset-y-0 left-0 z-40 hidden border-r transition-[width] duration-200 md:block",
+          collapsed ? "w-[72px]" : "w-[220px]",
+        )}
         aria-label="Main navigation"
       >
-        <WorkspaceSidebar />
+        <WorkspaceSidebar collapsed={collapsed} onToggleCollapse={toggleCollapsed} />
       </aside>
 
-      <ContentTopbar actionsNode={setActionsPortalNode} />
+      <ContentTopbar actionsNode={setActionsPortalNode} collapsed={collapsed} />
 
       <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-[var(--color-border)] nucleus-backdrop px-4 pt-[env(safe-area-inset-top,0px)] md:hidden">
         <button
@@ -152,8 +184,9 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
           <ContactPhotoProvider>
             <main
               className={cn(
-                "flex-1 min-w-0 min-h-screen overflow-hidden",
-                "md:ml-[220px] md:px-6 md:pb-6",
+                "flex-1 min-w-0 min-h-screen overflow-hidden transition-[margin-left] duration-200",
+                collapsed ? "md:ml-[72px]" : "md:ml-[220px]",
+                "md:px-6 md:pb-6",
                 "pt-[calc(56px+16px+env(safe-area-inset-top,0px))] px-4 pb-[calc(24px+env(safe-area-inset-bottom,0px))] md:pt-[80px]",
               )}
             >

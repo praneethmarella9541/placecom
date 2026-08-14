@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useContactPhoto, useMePhotoUrl } from "@/components/ContactPhotoProvider";
-import { gmailAvatarColor, gmailAvatarInitial } from "@/lib/gmail-avatar";
+import { gmailAvatarColor, gmailAvatarInitial, gmailAvatarInitials } from "@/lib/gmail-avatar";
 import { normalizeGooglePhotoUrl } from "@/lib/google-photo-url";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +20,10 @@ type GmailAvatarProps = {
   isMe?: boolean;
   /** Flat neutral bg + muted text instead of the seed-based color palette (Drive owner column). */
   monochrome?: boolean;
+  /** Copper brand gradient instead of the seed-based color palette (the signed-in user's own avatar, e.g. sidebar, profile page). */
+  copper?: boolean;
+  /** Show two initials ("SB") instead of one, matching the profile page card. */
+  twoLetterInitials?: boolean;
 };
 
 /** Gmail-style avatar — Google profile photo when available, else colored initial. */
@@ -32,6 +36,8 @@ export function GmailAvatar({
   email,
   isMe = false,
   monochrome = false,
+  copper = false,
+  twoLetterInitials = false,
 }: GmailAvatarProps) {
   const [imgFailed, setImgFailed] = useState(false);
   const lookupEmail = (email ?? seed).trim().toLowerCase();
@@ -46,7 +52,7 @@ export function GmailAvatar({
   }, [resolvedPhoto]);
 
   const bg = gmailAvatarColor(seed);
-  const initial = gmailAvatarInitial(name);
+  const initial = twoLetterInitials ? gmailAvatarInitials(name) : gmailAvatarInitial(name);
   const fontSize = size >= 40 ? 16 : size >= 32 ? 13 : size >= 24 ? 11 : 10;
 
   if (showPhoto && resolvedPhoto) {
@@ -74,7 +80,11 @@ export function GmailAvatar({
       style={{
         width: size,
         height: size,
-        backgroundColor: monochrome ? undefined : bg,
+        background: monochrome
+          ? undefined
+          : copper
+            ? "linear-gradient(135deg, var(--color-copper-grad-from), var(--color-copper-grad-to))"
+            : bg,
         fontSize,
         lineHeight: 1,
       }}

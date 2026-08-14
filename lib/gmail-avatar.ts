@@ -29,6 +29,22 @@ export function gmailAvatarColor(seed: string): string {
   return GMAIL_AVATAR_COLORS[hashString(key) % GMAIL_AVATAR_COLORS.length];
 }
 
+/**
+ * Up to two initials, one per word ("Sai Bharath" → "SB") — used for the
+ * signed-in user's own avatar (sidebar, profile page).
+ */
+export function gmailAvatarInitials(name: string): string {
+  const words = name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  return words || gmailAvatarInitial(name);
+}
+
 /** First letter/digit of a display name — skips quotes and punctuation. */
 export function gmailAvatarInitial(name: string): string {
   for (let i = 0; i < name.length; i++) {

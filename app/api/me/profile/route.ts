@@ -33,25 +33,42 @@ export type MeProfileResponse = {
 export async function GET(request: Request) {
   const authed = await getAuthedRequest(request);
   const supabase = authed?.supabase ?? createServerSupabaseClient();
-  const {
-    data: { user },
-    error: userErr,
-  } = await supabase.auth.getUser();
-  if (userErr || !user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // `getAuthedRequest` already resolved (and network-validated) the user —
+  // avoid a second `auth.getUser()` round trip when it succeeded.
+  let userId: string;
+  let userEmail: string | null;
+  let provider: string | undefined;
+  if (authed) {
+    userId = authed.user.id;
+    userEmail = authed.user.email ?? null;
+    provider = authed.user.app_metadata?.provider;
+  } else {
+    const { data, error: userErr } = await supabase.auth.getUser();
+    if (userErr || !data.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    userId = data.user.id;
+    userEmail = data.user.email ?? null;
+    provider = (data.user.app_metadata as { provider?: string } | undefined)?.provider;
   }
 
-  let { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("role, display_username, job_title, bio, restricted_features, group_id, mailbox_owner_id, exotel_virtual_number")
-    .eq("id", user.id)
-    .maybeSingle();
+  const [profileResult, tokenStatus] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("role, display_username, job_title, bio, restricted_features, group_id, mailbox_owner_id, exotel_virtual_number")
+      .eq("id", userId)
+      .maybeSingle(),
+    getUserTokenLimitStatus(userId),
+  ]);
+
+  let { data: profile, error: profileErr } = profileResult;
 
   if (profileErr && /job_title|bio|group_id|mailbox_owner_id|exotel_virtual_number/i.test(profileErr.message ?? "")) {
     const fallback = await supabase
       .from("profiles")
       .select("role, display_username, restricted_features, mailbox_owner_id")
-      .eq("id", user.id)
+      .eq("id", userId)
       .maybeSingle();
     profile = fallback.data as typeof profile;
     profileErr = fallback.error;
@@ -59,40 +76,40 @@ export async function GET(request: Request) {
 
   if (profileErr) return NextResponse.json({ error: profileErr.message }, { status: 500 });
 
-  let group: { name: string; restricted_features: unknown } | null = null;
-  if (profile?.group_id) {
-    const { data: g } = await supabase
-      .from("team_groups")
-      .select("name, restricted_features")
-      .eq("id", profile.group_id as string)
-      .maybeSingle();
-    if (g) group = g as { name: string; restricted_features: unknown };
-  }
-
-  const tokenStatus = await getUserTokenLimitStatus(user.id);
-  const appMeta = user.app_metadata as { provider?: string } | undefined;
-  const canChangePassword = appMeta?.provider !== "google";
-
   const role = (profile?.role as string) ?? "staff";
   const mailboxOwnerId =
-    role === "admin" ? user.id : (profile?.mailbox_owner_id as string | null);
-  let mailboxEmail: string | null = null;
-  if (mailboxOwnerId) {
-    try {
-      const svc = createServiceSupabase();
-      const { data: cred } = await svc
-        .from("google_mailbox_credentials")
-        .select("gmail_address")
-        .eq("owner_user_id", mailboxOwnerId)
-        .maybeSingle();
-      mailboxEmail = (cred?.gmail_address as string | null) ?? null;
-    } catch {
-      /* ignore */
-    }
-  }
+    role === "admin" ? userId : (profile?.mailbox_owner_id as string | null);
+
+  const [group, mailboxEmail] = await Promise.all([
+    profile?.group_id
+      ? supabase
+          .from("team_groups")
+          .select("name, restricted_features")
+          .eq("id", profile.group_id as string)
+          .maybeSingle()
+          .then(({ data: g }) => (g as { name: string; restricted_features: unknown } | null) ?? null)
+      : Promise.resolve(null as { name: string; restricted_features: unknown } | null),
+    mailboxOwnerId
+      ? (async () => {
+          try {
+            const svc = createServiceSupabase();
+            const { data: cred } = await svc
+              .from("google_mailbox_credentials")
+              .select("gmail_address")
+              .eq("owner_user_id", mailboxOwnerId)
+              .maybeSingle();
+            return (cred?.gmail_address as string | null) ?? null;
+          } catch {
+            return null;
+          }
+        })()
+      : Promise.resolve(null as string | null),
+  ]);
+
+  const canChangePassword = provider !== "google";
 
   const body: MeProfileResponse = {
-    sessionEmail: user.email ?? null,
+    sessionEmail: userEmail,
     displayUsername: (profile?.display_username as string | null) ?? null,
     jobTitle: (profile?.job_title as string | null) ?? null,
     bio: (profile?.bio as string | null) ?? null,

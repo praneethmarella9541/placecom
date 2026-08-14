@@ -4,7 +4,7 @@
  */
 export default function FormsLoading() {
   return (
-    <div className="mx-auto max-w-3xl space-y-8">
+    <div className="mx-auto max-w-5xl space-y-8">
       {/* Header */}
       <div className="flex items-start gap-4">
         <div className="skeleton-shimmer h-12 w-12 shrink-0 rounded-[var(--radius-lg)]" />

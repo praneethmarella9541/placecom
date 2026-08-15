@@ -28,13 +28,38 @@ export const COMPOSE_VARIABLES: ComposeVariable[] = [
   { key: "last_mail_interaction", label: "Last mail interaction", hint: "Date of the most recent email exchanged" },
 ];
 
-const VARIABLE_KEYS = new Set(COMPOSE_VARIABLES.map((v) => v.key));
+/**
+ * Spreadsheet headers → the variables the picker offers for an imported list.
+ *
+ * Replaces (never extends) COMPOSE_VARIABLES when a file is the audience: an
+ * imported row has no contact card behind it, so offering {job_title} because
+ * the directory has one would promise a value nothing can fill. `email` is
+ * dropped — it addresses the mail rather than being merged into it.
+ */
+export function columnsToComposeVariables(
+  columns: string[],
+  headerLabels: string[] = []
+): ComposeVariable[] {
+  const seen = new Set<string>();
+  const out: ComposeVariable[] = [];
+  columns.forEach((raw, i) => {
+    const key = normalizeMergeFieldKey(raw || "");
+    if (!key || key === "email" || seen.has(key)) return;
+    seen.add(key);
+    const label = headerLabels[i]?.trim() || raw;
+    out.push({ key, label, hint: `Column "${label}" from the imported file` });
+  });
+  return out;
+}
 
 /** Menu entries matching what the user has typed after `{`. */
-export function filterComposeVariables(query: string): ComposeVariable[] {
+export function filterComposeVariables(
+  query: string,
+  variables: ComposeVariable[] = COMPOSE_VARIABLES
+): ComposeVariable[] {
   const q = query.trim().toLowerCase();
-  if (!q) return COMPOSE_VARIABLES;
-  return COMPOSE_VARIABLES.filter(
+  if (!q) return variables;
+  return variables.filter(
     (v) => v.key.includes(normalizeMergeFieldKey(q)) || v.label.toLowerCase().includes(q)
   );
 }
@@ -45,7 +70,7 @@ export function filterComposeVariables(query: string): ComposeVariable[] {
  * the only sensible one. Invalid/absent dates collapse to "" so the caller's
  * missing-value handling treats them like any other empty field.
  */
-function formatInteractionDate(iso: string | null | undefined): string {
+export function formatInteractionDate(iso: string | null | undefined): string {
   if (!iso) return "";
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return "";
@@ -68,8 +93,11 @@ export function contactToMergeFields(contact: DirectoryContact): Record<string, 
   const company = contact.company?.trim() || "";
   const title = contact.title?.trim() || "";
   const phone = contact.phone?.trim() || "";
-  const lastAt = formatInteractionDate(contact.last_contacted_at);
 
+  // Deliberately no last_mail_interaction: the card's `last_contacted_at` is
+  // the later of a real interaction *or* the card's own updated_at, so editing
+  // a contact would move the date in a sent email. That variable is filled
+  // from mail only — the Gmail lookup first, the mailbox sync second.
   return {
     email: contact.email?.trim() || "",
     name,
@@ -79,7 +107,6 @@ export function contactToMergeFields(contact: DirectoryContact): Record<string, 
     title,
     phone_number: phone,
     phone,
-    last_mail_interaction: lastAt,
   };
 }
 
@@ -142,6 +169,18 @@ const VARIABLE_SPAN_RE = new RegExp(
   "gi"
 );
 
+/**
+ * Alternation of variable keys for the tinting regexes. Keys reaching here are
+ * normalized (`[a-z0-9_]`), but imported column headers are user data, so they
+ * are escaped rather than trusted to be regex-safe.
+ */
+export function variableKeyPattern(variables: ComposeVariable[]): string {
+  return variables
+    .map((v) => v.key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .filter(Boolean)
+    .join("|");
+}
+
 /** Remove the editor's tinting wrappers, keeping their text. */
 export function stripVariableSpans(html: string): string {
   return html.replace(VARIABLE_SPAN_RE, "$1");
@@ -155,9 +194,12 @@ export function stripVariableSpans(html: string): string {
  * stray braces in prose or code are left alone. Existing wrappers are removed
  * first to keep repeated passes idempotent.
  */
-export function wrapVariablesInHtml(html: string): string {
+export function wrapVariablesInHtml(
+  html: string,
+  variables: ComposeVariable[] = COMPOSE_VARIABLES
+): string {
   const bare = stripVariableSpans(html);
-  const keys = COMPOSE_VARIABLES.map((v) => v.key).join("|");
+  const keys = variableKeyPattern(variables);
   if (!keys) return bare;
 
   const re = new RegExp(`\\{(${keys})\\}(?![^<]*>)`, "g");
@@ -179,8 +221,10 @@ export type MissingVariableReport = {
 export function reportMissingVariables(
   subjectTemplate: string,
   bodyTemplate: string,
-  recipients: Array<{ email: string; fields: Record<string, string> }>
+  recipients: Array<{ email: string; fields: Record<string, string> }>,
+  variables: ComposeVariable[] = COMPOSE_VARIABLES
 ): MissingVariableReport {
+  const variableKeys = new Set(variables.map((v) => v.key));
   const used = Array.from(
     new Set([
       ...listPlaceholdersInTemplate(subjectTemplate),
@@ -188,8 +232,8 @@ export function reportMissingVariables(
     ])
   );
 
-  const unknownKeys = used.filter((k) => k !== "email" && !VARIABLE_KEYS.has(k));
-  const known = used.filter((k) => k !== "email" && VARIABLE_KEYS.has(k));
+  const unknownKeys = used.filter((k) => k !== "email" && !variableKeys.has(k));
+  const known = used.filter((k) => k !== "email" && variableKeys.has(k));
 
   const byRecipient = new Map<string, string[]>();
   for (const r of recipients) {

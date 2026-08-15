@@ -1,10 +1,10 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   filterComposeVariables,
+  variableKeyPattern,
   VARIABLE_SPAN_CLASS,
-  COMPOSE_VARIABLES,
   type ComposeVariable,
 } from "@/lib/compose-variables";
 
@@ -40,11 +40,10 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
-/** Plain subject text → display HTML with known `{variables}` tinted. */
-function renderHtml(text: string, tint: boolean): string {
+/** Plain subject text → display HTML with the offered `{variables}` tinted. */
+function renderHtml(text: string, variables: ComposeVariable[]): string {
   const escaped = escapeHtml(text);
-  if (!tint) return escaped;
-  const keys = COMPOSE_VARIABLES.map((v) => v.key).join("|");
+  const keys = variableKeyPattern(variables);
   if (!keys) return escaped;
   return escaped.replace(
     new RegExp(`\\{(${keys})\\}`, "g"),
@@ -109,7 +108,8 @@ function setCaretOffset(root: HTMLElement, offset: number): void {
  */
 export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
   function SubjectWithVariables({ value, onChange, placeholder, variables }, ref) {
-    const enabled = (variables?.length ?? 0) > 0;
+    const vars = useMemo(() => variables ?? [], [variables]);
+    const enabled = vars.length > 0;
     const elRef = useRef<HTMLDivElement>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
@@ -124,10 +124,10 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
       const el = elRef.current;
       if (!el) return;
       if ((el.textContent ?? "") !== value) {
-        el.innerHTML = renderHtml(value, enabled);
+        el.innerHTML = renderHtml(value, vars);
       }
       setEmpty(!value);
-    }, [value, enabled]);
+    }, [value, vars]);
 
     useEffect(() => {
       if (!menu) return;
@@ -157,7 +157,7 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
         setMenu(null);
         return;
       }
-      const matches = filterComposeVariables(trigger.query);
+      const matches = filterComposeVariables(trigger.query, vars);
       if (matches.length === 0) {
         setMenu(null);
         return;
@@ -184,7 +184,7 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
       }
 
       const caret = getCaretOffset(el);
-      const html = renderHtml(plain, enabled);
+      const html = renderHtml(plain, vars);
       if (el.innerHTML !== html) {
         el.innerHTML = html;
         setCaretOffset(el, caret);
@@ -203,7 +203,7 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
       const token = `{${v.key}} `;
       const next = plain.slice(0, trigger.braceIndex) + token + plain.slice(caret);
 
-      el.innerHTML = renderHtml(next, enabled);
+      el.innerHTML = renderHtml(next, vars);
       setCaretOffset(el, trigger.braceIndex + token.length);
       setEmpty(!next);
       onChange(next);
@@ -229,7 +229,7 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
 
       const plain = el.textContent ?? "";
       const caret = getCaretOffset(el);
-      const re = new RegExp(`\\{(${COMPOSE_VARIABLES.map((v) => v.key).join("|")})\\}`, "g");
+      const re = new RegExp(`\\{(${variableKeyPattern(vars)})\\}`, "g");
 
       let m: RegExpExecArray | null;
       while ((m = re.exec(plain)) !== null) {
@@ -241,7 +241,7 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
         if (!hit) continue;
 
         const next = plain.slice(0, start) + plain.slice(end);
-        el.innerHTML = renderHtml(next, enabled);
+        el.innerHTML = renderHtml(next, vars);
         setCaretOffset(el, start);
         setEmpty(!next);
         onChange(next);

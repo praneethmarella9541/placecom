@@ -258,7 +258,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   function highlightVariablesOnBlur() {
     const el = editorRef.current;
     if (!variablesEnabled || !el) return;
-    const wrapped = wrapVariablesInHtml(el.innerHTML);
+    const wrapped = wrapVariablesInHtml(el.innerHTML, variables);
     if (wrapped !== el.innerHTML) el.innerHTML = wrapped;
   }
 
@@ -273,7 +273,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
       return;
     }
 
-    const matches = filterComposeVariables(trigger.query);
+    const matches = filterComposeVariables(trigger.query, variables);
     if (matches.length === 0) {
       setVarMenu(null);
       return;

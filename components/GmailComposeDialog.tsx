@@ -2,7 +2,7 @@
 
 import { createPortal } from "react-dom";
 import { useRef, useState, useCallback, useEffect } from "react";
-import { Minus, Maximize, Minimize, Maximize2, Eye } from "lucide-react";
+import { Minus, Maximize, Minimize, Maximize2, Eye, Mails } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
@@ -62,11 +62,24 @@ export type GmailComposeDialogProps = {
   /** Merge variables offered by the body editor's `{` picker. */
   variables?: ComposeVariable[];
   /**
+   * Called when the variable button is used on a draft that has no variables
+   * to offer. Supplying it keeps the button visible outside mass sending, so
+   * the answer is an explanation and an offer to convert rather than a
+   * control that silently isn't there.
+   */
+  onVariableBlocked?: () => void;
+  /**
    * Locks the To field to a read-only mirror of the side panel's selection.
    * Used for mass sending, where the audience is owned by the rail and typing
    * an address on the left would silently escape the merge/preview flow.
    */
   recipientsLocked?: boolean;
+  /**
+   * Size of the locked audience. The To field shows this as a count rather
+   * than the address list: a campaign can carry dozens of recipients, and a
+   * truncated run-on of addresses says less than "3 recipients" does.
+   */
+  lockedRecipientCount?: number;
   /** Right-hand rail, rendered inside the dialog next to the editor. */
   sidePanel?: React.ReactNode;
   /** Small notice strip above the footer (outbox delivery hint). */
@@ -139,7 +152,9 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     onDismissComposeError,
     placement = "docked",
     variables,
+    onVariableBlocked,
     recipientsLocked,
+    lockedRecipientCount = 0,
     sidePanel,
     footerNotice,
     massSending,
@@ -404,8 +419,14 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               ) : recipientsLocked ? (
                 <div className="flex min-w-0 flex-1 items-center gap-2 py-2.5">
                   <span className="w-7 shrink-0 text-[13px] text-[#444746]">To</span>
-                  {to.trim() ? (
-                    <span className="truncate text-[13px] text-[#202124]">{to}</span>
+                  {lockedRecipientCount > 0 ? (
+                    <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-[#dadce0] px-2.5 py-1 text-[13px] text-[#3c4043]">
+                      <Mails className="h-3.5 w-3.5 shrink-0 text-[#5f6368]" strokeWidth={1.75} />
+                      <span className="truncate">
+                        Sending individual emails to {lockedRecipientCount} recipient
+                        {lockedRecipientCount === 1 ? "" : "s"}
+                      </span>
+                    </span>
                   ) : (
                     <span className="truncate text-[13px] text-[#70757a]">
                       Add recipients from the panel on the right
@@ -579,7 +600,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                     if (lastFocusedRef.current === "subject") subjectRef.current?.insertVariableTrigger();
                     else editorRef.current?.insertVariableTrigger();
                   }
-                : undefined
+                : onVariableBlocked
             }
           />
         </div>

@@ -50,7 +50,6 @@ type EventRow = {
   id: string;
   summary?: string;
   htmlLink?: string;
-  hangoutLink?: string;
   description?: string;
   location?: string;
   status?: string;
@@ -175,7 +174,6 @@ export default function CalendarPage() {
   const [startDateTime, setStartDateTime] = useState("");
   const [endDateTime, setEndDateTime] = useState("");
   const [scheduleError, setScheduleError] = useState<string | null>(null);
-  const [addMeet, setAddMeet] = useState(true);
   const [recurrencePreset, setRecurrencePreset] = useState<RecurrencePreset>("none");
 
   // Signed-in user emails — for in-app RSVP matching
@@ -191,13 +189,10 @@ export default function CalendarPage() {
   const [editStart, setEditStart] = useState("");
   const [editEnd, setEditEnd] = useState("");
   const [editAllDay, setEditAllDay] = useState(false);
-  const [editAddMeet, setEditAddMeet] = useState(false);
   const [editAttendees, setEditAttendees] = useState(""); // comma-sep emails
   const [editNotify, setEditNotify] = useState<SendUpdates>("all");
   const [editRecurrencePreset, setEditRecurrencePreset] = useState<RecurrencePreset>("none");
   const [editIsSeriesInstance, setEditIsSeriesInstance] = useState(false);
-  // Success state — shown after meeting created
-  const [createdMeetLink, setCreatedMeetLink] = useState<string | null>(null);
 
   /* ── Data loading ────────────────────────────────────── */
   const loadRecruiters = useCallback(async () => {
@@ -483,19 +478,16 @@ export default function CalendarPage() {
           startDateTime: new Date(startDateTime).toISOString(),
           endDateTime: new Date(endDateTime).toISOString(),
           recurrence: buildRecurrenceRules(recurrencePreset),
-          addMeet,
           sendUpdates: "all",
           extraAttendeeEmails: extras.length ? extras : undefined,
         }),
       });
       const body = (await res.json()) as {
         error?: string;
-        event?: { hangoutLink?: string; htmlLink?: string };
+        event?: { htmlLink?: string };
       };
       if (!res.ok) throw new Error(body.error || "Failed to schedule meeting");
 
-      const meetLink = body.event?.hangoutLink ?? null;
-      setCreatedMeetLink(meetLink);
       setScheduleOpen(false);
       setRecruiterEmail("");
       setTitle("");
@@ -533,7 +525,6 @@ export default function CalendarPage() {
           : ""
     );
     setEditAttendees((ev.attendees ?? []).map((a) => a.email).filter(Boolean).join(", "));
-    setEditAddMeet(!ev.hangoutLink);
     setEditRecurrencePreset(parseRecurrencePreset(ev.recurrence));
     setEditIsSeriesInstance(!!ev.recurringEventId && ev.recurringEventId !== ev.id);
     setEditNotify("all");
@@ -660,7 +651,6 @@ export default function CalendarPage() {
           ...(start ? { start } : {}),
           ...(end ? { end } : {}),
           attendees: attendees.length ? attendees : undefined,
-          addMeet: editAddMeet && !editEvent.hangoutLink ? true : undefined,
           sendUpdates: editNotify,
           ...(editIsSeriesInstance
             ? {}
@@ -730,12 +720,6 @@ export default function CalendarPage() {
     }
     void rescheduleEvent(arg.event.id, arg.event.start, arg.event.end, arg.revert);
   }
-
-  useEffect(() => {
-    if (!createdMeetLink) return;
-    const t = setTimeout(() => setCreatedMeetLink(null), 12_000);
-    return () => clearTimeout(t);
-  }, [createdMeetLink]);
 
   /* ── Deep-link from inbox invite buttons ─────────────────
    *
@@ -1262,49 +1246,6 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      {/* ── Meet link success banner ───────────────────── */}
-      {createdMeetLink ? (
-        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 animate-slide-down">
-          <div className="flex items-center gap-3 rounded-2xl bg-[var(--color-surface)] px-4 py-3 shadow-xl border border-[var(--color-border)] min-w-[320px] max-w-[480px]">
-            {/* Google Meet icon */}
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#00897B]">
-              <svg viewBox="0 0 24 24" className="h-4 w-4 fill-white" xmlns="http://www.w3.org/2000/svg">
-                <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/>
-              </svg>
-            </span>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-[var(--color-text)]">Meeting created!</p>
-              <p className="truncate text-xs text-[var(--color-text-muted)]">{createdMeetLink}</p>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <a
-                href={createdMeetLink}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-lg bg-[var(--color-copper)] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[var(--color-copper-hover)] transition-colors"
-              >
-                Join
-              </a>
-              <button
-                onClick={() => {
-                  void navigator.clipboard.writeText(createdMeetLink);
-                }}
-                className="rounded-lg border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] transition-colors"
-                title="Copy link"
-              >
-                Copy
-              </button>
-              <button
-                onClick={() => setCreatedMeetLink(null)}
-                className="rounded-full p-1 text-[var(--color-text-faint)] hover:text-[var(--color-text)] transition-colors"
-              >
-                <IconX className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
       {/* ── Schedule meeting modal ─────────────────────── */}
       {scheduleOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center animate-fade-in">
@@ -1413,45 +1354,6 @@ export default function CalendarPage() {
                 className="input-field resize-none"
               />
 
-              {/* Google Meet toggle */}
-              <button
-                data-testid="calendar-meet-toggle"
-                type="button"
-                onClick={() => setAddMeet((v) => !v)}
-                className={[
-                  "flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
-                  addMeet
-                    ? "border-[var(--color-copper)] bg-[var(--color-copper-tint)]"
-                    : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-offset)]",
-                ].join(" ")}
-              >
-                {/* Meet icon */}
-                <span className={[
-                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors",
-                  addMeet ? "bg-[#00897B]" : "bg-[var(--color-surface-offset)]",
-                ].join(" ")}>
-                  <svg viewBox="0 0 24 24" className="h-4 w-4 fill-white" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/>
-                  </svg>
-                </span>
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-[var(--color-text)]">Google Meet video conference</p>
-                  <p className="text-xs text-[var(--color-text-muted)]">
-                    {addMeet ? "A Meet link will be generated and shared with attendees" : "No video link — in-person or phone only"}
-                  </p>
-                </div>
-                {/* Toggle pill */}
-                <span className={[
-                  "relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200",
-                  addMeet ? "bg-[var(--color-copper)]" : "bg-[var(--color-border-strong)]",
-                ].join(" ")}>
-                  <span className={[
-                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200 mt-0.5",
-                    addMeet ? "translate-x-4" : "translate-x-0.5",
-                  ].join(" ")} />
-                </span>
-              </button>
-
               {scheduleError && (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
                   {scheduleError}
@@ -1474,7 +1376,7 @@ export default function CalendarPage() {
                 onClick={() => void scheduleMeeting()}
                 className="btn-primary"
               >
-                {busy ? "Scheduling…" : addMeet ? "Create with Meet" : "Create event"}
+                {busy ? "Scheduling…" : "Create event"}
               </button>
             </div>
           </div>
@@ -1654,27 +1556,6 @@ export default function CalendarPage() {
                   {deleteBusy ? "Deleting…" : "Delete"}
                 </button>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {selectedEvent.hangoutLink ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void navigator.clipboard.writeText(selectedEvent.hangoutLink!)}
-                      className="btn-secondary text-xs"
-                    >
-                      Copy Meet link
-                    </button>
-                    <a
-                      href={selectedEvent.hangoutLink}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn-primary"
-                    >
-                      Join meeting
-                    </a>
-                  </>
-                ) : null}
-              </div>
             </div>
           </div>
         </div>
@@ -1762,29 +1643,6 @@ export default function CalendarPage() {
                 className="input-field"
               />
 
-              {!editAllDay && !editEvent.hangoutLink ? (
-                <button
-                  type="button"
-                  onClick={() => setEditAddMeet((v) => !v)}
-                  className={[
-                    "flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left transition-colors",
-                    editAddMeet
-                      ? "border-[var(--color-copper)] bg-[var(--color-copper-tint)]"
-                      : "border-[var(--color-border)] hover:bg-[var(--color-surface-offset)]",
-                  ].join(" ")}
-                >
-                  <span className="text-sm font-medium text-[var(--color-text)]">Add Google Meet</span>
-                  <span className={[
-                    "ml-auto relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors",
-                    editAddMeet ? "bg-[var(--color-copper)]" : "bg-[var(--color-border-strong)]",
-                  ].join(" ")}>
-                    <span className={[
-                      "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform mt-0.5",
-                      editAddMeet ? "translate-x-4" : "translate-x-0.5",
-                    ].join(" ")} />
-                  </span>
-                </button>
-              ) : null}
 
               {/* Attendees */}
               <div>

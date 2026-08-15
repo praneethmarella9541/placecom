@@ -5,6 +5,18 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * Truncates to a fixed character count, appending "…" when cut. Unlike CSS
+ * `truncate` (text-overflow: ellipsis, pixel-width based), this cuts at the same
+ * character count regardless of how wide each character renders — so two
+ * strings with the same maxLen always show the same amount of text, instead of
+ * one cutting off much sooner than another just because its letters are wider.
+ */
+export function truncateChars(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen).trimEnd()}…`;
+}
+
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   try {

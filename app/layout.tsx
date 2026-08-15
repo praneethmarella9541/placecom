@@ -26,7 +26,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "The Nucleus",
   description:
-    "Mail, contact extraction, recruiter CRM, calendar, calls, and meeting notes in one workspace.",
+    "Mail, contact extraction, recruiter CRM, calendar, and calls in one workspace.",
   icons: {
     icon: "/favicon.png",
   },

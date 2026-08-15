@@ -3,7 +3,7 @@
  * route-segment `loading.tsx`. Mimics a generic content-page shape:
  * page title, top action bar, a primary card, then a stack of list rows.
  *
- * Most main routes (inbox/drive/crm/dashboard/meetings/forms/etc.) have
+ * Most main routes (inbox/drive/crm/dashboard/forms/etc.) have
  * their own pixel-matched skeleton — this is the safety net for anything
  * else and for first-paint before the route's own loader takes over.
  */

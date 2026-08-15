@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
-import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
+import { isValidE164, normalizePhone } from "@/lib/phone";
+import { deriveCallDirection, ourNumbersForRows } from "@/lib/call-log-peer";
 import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
 import { rowNeedsTalkDurationBackfill } from "@/lib/call-talk-seconds";
 
@@ -89,30 +90,13 @@ export async function GET(request: Request) {
   }
 
   // Derive direction + peer (the "other party" number, never our own).
-  // Incoming: from_number = external caller, to_number = our agent.
-  // Outbound: from_number = our virtual number, to_number = destination.
   const userMobile = (telephony?.mobile_phone as string | null) ?? "";
   const userExotel = (telephony?.exotel_virtual_number as string | null) ?? "";
-  const allVirtuals = [
-    ...listConfiguredExotelNumbers(),
-    ...(userExotel ? [normalizePhone(userExotel)] : []),
-  ].filter((v, i, a) => v && a.indexOf(v) === i);
+  const ourNumbers = ourNumbersForRows(rows, [userMobile, userExotel]);
 
   const enriched = rows.map((r) => {
-    const fromIsVirtual = allVirtuals.some((v) => phoneMatches(v, r.from_number ?? ""));
-    const toIsUserMobile = userMobile && phoneMatches(userMobile, r.to_number ?? "");
-    const fromIsExternal =
-      r.from_number &&
-      !allVirtuals.some((v) => phoneMatches(v, r.from_number ?? "")) &&
-      !(userMobile && phoneMatches(userMobile, r.from_number ?? ""));
-
-    let direction: "incoming" | "outbound" = "outbound";
-    if (fromIsVirtual) direction = "outbound";
-    else if (toIsUserMobile && fromIsExternal) direction = "incoming";
-    else if (fromIsExternal) direction = "incoming";
-
-    const peer_number = direction === "incoming" ? r.from_number : r.to_number;
-    return { ...r, direction, peer_number };
+    const { direction, peerNumber } = deriveCallDirection(r, ourNumbers);
+    return { ...r, direction, peer_number: peerNumber };
   });
 
   return NextResponse.json({

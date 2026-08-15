@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { isMeetOrganizerAccountEmail } from "@/lib/google-meet-organizer";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
@@ -54,9 +53,7 @@ export async function POST(request: Request) {
   if (!profile) {
     return NextResponse.json({ skipped: true, reason: "no_profile_row" });
   }
-  const saveMeetOrganizer =
-    isMeetOrganizerAccountEmail(user.email) && profile.role !== "admin";
-  if (profile.role !== "admin" && !saveMeetOrganizer) {
+  if (profile.role !== "admin") {
     return NextResponse.json({ skipped: true });
   }
 
@@ -122,8 +119,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: upErr.message }, { status: 500 });
   }
 
-  return NextResponse.json({
-    ok: true,
-    meetOrganizer: saveMeetOrganizer || undefined,
-  });
+  return NextResponse.json({ ok: true });
 }

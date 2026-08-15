@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { fetchAllRows } from "@/lib/supabase-fetch-all";
 
 export const runtime = "nodejs";
 
@@ -13,16 +14,21 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Fetch leads
-  const { data: leads, error } = await supabase
-    .from("leads")
-    .select("*")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
+  // Fetch leads — paged (see lib/supabase-fetch-all.ts) rather than a plain
+  // .select(), which silently caps at 1000 rows once this user has that many.
+  const { data: leads, error } = await fetchAllRows((from, to) =>
+    supabase
+      .from("leads")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
 
   if (error) {
     console.error("GET Leads error:", error);
-    return NextResponse.json({ error: "Database error: " + error.message }, { status: 500 });
+    return NextResponse.json({ error: "Database error: " + error }, { status: 500 });
   }
 
   // Fetch all interactions for these leads to compute last_interaction_at

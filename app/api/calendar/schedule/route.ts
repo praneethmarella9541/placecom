@@ -42,7 +42,6 @@ export async function POST(request: Request) {
         notes?: string;
         location?: string;
         timeZone?: string;
-        addMeet?: boolean;
         sendUpdates?: SendUpdates;
         extraAttendeeEmails?: string[];
         recurrence?: string[];
@@ -110,24 +109,9 @@ export async function POST(request: Request) {
         timeZone: body?.timeZone,
         extraAttendeeEmails,
         recurrence: body?.recurrence,
-        addMeet: body?.addMeet !== false,           // default true
         sendUpdates: body?.sendUpdates ?? "all",     // default: send invite emails
       }
     );
-
-    // Record the meet link for recordings / follow-ups.
-    const hangoutLink = event.hangoutLink;
-    if (hangoutLink && user) {
-      try {
-        await supabase.from("meeting_recordings").insert({
-          user_id: user.id,
-          meeting_url: hangoutLink,
-          attendee_email: recruiterEmail,
-        });
-      } catch (err) {
-        console.error("[schedule] Failed to save meeting recording:", err);
-      }
-    }
 
     return NextResponse.json(
       {

@@ -148,6 +148,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
 
       {minimized ? (
         <div
+          data-compose-dialog
           className={cn(
             "fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border px-2 lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[560px] lg:rounded-t-lg",
             GMAIL_COMPOSE_HEADER,

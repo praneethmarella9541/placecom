@@ -8,7 +8,6 @@ export const FEATURE_KEYS = [
   "dashboard",
   "crm",
   "calendar",
-  "meetings",
   "sms",
   "whatsapp",
 ] as const;
@@ -25,7 +24,6 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   dashboard: "Extraction",
   crm: "CRM",
   calendar: "Calendar",
-  meetings: "Meetings",
   sms: "SMS",
   whatsapp: "WhatsApp",
 };
@@ -78,7 +76,6 @@ export function pathToFeature(pathname: string, search: URLSearchParams): Featur
   if (pathname.startsWith("/dashboard")) return "dashboard";
   if (pathname.startsWith("/crm")) return "crm";
   if (pathname.startsWith("/calendar")) return "calendar";
-  if (pathname.startsWith("/meetings")) return "meetings";
   if (pathname.startsWith("/broadcasting")) {
     const channel = search.get("channel");
     if (channel === "sms") return "sms";
@@ -132,8 +129,6 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";
 
-  if (pathname.startsWith("/api/meetings")) return "meetings";
-
   if (pathname.startsWith("/api/sms") || pathname.startsWith("/api/twilio/sms")) return "sms";
   if (pathname.startsWith("/api/whatsapp") || pathname.startsWith("/api/twilio/whatsapp")) return "whatsapp";
 
@@ -144,8 +139,6 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
     if (pathname.endsWith("/parse-phones")) return null;
     return "broadcasting";
   }
-
-  if (pathname.startsWith("/api/webhooks/fireflies")) return "meetings";
 
   return null;
 }

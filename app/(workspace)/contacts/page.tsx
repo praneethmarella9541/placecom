@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { ContactBook } from "@/components/ContactBook";
+import { ContactDirectory } from "@/components/ContactDirectory";
 import { GoogleContactsTab } from "@/components/GoogleContactsTab";
 import { titleCase } from "@/lib/title-case";
 
-type Tab = "my-contacts" | "google";
+type Tab = "my-contacts" | "directory" | "google";
 
 export default function ContactsPage() {
   const [tab, setTab] = useState<Tab>("my-contacts");
@@ -32,6 +33,17 @@ export default function ContactsPage() {
         </button>
         <button
           type="button"
+          onClick={() => setTab("directory")}
+          className={`flex-1 rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
+            tab === "directory"
+              ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
+              : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          }`}
+        >
+          Team Directory
+        </button>
+        <button
+          type="button"
           onClick={() => setTab("google")}
           className={`flex-1 rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
             tab === "google"
@@ -43,7 +55,7 @@ export default function ContactsPage() {
         </button>
       </div>
 
-      {tab === "my-contacts" ? <ContactBook /> : <GoogleContactsTab />}
+      {tab === "my-contacts" ? <ContactBook /> : tab === "directory" ? <ContactDirectory /> : <GoogleContactsTab />}
     </div>
   );
 }

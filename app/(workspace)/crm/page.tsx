@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { UserPlus, ChevronRight, Users2, RefreshCw } from "lucide-react";
-import { IconPhone, IconMail, IconMenu, IconX, IconCalendar, IconUser } from "@/components/Icons";
+import { IconPhone, IconMail, IconMenu, IconX, IconUser } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
 
 type LeadScore = "Hot" | "Warm" | "Cold";
@@ -29,15 +29,6 @@ type InteractionRow = {
   id: string;
   interaction_type: "Call" | "Email" | "Meeting" | "Note";
   notes: string | null;
-  created_at: string;
-};
-
-type MeetingRow = {
-  id: string;
-  meeting_url: string;
-  status: string;
-  transcript: string | null;
-  summary: string | null;
   created_at: string;
 };
 
@@ -100,11 +91,9 @@ export default function CRMPage() {
 
   // Interaction Form
   const [interactions, setInteractions] = useState<InteractionRow[]>([]);
-  const [meetings, setMeetings] = useState<MeetingRow[]>([]);
   const [loadingInteractions, setLoadingInteractions] = useState(false);
   const [interactionType, setInteractionType] = useState<InteractionRow["interaction_type"]>("Note");
   const [interactionNotes, setInteractionNotes] = useState("");
-  const [activePanelTab, setActivePanelTab] = useState<"History" | "Meetings">("History");
 
   const loadLeads = useCallback(async () => {
     setLoading(true);
@@ -243,17 +232,6 @@ export default function CRMPage() {
       }
       const json = await res.json();
       setInteractions(json.interactions || []);
-
-      // 2. Fetch GMeet Summaries via email
-      if (lead.email) {
-        const meetRes = await fetch(`/api/crm/meetings?email=${encodeURIComponent(lead.email)}`);
-        if (meetRes.ok) {
-          const meetJson = await meetRes.json();
-          setMeetings(meetJson.meetings || []);
-        }
-      } else {
-        setMeetings([]);
-      }
     } catch (err: unknown) {
       alert(errMessage(err));
     } finally {
@@ -719,104 +697,43 @@ export default function CRMPage() {
                 </form>
               </div>
 
-              {/* History / Meetings Toggle */}
+              {/* History */}
               <div>
                 <div className="relative mb-4 flex flex-wrap gap-x-1 border-b border-[var(--color-border)]">
-                  <button
+                  <span
                     data-testid="crm-tab-history"
-                    type="button"
-                    onClick={() => setActivePanelTab("History")}
-                    className={`relative px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
-                      activePanelTab === "History"
-                        ? "z-[1] -mb-px border-b-2 border-[var(--color-primary)] text-[var(--color-text)]"
-                        : "border-b-2 border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    }`}
+                    className="relative z-[1] -mb-px border-b-2 border-[var(--color-primary)] px-3 pb-2 text-sm font-medium text-[var(--color-text)] sm:px-4"
                   >
                     {titleCase(`History (${interactions.length})`)}
-                  </button>
-                  <button
-                    data-testid="crm-tab-meetings"
-                    type="button"
-                    onClick={() => setActivePanelTab("Meetings")}
-                    className={`relative flex items-center gap-1.5 px-3 pb-2 text-sm font-medium transition-colors sm:px-4 ${
-                      activePanelTab === "Meetings"
-                        ? "z-[1] -mb-px border-b-2 border-[var(--color-primary)] text-[var(--color-text)]"
-                        : "border-b-2 border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                    }`}
-                  >
-                    <IconCalendar className="h-3.5 w-3.5 shrink-0" />
-                    {titleCase(`GMeet summaries (${meetings.length})`)}
-                  </button>
+                  </span>
                 </div>
 
                 {loadingInteractions ? (
                   <p className="text-sm text-[var(--color-text-muted)]">{titleCase("Loading...")}</p>
-                ) : activePanelTab === "History" ? (
-                  interactions.length === 0 ? (
-                    <p className="text-sm italic text-[var(--color-text-muted)]">{titleCase("No interactions recorded.")}</p>
-                  ) : (
-                    <div className="relative space-y-4 before:absolute before:inset-0 before:ml-5 before:h-full before:w-0.5 before:-translate-x-px before:bg-gradient-to-b before:from-transparent before:via-[var(--color-border-strong)] before:to-transparent md:before:mx-auto md:before:translate-x-0">
-                      {interactions.map((i) => (
-                        <div key={i.id} className="group is-active relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse">
-                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--color-surface)] bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] shadow-[var(--shadow-sm)] md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
-                            {i.interaction_type === "Call" && <IconPhone className="h-4 w-4" />}
-                            {i.interaction_type === "Email" && <IconMail className="h-4 w-4" />}
-                            {i.interaction_type === "Meeting" && <IconUser className="h-4 w-4" />}
-                            {i.interaction_type === "Note" && <IconMenu className="h-4 w-4" />}
-                          </div>
-                          <div className="w-[calc(100%-4rem)] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-sm)] md:w-[calc(50%-2.5rem)]">
-                            <div className="mb-1 flex items-center justify-between">
-                              <span className="text-sm font-bold text-[var(--color-text)]">
-                                {titleCase(i.interaction_type)}
-                              </span>
-                              <time className="text-xs font-medium text-[var(--color-primary)]">{new Date(i.created_at).toLocaleDateString()}</time>
-                            </div>
-                            <div className="whitespace-pre-wrap text-xs text-[var(--color-text-muted)]">{i.notes}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )
+                ) : interactions.length === 0 ? (
+                  <p className="text-sm italic text-[var(--color-text-muted)]">{titleCase("No interactions recorded.")}</p>
                 ) : (
-                  meetings.length === 0 ? (
-                    <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface-2)] p-6 text-center">
-                      <p className="text-sm text-[var(--color-text-muted)]">
-                        {titleCase("No Google Meet summaries found for")}{" "}
-                        <span className="font-medium text-[var(--color-text)]">
-                          {activeLead.email || titleCase("this lead")}
-                        </span>
-                        .
-                      </p>
-                      <p className="mt-2 text-xs text-[var(--color-text-faint)]">
-                        {titleCase(
-                          "Make sure your meeting notetaker joins the meeting and you have added their exact email address above."
-                        )}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {meetings.map((m) => (
-                        <div key={m.id} className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-sm)]">
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="flex items-center gap-1.5 text-sm font-bold text-[var(--color-text)]">
-                              <IconCalendar className="h-4 w-4 text-[var(--color-primary)]" /> {titleCase("Meeting notes")}
-                            </span>
-                            <time className="text-xs font-medium text-[var(--color-text-muted)]">{new Date(m.created_at).toLocaleDateString()}</time>
-                          </div>
-                          <div className="mt-2 whitespace-pre-wrap rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3 text-xs leading-relaxed text-[var(--color-text-muted)]">
-                            {m.summary ? (
-                              m.summary
-                            ) : (
-                              <span className="italic text-[var(--color-text-faint)]">{titleCase("Processing summary...")}</span>
-                            )}
-                          </div>
-                          <a href={m.meeting_url} target="_blank" rel="noreferrer" className="mt-3 flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] hover:text-[var(--color-primary-hover)]">
-                            {titleCase("View transcript →")}
-                          </a>
+                  <div className="relative space-y-4 before:absolute before:inset-0 before:ml-5 before:h-full before:w-0.5 before:-translate-x-px before:bg-gradient-to-b before:from-transparent before:via-[var(--color-border-strong)] before:to-transparent md:before:mx-auto md:before:translate-x-0">
+                    {interactions.map((i) => (
+                      <div key={i.id} className="group is-active relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--color-surface)] bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] shadow-[var(--shadow-sm)] md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
+                          {i.interaction_type === "Call" && <IconPhone className="h-4 w-4" />}
+                          {i.interaction_type === "Email" && <IconMail className="h-4 w-4" />}
+                          {i.interaction_type === "Meeting" && <IconUser className="h-4 w-4" />}
+                          {i.interaction_type === "Note" && <IconMenu className="h-4 w-4" />}
                         </div>
-                      ))}
-                    </div>
-                  )
+                        <div className="w-[calc(100%-4rem)] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-sm)] md:w-[calc(50%-2.5rem)]">
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="text-sm font-bold text-[var(--color-text)]">
+                              {titleCase(i.interaction_type)}
+                            </span>
+                            <time className="text-xs font-medium text-[var(--color-primary)]">{new Date(i.created_at).toLocaleDateString()}</time>
+                          </div>
+                          <div className="whitespace-pre-wrap text-xs text-[var(--color-text-muted)]">{i.notes}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>

@@ -2,7 +2,6 @@
 
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { Video } from "lucide-react";
 import {
   extractCalendarEventId,
   hasCalendarInviteCardData,
@@ -53,7 +52,7 @@ export function CalendarInviteOrHtml({
   return <EmailHtmlBody {...htmlProps} />;
 }
 
-/** Gmail-style structured calendar invitation (When / Organizer / RSVP / Meet). */
+/** Gmail-style structured calendar invitation (When / Organizer / RSVP). */
 export function CalendarInviteCard({ subject, bodyHtml, className }: CalendarInviteCardProps) {
   const router = useRouter();
   const parsed = useMemo(
@@ -158,31 +157,6 @@ export function CalendarInviteCard({ subject, bodyHtml, className }: CalendarInv
               </div>
             )}
           </div>
-
-          {parsed.meetLink && (
-            <div className="flex shrink-0 flex-col items-stretch border-t border-[#e8eaed] bg-[#f8f9fa] p-5 md:w-[220px] md:border-l md:border-t-0">
-              <a
-                href={parsed.meetLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-2 rounded bg-[#1a73e8] px-4 py-2.5 text-[14px] font-medium text-white shadow-sm hover:bg-[#1765cc]"
-              >
-                <Video className="h-4 w-4" strokeWidth={2} />
-                {titleCase("Join with Google Meet")}
-              </a>
-              <div className="mt-4">
-                <p className="text-[12px] font-medium text-[#5f6368]">{titleCase("Meeting link")}</p>
-                <a
-                  href={parsed.meetLink}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-1 break-all text-[13px] text-[#1a73e8] hover:underline"
-                >
-                  {parsed.meetLink.replace(/^https:\/\//, "")}
-                </a>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 

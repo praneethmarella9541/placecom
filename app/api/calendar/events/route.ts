@@ -11,9 +11,6 @@ export const runtime = "nodejs";
 
 export async function GET(request: Request) {
   // Always list the signed-in user's own primary calendar.
-  // The Meet-organizer token is only for *creating* meetings on a shared
-  // host calendar — it must never override the calendar view, otherwise
-  // every user sees the organizer account's events instead of their own.
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
@@ -73,7 +70,6 @@ type CreateBody = {
   start?: { dateTime?: string; date?: string; timeZone?: string };
   end?: { dateTime?: string; date?: string; timeZone?: string };
   attendees?: { email: string }[];
-  addMeet?: boolean;
   sendUpdates?: "all" | "externalOnly" | "none";
 };
 
@@ -115,7 +111,6 @@ export async function POST(request: Request) {
       start: body.start,
       end: body.end,
       attendees: body.attendees,
-      addMeet: body.addMeet,
       sendUpdates: body.sendUpdates,
     });
     return NextResponse.json({ event }, { status: 201 });

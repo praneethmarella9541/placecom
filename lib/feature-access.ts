@@ -5,6 +5,7 @@ export const FEATURE_KEYS = [
   "sheets",
   "docs",
   "broadcasting",
+  "sequences",
   "dashboard",
   "crm",
   "calendar",
@@ -22,6 +23,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   sheets: "Sheets",
   docs: "Docs",
   broadcasting: "Broadcasting",
+  sequences: "Sequences",
   dashboard: "Extraction",
   crm: "CRM",
   calendar: "Calendar",
@@ -38,6 +40,7 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "sheets",
   "docs",
   "broadcasting",
+  "sequences",
   "calendar",
   "whatsapp",
 ];
@@ -85,6 +88,7 @@ export function pathToFeature(pathname: string, search: URLSearchParams): Featur
     if (channel === "whatsapp") return "whatsapp";
     return "broadcasting";
   }
+  if (pathname.startsWith("/sequences")) return "sequences";
   if (pathname.startsWith("/sms")) return "sms";
   if (pathname.startsWith("/whatsapp")) return "whatsapp";
   if (pathname.startsWith("/contacts")) return "whatsapp";
@@ -96,6 +100,9 @@ const API_PUBLIC_PREFIXES = [
   "/api/me/",
   "/api/track/",
   "/api/auth/",
+  // Scheduler ticks arrive from an external pinger with no session; they carry
+  // their own CRON_SECRET bearer check.
+  "/api/cron/",
 ] as const;
 
 /**
@@ -118,6 +125,8 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/api/sheets")) return "sheets";
 
   if (pathname.startsWith("/api/docs")) return "docs";
+
+  if (pathname.startsWith("/api/sequences")) return "sequences";
 
   if (
     pathname.startsWith("/api/extract") ||
@@ -164,6 +173,7 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
     { path: "/sheets" },
     { path: "/docs" },
     { path: "/broadcasting" },
+    { path: "/sequences" },
     { path: "/dashboard" },
     { path: "/calendar" },
     { path: "/whatsapp" },

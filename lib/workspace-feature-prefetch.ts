@@ -294,6 +294,40 @@ async function prefetchDocsData(signal?: AbortSignal): Promise<void> {
   });
 }
 
+/* ─── Sequences ────────────────────────────────────────────── */
+
+export type SequencesPrefetchSnapshot = {
+  sequences: unknown[];
+  schedulerLastRunAt: string | null;
+};
+
+let sequencesCache: SequencesPrefetchSnapshot | null = null;
+
+export function getSequencesPrefetchCache(): SequencesPrefetchSnapshot | null {
+  return sequencesCache;
+}
+
+export function setSequencesPrefetchCache(snapshot: SequencesPrefetchSnapshot): void {
+  sequencesCache = snapshot;
+}
+
+async function prefetchSequencesData(signal?: AbortSignal): Promise<void> {
+  const res = await fetch("/api/sequences", { cache: "no-store", signal });
+  if (signal?.aborted) return;
+  if (!res.ok) return;
+
+  const data = (await res.json()) as {
+    sequences?: unknown[];
+    schedulerLastRunAt?: string | null;
+  };
+
+  if (signal?.aborted) return;
+  setSequencesPrefetchCache({
+    sequences: data.sequences ?? [],
+    schedulerLastRunAt: data.schedulerLastRunAt ?? null,
+  });
+}
+
 /* ─── Login chain (mail + drive, then WhatsApp → Calendar → Forms → Sheets → Docs) ─ */
 
 export async function prefetchSecondaryFeaturesInOrder(opts?: {
@@ -325,6 +359,11 @@ export async function prefetchSecondaryFeaturesInOrder(opts?: {
 
   if (!restricted.has("docs")) {
     await prefetchDocsData(signal);
+  }
+  if (signal?.aborted) return;
+
+  if (!restricted.has("sequences")) {
+    await prefetchSequencesData(signal);
   }
 }
 
@@ -375,6 +414,7 @@ export function clearSecondaryFeaturePrefetchCache(): void {
   formsCache = null;
   sheetsCache = null;
   docsCache = null;
+  sequencesCache = null;
   clearWorkspacePrefetchSession();
   clearAdminTeamPrefetchCache();
   clearMailThreadPrefetchCache();

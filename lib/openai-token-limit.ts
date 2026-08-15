@@ -44,16 +44,14 @@ export async function getUserTokenLimitStatus(userId: string): Promise<TokenLimi
     return { limit: null, used: 0, remaining: null, exceeded: false };
   }
 
-  const { data: profile } = await svc
-    .from("profiles")
-    .select("openai_token_limit")
-    .eq("id", userId)
-    .maybeSingle();
+  const [{ data: profile }, used] = await Promise.all([
+    svc.from("profiles").select("openai_token_limit").eq("id", userId).maybeSingle(),
+    getUserOpenAITokenUsage(userId),
+  ]);
 
   const limitRaw = profile?.openai_token_limit;
   const limit =
     limitRaw == null || limitRaw === "" ? null : Math.max(0, Number(limitRaw) || 0);
-  const used = await getUserOpenAITokenUsage(userId);
 
   if (limit == null) {
     return { limit: null, used, remaining: null, exceeded: false };

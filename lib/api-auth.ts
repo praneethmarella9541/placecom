@@ -3,7 +3,7 @@ import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
-export type AuthedUser = { id: string; email?: string };
+export type AuthedUser = { id: string; email?: string; app_metadata?: { provider?: string } };
 export type AuthedRequest = {
   user: AuthedUser;
   supabase: SupabaseClient;
@@ -34,7 +34,7 @@ export async function getAuthedRequest(request: Request): Promise<AuthedRequest 
         { global: { headers: { Authorization: `Bearer ${token}` } } }
       );
       return {
-        user: { id: user.id, email: user.email },
+        user: { id: user.id, email: user.email, app_metadata: user.app_metadata },
         supabase,
         isBearer: true,
       };
@@ -46,7 +46,7 @@ export async function getAuthedRequest(request: Request): Promise<AuthedRequest 
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user) return null;
   return {
-    user: { id: user.id, email: user.email },
+    user: { id: user.id, email: user.email, app_metadata: user.app_metadata },
     // Cast to the broader SupabaseClient type — server client is API-compatible
     supabase: supabase as unknown as SupabaseClient,
     isBearer: false,

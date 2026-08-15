@@ -323,7 +323,7 @@ export function WhatsAppComposerBar({
                 ref={emojiBtnRef}
                 type="button"
                 className={cn(
-                  "flex h-10 w-10 items-center justify-center rounded-full text-[22px] leading-none text-[#54656f] transition hover:bg-black/[0.04]",
+                  "flex h-10 w-10 items-center justify-center rounded-full text-[22px] leading-none text-[var(--color-text-faint)] transition hover:bg-black/[0.04]",
                   EMOJI_FONT,
                 )}
                 onClick={() => {
@@ -348,7 +348,7 @@ export function WhatsAppComposerBar({
               <button
                 data-testid="wa-attach-btn"
                 type="button"
-                className="flex h-10 w-10 items-center justify-center rounded-full text-[#54656f] transition hover:bg-black/[0.04] disabled:opacity-40"
+                className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--color-text-faint)] transition hover:bg-black/[0.04] disabled:opacity-40"
                 disabled={hasAttachments && attachments.length >= WHATSAPP_MAX_ATTACHMENTS}
                 onClick={() => {
                   if (needsTemplate) {
@@ -418,8 +418,8 @@ export function WhatsAppComposerBar({
           className={cn(
             "mb-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition shadow-sm",
             canSend()
-              ? "bg-[#00a884] text-white hover:bg-[#008f72] hover:shadow-md"
-              : "bg-[#8696a0]/35 text-white/90",
+              ? "bg-[var(--color-copper)] text-white hover:bg-[var(--color-copper-hover)] hover:shadow-md"
+              : "bg-[var(--color-text-faint)]/35 text-white/90",
           )}
           disabled={!canSend()}
           onClick={() => {

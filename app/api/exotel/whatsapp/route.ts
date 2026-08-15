@@ -12,6 +12,7 @@ import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
 import { notifyWhatsAppInbound } from "@/lib/push-notifications";
 import { fetchAndStoreExotelMedia } from "@/lib/whatsapp-media-storage";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -173,8 +174,11 @@ export async function POST(request: Request) {
     if (parent?.id) replyToId = parent.id as string;
   }
 
+  const mailboxOwnerId = ownerUserId ? await resolveMailboxOwnerId(supabase, ownerUserId) : null;
+
   const insertRow: Record<string, unknown> = {
     user_id: ownerUserId,
+    mailbox_owner_id: mailboxOwnerId,
     direction: "inbound",
     peer_e164: canonicalWhatsAppPeer(finalized.peerE164),
     business_e164: finalized.businessE164,

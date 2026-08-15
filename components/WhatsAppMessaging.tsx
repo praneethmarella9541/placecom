@@ -6,11 +6,13 @@ import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { isValidE164, normalizePhone } from "@/lib/phone";
-import { formatPhone, peerInitials } from "@/lib/wa-contacts-display";
+import { formatPhone, peerInitials, buildContactNameMap, resolveContactName, canonicalPeer, allPeerLookupKeys } from "@/lib/wa-contacts-display";
 import { categorizeWhatsAppMedia, mediaFilenameFromMessage, type WhatsAppMediaCategory } from "@/lib/whatsapp-media-helpers";
 import { resolveWhatsAppMediaUrl } from "@/lib/whatsapp-media-url-client";
 import { ForwardChatModal } from "@/components/ForwardChatModal";
-import { useWaContacts } from "@/hooks/useWaContacts";
+import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
+import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
+import type { DirectoryContact } from "@/lib/contact-directory";
 import {
   formatWhatsAppDeliveryLabel,
   getDeliveryFailureAdvice,
@@ -51,10 +53,10 @@ import {
   IconMessageChat,
   IconPin,
   IconPlay,
+  IconPlus,
   IconRefresh,
   IconReply,
   IconStar,
-  IconUpload,
   IconX,
 } from "@/components/Icons";
 
@@ -219,13 +221,23 @@ export function WhatsAppMessaging({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [newPhoneInput, setNewPhoneInput] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
-  const [importBusy, setImportBusy] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
-  const [importedPhones, setImportedPhones] = useState<string[]>([]);
-  const importFileRef = useRef<HTMLInputElement>(null);
-  const { contacts: contactList, saveContact, deleteContact, resolveName } = useWaContacts();
-  const [editingName, setEditingName] = useState<string | null>(null);
-  const [nameInput, setNameInput] = useState("");
+  // Contact names/lookup now come from the shared team directory
+  // (directory_contacts) instead of the old per-user wa_contacts table —
+  // one universal address book across WhatsApp, Contacts, and everywhere else.
+  const { contacts: directoryContacts } = useDirectoryContacts();
+  const contactList = useMemo(
+    () =>
+      directoryContacts
+        .filter((c) => c.phone)
+        .map((c) => ({ peer_e164: canonicalPeer(c.phone!), name: c.name })),
+    [directoryContacts]
+  );
+  const nameMap = useMemo(() => buildContactNameMap(contactList), [contactList]);
+  const resolveName = useCallback((peer: string) => resolveContactName(nameMap, peer), [nameMap]);
+  const [contactModal, setContactModal] = useState<{
+    editingId: string | null;
+    initial: DirectoryContactInput;
+  } | null>(null);
   // Media gallery drawer (opened by tapping the contact name) + in-chat
   // media viewer (lightbox) — mirrors WhatsApp Web behaviour.
   const [galleryOpen, setGalleryOpen] = useState(false);
@@ -308,19 +320,20 @@ export function WhatsAppMessaging({
     return () => window.removeEventListener("keydown", onKey);
   }, [viewer, galleryOpen, navigateViewer]);
 
-  async function saveName(peer: string, name: string) {
-    const trimmed = name.trim();
-    setEditingName(null);
-    setNameInput("");
-    try {
-      if (trimmed) {
-        await saveContact(peer, trimmed);
-      } else {
-        await deleteContact(peer);
-      }
-    } catch {
-      /* optimistic hook state already applied on save; ignore delete errors */
-    }
+  function findDirectoryContactByPeer(peer: string): DirectoryContact | undefined {
+    const keys = new Set(allPeerLookupKeys(peer));
+    return directoryContacts.find((c) => c.phone && allPeerLookupKeys(c.phone).some((k) => keys.has(k)));
+  }
+
+  /** Opens the same add/edit card used by Contacts → Team Directory, prefilled
+   *  for this WhatsApp peer — saving it lands in directory_contacts, visible
+   *  everywhere else too, not just in this chat. */
+  function openContactModalForPeer(peer: string) {
+    const existing = findDirectoryContactByPeer(peer);
+    setContactModal({
+      editingId: existing?.id ?? null,
+      initial: existing ? contactToFormInput(existing) : { ...emptyContactForm, phone: peer },
+    });
   }
 
   function displayName(peer: string): string {
@@ -533,40 +546,6 @@ export function WhatsAppMessaging({
       : contactList;
     return list.slice(0, q ? 12 : 8);
   }, [contactList, contactSearch]);
-
-  const filteredImportedPhones = useMemo(() => {
-    const q = contactSearch.trim().toLowerCase();
-    const list = importedPhones.filter((p) => {
-      if (!q) return true;
-      return p.includes(q) || formatPhone(p).toLowerCase().includes(q);
-    });
-    return list.slice(0, q ? 20 : 12);
-  }, [importedPhones, contactSearch]);
-
-  const onPickImportFile = useCallback(async (list: FileList | null) => {
-    if (!list?.length) return;
-    setImportError(null);
-    setImportBusy(true);
-    const fd = new FormData();
-    fd.set("file", list[0]);
-    try {
-      const res = await fetch("/api/broadcast/parse-phones", { method: "POST", body: fd });
-      const data = (await res.json()) as { error?: string; phones?: string[] };
-      if (!res.ok) throw new Error(data.error ?? "Import failed");
-      const phones = data.phones ?? [];
-      if (phones.length === 0) {
-        setImportError("No phone numbers found. Use a Phone/Mobile column with 10-digit Indian numbers or +91… format.");
-      } else {
-        setImportedPhones((prev) => Array.from(new Set([...prev, ...phones])));
-        setNewPhoneInput(true);
-      }
-    } catch (e) {
-      setImportError(e instanceof Error ? e.message : "Import failed");
-    } finally {
-      setImportBusy(false);
-      if (importFileRef.current) importFileRef.current.value = "";
-    }
-  }, []);
 
   useEffect(() => {
     const cached = getWhatsAppPrefetchCache();
@@ -909,148 +888,69 @@ export function WhatsAppMessaging({
     >
       {/* Sidebar header */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3">
-        <p className="text-[13px] font-semibold text-[var(--color-text)]">{titleCase("Chats")}</p>
+        <p className="text-[15px] font-bold text-[var(--color-text)]">{titleCase("Chats")}</p>
         <button
           data-testid="wa-new-chat-btn"
           type="button"
           onClick={() => setNewPhoneInput((v) => !v)}
           className={cn(
-            "flex h-7 w-7 items-center justify-center rounded-lg text-[13px] font-bold transition-colors",
+            "flex h-8 w-8 items-center justify-center rounded-full transition-colors",
             newPhoneInput
-              ? "bg-[var(--color-primary)] text-white"
-              : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+              ? "bg-[var(--color-surface-offset)] text-[var(--color-text-muted)]"
+              : "bg-[var(--color-copper)] text-white hover:bg-[var(--color-copper-hover)]"
           )}
           title={titleCase("New chat")}
           aria-label={titleCase("New chat")}
         >
-          {newPhoneInput ? "×" : "+"}
+          {newPhoneInput ? <IconX className="h-4 w-4" /> : <IconPlus className="h-4 w-4" />}
         </button>
       </div>
 
-      {/* New number input */}
+      {/* New conversation */}
       {newPhoneInput && (
         <div className="shrink-0 border-b border-[var(--color-border)] bg-[var(--color-surface-offset)]/50 px-3 py-3">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
-            {titleCase("New conversation")}
-          </p>
-          <div className="flex gap-2">
-            <input
-              data-testid="wa-new-phone-input"
-              className="input-field min-w-0 flex-1 text-[13px]"
-              placeholder="+91… or 10-digit"
-              value={newPhone}
-              onChange={(e) => setNewPhone(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                const t = recipientE164(newPhone);
-                if (!isValidE164(t)) { setError("Enter a valid mobile, e.g. +918489431508"); return; }
-                setError(null); selectPeer(t);
-              }}
-              autoFocus
-            />
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              data-testid="wa-open-phone-btn"
+              data-testid="wa-add-contact-btn"
               type="button"
-              className="btn-primary shrink-0 px-3 text-[13px]"
-              onClick={() => {
-                const t = recipientE164(newPhone);
-                if (!isValidE164(t)) { setError("Enter a valid mobile, e.g. +918489431508"); return; }
-                setError(null); selectPeer(t);
-              }}
+              className="btn-primary-copper gap-1.5 px-3 py-1.5 text-[12px]"
+              onClick={() => setContactModal({ editingId: null, initial: { ...emptyContactForm } })}
             >
-              {titleCase("Open")}
+              <IconPlus className="h-3.5 w-3.5" />
+              {titleCase("Add contact")}
             </button>
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="mt-3 border-t border-[var(--color-border)] pt-3">
             <input
-              ref={importFileRef}
-              type="file"
-              accept=".csv,.xlsx,.xls,.ods"
-              className="hidden"
-              onChange={(e) => void onPickImportFile(e.target.files)}
+              className="input-field mb-2 w-full text-[12px]"
+              placeholder={titleCase("Search team directory")}
+              value={contactSearch}
+              onChange={(e) => setContactSearch(e.target.value)}
             />
-            <button
-              data-testid="wa-import-csv-btn"
-              type="button"
-              disabled={importBusy}
-              onClick={() => importFileRef.current?.click()}
-              className="btn-secondary gap-1.5 px-3 py-1.5 text-[12px]"
-            >
-              <IconUpload className="h-3.5 w-3.5" />
-              {importBusy ? titleCase("Reading…") : titleCase("Import CSV / Excel")}
-            </button>
-            {importedPhones.length > 0 ? (
-              <button
-                type="button"
-                className="btn-ghost px-2 py-1 text-[11px]"
-                onClick={() => setImportedPhones([])}
-              >
-                {titleCase("Clear import")}
-              </button>
-            ) : null}
+            <div className="max-h-40 space-y-0.5 overflow-y-auto">
+              {filteredContactsForNewChat.map((c) => (
+                <button
+                  key={c.peer_e164}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-offset)]"
+                  onClick={() => { setError(null); selectPeer(c.peer_e164); setContactSearch(""); }}
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper)] text-[11px] font-bold text-white">
+                    {peerInitials(c.peer_e164, c.name)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{c.name}</span>
+                    <span className="block truncate text-[11px] text-[var(--color-text-faint)]">{formatPhone(c.peer_e164)}</span>
+                  </span>
+                </button>
+              ))}
+              {filteredContactsForNewChat.length === 0 && (
+                <p className="px-2 py-1 text-[12px] text-[var(--color-text-faint)]">
+                  {contactSearch.trim() ? titleCase("No matching contacts") : titleCase("No contacts in the team directory yet")}
+                </p>
+              )}
+            </div>
           </div>
-          {importError ? (
-            <p className="mt-2 text-[11px] text-red-600 dark:text-red-400">{importError}</p>
-          ) : null}
-          {filteredImportedPhones.length > 0 && (
-            <div className="mt-3 border-t border-[var(--color-border)] pt-3">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">
-                {titleCase("From file")} ({importedPhones.length})
-              </p>
-              <div className="max-h-36 space-y-0.5 overflow-y-auto">
-                {filteredImportedPhones.map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-offset)]"
-                    onClick={() => {
-                      setError(null);
-                      selectPeer(p);
-                      setContactSearch("");
-                    }}
-                  >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#128c7e] text-[11px] font-bold text-white">
-                      {peerInitials(p)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--color-text)]">
-                      {formatPhone(p)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          {contactList.length > 0 && (
-            <div className="mt-3 border-t border-[var(--color-border)] pt-3">
-              <input
-                className="input-field mb-2 w-full text-[12px]"
-                placeholder={titleCase("Search saved contacts")}
-                value={contactSearch}
-                onChange={(e) => setContactSearch(e.target.value)}
-              />
-              <div className="max-h-40 space-y-0.5 overflow-y-auto">
-                {filteredContactsForNewChat.map((c) => (
-                  <button
-                    key={c.peer_e164}
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left hover:bg-[var(--color-surface-offset)]"
-                    onClick={() => { setError(null); selectPeer(c.peer_e164); setContactSearch(""); }}
-                  >
-                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[11px] font-bold text-white">
-                      {peerInitials(c.peer_e164, c.name)}
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{c.name}</span>
-                      <span className="block truncate text-[11px] text-[var(--color-text-faint)]">{formatPhone(c.peer_e164)}</span>
-                    </span>
-                  </button>
-                ))}
-                {filteredContactsForNewChat.length === 0 && contactSearch.trim() && (
-                  <p className="px-2 py-1 text-[12px] text-[var(--color-text-faint)]">{titleCase("No matching contacts")}</p>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -1091,14 +991,11 @@ export function WhatsAppMessaging({
               className={cn(
                 "flex w-full items-center gap-3 border-b border-[var(--color-border)] px-4 py-3 text-left transition-colors duration-100",
                 peer === c.peer_e164
-                  ? "bg-[var(--color-primary-tint)]"
+                  ? "bg-[var(--color-copper-tint)]"
                   : "hover:bg-[var(--color-surface-offset)]"
               )}
             >
-              <span className={cn(
-                "flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[13px] font-bold text-white",
-                peer === c.peer_e164 ? "bg-[var(--color-primary)]" : "bg-[#25d366]"
-              )}>
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper)] text-[13px] font-bold text-white">
                 {peerInitials(c.peer_e164, savedContactName(c.peer_e164))}
               </span>
               <span className="min-w-0 flex-1">
@@ -1106,13 +1003,13 @@ export function WhatsAppMessaging({
                   <span className={cn(
                     "truncate text-[14px]",
                     hasUnread && "font-semibold",
-                    peer === c.peer_e164 ? "font-semibold text-[var(--color-primary)]" : "font-medium text-[var(--color-text)]"
+                    peer === c.peer_e164 ? "font-semibold text-[var(--color-copper)]" : "font-medium text-[var(--color-text)]"
                   )}>
                     {displayName(c.peer_e164)}
                   </span>
                   <span className={cn(
                     "shrink-0 text-[12px]",
-                    hasUnread ? "font-semibold text-[#25d366]" : "text-[var(--color-text-faint)]"
+                    hasUnread ? "font-semibold text-[var(--color-copper)]" : "text-[var(--color-text-faint)]"
                   )}>
                     {formatListTime(c.last_at)}
                   </span>
@@ -1125,7 +1022,7 @@ export function WhatsAppMessaging({
                 </span>
               </span>
               {hasUnread ? (
-                <span className="flex h-[22px] min-w-[22px] shrink-0 items-center justify-center rounded-full bg-[#25d366] px-1.5 text-[11px] font-bold text-white">
+                <span className="flex h-[22px] min-w-[22px] shrink-0 items-center justify-center rounded-full bg-[var(--color-copper)] px-1.5 text-[11px] font-bold text-white">
                   {unread > 99 ? "99+" : unread}
                 </span>
               ) : null}
@@ -1145,7 +1042,7 @@ export function WhatsAppMessaging({
         !mobileShowThread || !peer ? "hidden lg:flex" : "flex",
       )}
       style={{
-        background: "var(--wa-bg, #efeae2)",
+        background: "var(--color-bg)",
       }}
     >
       {/* Thread header */}
@@ -1165,62 +1062,43 @@ export function WhatsAppMessaging({
           <>
             <button
               type="button"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#25d366] text-[13px] font-bold text-white transition-opacity hover:opacity-90"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper)] text-[13px] font-bold text-white transition-opacity hover:opacity-90"
               onClick={() => { setGalleryTab("image"); setGalleryOpen(true); }}
               title={titleCase("View media, links and docs")}
             >
               {peerInitials(peer, savedContactName(peer))}
             </button>
             <div
-              className={cn("min-w-0 flex-1", editingName !== peer && "cursor-pointer")}
-              onClick={() => { if (editingName !== peer) { setGalleryTab("image"); setGalleryOpen(true); } }}
-              title={editingName !== peer ? titleCase("View media, links and docs") : undefined}
+              className="min-w-0 flex-1 cursor-pointer"
+              onClick={() => { setGalleryTab("image"); setGalleryOpen(true); }}
+              title={titleCase("View media, links and docs")}
             >
-              {editingName === peer ? (
-                <form
-                  className="flex items-center gap-1"
-                  onSubmit={(e) => { e.preventDefault(); void saveName(peer, nameInput); }}
-                >
-                  <input
-                    data-testid="wa-contact-name-input"
-                    autoFocus
-                    value={nameInput}
-                    onChange={(e) => setNameInput(e.target.value)}
-                    placeholder={formatPhone(peer)}
-                    className="input-field h-7 flex-1 text-[13px]"
-                    onKeyDown={(e) => { if (e.key === "Escape") { setEditingName(null); setNameInput(""); } }}
-                  />
-                  <button data-testid="wa-save-name-btn" type="submit" className="btn-primary h-7 px-2.5 text-[12px]">Save</button>
-                  <button data-testid="wa-cancel-name-btn" type="button" className="btn-ghost h-7 px-2 text-[12px]" onClick={() => { setEditingName(null); setNameInput(""); }}>✕</button>
-                </form>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-[15px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
-                    {savedContactName(peer) && (
-                      <p className="truncate text-[11px] text-[var(--color-text-faint)]">{formatPhone(peer)}</p>
-                    )}
-                  </div>
-                  <button
-                    data-testid="wa-edit-name-btn"
-                    type="button"
-                    className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-faint)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] transition-colors"
-                    onClick={(e) => { e.stopPropagation(); setEditingName(peer); setNameInput(savedContactName(peer) || ""); }}
-                  >
-                    {savedContactName(peer) ? "Edit name" : "Save name"}
-                  </button>
+              <div className="flex items-center gap-2">
+                <div className="min-w-0">
+                  <p className="truncate text-[15px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
+                  {savedContactName(peer) && (
+                    <p className="truncate text-[11px] text-[var(--color-text-faint)]">{formatPhone(peer)}</p>
+                  )}
                 </div>
-              )}
-              {sessionOpen !== null && editingName !== peer && (
+                <button
+                  data-testid="wa-edit-name-btn"
+                  type="button"
+                  className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-faint)] hover:border-[var(--color-copper)] hover:text-[var(--color-copper)] transition-colors"
+                  onClick={(e) => { e.stopPropagation(); openContactModalForPeer(peer); }}
+                >
+                  {savedContactName(peer) ? "Edit contact" : "Save contact"}
+                </button>
+              </div>
+              {sessionOpen !== null && (
                 <span
                   className={cn(
                     "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
                     sessionOpen
-                      ? "bg-[#e7f8ef] text-[#075E54]"
+                      ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
                       : "bg-[var(--color-warning-light)] text-[var(--color-warning)]",
                   )}
                 >
-                  <span className={cn("h-1.5 w-1.5 rounded-full", sessionOpen ? "bg-[#25D366]" : "bg-[var(--color-warning)]")} />
+                  <span className={cn("h-1.5 w-1.5 rounded-full", sessionOpen ? "bg-[var(--color-success)]" : "bg-[var(--color-warning)]")} />
                   {sessionOpen ? titleCase("Session open") : titleCase("Template required")}
                 </span>
               )}
@@ -1276,7 +1154,7 @@ export function WhatsAppMessaging({
 
       {/* Error bar */}
       {error && (
-        <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-2 text-[12px] text-[var(--color-danger)] dark:border-red-900/40 dark:bg-red-950/30">
+        <div className="shrink-0 border-b border-[var(--color-danger-light)] bg-[var(--color-danger-light)] px-4 py-2 text-[12px] text-[var(--color-danger)]">
           {error}
           <button type="button" className="ml-2 underline" onClick={() => setError(null)}>Dismiss</button>
         </div>
@@ -1288,7 +1166,7 @@ export function WhatsAppMessaging({
         onScroll={onThreadScroll}
         className={cn("relative min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-3 scrollbar-thin", EMOJI_FONT)}
         style={{
-          background: "var(--wa-bg, #efeae2)",
+          background: "var(--color-bg)",
           backgroundImage: "radial-gradient(circle at 1px 1px, rgba(0,0,0,0.03) 1px, transparent 0)",
           backgroundSize: "16px 16px",
         }}
@@ -1296,7 +1174,7 @@ export function WhatsAppMessaging({
         {!peer ? (
           <div className="flex h-full min-h-[120px] flex-col items-center justify-center gap-3 px-6 text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/60 shadow-sm">
-              <IconMessageChat className="h-8 w-8 text-[#25d366]" />
+              <IconMessageChat className="h-8 w-8 text-[var(--color-copper)]" />
             </div>
             <div>
               <p className="text-[14px] font-semibold text-[var(--color-text)]">{titleCase("Select a conversation")}</p>
@@ -1305,7 +1183,7 @@ export function WhatsAppMessaging({
           </div>
         ) : loadingThread ? (
           <div className="flex h-full items-center justify-center">
-            <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-[#25d366] border-t-transparent" />
+            <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-[var(--color-copper)] border-t-transparent" />
           </div>
         ) : messages.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
@@ -1316,10 +1194,10 @@ export function WhatsAppMessaging({
           <>
             {/* Pinned messages */}
             {messages.some((m) => m.is_pinned) && (
-              <div className="mb-2 rounded-xl border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-[12px]">
-                <p className="mb-1 font-semibold text-amber-900">📌 {titleCase("Pinned")}</p>
+              <div className="mb-2 rounded-xl border border-[var(--color-warning)]/30 bg-[var(--color-warning-light)] px-3 py-2 text-[12px]">
+                <p className="mb-1 font-semibold text-[var(--color-warning)]">📌 {titleCase("Pinned")}</p>
                 {messages.filter((m) => m.is_pinned).map((m) => (
-                  <p key={`pin-${m.id}`} className="line-clamp-1 text-amber-800">{m.body || "—"}</p>
+                  <p key={`pin-${m.id}`} className="line-clamp-1 text-[var(--color-text-muted)]">{m.body || "—"}</p>
                 ))}
               </div>
             )}
@@ -1335,7 +1213,7 @@ export function WhatsAppMessaging({
                   className={cn(
                     "group flex w-full items-end gap-1.5 transition-[box-shadow] duration-300",
                     outbound ? "justify-end" : "justify-start",
-                    highlightMessageId === m.id && "ring-2 ring-[var(--color-primary)] ring-offset-2 ring-offset-[#efeae2] rounded-lg",
+                    highlightMessageId === m.id && "ring-2 ring-[var(--color-copper)] ring-offset-2 ring-offset-[var(--color-bg)] rounded-lg",
                   )}
                 >
                   {/* Select checkbox (inbound side) */}
@@ -1344,7 +1222,7 @@ export function WhatsAppMessaging({
                       type="button"
                       className={cn(
                         "mb-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
-                        selected ? "border-[var(--color-primary)] bg-[var(--color-primary)]" : "border-[var(--color-text-faint)] bg-white"
+                        selected ? "border-[var(--color-copper)] bg-[var(--color-copper)]" : "border-[var(--color-text-faint)] bg-white"
                       )}
                       onClick={() => toggleSelected(m.id)}
                     >
@@ -1362,13 +1240,13 @@ export function WhatsAppMessaging({
                     className={cn(
                       "relative max-w-[min(80%,34rem)] rounded-2xl px-3 py-2 text-[15px] leading-relaxed shadow-sm",
                       outbound
-                        ? "rounded-br-sm bg-[#dcf8c6] text-zinc-900"
-                        : "rounded-bl-sm bg-white text-zinc-900",
-                      selectMode && selected && "ring-2 ring-[var(--color-primary)]",
+                        ? "rounded-br-sm bg-[var(--color-copper-tint)] text-[var(--color-text)]"
+                        : "rounded-bl-sm bg-[var(--color-surface)] text-[var(--color-text)]",
+                      selectMode && selected && "ring-2 ring-[var(--color-copper)]",
                     )}
                   >
                     {/* Starred indicator */}
-                    {m.is_starred && <span className="absolute -right-1 -top-1 text-amber-400">★</span>}
+                    {m.is_starred && <span className="absolute -right-1 -top-1 text-[var(--color-warning)]">★</span>}
 
                     {/* Message menu button */}
                     {!selectMode && (
@@ -1378,7 +1256,7 @@ export function WhatsAppMessaging({
                         aria-label={titleCase("Message options")}
                         onClick={(e) => { e.stopPropagation(); setMenu({ msg: m, x: e.clientX, y: e.clientY }); }}
                       >
-                        <IconDotsVertical className="h-3.5 w-3.5 text-zinc-500" />
+                        <IconDotsVertical className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />
                       </button>
                     )}
 
@@ -1386,16 +1264,16 @@ export function WhatsAppMessaging({
                     {replyRef ? (
                       <button
                         type="button"
-                        className="mb-2 w-full rounded-lg border-l-4 border-[#25d366] bg-black/5 px-2 py-1.5 text-left hover:bg-black/10"
+                        className="mb-2 w-full rounded-lg border-l-4 border-[var(--color-copper)] bg-black/5 px-2 py-1.5 text-left hover:bg-black/10"
                         onClick={(e) => { e.stopPropagation(); scrollToQuotedMessage(replyRef.id); }}
                       >
-                        <p className="text-[10px] font-semibold text-[#25d366]">
+                        <p className="text-[10px] font-semibold text-[var(--color-copper)]">
                           {replyRef.direction?.toLowerCase() === "outbound" ? "You" : "Contact"}
                         </p>
-                        <p className="line-clamp-2 text-[12px] text-zinc-700">{replyRef.body || "—"}</p>
+                        <p className="line-clamp-2 text-[12px] text-[var(--color-text-muted)]">{replyRef.body || "—"}</p>
                       </button>
                     ) : m.reply_to_id ? (
-                      <div className="mb-2 rounded-lg border-l-4 border-zinc-300 bg-black/5 px-2 py-1.5 text-[11px] text-zinc-500">
+                      <div className="mb-2 rounded-lg border-l-4 border-[var(--color-border-strong)] bg-black/5 px-2 py-1.5 text-[11px] text-[var(--color-text-faint)]">
                         Original message not in history
                       </div>
                     ) : null}
@@ -1438,7 +1316,7 @@ export function WhatsAppMessaging({
                         <button
                           type="button"
                           onClick={() => setViewer(m)}
-                          className="mt-1.5 flex max-w-full items-center gap-2 rounded-lg bg-black/5 px-2.5 py-2 text-left text-[13px] font-medium text-zinc-700 hover:bg-black/10"
+                          className="mt-1.5 flex max-w-full items-center gap-2 rounded-lg bg-black/5 px-2.5 py-2 text-left text-[13px] font-medium text-[var(--color-text-muted)] hover:bg-black/10"
                         >
                           <IconFile className="h-4 w-4 shrink-0" />
                           <span className="truncate">{mediaFilenameFromMessage(m)}</span>
@@ -1448,7 +1326,7 @@ export function WhatsAppMessaging({
 
                     {/* Timestamp + ticks */}
                     <p className={cn(
-                      "mt-1 flex items-center gap-1 text-[12px] text-zinc-500",
+                      "mt-1 flex items-center gap-1 text-[12px] text-[var(--color-text-faint)]",
                       outbound ? "justify-end" : "justify-start"
                     )}>
                       <span className="tabular-nums">{formatDate(m.created_at)}</span>
@@ -1457,7 +1335,7 @@ export function WhatsAppMessaging({
 
                     {/* Delivery failure detail */}
                     {outbound && showWhatsAppFailureDetail(m.delivery_status) && (
-                      <p className="mt-1 text-[11px] leading-snug text-red-700">
+                      <p className="mt-1 text-[11px] leading-snug text-[var(--color-danger)]">
                         {getDeliveryFailureAdvice(m.delivery_status)}
                       </p>
                     )}
@@ -1469,7 +1347,7 @@ export function WhatsAppMessaging({
                       type="button"
                       className={cn(
                         "mb-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
-                        selected ? "border-[var(--color-primary)] bg-[var(--color-primary)]" : "border-[var(--color-text-faint)] bg-white"
+                        selected ? "border-[var(--color-copper)] bg-[var(--color-copper)]" : "border-[var(--color-text-faint)] bg-white"
                       )}
                       onClick={() => toggleSelected(m.id)}
                     >
@@ -1519,7 +1397,7 @@ export function WhatsAppMessaging({
                   className={cn(
                     "flex-1 border-b-2 px-2 py-2.5 text-[12px] font-semibold transition-colors",
                     galleryTab === t.key
-                      ? "border-[#25d366] text-[var(--color-text)]"
+                      ? "border-[var(--color-copper)] text-[var(--color-text)]"
                       : "border-transparent text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]",
                   )}
                 >
@@ -1688,7 +1566,7 @@ export function WhatsAppMessaging({
                     </div>
                     <button
                       type="button"
-                      className="flex items-center gap-2 rounded-lg bg-white px-5 py-2.5 text-[14px] font-semibold text-zinc-900 hover:bg-white/90"
+                      className="flex items-center gap-2 rounded-lg bg-[var(--color-surface)] px-5 py-2.5 text-[14px] font-semibold text-[var(--color-text)] hover:opacity-90"
                       onClick={(e) => { e.stopPropagation(); void downloadMedia(url, filename); }}
                     >
                       <IconDownload className="h-4 w-4" /> {titleCase("Download")}
@@ -1787,10 +1665,10 @@ export function WhatsAppMessaging({
       {/* Composer */}
       <div ref={composerRef} className="relative shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface)]">
         {replyTo && (
-          <div className="mx-3 mt-2 flex items-start gap-2 rounded-xl border-l-4 border-[#25d366] bg-[var(--color-surface-offset)] px-3 py-2 text-[12px]">
-            <IconReply className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#25d366]" />
+          <div className="mx-3 mt-2 flex items-start gap-2 rounded-xl border-l-4 border-[var(--color-copper)] bg-[var(--color-surface-offset)] px-3 py-2 text-[12px]">
+            <IconReply className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--color-copper)]" />
             <div className="min-w-0 flex-1">
-              <p className="font-semibold text-[#25d366]">
+              <p className="font-semibold text-[var(--color-copper)]">
                 {replyTo.direction?.toLowerCase() === "outbound" ? "You" : "Contact"}
                 <span className="ml-1 font-normal text-[var(--color-text-faint)]">· {formatDate(replyTo.created_at)}</span>
               </p>
@@ -1850,6 +1728,22 @@ export function WhatsAppMessaging({
     </div>
   );
 
+  const contactModalEl = contactModal && (
+    <ContactFormModal
+      editingId={contactModal.editingId}
+      initial={contactModal.initial}
+      onClose={() => setContactModal(null)}
+      onSaved={(contact) => {
+        setContactModal(null);
+        if (contact.phone) {
+          setError(null);
+          selectPeer(canonicalPeer(contact.phone));
+          setContactSearch("");
+        }
+      }}
+    />
+  );
+
   if (fullPage || embedded) {
     return (
       <>
@@ -1863,6 +1757,7 @@ export function WhatsAppMessaging({
           }}
           onForward={(target) => void forwardToPeer(target)}
         />
+        {contactModalEl}
       </>
     );
   }
@@ -1891,6 +1786,7 @@ export function WhatsAppMessaging({
         }}
         onForward={(target) => void forwardToPeer(target)}
       />
+      {contactModalEl}
     </div>
   );
 }

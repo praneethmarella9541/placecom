@@ -34,9 +34,9 @@ export function WhatsAppTicks({ deliveryStatus }: { deliveryStatus?: string | nu
     return (
       <span className="inline-flex items-center align-middle" title={title}>
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden>
-          <circle cx="8" cy="8" r="7" stroke="#ef4444" strokeWidth="1.5" />
-          <line x1="8" y1="4" x2="8" y2="9" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" />
-          <circle cx="8" cy="11.5" r="0.75" fill="#ef4444" />
+          <circle cx="8" cy="8" r="7" stroke="var(--color-danger)" strokeWidth="1.5" />
+          <line x1="8" y1="4" x2="8" y2="9" stroke="var(--color-danger)" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="8" cy="11.5" r="0.75" fill="var(--color-danger)" />
         </svg>
       </span>
     );
@@ -44,7 +44,7 @@ export function WhatsAppTicks({ deliveryStatus }: { deliveryStatus?: string | nu
 
   if (level === "pending") {
     return (
-      <span className="inline-flex items-center align-middle text-[#8696a0]" title={title}>
+      <span className="inline-flex items-center align-middle text-[var(--color-text-faint)]" title={title}>
         <svg viewBox="0 0 14 14" width="13" height="13" fill="none" aria-hidden>
           <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" />
         </svg>
@@ -53,7 +53,7 @@ export function WhatsAppTicks({ deliveryStatus }: { deliveryStatus?: string | nu
   }
 
   const showDouble = level === "delivered" || level === "read";
-  const color = level === "read" ? "text-[#53bdeb]" : "text-[#8696a0]";
+  const color = level === "read" ? "text-[var(--color-copper)]" : "text-[var(--color-text-faint)]";
 
   return (
     <span className={cn("inline-flex shrink-0 items-center align-middle", color)} title={title}>

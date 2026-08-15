@@ -11,6 +11,7 @@ import { resolveOutboundMediaUrl } from "@/lib/whatsapp-outbound-media-url";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
 import { isValidE164, normalizePhone } from "@/lib/phone";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 
@@ -176,8 +177,11 @@ export async function POST(request: Request) {
         ? formatTemplatePreview(templateConfig, templateVariables)
         : sent.logBody;
 
+    const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
+
     const logRow = {
       user_id: user.id,
+      mailbox_owner_id: mailboxOwnerId,
       direction: "outbound" as const,
       peer_e164: peerNorm,
       business_e164: businessLine,

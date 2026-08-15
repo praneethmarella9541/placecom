@@ -41,7 +41,6 @@ export type WhatsAppPrefetchStatus = {
 export type WhatsAppPrefetchSnapshot = {
   status: WhatsAppPrefetchStatus | null;
   conversations: WhatsAppPrefetchConversation[];
-  contacts: Record<string, string>;
 };
 
 let whatsappCache: WhatsAppPrefetchSnapshot | null = null;
@@ -57,14 +56,15 @@ export function setWhatsAppPrefetchCache(snapshot: WhatsAppPrefetchSnapshot): vo
 export function patchWhatsAppPrefetchCache(
   patch: Partial<WhatsAppPrefetchSnapshot>
 ): void {
-  whatsappCache = { ...(whatsappCache ?? { status: null, conversations: [], contacts: {} }), ...patch };
+  whatsappCache = { ...(whatsappCache ?? { status: null, conversations: [] }), ...patch };
 }
 
 async function prefetchWhatsAppData(signal?: AbortSignal): Promise<void> {
-  const [statusRes, convRes, contactsRes] = await Promise.all([
+  // Contact names now come from directory_contacts (useDirectoryContacts),
+  // not a WhatsApp-specific prefetch — no more /api/whatsapp/contacts call here.
+  const [statusRes, convRes] = await Promise.all([
     fetch("/api/whatsapp/status", { cache: "no-store", signal }),
     fetch("/api/whatsapp/conversations", { cache: "no-store", signal }),
-    fetch("/api/whatsapp/contacts", { cache: "no-store", signal }),
   ]);
 
   if (signal?.aborted) return;
@@ -80,16 +80,8 @@ async function prefetchWhatsAppData(signal?: AbortSignal): Promise<void> {
     conversations = body.conversations ?? [];
   }
 
-  const contacts: Record<string, string> = {};
-  if (contactsRes.ok) {
-    const body = (await contactsRes.json()) as { contacts?: { peer_e164: string; name: string }[] };
-    for (const c of body.contacts ?? []) {
-      if (c.peer_e164) contacts[c.peer_e164] = c.name;
-    }
-  }
-
   if (signal?.aborted) return;
-  setWhatsAppPrefetchCache({ status, conversations, contacts });
+  setWhatsAppPrefetchCache({ status, conversations });
 
   const peers = conversations.map((c) => c.peer_e164).filter(Boolean);
   if (peers.length) {

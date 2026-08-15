@@ -6,6 +6,7 @@ import { isValidE164, normalizePhone } from "@/lib/phone";
 import { deriveCallDirection, ourNumbersForRows } from "@/lib/call-log-peer";
 import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
 import { rowNeedsTalkDurationBackfill } from "@/lib/call-talk-seconds";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 
@@ -55,14 +56,26 @@ export async function GET(request: Request) {
     .eq("id", user.id)
     .maybeSingle();
 
-  const { data, error } = await supabase
+  // Default (no params) stays "my own calls only" — unchanged, so the mobile
+  // dialer keeps working exactly as before. The web Calls page (admin-only
+  // team view) passes one of these instead; RLS (0048 migration) is what
+  // actually enforces the boundary — a non-admin passing `member`/`scope`
+  // just gets their own rows back regardless, same as WhatsApp's `?line=`.
+  const url = new URL(request.url);
+  const memberParam = url.searchParams.get("member")?.trim();
+  const scopeTeam = url.searchParams.get("scope") === "team";
+
+  let logsQuery = supabase
     .from("call_logs")
     .select(
-      "id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, conversation_duration_seconds, started_at, ended_at, created_at, recording_sid, recording_duration_seconds, transcript, transcript_segments"
-    )
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(200);
+      "id, user_id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, conversation_duration_seconds, started_at, ended_at, created_at, recording_sid, recording_duration_seconds, transcript, transcript_segments"
+    );
+  if (memberParam) {
+    logsQuery = logsQuery.eq("user_id", memberParam);
+  } else if (!scopeTeam) {
+    logsQuery = logsQuery.eq("user_id", user.id);
+  }
+  const { data, error } = await logsQuery.order("created_at", { ascending: false }).limit(200);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -165,10 +178,13 @@ export async function POST(request: Request) {
     );
   }
 
+  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
+
   const { data, error } = await supabase
     .from("call_logs")
     .insert({
       user_id: user.id,
+      mailbox_owner_id: mailboxOwnerId,
       call_sid: `pending_${Date.now()}`,
       to_number: normalizePhone(to),
       from_number: normalizePhone(exotelLine),

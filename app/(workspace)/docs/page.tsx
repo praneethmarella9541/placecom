@@ -122,7 +122,7 @@ export default function DocsListPage() {
   const empty = useMemo(() => !loading && docs.length === 0, [loading, docs.length]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-[1400px] space-y-6">
       <div className="flex items-center justify-between gap-3">
         <h1 className="font-display text-[19px] font-bold tracking-tight text-[var(--color-text)]">
           {titleCase("Docs")}

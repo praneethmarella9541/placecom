@@ -226,7 +226,14 @@ function TimelineList({
               <Icon className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-medium text-[var(--color-text)]">{item.summary}</p>
+              <div className="flex items-center gap-2">
+                <p className="truncate text-[13px] font-medium text-[var(--color-text)]">{item.summary}</p>
+                {"by" in item && item.by && (
+                  <span className="shrink-0 rounded-full bg-[var(--color-surface-offset)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
+                    {item.by}
+                  </span>
+                )}
+              </div>
               {"detail" in item && item.detail && (
                 <p className="mt-0.5 truncate text-[12px] text-[var(--color-text-muted)]">{item.detail}</p>
               )}

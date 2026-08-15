@@ -7,7 +7,7 @@ import { searchPrimaryCalendarEvents } from "@/lib/google-calendar";
 import { deriveCallDirection, ourNumbersForRows } from "@/lib/call-log-peer";
 import { phoneLookupVariants, normalizePhone } from "@/lib/phone";
 import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
-import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
+import { resolveDisplayNames } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 
@@ -20,7 +20,32 @@ export type TimelineItem = {
   threadId?: string;
   /** Email items only — whether the thread has a file attachment (not counting a calendar invite). */
   hasAttachments?: boolean;
+  /**
+   * Call/WhatsApp items only — which team member this row belongs to. Only
+   * set when an admin is viewing combined team activity (more than one
+   * teammate's rows in the result, or someone else's alone); omitted when
+   * every row is just the viewer's own, so nothing changes for staff.
+   */
+  by?: string;
 };
+
+/** Attaches `by` to items whose row belongs to someone other than the viewer, or when the
+ *  result mixes more than one team member's rows — never for a plain "just my own" list. */
+async function attributeToOwners<T extends { user_id: string | null }>(
+  rows: T[],
+  viewerId: string
+): Promise<Map<string, string>> {
+  const distinctIds = new Set((rows.map((r) => r.user_id).filter(Boolean) as string[]));
+  const showAttribution = distinctIds.size > 1 || (distinctIds.size === 1 && !distinctIds.has(viewerId));
+  if (!showAttribution) return new Map();
+  const idList = Array.from(distinctIds);
+  const names = await resolveDisplayNames(idList);
+  const byId = new Map<string, string>();
+  for (const id of idList) {
+    byId.set(id, id === viewerId ? "You" : names.get(id) ?? "Teammate");
+  }
+  return byId;
+}
 
 /**
  * GET /api/directory-contacts/[id]/timeline?source=email|call|meeting|whatsapp
@@ -98,13 +123,16 @@ export async function GET(request: Request, { params }: { params: { id: string }
         .join(",");
       const { data: rows, error } = await supabase
         .from("call_logs")
-        .select("id, to_number, from_number, agent_number, status, duration_seconds, notes, started_at, created_at")
+        .select(
+          "id, user_id, to_number, from_number, agent_number, status, duration_seconds, notes, started_at, created_at"
+        )
         .or(orFilter)
         .order("created_at", { ascending: false })
         .limit(100);
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
       const ourNumbers = ourNumbersForRows(rows ?? []);
+      const byId = await attributeToOwners(rows ?? [], user.id);
       const items: TimelineItem[] = (rows ?? []).map((r) => {
         const { direction } = deriveCallDirection(r, ourNumbers);
         const durationLabel = r.duration_seconds ? `${r.duration_seconds}s` : r.status;
@@ -114,34 +142,37 @@ export async function GET(request: Request, { params }: { params: { id: string }
           summary: `${direction === "incoming" ? "Incoming" : "Outbound"} call — ${durationLabel}`,
           detail: r.notes ?? undefined,
           at: r.started_at || r.created_at,
+          by: r.user_id ? byId.get(r.user_id) : undefined,
         };
       });
       return NextResponse.json({ items });
     }
 
-    // source === "whatsapp"
+    // source === "whatsapp" — no business_e164/own-line filter: RLS (0048
+    // migration) already scopes rows to "my own" for staff or "my whole
+    // team's" for an admin, so a staff member sees only their own thread
+    // with this contact while their admin sees every team member's.
     if (!contact.phone) return NextResponse.json({ items: [] });
-    const lineResult = await getUserWhatsAppLine(supabase, user.id);
-    if (!lineResult.ok) return NextResponse.json({ items: [] });
 
     const peerNorm = canonicalWhatsAppPeer(contact.phone);
     const peerKeys = peerKeysForQuery(peerNorm);
     const { data: rows, error } = await supabase
       .from("whatsapp_messages")
-      .select("id, direction, body, content_type, created_at")
+      .select("id, user_id, direction, body, content_type, created_at")
       .in("peer_e164", peerKeys)
-      .eq("business_e164", lineResult.data.line)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+    const byId = await attributeToOwners(rows ?? [], user.id);
     const items: TimelineItem[] = (rows ?? []).map((r) => ({
       id: r.id,
       type: "whatsapp",
       summary: r.body || `[${r.content_type || "media"}]`,
       detail: r.direction === "inbound" ? "Received" : "Sent",
       at: r.created_at,
+      by: r.user_id ? byId.get(r.user_id) : undefined,
     }));
     return NextResponse.json({ items });
   } catch (err: unknown) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import type { DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import type { DirectoryContact } from "@/lib/contact-directory";
 import { titleCase } from "@/lib/title-case";
@@ -87,7 +88,7 @@ export function ContactFormModal({
     }
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div
         className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6 shadow-xl"
@@ -193,7 +194,8 @@ export function ContactFormModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

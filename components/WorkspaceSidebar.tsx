@@ -16,6 +16,7 @@ import {
   LogOut,
   Mail,
   MessageCircle,
+  Phone,
   Radio,
   UserRound,
   Users,
@@ -37,6 +38,7 @@ const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 const commsNav = [
   { href: "/inbox", label: "Mail", Icon: Mail },
   { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
+  { href: "/calls", label: "Calls", Icon: Phone },
   { href: "/broadcasting", label: "Broadcasting", Icon: Radio },
   { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;

@@ -361,12 +361,19 @@ export default function CalendarPage() {
   function goToday() { getApi()?.today(); }
 
 
-  function openScheduleModal(prefill?: { start?: string; end?: string }) {
+  function openScheduleModal(prefill?: {
+    start?: string;
+    end?: string;
+    title?: string;
+    recruiterEmail?: string;
+  }) {
     const defaults = defaultMeetingTimes();
     setStartDateTime(prefill?.start ?? defaults.start);
     setEndDateTime(prefill?.end ?? defaults.end);
     setRecurrencePreset("none");
     setScheduleError(null);
+    if (prefill?.title !== undefined) setTitle(prefill.title);
+    if (prefill?.recruiterEmail !== undefined) setRecruiterEmail(prefill.recruiterEmail);
     setScheduleOpen(true);
   }
 
@@ -768,6 +775,24 @@ export default function CalendarPage() {
 
     void resolveDeepLink();
   }, [events, loadingEvents, searchParams, router]);
+
+  /**
+   * Deep-link from a contact's "Schedule meeting" quick action:
+   * ?action=new&attendee=<email>&title=<text> opens the create-meeting card
+   * pre-filled with that contact, instead of a blank form.
+   */
+  const handledNewMeetingDeepLinkRef = useRef(false);
+  useEffect(() => {
+    if (handledNewMeetingDeepLinkRef.current) return;
+    const action = searchParams.get("action");
+    if (action !== "new") return;
+    handledNewMeetingDeepLinkRef.current = true;
+    const attendee = searchParams.get("attendee") ?? undefined;
+    const title = searchParams.get("title") ?? undefined;
+    openScheduleModal({ recruiterEmail: attendee, title });
+    router.replace("/calendar");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, router]);
 
   const scheduleGuestEmails = useMemo(
     () => extractAllEmailsFromText(recruiterEmail),

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
+import { normalizePhone } from "@/lib/phone";
 
 export const runtime = "nodejs";
 
@@ -11,14 +12,25 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const lineResult = await getUserWhatsAppLine(supabase, user.id);
-  if (!lineResult.ok) {
-    return NextResponse.json(
-      { error: lineResult.error, conversations: [], businessLine: null },
-      { status: lineResult.status }
-    );
+  // `?line=<E164>` lets an admin browse a team member's line instead of their
+  // own — safe to trust as-is with no extra ownership check: RLS (0048
+  // migration) already restricts which whatsapp_messages rows come back to
+  // "my own" or, for an admin, "my whole team's", so passing someone else's
+  // line just narrows within whatever the caller is already allowed to see.
+  const requestedLine = new URL(request.url).searchParams.get("line")?.trim();
+  let businessLine: string;
+  if (requestedLine) {
+    businessLine = normalizePhone(requestedLine);
+  } else {
+    const lineResult = await getUserWhatsAppLine(supabase, user.id);
+    if (!lineResult.ok) {
+      return NextResponse.json(
+        { error: lineResult.error, conversations: [], businessLine: null },
+        { status: lineResult.status }
+      );
+    }
+    businessLine = lineResult.data.line;
   }
-  const businessLine = lineResult.data.line;
 
   const { data: rows, error } = await supabase
     .from("whatsapp_messages")

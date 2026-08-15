@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 
@@ -16,11 +17,13 @@ export async function GET() {
 
   // Fetch leads — paged (see lib/supabase-fetch-all.ts) rather than a plain
   // .select(), which silently caps at 1000 rows once this user has that many.
+  // No user_id filter here: RLS (0048 migration) already scopes this to "my
+  // own leads" for staff, or "my whole team's leads" for an admin — adding a
+  // hardcoded .eq("user_id", user.id) would defeat the admin team view.
   const { data: leads, error } = await fetchAllRows((from, to) =>
     supabase
       .from("leads")
       .select("*")
-      .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
       .range(from, to)
@@ -83,10 +86,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Company name is required" }, { status: 400 });
     }
 
+    const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
+
     const { data: newLead, error } = await supabase
       .from("leads")
       .insert({
         user_id: user.id,
+        mailbox_owner_id: mailboxOwnerId,
         company_name,
         contact_name: contact_name || null,
         email: email || null,

@@ -17,7 +17,7 @@ export default function ContactsPage() {
   const [tab, setTab] = useState<Tab>("directory");
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-[1400px] space-y-6">
       <div>
         <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--color-text)]">
           {titleCase("Contact book")}

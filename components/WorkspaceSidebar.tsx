@@ -8,6 +8,7 @@ import {
   BookText,
   Calendar,
   ChevronDown,
+  ChevronLeft,
   Contact,
   FileText,
   Folder,
@@ -26,7 +27,7 @@ import { clearSecondaryFeaturePrefetchCache } from "@/lib/workspace-feature-pref
 import { pathToFeature } from "@/lib/feature-access";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
-import { PlacecomLogo } from "@/components/PlacecomLogo";
+import { PlacecomLogo, PlacecomMark } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { clearMeMailboxCache, useMeMailbox } from "@/lib/use-me-mailbox";
 import { GmailAvatar } from "@/components/GmailAvatar";
@@ -74,6 +75,7 @@ const NavItem = memo(function NavItem({
   label,
   Icon,
   selected,
+  collapsed,
   onClick,
   onMouseEnter,
   onNavigateStart,
@@ -82,6 +84,7 @@ const NavItem = memo(function NavItem({
   label: string;
   Icon: React.ElementType;
   selected: boolean;
+  collapsed?: boolean;
   onClick?: () => void;
   onMouseEnter?: () => void;
   onNavigateStart?: (href: string) => void;
@@ -94,6 +97,7 @@ const NavItem = memo(function NavItem({
     <a
       href={href}
       data-testid={testId}
+      title={collapsed ? label : undefined}
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         flushSync(() => onNavigateStart?.(href));
@@ -109,7 +113,8 @@ const NavItem = memo(function NavItem({
         onMouseEnter?.();
       }}
       className={cn(
-        "group relative flex cursor-pointer items-center gap-[11px] rounded-[10px] px-3 py-2 text-[13.5px] select-none",
+        "group relative flex cursor-pointer items-center rounded-[10px] py-2 text-[13.5px] select-none",
+        collapsed ? "justify-center px-0" : "gap-[11px] px-3",
         selected
           ? "font-semibold text-[var(--sidebar-active-text)]"
           : "font-medium text-[var(--sidebar-text)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--color-text)]",
@@ -127,7 +132,7 @@ const NavItem = memo(function NavItem({
         )}
         strokeWidth={1.75}
       />
-      <span className="truncate leading-normal">{label}</span>
+      {!collapsed && <span className="truncate leading-normal">{label}</span>}
     </a>
   );
 });
@@ -136,11 +141,13 @@ function UserProfile({
   displayName,
   email,
   me,
+  collapsed,
   onSignOut,
 }: {
   displayName: string;
   email: string;
   me: MeMailboxResponse | null;
+  collapsed?: boolean;
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -162,33 +169,44 @@ function UserProfile({
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        title={collapsed ? displayName : undefined}
         className={cn(
-          "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left",
+          "flex w-full items-center rounded-xl text-left",
+          collapsed ? "justify-center px-0 py-2" : "gap-3 px-3 py-2.5",
           open ? "bg-[var(--sidebar-hover)]" : "hover:bg-[var(--sidebar-hover)]",
         )}
       >
         <div className="relative shrink-0">
-          <GmailAvatar seed={email} name={displayName} email={email} isMe size={32} />
+          <GmailAvatar seed={email} name={displayName} email={email} isMe copper twoLetterInitials size={32} />
           <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-[1.5px] border-[var(--sidebar-bg)] bg-emerald-500" />
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-semibold leading-tight text-[var(--color-text)]">
-            {displayName}
-          </p>
-          <p className="truncate text-[11px] leading-tight text-[var(--sidebar-text-faint)]" title={email}>
-            {email}
-          </p>
-        </div>
-        <ChevronDown
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-[var(--sidebar-text-faint)] transition-transform duration-200",
-            open && "rotate-180",
-          )}
-        />
+        {!collapsed && (
+          <>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13px] font-semibold leading-tight text-[var(--color-text)]">
+                {displayName}
+              </p>
+              <p className="truncate text-[11px] leading-tight text-[var(--sidebar-text-faint)]" title={email}>
+                {email}
+              </p>
+            </div>
+            <ChevronDown
+              className={cn(
+                "h-3.5 w-3.5 shrink-0 text-[var(--sidebar-text-faint)] transition-transform duration-200",
+                open && "rotate-180",
+              )}
+            />
+          </>
+        )}
       </button>
 
       {open && (
-        <div className="animate-slide-down absolute bottom-full left-0 right-0 mb-1 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
+        <div
+          className={cn(
+            "animate-slide-down absolute overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]",
+            collapsed ? "bottom-0 left-full ml-2 w-56" : "bottom-full left-0 right-0 mb-1",
+          )}
+        >
           <div className="border-b border-[var(--color-border)] px-4 py-3">
             <p className="truncate text-[12px] font-semibold text-[var(--color-text)]">{displayName}</p>
             <p className="truncate text-[11px] text-[var(--color-text-faint)]">{email}</p>
@@ -258,6 +276,8 @@ const SidebarPanel = memo(function SidebarPanel({
   email,
   me,
   meLoaded,
+  collapsed,
+  onToggleCollapse,
   onSignOut,
   onClick,
   onAdminHover,
@@ -270,16 +290,39 @@ const SidebarPanel = memo(function SidebarPanel({
   email: string;
   me: MeMailboxResponse | null;
   meLoaded: boolean;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
   onSignOut: () => void;
   onClick?: () => void;
   onAdminHover?: () => void;
   onNavigateStart: (href: string) => void;
 }) {
   return (
-    <aside className="flex h-full flex-col">
-      <div className="flex h-14 shrink-0 items-center border-b border-[var(--sidebar-border)] px-4">
+    <aside className="relative flex h-full flex-col">
+      {onToggleCollapse && (
+        <button
+          type="button"
+          data-testid="sidebar-collapse-toggle"
+          onClick={onToggleCollapse}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          className="absolute -right-3 top-[26px] z-10 flex h-6 w-6 items-center justify-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] shadow-[var(--shadow-sm)] transition-all hover:bg-[var(--sidebar-hover)] hover:text-[var(--color-text)]"
+        >
+          <ChevronLeft
+            className={cn("h-3.5 w-3.5 transition-transform duration-200", collapsed && "rotate-180")}
+            strokeWidth={2}
+          />
+        </button>
+      )}
+
+      <div
+        className={cn(
+          "flex h-14 shrink-0 items-center border-b border-[var(--sidebar-border)]",
+          collapsed ? "justify-center px-2" : "px-4",
+        )}
+      >
         <Link href="/inbox" prefetch aria-label="The Nucleus — home">
-          <PlacecomLogo />
+          {collapsed ? <PlacecomMark size={24} /> : <PlacecomLogo />}
         </Link>
       </div>
 
@@ -296,9 +339,11 @@ const SidebarPanel = memo(function SidebarPanel({
         {groups.map((group) =>
           group.items.length ? (
             <div key={group.label}>
-              <p className="font-mono mb-1.5 ml-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-text-whisper)]">
-                {group.label}
-              </p>
+              {!collapsed && (
+                <p className="font-mono mb-1.5 ml-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-text-whisper)]">
+                  {group.label}
+                </p>
+              )}
               <div className="flex flex-col gap-0.5">
                 {group.items.map(({ href, label, Icon }) => (
                   <NavItem
@@ -307,6 +352,7 @@ const SidebarPanel = memo(function SidebarPanel({
                     label={label}
                     Icon={Icon}
                     selected={navItemSelected(href, pathname, pendingHref)}
+                    collapsed={collapsed}
                     onClick={onClick}
                     onMouseEnter={href === adminLink.href ? onAdminHover : undefined}
                     onNavigateStart={onNavigateStart}
@@ -322,7 +368,7 @@ const SidebarPanel = memo(function SidebarPanel({
       )}
 
       <div className="shrink-0 border-t border-[var(--sidebar-border)] px-2.5 py-2.5">
-        <UserProfile displayName={displayName} email={email} me={me} onSignOut={onSignOut} />
+        <UserProfile displayName={displayName} email={email} me={me} collapsed={collapsed} onSignOut={onSignOut} />
       </div>
     </aside>
   );
@@ -330,9 +376,15 @@ const SidebarPanel = memo(function SidebarPanel({
 
 type Props = {
   onCloseMobile?: () => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 };
 
-export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }: Props) {
+export const WorkspaceSidebar = memo(function WorkspaceSidebar({
+  onCloseMobile,
+  collapsed,
+  onToggleCollapse,
+}: Props) {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -400,6 +452,8 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({ onCloseMobile }
       email={email}
       me={me}
       meLoaded={me !== null}
+      collapsed={collapsed}
+      onToggleCollapse={onToggleCollapse}
       onSignOut={() => void signOut()}
       onClick={onCloseMobile}
       onAdminHover={me?.role === "admin" ? () => void prefetchAdminTeamData() : undefined}

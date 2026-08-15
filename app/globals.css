@@ -162,6 +162,13 @@
     outline-offset: 2px;
   }
 
+  /* Pointer cursor on the native "clear" (x) button of type="search" inputs,
+     e.g. the Forms/Sheets/Docs list search boxes — browsers default it to an
+     arrow cursor which reads as non-interactive. */
+  input[type="search"]::-webkit-search-cancel-button {
+    cursor: pointer;
+  }
+
   /* Focus-visible ring */
   :focus-visible {
     outline: 2px solid var(--color-primary);

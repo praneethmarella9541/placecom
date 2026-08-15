@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookText, Loader2, Plus, Search } from "lucide-react";
+import { BookText, Plus, Search } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { cn } from "@/lib/utils";
+import { CreateNamePopup } from "@/components/CreateNamePopup";
 import {
   getDocsPrefetchCache,
   setDocsPrefetchCache,
@@ -27,8 +27,8 @@ export default function DocsListPage() {
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
+  const [showCreatePopup, setShowCreatePopup] = useState(false);
   const [search, setSearch] = useState("");
   const [searchDebounced, setSearchDebounced] = useState("");
 
@@ -57,7 +57,7 @@ export default function DocsListPage() {
     if (opts.pageToken) params.set("pageToken", opts.pageToken);
     if (searchDebounced) params.set("search", searchDebounced);
     try {
-      const res = await fetch(`/api/docs?${params.toString()}`);
+      const res = await fetch(`/api/docs?${params.toString()}`, { cache: "no-store" });
       const data = (await res.json()) as {
         error?: string;
         docs?: DocRow[];
@@ -84,24 +84,33 @@ export default function DocsListPage() {
     void load({ append: false });
   }, [load]);
 
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    const t = title.trim();
-    if (!t || creating) return;
+  async function handleCreate(name: string) {
+    if (creating) return;
     setCreating(true);
     setError(null);
     try {
       const res = await fetch("/api/docs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: t }),
+        body: JSON.stringify({ title: name }),
       });
       const data = (await res.json()) as { error?: string; message?: string; documentId?: string };
       if (!res.ok) {
         throw new Error(data.error || data.message || "Could not create doc");
       }
       if (!data.documentId) throw new Error("Invalid response");
-      setTitle("");
+      const optimisticDoc: DocRow = {
+        id: data.documentId,
+        name,
+        mimeType: "application/vnd.google-apps.document",
+        modifiedTime: new Date().toISOString(),
+      };
+      const cached = getDocsPrefetchCache();
+      setDocsPrefetchCache({
+        docs: [optimisticDoc, ...(cached?.docs ?? [])],
+        nextPageToken: cached?.nextPageToken,
+      });
+      setShowCreatePopup(false);
       router.push(`/docs/${encodeURIComponent(data.documentId)}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -113,78 +122,60 @@ export default function DocsListPage() {
   const empty = useMemo(() => !loading && docs.length === 0, [loading, docs.length]);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[var(--color-copper-tint)] text-[var(--color-copper)]">
-            <BookText className="h-5 w-5" strokeWidth={2} />
-          </div>
-          <h1 className="font-display text-[17px] font-bold tracking-tight text-[var(--color-text)]">
-            {titleCase("New doc")}
-          </h1>
-        </div>
-        <form data-testid="docs-create-form" onSubmit={(e) => void handleCreate(e)} className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input
-            data-testid="docs-new-title-input"
-            id="new-doc-title"
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Doc title, e.g. Offer Letter Template"
-            className="h-12 w-full min-w-0 flex-1 rounded-xl border border-transparent bg-[var(--color-surface-2)] px-4 text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
-            autoComplete="off"
-            disabled={creating}
-          />
-          <button
-            data-testid="docs-create-btn"
-            type="submit"
-            disabled={creating || !title.trim()}
-            className={cn(
-              "inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-copper)] px-6 text-[14px] font-semibold text-white transition hover:bg-[var(--color-copper-hover)]",
-              (!title.trim() || creating) && "opacity-60",
-            )}
-          >
-            {creating ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                {titleCase("Creating…")}
-              </>
-            ) : (
-              <>
-                <Plus className="h-4 w-4" strokeWidth={2} />
-                {titleCase("Create & edit")}
-              </>
-            )}
-          </button>
-        </form>
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="font-display text-[19px] font-bold tracking-tight text-[var(--color-text)]">
+          {titleCase("Docs")}
+        </h1>
+        <button
+          data-testid="docs-create-btn"
+          type="button"
+          onClick={() => {
+            setError(null);
+            setShowCreatePopup(true);
+          }}
+          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-copper)] px-5 text-[14px] font-semibold text-white transition hover:bg-[var(--color-copper-hover)]"
+        >
+          <Plus className="h-4 w-4" strokeWidth={2} />
+          {titleCase("Create")}
+        </button>
       </div>
 
-      {error ? (
+      {showCreatePopup ? (
+        <CreateNamePopup
+          icon={<BookText className="h-5 w-5" strokeWidth={2} />}
+          title="New doc"
+          placeholder="Doc title, e.g. Offer Letter Template"
+          creating={creating}
+          error={error}
+          onSubmit={(name) => void handleCreate(name)}
+          onClose={() => {
+            if (!creating) {
+              setShowCreatePopup(false);
+              setError(null);
+            }
+          }}
+        />
+      ) : null}
+
+      {error && !showCreatePopup ? (
         <div className="rounded-[var(--radius-md)] border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3 text-[13px] text-[var(--color-danger)]">
           {error}
         </div>
       ) : null}
 
       <div>
-        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="flex items-baseline gap-2 font-display text-[17px] font-bold text-[var(--color-text)]">
-            {titleCase("Your docs")}
-            <span className="font-mono text-[12px] font-medium text-[var(--color-text-faint)]">
-              {docs.length} {docs.length === 1 ? "doc" : "docs"}
-            </span>
-          </h2>
-          <div className="relative max-w-sm flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" strokeWidth={2} />
-            <input
-              data-testid="docs-search-input"
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={titleCase("Search by doc title")}
-              className="h-10 w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] pl-9 pr-4 text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
-              autoComplete="off"
-            />
-          </div>
+        <div className="relative mb-3 max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" strokeWidth={2} />
+          <input
+            data-testid="docs-search-input"
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={titleCase("Search by doc title")}
+            className="h-10 w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] pl-9 pr-4 text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
+            autoComplete="off"
+          />
         </div>
         {loading ? (
           <div className="space-y-2">

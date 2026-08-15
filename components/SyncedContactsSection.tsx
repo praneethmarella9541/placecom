@@ -250,7 +250,11 @@ export function SyncedContactsSection({
             </button>
           </div>
         ) : companiesLoading ? (
-          <div className="surface-card h-40 animate-pulse" />
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {[...Array(3)].map((_, i) => (
+              <div key={i} className="surface-card h-16 animate-pulse p-4" />
+            ))}
+          </div>
         ) : companies.length === 0 ? (
           <div className="surface-card p-6 text-center">
             <p className="text-[13px] text-[var(--color-text-muted)]">
@@ -262,46 +266,42 @@ export function SyncedContactsSection({
             <p className="text-[13px] text-[var(--color-text-muted)]">{titleCase("No matches.")}</p>
           </div>
         ) : (
-          <div className="surface-card overflow-x-auto p-0">
-            <table className="w-full min-w-[520px] text-left text-[13px]">
-              <thead>
-                <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
-                  <th className="px-4 py-3 font-bold">{titleCase("Company")}</th>
-                  <th className="px-4 py-3 font-bold">{titleCase("Contacts")}</th>
-                  <th className="px-4 py-3 font-bold">{titleCase("Connection strength")}</th>
-                  <th className="px-4 py-3 font-bold">{titleCase("Last email interaction")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredCompanies.map((c) => (
-                  <tr
-                    key={c.domain}
-                    data-testid={`synced-company-${c.domain}`}
-                    onClick={() => setSelectedCompany(c)}
-                    className="cursor-pointer border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-surface-offset)]"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex min-w-0 items-center gap-2">
-                        <CompanyLogo logoUrl={c.logoUrl} size={16} />
-                        <span className="truncate font-semibold text-[var(--color-text)]">{c.companyName}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.contactCount}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1.5">
-                        <span
-                          className={`h-2 w-2 shrink-0 rounded-full ${CONNECTION_STRENGTH_DOT[c.bestConnectionStrength]}`}
-                        />
-                        {titleCase(c.bestConnectionStrength)}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">
-                      {c.lastInteractionAt ? timeAgo(c.lastInteractionAt) : titleCase("No contact")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {filteredCompanies.map((c) => (
+              <div
+                key={c.domain}
+                data-testid={`synced-company-${c.domain}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedCompany(c)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelectedCompany(c);
+                  }
+                }}
+                className="surface-card flex cursor-pointer items-start gap-3 p-3.5"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-offset)]">
+                  <CompanyLogo logoUrl={c.logoUrl} size={20} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-semibold text-[var(--color-text)]">
+                    {truncateChars(c.companyName, 24)}
+                  </p>
+                  <p className="truncate text-[12px] text-[var(--color-text-muted)]">
+                    {c.contactCount} {titleCase(c.contactCount === 1 ? "contact" : "contacts")}
+                  </p>
+                  <p className="mt-0.5 flex items-center gap-1.5 text-[12px] text-[var(--color-text-faint)]">
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${CONNECTION_STRENGTH_DOT[c.bestConnectionStrength]}`} />
+                    {titleCase(c.bestConnectionStrength)}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">
+                  {c.lastInteractionAt ? timeAgo(c.lastInteractionAt) : titleCase("No contact")}
+                </span>
+              </div>
+            ))}
           </div>
         )
       ) : loading ? (
@@ -417,6 +417,7 @@ export function SyncedContactsSection({
             setSelectedCompany(null);
             setSelectedPerson(person);
           }}
+          onAddToDirectory={onAddToDirectory}
         />
       )}
     </div>

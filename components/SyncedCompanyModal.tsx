@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Paperclip } from "lucide-react";
+import { Paperclip, UserPlus } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconX } from "@/components/Icons";
 import { CompanyLogo } from "@/components/CompanyLogo";
@@ -10,6 +10,7 @@ import { EmailThreadPreviewModal } from "@/components/EmailThreadPreviewModal";
 import { CONNECTION_STRENGTH_DOT } from "@/lib/connection-strength-ui";
 import type { EmailConnectionStrength } from "@/lib/email-connection-strength";
 import { EMAIL_CATEGORY_COLORS } from "@/lib/email-category";
+import type { DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { timeAgo } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import type { SyncedCompanyRow } from "@/app/api/synced-contacts/companies/route";
@@ -52,11 +53,13 @@ export function SyncedCompanyModal({
   people,
   onClose,
   onOpenPerson,
+  onAddToDirectory,
 }: {
   company: SyncedCompanyRow;
   people: SyncedContactRow[];
   onClose: () => void;
   onOpenPerson: (contact: SyncedContactRow) => void;
+  onAddToDirectory: (input: DirectoryContactInput) => void;
 }) {
   const [tab, setTab] = useState<Tab>("Team");
   // undefined = not fetched yet (lazy on first switch to the Emails tab).
@@ -154,11 +157,11 @@ export function SyncedCompanyModal({
             ) : (
               <ul className="space-y-1">
                 {people.map((p) => (
-                  <li key={p.id}>
+                  <li key={p.id} className="flex items-center gap-1 rounded-lg pr-1.5 hover:bg-[var(--color-surface-offset)]">
                     <button
                       type="button"
                       onClick={() => onOpenPerson(p)}
-                      className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-[var(--color-surface-offset)]"
+                      className="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2 text-left"
                     >
                       <GmailAvatar seed={p.email} name={p.display_name || p.email} size={32} />
                       <div className="min-w-0 flex-1">
@@ -172,6 +175,22 @@ export function SyncedCompanyModal({
                           className={`h-2 w-2 shrink-0 rounded-full ${CONNECTION_STRENGTH_DOT[p.connection_strength]}`}
                         />
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-ghost inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg p-0"
+                      title={titleCase("Add to directory")}
+                      aria-label={titleCase("Add to directory")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onAddToDirectory({
+                          name: p.display_name || p.email,
+                          company: p.company_name ?? company.companyName,
+                          email: p.email,
+                        });
+                      }}
+                    >
+                      <UserPlus className="h-3.5 w-3.5" />
                     </button>
                   </li>
                 ))}

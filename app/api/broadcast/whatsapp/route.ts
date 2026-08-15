@@ -18,6 +18,7 @@ import { peerForOutbound } from "@/lib/whatsapp-address";
 import { normalizePhone } from "@/lib/phone";
 import { resolveWhatsAppTemplateAsync } from "@/lib/whatsapp-template-resolve";
 import { formatTemplatePreview } from "@/lib/whatsapp-template";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -68,6 +69,8 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
 
   const useExotel = isExotelWhatsAppConfigured();
   const client = useExotel ? null : getTwilioClient();
@@ -127,6 +130,7 @@ export async function POST(request: Request) {
         const logBody = formatTemplatePreview(templateConfig, vars);
         const { error: logErr } = await supabase.from("whatsapp_messages").insert({
           user_id: user.id,
+          mailbox_owner_id: mailboxOwnerId,
           direction: "outbound",
           peer_e164: peerForOutbound(phone),
           business_e164: businessLine,
@@ -185,6 +189,7 @@ export async function POST(request: Request) {
         sid = result.sid;
         const { error: logErr } = await supabase.from("whatsapp_messages").insert({
           user_id: user.id,
+          mailbox_owner_id: mailboxOwnerId,
           direction: "outbound",
           peer_e164: peerForOutbound(to),
           business_e164: businessLine,
@@ -204,6 +209,7 @@ export async function POST(request: Request) {
         if (fromAddr) {
           const { error: logErr } = await supabase.from("whatsapp_messages").insert({
             user_id: user.id,
+            mailbox_owner_id: mailboxOwnerId,
             direction: "outbound",
             peer_e164: peerForOutbound(to),
             from_addr: fromAddr,

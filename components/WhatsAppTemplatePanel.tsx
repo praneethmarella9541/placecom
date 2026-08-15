@@ -56,18 +56,15 @@ export function WhatsAppTemplatePanel({
   return (
     <div
       className={cn(
-        "mb-2 overflow-hidden rounded-2xl border transition-all duration-200",
+        "mb-2 overflow-hidden rounded-2xl border bg-[var(--color-surface)] transition-all duration-200",
         needsTemplate
-          ? "border-[#c8e6d4] bg-gradient-to-br from-[#f4fbf7] via-[#f8fdf9] to-[#eef8f2] shadow-[0_2px_12px_rgba(7,94,84,0.08)]"
-          : "border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)]",
+          ? "border-[var(--color-copper)]/25 shadow-[0_2px_12px_rgba(196,92,26,0.08)]"
+          : "border-[var(--color-border)] shadow-[var(--shadow-sm)]",
       )}
     >
       <button
         type="button"
-        className={cn(
-          "flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors",
-          !needsTemplate && "hover:bg-[var(--color-surface-offset)]/60",
-        )}
+        className="flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-[var(--color-surface-offset)]/60"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >
@@ -75,8 +72,8 @@ export function WhatsAppTemplatePanel({
           className={cn(
             "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[13px] font-bold",
             needsTemplate
-              ? "bg-[#075E54] text-white shadow-[0_2px_8px_rgba(7,94,84,0.25)]"
-              : "bg-[var(--color-primary-tint)] text-[var(--color-primary)]",
+              ? "bg-[var(--color-copper)] text-white shadow-[0_2px_8px_rgba(196,92,26,0.25)]"
+              : "bg-[var(--color-copper-tint)] text-[var(--color-copper)]",
           )}
         >
           {needsTemplate ? "!" : "T"}
@@ -88,11 +85,11 @@ export function WhatsAppTemplatePanel({
               {needsTemplate ? titleCase("Approved template required") : titleCase("Template options")}
             </span>
             {needsTemplate ? (
-              <span className="rounded-full bg-[#dcf8e8] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#075E54]">
+              <span className="rounded-full bg-[var(--color-copper-tint)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-copper)]">
                 {titleCase("Session closed")}
               </span>
             ) : forceTemplate ? (
-              <span className="rounded-full bg-[var(--color-primary-tint)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-primary)]">
+              <span className="rounded-full bg-[var(--color-copper-tint)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-copper)]">
                 {titleCase("Force template")}
               </span>
             ) : null}
@@ -145,12 +142,12 @@ export function WhatsAppTemplatePanel({
               </p>
             )}
 
-            <div className="rounded-xl border border-[#d9f0e3] bg-white/80 p-3">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[#075E54]/70">
+            <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/80 p-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-copper)]/70">
                 {titleCase("Preview")}
               </p>
               <div className="flex justify-end">
-                <div className="max-w-[92%] rounded-xl rounded-tr-sm bg-[#dcf8c6] px-3 py-2 text-[13px] leading-relaxed text-[#111b21] shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
+                <div className="max-w-[92%] rounded-xl rounded-tr-sm bg-[var(--color-copper-tint)] px-3 py-2 text-[13px] leading-relaxed text-[var(--color-text)] shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
                   {templatePreview || "…"}
                 </div>
               </div>
@@ -168,7 +165,7 @@ export function WhatsAppTemplatePanel({
                         className={cn(
                           "flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold",
                           filled
-                            ? "bg-[#075E54] text-white"
+                            ? "bg-[var(--color-copper)] text-white"
                             : "bg-[var(--color-surface-offset)] text-[var(--color-text-faint)]",
                         )}
                       >
@@ -191,10 +188,10 @@ export function WhatsAppTemplatePanel({
               })}
             </div>
 
-            <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 transition-colors hover:border-[var(--color-primary)]/30">
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 transition-colors hover:border-[var(--color-copper)]/30">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-[var(--color-border-strong)] text-[#075E54] focus:ring-[#075E54]/30"
+                className="h-4 w-4 rounded border-[var(--color-border-strong)] text-[var(--color-copper)] focus:ring-[var(--color-copper)]/30"
                 checked={forceTemplate}
                 onChange={(e) => onForceTemplateChange(e.target.checked)}
               />

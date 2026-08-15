@@ -1,10 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Search, Trash2, UserRound } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
-import { IconLinkedin, IconWhatsApp } from "@/components/Icons";
+import { IconLinkedin, IconWhatsAppLogo } from "@/components/Icons";
 import { SyncedContactsSection } from "@/components/SyncedContactsSection";
 import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
@@ -259,7 +260,7 @@ export function ContactDirectory() {
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") router.push(`/contacts/${c.id}`);
                     }}
-                    className="cursor-pointer border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-surface-offset)]"
+                    className="cursor-pointer border-b border-[var(--color-border)] last:border-b-0"
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
@@ -284,26 +285,24 @@ export function ContactDirectory() {
                       {new Date(c.last_contacted_at ?? c.updated_at).toLocaleDateString()}
                     </td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
                         <a
                           href={c.linkedin_url || linkedInSearchUrl(c.name, c.company)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-faint)] transition-colors hover:bg-[#0A66C2]/10 hover:text-[var(--color-text)]"
                           title={titleCase("LinkedIn")}
                         >
                           <IconLinkedin className="h-4 w-4" />
                         </a>
                         {c.phone && (
-                          <a
-                            href={`https://wa.me/${c.phone.replace(/\D/g, "")}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[#25d366]"
+                          <Link
+                            href={`/whatsapp?peer=${encodeURIComponent(c.phone)}`}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[#25D366]/10"
                             title={titleCase("WhatsApp")}
                           >
-                            <IconWhatsApp className="h-4 w-4" />
-                          </a>
+                            <IconWhatsAppLogo className="h-4 w-4" />
+                          </Link>
                         )}
                       </div>
                     </td>
@@ -343,7 +342,7 @@ export function ContactDirectory() {
           className={cn(
             "fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-xl px-4 py-3 text-[13px] font-medium shadow-lg",
             toast.kind === "success"
-              ? "border border-[#25d366]/30 bg-[#25d366]/10 text-[#1a8a45]"
+              ? "border border-[var(--color-success)]/30 bg-[var(--color-success-light)] text-[var(--color-success)]"
               : "border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/10 text-[var(--color-danger)]",
           )}
           role="status"

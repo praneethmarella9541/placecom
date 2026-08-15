@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
-import { IconBuilding, IconLinkedin, IconMail, IconMapPin, IconPhone, IconWhatsApp } from "@/components/Icons";
+import { IconBuilding, IconLinkedin, IconMail, IconMapPin, IconPhone, IconWhatsAppLogo } from "@/components/Icons";
 import { ContactFormModal, contactToFormInput } from "@/components/ContactFormModal";
 import { ContactDetailQuickLogger } from "@/components/ContactDetailQuickLogger";
 import { ContactActivityTimeline } from "@/components/ContactActivityTimeline";
@@ -78,7 +78,7 @@ export default function ContactDetailPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-[1400px] space-y-6">
       <div className="flex items-center justify-between">
         <Link
           href="/contacts"
@@ -146,15 +146,13 @@ export default function ContactDetailPage() {
                 </a>
               )}
               {contact.phone && (
-                <a
-                  href={`https://wa.me/${contact.phone.replace(/\D/g, "")}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 text-[#25d366] hover:underline"
+                <Link
+                  href={`/whatsapp?peer=${encodeURIComponent(contact.phone)}`}
+                  className="flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline"
                 >
-                  <IconWhatsApp className="h-3.5 w-3.5 shrink-0" />
+                  <IconWhatsAppLogo className="h-3.5 w-3.5 shrink-0" />
                   <span>{titleCase("WhatsApp")}</span>
-                </a>
+                </Link>
               )}
               {contact.location && (
                 <p className="flex items-center gap-2 text-[var(--color-text-muted)]">
@@ -205,11 +203,13 @@ export default function ContactDetailPage() {
           )}
         </div>
 
-        <div className="surface-card space-y-6 p-5">
+        <div className="surface-card min-w-0 space-y-6 p-5">
           <ContactDetailQuickLogger
             contactId={contact.id}
             email={contact.email}
             phone={contact.phone}
+            name={contact.name}
+            company={contact.company}
             onLogged={() => setTimelineKey((k) => k + 1)}
           />
           <div className="border-t border-[var(--color-border)] pt-5">

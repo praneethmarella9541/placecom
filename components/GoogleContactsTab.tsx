@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { Mail, Search, UserRound } from "lucide-react";
-import { IconWhatsApp } from "@/components/Icons";
+import { Mail, Search, UserPlus, UserRound } from "lucide-react";
+import { ContactFormModal, emptyContactForm } from "@/components/ContactFormModal";
+import type { DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { normalizePhone, isValidE164 } from "@/lib/phone";
 import { titleCase } from "@/lib/title-case";
 
@@ -45,7 +45,7 @@ function Avatar({ name, photoUrl }: { name: string; photoUrl?: string }) {
     );
   }
   return (
-    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--color-primary)] text-[13px] font-bold text-white">
+    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper)] text-[13px] font-bold text-white">
       {initials(name)}
     </span>
   );
@@ -56,6 +56,7 @@ export function GoogleContactsTab() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const router = useRouter();
+  const [contactModalInitial, setContactModalInitial] = useState<DirectoryContactInput | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,16 +181,22 @@ export function GoogleContactsTab() {
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
-                    {validPhone && (
-                      <Link
-                        href={`/whatsapp?peer=${encodeURIComponent(validPhone)}`}
-                        className="btn-ghost inline-flex h-9 w-9 items-center justify-center rounded-lg p-0 text-[#25d366]"
-                        title={titleCase("Message on WhatsApp")}
-                        aria-label={titleCase("Message on WhatsApp")}
-                      >
-                        <IconWhatsApp className="h-4 w-4" />
-                      </Link>
-                    )}
+                    <button
+                      type="button"
+                      className="btn-ghost inline-flex h-9 w-9 items-center justify-center rounded-lg p-0 text-[var(--color-copper)]"
+                      title={titleCase("Add to team directory")}
+                      aria-label={titleCase("Add to team directory")}
+                      onClick={() =>
+                        setContactModalInitial({
+                          ...emptyContactForm,
+                          name: c.name,
+                          email: email ?? "",
+                          phone: validPhone ?? "",
+                        })
+                      }
+                    >
+                      <UserPlus className="h-4 w-4" />
+                    </button>
                     {email && (
                       <button
                         type="button"
@@ -213,6 +220,14 @@ export function GoogleContactsTab() {
         <p className="text-center text-[12px] text-[var(--color-text-faint)]">
           {contacts.length} contact{contacts.length !== 1 ? "s" : ""} from Google
         </p>
+      )}
+
+      {contactModalInitial && (
+        <ContactFormModal
+          initial={contactModalInitial}
+          onClose={() => setContactModalInitial(null)}
+          onSaved={() => setContactModalInitial(null)}
+        />
       )}
     </div>
   );

@@ -5,6 +5,7 @@ import { normalizePhone, phoneLookupVariants, phoneMatches } from "@/lib/phone";
 import { deriveCallDirection, resolveCallStatus } from "@/lib/call-status";
 import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
 import { notifyIncomingCall } from "@/lib/push-notifications";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 
@@ -328,8 +329,10 @@ async function resolveDestination(
       .eq("call_sid", exotelCallSid)
       .maybeSingle();
     if (!existing) {
+      const mailboxOwnerId = await resolveMailboxOwnerId(supabaseAdmin, logUserId);
       await supabaseAdmin.from("call_logs").insert({
         user_id: logUserId,
+        mailbox_owner_id: mailboxOwnerId,
         call_sid: exotelCallSid,
         to_number: incomingAgent,
         from_number: from,

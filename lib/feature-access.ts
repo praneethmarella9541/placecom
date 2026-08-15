@@ -10,6 +10,7 @@ export const FEATURE_KEYS = [
   "calendar",
   "sms",
   "whatsapp",
+  "calls",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -26,6 +27,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   calendar: "Calendar",
   sms: "SMS",
   whatsapp: "WhatsApp",
+  calls: "Calls",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -38,6 +40,7 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "broadcasting",
   "calendar",
   "whatsapp",
+  "calls",
 ];
 
 const SET = new Set<string>(FEATURE_KEYS);
@@ -85,6 +88,7 @@ export function pathToFeature(pathname: string, search: URLSearchParams): Featur
   if (pathname.startsWith("/sms")) return "sms";
   if (pathname.startsWith("/whatsapp")) return "whatsapp";
   if (pathname.startsWith("/contacts")) return "whatsapp";
+  if (pathname.startsWith("/calls")) return "calls";
   return null;
 }
 
@@ -128,6 +132,7 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";
+  if (pathname.startsWith("/api/calls")) return "calls";
 
   if (pathname.startsWith("/api/sms") || pathname.startsWith("/api/twilio/sms")) return "sms";
   if (pathname.startsWith("/api/whatsapp") || pathname.startsWith("/api/twilio/whatsapp")) return "whatsapp";
@@ -160,6 +165,7 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
     { path: "/dashboard" },
     { path: "/calendar" },
     { path: "/whatsapp" },
+    { path: "/calls" },
     { path: "/contacts" },
   ];
   for (const { path, search = "" } of candidates) {

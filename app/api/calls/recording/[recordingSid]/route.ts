@@ -25,17 +25,32 @@ export async function GET(
     return NextResponse.json({ error: "Exotel credentials not configured" }, { status: 500 });
   }
 
-  // recording_sid stores the full S3 URL — look up by matching it in the DB
+  // recording_sid stores the full S3 URL — look up by matching it in the DB.
+  // Uses service role (bypasses RLS) so the ownership check is replicated
+  // here explicitly: your own recording, or — if you're an admin — any
+  // recording belonging to your team (mailbox_owner_id), same boundary as
+  // the 0048-migration RLS policy on call_logs.
   const svc = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
-  const { data: row } = await svc
+  const { data: profile } = await svc
+    .from("profiles")
+    .select("role, mailbox_owner_id")
+    .eq("id", authed.user.id)
+    .maybeSingle();
+  const mailboxOwnerId =
+    profile?.role === "admin" ? authed.user.id : (profile?.mailbox_owner_id as string | null);
+
+  let recordingQuery = svc
     .from("call_logs")
     .select("id, recording_sid")
-    .eq("user_id", authed.user.id)
-    .eq("recording_sid", recordingSid)
-    .maybeSingle();
+    .eq("recording_sid", recordingSid);
+  recordingQuery =
+    profile?.role === "admin" && mailboxOwnerId
+      ? recordingQuery.or(`user_id.eq.${authed.user.id},mailbox_owner_id.eq.${mailboxOwnerId}`)
+      : recordingQuery.eq("user_id", authed.user.id);
+  const { data: row } = await recordingQuery.maybeSingle();
 
   if (!row?.recording_sid) {
     return NextResponse.json({ error: "Recording not found" }, { status: 404 });

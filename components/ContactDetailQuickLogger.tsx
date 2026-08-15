@@ -2,25 +2,29 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { IconCalendar, IconMail, IconMenu, IconPhone, IconWhatsApp } from "@/components/Icons";
+import { IconCalendar, IconMail, IconMenu, IconWhatsAppLogo } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
 
-type QuickPost = "call" | "note" | null;
+type QuickPost = "note" | null;
 
 /**
- * Quick Interaction Logger — Send Email / Log Call / Schedule Meeting / Send WhatsApp /
- * Add Note. Email/WhatsApp/Meeting deep-link into existing flows (mailto:, /whatsapp?peer=,
- * /calendar); Log Call and Add Note post straight to crm_contact_notes (kind: call|note).
+ * Quick Interaction Logger — Send Email / Schedule Meeting / Send WhatsApp / Add Note.
+ * Email/WhatsApp/Meeting deep-link into existing flows (/inbox?composeTo=, /whatsapp?peer=,
+ * /calendar); Add Note posts straight to crm_contact_notes (kind: note).
  */
 export function ContactDetailQuickLogger({
   contactId,
   email,
   phone,
+  name,
+  company,
   onLogged,
 }: {
   contactId: string;
   email: string | null;
   phone: string | null;
+  name?: string | null;
+  company?: string | null;
   onLogged: () => void;
 }) {
   const [open, setOpen] = useState<QuickPost>(null);
@@ -58,24 +62,22 @@ export function ContactDetailQuickLogger({
       </h3>
       <div className="flex flex-wrap gap-2">
         {email ? (
-          <a
-            href={`mailto:${email}`}
+          <Link
+            href={`/inbox?composeTo=${encodeURIComponent(email)}`}
             className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
           >
             <IconMail className="h-3.5 w-3.5" />
             {titleCase("Send email")}
-          </a>
+          </Link>
         ) : null}
-        <button
-          type="button"
-          onClick={() => setOpen(open === "call" ? null : "call")}
-          className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
-        >
-          <IconPhone className="h-3.5 w-3.5" />
-          {titleCase("Log call")}
-        </button>
         <Link
-          href="/calendar"
+          href={(() => {
+            const params = new URLSearchParams({ action: "new" });
+            if (email) params.set("attendee", email);
+            const title = name ? `Meeting with ${name}${company ? ` (${company})` : ""}` : "";
+            if (title) params.set("title", title);
+            return `/calendar?${params.toString()}`;
+          })()}
           className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
         >
           <IconCalendar className="h-3.5 w-3.5" />
@@ -84,9 +86,9 @@ export function ContactDetailQuickLogger({
         {phone ? (
           <Link
             href={`/whatsapp?peer=${encodeURIComponent(phone)}`}
-            className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-[#25d366]"
+            className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
           >
-            <IconWhatsApp className="h-3.5 w-3.5" />
+            <IconWhatsAppLogo className="h-3.5 w-3.5" />
             {titleCase("Send WhatsApp")}
           </Link>
         ) : null}
@@ -108,7 +110,7 @@ export function ContactDetailQuickLogger({
             rows={2}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={titleCase(open === "call" ? "What happened on the call?" : "Note…")}
+            placeholder={titleCase("Note…")}
             className="input-field w-full text-[13px]"
           />
           <div className="flex justify-end gap-2">

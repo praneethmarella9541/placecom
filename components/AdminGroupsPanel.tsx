@@ -199,9 +199,19 @@ export function AdminGroupsPanel({ groups, groupsLoading = false, onRefresh, onT
                   <div>
                     <p className="text-[14px] font-semibold text-[var(--color-text)]">{g.name}</p>
                     <p className="font-mono text-[11.5px] text-[var(--color-text-faint)]">
-                      {g.restrictedFeatures.length
-                        ? `${g.restrictedFeatures.length} feature(s) blocked`
-                        : titleCase("Full access")}
+                      {(() => {
+                        // Only count features actually shown/toggleable below —
+                        // a stray entry outside GROUP_MANAGEABLE_FEATURES (e.g.
+                        // a legacy value from before a feature was removed from
+                        // this checklist) shouldn't show as "blocked" with no
+                        // way to see or change it.
+                        const visibleBlocked = g.restrictedFeatures.filter((f) =>
+                          GROUP_MANAGEABLE_FEATURES.includes(f)
+                        );
+                        return visibleBlocked.length
+                          ? `${visibleBlocked.length} feature(s) blocked`
+                          : titleCase("Full access");
+                      })()}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-2">

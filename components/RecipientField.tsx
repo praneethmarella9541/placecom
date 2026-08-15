@@ -7,6 +7,7 @@ import { extractEmailAddress } from "@/lib/email-parse";
 import {
   isCompleteEmailAddress,
   parseRecipientValue,
+  recipientMatchesQuery,
   serializeRecipientValue,
   type RecipientChipData,
 } from "@/lib/email-recipients";
@@ -70,20 +71,9 @@ export function RecipientField({
   }, [draft]);
 
   const filtered = useMemo(() => {
-    const q = draft.trim().toLowerCase();
+    const q = draft.trim();
     if (!q) return [];
-    // Also compare with whitespace stripped, so a run-together query like
-    // "saibharath" still matches a display name like "Sai Bharath" — the
-    // plain substring check below would otherwise miss it over the space.
-    const qCompact = q.replace(/\s+/g, "");
-    return suggestions
-      .filter((s) => {
-        const em = s.email.toLowerCase();
-        const name = (s.displayName || "").toLowerCase();
-        if (em.includes(q) || name.includes(q)) return true;
-        return qCompact.length > 0 && name.replace(/\s+/g, "").includes(qCompact);
-      })
-      .slice(0, 10);
+    return suggestions.filter((s) => recipientMatchesQuery(s, q)).slice(0, 10);
   }, [draft, suggestions]);
 
   const showDropdown = !pickerDismissed && draft.trim().length > 0 && filtered.length > 0;

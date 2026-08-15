@@ -16,6 +16,20 @@ import { GmailAttachmentPreviews } from "@/components/GmailAttachmentPreviews";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
+import { MassRecipientsPanel, type MassRecipient } from "@/components/MassRecipientsPanel";
+import { useDirectoryContacts } from "@/hooks/useDirectoryContacts";
+import { useSyncedContacts } from "@/hooks/useSyncedContacts";
+import type { DirectoryContact } from "@/lib/contact-directory";
+import {
+  COMPOSE_VARIABLES,
+  contactToMergeFields,
+  mergeFieldSources,
+  reportMissingVariables,
+  stripVariableSpans,
+  syncedContactToMergeFields,
+  templateUsesVariables,
+} from "@/lib/compose-variables";
+import { mergeTemplate } from "@/lib/mail-merge";
 import { GmailInlineReply } from "@/components/GmailInlineReply";
 import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
 import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
@@ -92,6 +106,7 @@ import {
   IconEye,
   IconCheck,
   IconCalendar,
+  IconInfo,
 } from "@/components/Icons";
 
 type Folder = "inbox" | "sent" | "drafts" | "starred" | "important" | "trash" | "spam" | "allmail";
@@ -930,9 +945,13 @@ export default function InboxPage() {
   // stays visible while the API call runs in the background, then shows
   // success or error. On error the user can retry (re-opens compose).
   type SendSnackState =
-    | { phase: "sending" }
-    | { phase: "sent" }
-    | { phase: "error"; message: string; retry: () => void };
+    // `message` overrides the default copy — a mass send reports a count
+    // ("Sent to 12 recipients") where a single send just says "Message sent".
+    | { phase: "sending"; message?: string }
+    | { phase: "sent"; message?: string }
+    // Retry is optional: a partially-delivered campaign can't be safely
+    // replayed wholesale, so it reports the outcome without offering one.
+    | { phase: "error"; message: string; retry?: () => void };
   const [sendSnack, setSendSnack] = useState<SendSnackState | null>(null);
   const sendSnackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [composeFieldError, setComposeFieldError] = useState<string | null>(null);
@@ -962,6 +981,33 @@ export default function InboxPage() {
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeFullscreen, setComposeFullscreen] = useState(false);
   const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+
+  // ── Mass sending ────────────────────────────────────────────────────────
+  // One personalised copy per recipient, addressed individually (never a
+  // shared To/Cc list), with {variables} resolved from each contact's card.
+  const [massSending, setMassSending] = useState(false);
+  const [massRecipients, setMassRecipients] = useState<MassRecipient[]>([]);
+  /** Email currently shown on the review screen; null means "still editing". */
+  const [reviewEmail, setReviewEmail] = useState<string | null>(null);
+  const [massSendProgress, setMassSendProgress] = useState<{ sent: number; total: number } | null>(null);
+  /**
+   * Campaign-wide default per variable key, set from the review screen's
+   * warning banner. Applies to every recipient missing that field, not just
+   * the one being previewed — typing it per person for a 50-name list would
+   * be unusable.
+   */
+  const [variableFallbacks, setVariableFallbacks] = useState<Record<string, string>>({});
+  const { contacts: directoryContacts } = useDirectoryContacts();
+  // Loaded only once mass sending is switched on — see useSyncedContacts.
+  const { contacts: syncedContacts } = useSyncedContacts(massSending);
+
+  // The rail owns the audience while mass sending is on; the To field is a
+  // read-only mirror of it. Kept in sync here so the draft that gets autosaved
+  // still carries the recipient list.
+  useEffect(() => {
+    if (!massSending) return;
+    setComposeTo(massRecipients.map((r) => r.email).join(", "));
+  }, [massSending, massRecipients]);
 
   // In-flight guard for openDraft. A ref (vs state) keeps the useCallback
   // identity stable so click handlers don't rebind on every flip.
@@ -1408,6 +1454,50 @@ export default function InboxPage() {
       displayName: label !== email ? label : undefined,
     }));
   }, [googleContacts, recruiterSuggestions, threadDerivedEmails]);
+
+  /**
+   * Search pool for the mass-send rail, ordered by how much merge data each
+   * source carries: Team Directory (all five variables), then mailbox-synced
+   * people (name / company / last interaction), then the plain Gmail
+   * suggestions the To field uses (name only).
+   */
+  const massSuggestions = useMemo((): RecipientSuggestion[] => {
+    const seen = new Set<string>();
+    const out: RecipientSuggestion[] = [];
+
+    const push = (email: string, displayName?: string) => {
+      const key = email.trim().toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push({ email: key, displayName: displayName?.trim() || undefined });
+    };
+
+    for (const c of directoryContacts) push(c.email ?? "", c.name);
+    for (const s of syncedContacts) push(s.email, s.display_name ?? undefined);
+    for (const s of composeRecipientSuggestions) push(s.email, s.displayName);
+
+    return out;
+  }, [directoryContacts, syncedContacts, composeRecipientSuggestions]);
+
+  /** Full merge data — badged "Directory" in the rail. */
+  const directoryEmails = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of directoryContacts) {
+      const e = (c.email ?? "").trim().toLowerCase();
+      if (e) set.add(e);
+    }
+    return set;
+  }, [directoryContacts]);
+
+  /** Partial merge data (no title/phone) — badged "Synced" in the rail. */
+  const syncedEmails = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of syncedContacts) {
+      const e = s.email?.trim().toLowerCase();
+      if (e) set.add(e);
+    }
+    return set;
+  }, [syncedContacts]);
 
   const [trackingMap, setTrackingMap] = useState<Record<string, TrackingRow>>({});
 
@@ -3589,6 +3679,181 @@ export default function InboxPage() {
     setComposeOpen(true);
   }
 
+  /**
+   * Merge fields per selected recipient, keyed by email. Recipients whose
+   * contact card has since been deleted fall back to name/email only, so a
+   * stale selection degrades to a plain email rather than blocking the send.
+   */
+  const massMergeRows = useMemo(() => {
+    const cardByEmail = new Map<string, DirectoryContact>();
+    const cardByName = new Map<string, DirectoryContact>();
+    for (const c of directoryContacts) {
+      const email = (c.email ?? "").trim().toLowerCase();
+      if (email && !cardByEmail.has(email)) cardByEmail.set(email, c);
+      const name = c.name.trim().toLowerCase();
+      // First card wins on a duplicate name — with no email to disambiguate,
+      // picking arbitrarily among namesakes would be worse than being stable.
+      if (name && !cardByName.has(name)) cardByName.set(name, c);
+    }
+
+    const syncedByEmail = new Map(
+      syncedContacts
+        .filter((s) => s.email?.trim())
+        .map((s) => [s.email.trim().toLowerCase(), s])
+    );
+
+    return massRecipients.map((r) => {
+      const key = r.email.toLowerCase();
+      // Email is the reliable key; the display name is a fallback for people
+      // whose card was filed under a different (or missing) address.
+      const card =
+        cardByEmail.get(key) ??
+        (r.name.trim() ? cardByName.get(r.name.trim().toLowerCase()) : undefined);
+      const synced = syncedByEmail.get(key);
+
+      // Team Directory wins field-by-field; the mailbox sync fills whatever
+      // the card left blank; the Gmail display name is the last resort.
+      const baseFields = mergeFieldSources(
+        card ? contactToMergeFields(card) : undefined,
+        synced ? syncedContactToMergeFields(synced) : undefined,
+        { email: r.email, name: r.name }
+      );
+      // Always mail the address that was actually selected, not the card's.
+      baseFields.email = r.email;
+
+      // User-typed fallbacks are the weakest source — real data always wins.
+      // Kept separate from baseFields so the review banner can keep listing a
+      // field as "missing" (and therefore editable) after a fallback is set.
+      const fields = mergeFieldSources(baseFields, variableFallbacks);
+
+      return {
+        email: r.email,
+        name: fields.name || r.email,
+        baseFields,
+        fields,
+        hasCard: !!card || !!synced,
+      };
+    });
+  }, [massRecipients, directoryContacts, syncedContacts, variableFallbacks]);
+
+  /**
+   * Missing variables measured against the *real* data only, ignoring
+   * fallbacks — so the banner keeps listing a field after you give it a
+   * fallback, letting you edit or clear it instead of having the control
+   * vanish the moment it's used.
+   */
+  const massMissing = useMemo(
+    () =>
+      reportMissingVariables(
+        composeSubject,
+        composeBody,
+        massMergeRows.map((r) => ({ email: r.email, fields: r.baseFields }))
+      ),
+    [composeSubject, composeBody, massMergeRows]
+  );
+
+  /** Only a variable-bearing draft needs the review gate before sending. */
+  const massTemplateHasVariables = useMemo(
+    () => templateUsesVariables(composeSubject, composeBody),
+    [composeSubject, composeBody]
+  );
+
+  /** The row currently being previewed on the review screen. */
+  const reviewRow = useMemo(() => {
+    if (!reviewEmail) return null;
+    return massMergeRows.find((r) => r.email.toLowerCase() === reviewEmail.toLowerCase()) ?? null;
+  }, [reviewEmail, massMergeRows]);
+
+  async function sendMassCampaign() {
+    const rows = massMergeRows;
+    if (rows.length === 0) return;
+
+    const snapshot = {
+      subject: composeSubject,
+      body: composeBody,
+      files: composeFiles,
+      draftId: composeDraftId,
+    };
+
+    setMassSendProgress({ sent: 0, total: rows.length });
+
+    let sent = 0;
+    const failed: string[] = [];
+    try {
+      const attachments = await resolveAttachmentsForUpload(snapshot.files);
+
+      // Sequential, not Promise.all — Gmail rate-limits concurrent sends and a
+      // partial failure mid-campaign must not lose the count of what got out.
+      for (const row of rows) {
+        const htmlBody = appendDriveLinksToHtml(
+          stripVariableSpans(mergeTemplate(snapshot.body, row.fields)),
+          snapshot.files
+        );
+        try {
+          const res = await fetch("/api/gmail/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: row.email,
+              subject: mergeTemplate(snapshot.subject, row.fields),
+              textBody: "",
+              htmlBody,
+              attachments: attachments.length ? attachments : undefined,
+            }),
+          });
+          if (!res.ok) {
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(data.error || "Send failed");
+          }
+          sent += 1;
+          setMassSendProgress({ sent, total: rows.length });
+        } catch {
+          failed.push(row.email);
+        }
+      }
+    } catch (e) {
+      setMassSendProgress(null);
+      showSendSnack({
+        phase: "error",
+        message: e instanceof Error ? e.message : "Could not send campaign",
+      });
+      return;
+    }
+
+    setMassSendProgress(null);
+    closeMassCompose();
+
+    if (failed.length === 0) {
+      showSendSnack({ phase: "sent", message: `Sent to ${sent} recipient${sent === 1 ? "" : "s"}` });
+    } else {
+      showSendSnack({
+        phase: "error",
+        message: `Sent ${sent} of ${rows.length}. Failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`,
+      });
+    }
+
+    if (snapshot.draftId) {
+      void fetch(`/api/gmail/drafts/${snapshot.draftId}`, { method: "DELETE" }).catch(() => {});
+    }
+    void loadThreads({ append: false, forceRefresh: true });
+  }
+
+  /** Reset compose + all mass state after a campaign finishes. */
+  function closeMassCompose() {
+    setComposeOpen(false);
+    setComposeTo("");
+    setComposeCc("");
+    setComposeBcc("");
+    setComposeSubject("");
+    setComposeBody("");
+    setComposeFiles([]);
+    setComposeDraftId(null);
+    setMassSending(false);
+    setMassRecipients([]);
+    setReviewEmail(null);
+    setVariableFallbacks({});
+  }
+
   async function sendCompose() {
     const invalid = findInvalidRecipient({
       to: composeTo,
@@ -3663,7 +3928,12 @@ export default function InboxPage() {
     try {
       const attachments = await resolveAttachmentsForUpload(snapshot.files);
 
-      const finalHtmlBody = appendDriveLinksToHtml(snapshot.htmlBody, snapshot.files);
+      // Strip editor-only variable tinting here too — a draft written with
+      // mass sending on can be sent as a normal single email after toggling off.
+      const finalHtmlBody = appendDriveLinksToHtml(
+        stripVariableSpans(snapshot.htmlBody),
+        snapshot.files
+      );
 
       const res = await fetch("/api/gmail/send", {
         method: "POST",
@@ -4933,7 +5203,7 @@ export default function InboxPage() {
           {sendSnack.phase === "sent" && (
             <>
               <IconCheck className="h-4 w-4 shrink-0 text-green-400" />
-              <span>Message sent</span>
+              <span>{sendSnack.message ?? "Message sent"}</span>
               <button
                 type="button"
                 onClick={() => setSendSnack(null)}
@@ -4950,13 +5220,15 @@ export default function InboxPage() {
                 <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
               <span className="max-w-[220px] truncate">{sendSnack.message}</span>
-              <button
-                type="button"
-                onClick={sendSnack.retry}
-                className="ml-1 rounded bg-[var(--color-surface)]/15 px-2 py-0.5 text-[12px] font-semibold hover:bg-[var(--color-surface)]/25"
-              >
-                Retry
-              </button>
+              {sendSnack.retry && (
+                <button
+                  type="button"
+                  onClick={sendSnack.retry}
+                  className="ml-1 rounded bg-[var(--color-surface)]/15 px-2 py-0.5 text-[12px] font-semibold hover:bg-[var(--color-surface)]/25"
+                >
+                  Retry
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setSendSnack(null)}
@@ -4991,14 +5263,88 @@ export default function InboxPage() {
         onCcBccOpenChange={setComposeCcBccOpen}
         suggestions={composeRecipientSuggestions}
         contactsHint={contactsHint}
-        sendDisabled={!composeTo.trim()}
+        sendDisabled={massSending ? massRecipients.length === 0 : !composeTo.trim()}
         composeError={composeFieldError}
         onDismissComposeError={() => setComposeFieldError(null)}
         onMinimize={() => setComposeMinimized((m) => !m)}
         onToggleFullscreen={() => setComposeFullscreen((v) => !v)}
         onClose={closeComposeAndSaveDraft}
-        onSend={() => void sendCompose()}
+        onSend={() => {
+          if (!massSending) return void sendCompose();
+          void sendMassCampaign();
+        }}
+        onReview={
+          massSending && massTemplateHasVariables
+            ? () => setReviewEmail(massMergeRows[0]?.email ?? null)
+            : undefined
+        }
+        reviewDisabled={massRecipients.length === 0}
         onDiscard={discardComposeDraft}
+        placement="centered"
+        variables={massSending ? COMPOSE_VARIABLES : undefined}
+        recipientsLocked={massSending}
+        massSending={massSending}
+        onMassSendingChange={(on) => {
+          setMassSending(on);
+          setReviewEmail(null);
+          if (!on) {
+            setMassRecipients([]);
+            setVariableFallbacks({});
+          }
+        }}
+        massToggleDisabled={!!massSendProgress}
+        sending={!!massSendProgress}
+        sendLabel={
+          massSendProgress
+            ? `Sending ${massSendProgress.sent}/${massSendProgress.total}…`
+            : massSending
+            ? `Send emails (${massRecipients.length})`
+            : "Send email"
+        }
+        review={
+          reviewRow
+            ? {
+                toLabel: reviewRow.name || reviewRow.email,
+                subject: mergeTemplate(composeSubject, reviewRow.fields),
+                // Tinting is an editor affordance — the review screen shows
+                // the mail exactly as the recipient will receive it.
+                bodyHtml: stripVariableSpans(mergeTemplate(composeBody, reviewRow.fields)),
+                missingKeys: massMissing.byRecipient.get(reviewRow.email),
+                noContactCard: !reviewRow.hasCard,
+                fallbacks: variableFallbacks,
+                onFallbackChange: (key, value) =>
+                  setVariableFallbacks((prev) => {
+                    const next = { ...prev };
+                    if (value.trim()) next[key] = value.trim();
+                    else delete next[key];
+                    return next;
+                  }),
+              }
+            : null
+        }
+        onBackToEditor={() => setReviewEmail(null)}
+        footerNotice={
+          massSending ? (
+            <div className="flex shrink-0 items-center gap-2 border-t border-[#f1f3f4] bg-white px-4 py-2 text-[12px] text-[#5f6368]">
+              <IconInfo className="h-3.5 w-3.5 shrink-0" />
+              <span>Delivery time will depend on items in your outbox.</span>
+            </div>
+          ) : null
+        }
+        sidePanel={
+          massSending ? (
+            <MassRecipientsPanel
+              suggestions={massSuggestions}
+              directoryEmails={directoryEmails}
+              syncedEmails={syncedEmails}
+              selected={massRecipients}
+              onChange={setMassRecipients}
+              readOnly={!!reviewEmail}
+              activeEmail={reviewEmail}
+              onActiveEmailChange={setReviewEmail}
+            />
+          ) : null
+        }
         fileInputRef={composeFileRef}
         onAttachClick={() => composeFileRef.current?.click()}
         onFileChange={(files) => void handleFileSelect(files)}

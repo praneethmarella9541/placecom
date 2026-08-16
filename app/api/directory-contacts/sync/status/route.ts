@@ -8,11 +8,19 @@ export type ContactSyncStateRow = {
   phase: "backfill" | "incremental" | null;
   messages_scanned_total: number;
   contacts_found_total: number;
-  last_progress: { scanned: number } | null;
+  /** `total` is Gmail's estimate of matching messages — the progress bar's denominator. */
+  last_progress: { scanned: number; total?: number | null } | null;
   last_summary: string | null;
   completed_backfill_at: string | null;
   error_message: string | null;
   updated_at: string;
+  /**
+   * Work remains but no batch is executing right now — a stored page cursor with
+   * the lock released (see the not-done branches in lib/people-mailbox-sync.ts).
+   * Derived rather than stored, because "is a batch running" and "is there more
+   * to do" are different questions that `status` alone used to conflate.
+   */
+  resumable: boolean;
 };
 
 /** GET /api/directory-contacts/sync/status — cheap poll target, no Gmail calls. */
@@ -35,7 +43,7 @@ export async function GET(request: Request) {
   const { data, error } = await supabase
     .from("contact_sync_state")
     .select(
-      "status, phase, messages_scanned_total, contacts_found_total, last_progress, last_summary, completed_backfill_at, error_message, updated_at"
+      "status, phase, page_token, messages_scanned_total, contacts_found_total, last_progress, last_summary, completed_backfill_at, error_message, updated_at"
     )
     .eq("mailbox_owner_id", mailboxOwnerId)
     .maybeSingle();
@@ -47,5 +55,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ state: (data ?? null) as ContactSyncStateRow | null });
+  if (!data) return NextResponse.json({ state: null });
+
+  // "paused" is deliberately excluded: the user stopped this sync, so a leftover
+  // cursor is not an invitation for another tab to pick it back up.
+  const { page_token: pageToken, ...row } = data;
+  const resumable = data.status === "idle" && pageToken !== null;
+
+  return NextResponse.json({ state: { ...row, resumable } as ContactSyncStateRow });
 }

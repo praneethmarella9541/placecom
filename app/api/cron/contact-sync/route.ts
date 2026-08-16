@@ -88,6 +88,16 @@ export async function GET(request: Request) {
     // A live browser tab is actively driving it right now — nothing for cron to do this tick.
     return NextResponse.json({ skipped: true, reason: "already_running" });
   }
+  if (lastResult?.status === "rate_limited") {
+    // Progress is saved; the next scheduled tick picks up where this left off,
+    // by which point the per-minute quota window has long since reset.
+    return NextResponse.json({ skipped: true, reason: "rate_limited", batches });
+  }
+  if (lastResult?.status === "paused") {
+    // Stopped from the UI partway through this invocation's loop — respect it
+    // rather than picking the work straight back up on the next iteration.
+    return NextResponse.json({ skipped: true, reason: "paused", batches });
+  }
   if (lastResult?.status === "error") {
     return NextResponse.json({ error: lastResult.message }, { status: 500 });
   }

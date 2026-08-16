@@ -3,7 +3,22 @@ import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-const RATE_LIMIT_MAX_ATTEMPTS = 5;
+// Gmail's per-user ceiling is `defaultPerMinutePerUser` — 15,000 quota units per
+// MINUTE, not per second. Once it's exhausted, nothing succeeds until that minute
+// window rolls over, so the backoff has to be able to outlast a full window: these
+// values give waits of ~1s, 2s, 4s, 8s, 16s, 32s ≈ 63s total. The previous 5
+// attempts capped at 8s spent ~7.5s in total and so always gave up inside the very
+// minute it was being throttled in, surfacing the 403 to the caller.
+const RATE_LIMIT_MAX_ATTEMPTS = 7;
+const RATE_LIMIT_MAX_BACKOFF_MS = 60_000;
+
+/** Retries exhausted against a quota error — the caller should back off, not fail outright. */
+export class GmailRateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GmailRateLimitError";
+  }
+}
 
 function isRateLimitedResponse(status: number, bodyText: string): boolean {
   if (status === 429) return true;
@@ -26,9 +41,12 @@ async function fetchGmailWithRetry(url: string, init: RequestInit): Promise<Resp
     if (!isRateLimitedResponse(res.status, bodyText)) return res;
 
     const retryAfterHeader = res.headers.get("Retry-After");
+    // Jitter is a full second rather than 250ms because every in-flight worker
+    // hits the quota wall at once — without spreading them out they all wake
+    // together and re-exhaust the next window as a thundering herd.
     const backoffMs = retryAfterHeader
       ? Number(retryAfterHeader) * 1000
-      : Math.min(8000, 500 * 2 ** attempt) + Math.random() * 250;
+      : Math.min(RATE_LIMIT_MAX_BACKOFF_MS, 1000 * 2 ** attempt) + Math.random() * 1000;
     await new Promise((resolve) => setTimeout(resolve, backoffMs));
   }
 }
@@ -322,7 +340,12 @@ export async function fetchGmailMessageHeaders(
   if (!res.ok) {
     const text = await res.text();
     throwIfGmailInsufficientScope(res.status, text);
-    throw new Error(`Gmail API error ${res.status}: ${text}`);
+    if (isRateLimitedResponse(res.status, text)) {
+      throw new GmailRateLimitError(`Gmail message-headers quota exhausted: ${text}`);
+    }
+    const err = new Error(`Gmail API error ${res.status}: ${text}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
 
   const data = (await res.json()) as {
@@ -361,11 +384,25 @@ export async function fetchGmailMessageHeadersByIds(
       try {
         return await fetchGmailMessageHeaders(accessToken, id);
       } catch (e) {
-        // A handful of message types (Google Chat threads surfaced under Gmail's
-        // "Chats" label, in particular) 400 with "Precondition check failed" on
-        // format=metadata. Skip them rather than aborting the whole bulk scan
-        // over one unreadable message.
-        console.warn(`fetchGmailMessageHeaders(${id}) failed, skipping:`, e);
+        // Quota exhaustion is NOT a per-message defect — every remaining id in
+        // this page would fail the same way, and skipping them would drop those
+        // messages from the scan permanently and silently (the caller advances
+        // its cursor past the page regardless). Propagate so the batch can stop
+        // and be retried against a fresh quota window.
+        if (e instanceof GmailRateLimitError) throw e;
+
+        // Skipping is only ever safe for a message Gmail will NEVER return —
+        // callers advance their cursor past this page either way, so anything
+        // skipped here is dropped from the scan permanently and silently. A 4xx
+        // is a property of the message (Google Chat threads under the "Chats"
+        // label 400 with "Precondition check failed" on format=metadata); a 5xx
+        // or a network fault is transient and would succeed on a retry, so it
+        // must propagate and let the page be re-fetched instead.
+        const status = (e as { status?: number } | null)?.status;
+        const permanent = typeof status === "number" && status >= 400 && status < 500;
+        if (!permanent) throw e;
+
+        console.warn(`fetchGmailMessageHeaders(${id}) unreadable (${status}), skipping:`, e);
         return null;
       }
     },
@@ -380,6 +417,11 @@ export async function fetchGmailMessageHeadersByIds(
 export type ListMessagesResult = {
   messageIds: string[];
   nextPageToken?: string;
+  /**
+   * Gmail's own estimate of how many messages match the query. Approximate —
+   * treat it as a denominator for a progress indicator, never as an exact count.
+   */
+  resultSizeEstimate?: number;
 };
 
 export async function listMessageIdsPage(
@@ -422,16 +464,24 @@ export async function listMessageIdsPage(
   if (!res.ok) {
     const text = await res.text();
     throwIfGmailInsufficientScope(res.status, text);
+    if (isRateLimitedResponse(res.status, text)) {
+      throw new GmailRateLimitError(`Gmail list quota exhausted: ${text}`);
+    }
     throw new Error(`Gmail list error ${res.status}: ${text}`);
   }
 
   const data = (await res.json()) as {
     messages?: { id: string }[];
     nextPageToken?: string;
+    resultSizeEstimate?: number;
   };
 
   const messageIds = (data.messages || []).map((m) => m.id);
-  return { messageIds, nextPageToken: data.nextPageToken };
+  return {
+    messageIds,
+    nextPageToken: data.nextPageToken,
+    resultSizeEstimate: data.resultSizeEstimate,
+  };
 }
 
 /** Current mailbox historyId — the incremental contact sync's starting cursor (lib/people-mailbox-sync.ts). */
@@ -504,9 +554,15 @@ export async function fetchGmailHistoryPage(
 
 const ALL_MAIL_CAP = 10_000;
 
+// 15,000 units/min ÷ 5 units per messages.get = 3,000 requests/min = 50/sec, the
+// hard per-user ceiling. At ~250ms per request a concurrency of 12 lands just under
+// that; the previous default of 20 sustained ~80/sec, i.e. roughly 1.6x over quota,
+// which is why bulk scans leaned on backoff to throttle themselves and eventually
+// tripped `defaultPerMinutePerUser`. Raising this does not buy throughput — the
+// quota, not the client, is the limit.
 function gmailFetchConcurrency(): number {
-  const n = parseInt(process.env.GMAIL_FETCH_CONCURRENCY || "20", 10);
-  if (!Number.isFinite(n) || n < 1) return 20;
+  const n = parseInt(process.env.GMAIL_FETCH_CONCURRENCY || "12", 10);
+  if (!Number.isFinite(n) || n < 1) return 12;
   return Math.min(32, Math.floor(n));
 }
 

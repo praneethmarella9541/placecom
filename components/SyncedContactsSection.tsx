@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { RefreshCw, Search, UserPlus } from "lucide-react";
+import { Pause, Play, RefreshCw, Search, UserPlus } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconBuilding, IconLinkedin } from "@/components/Icons";
 import { CompanyLogo } from "@/components/CompanyLogo";
@@ -152,19 +152,38 @@ export function SyncedContactsSection({
   }, [companies, search]);
 
   const syncing = sync.status === "running";
+  // A paused sync keeps its cursor server-side and stays paused until this
+  // button explicitly resumes it — nothing else, including a reload, a tab
+  // switch or the cron job, restarts it.
+  const paused = sync.status === "paused";
+
+  // Gmail's resultSizeEstimate for this backfill's (date-bounded) query. It's an
+  // estimate, so the bar is capped at 99% while work continues — overshooting to
+  // a full bar that then keeps going is worse than arriving slightly late.
+  const syncPercent =
+    sync.phase === "backfill" && sync.messagesTotalEstimate && sync.messagesTotalEstimate > 0
+      ? Math.min(99, Math.round((sync.messagesScanned / sync.messagesTotalEstimate) * 100))
+      : null;
+
   const statusLine = syncing
     ? titleCase(
         sync.phase === "incremental"
           ? "Syncing new mail…"
-          : `Scanning mailbox — ${sync.messagesScanned} emails so far…`
+          : syncPercent !== null
+            ? `Scanning mailbox — ${sync.messagesScanned.toLocaleString()} of about ${sync.messagesTotalEstimate?.toLocaleString()} emails (${syncPercent}%)…`
+            : `Scanning mailbox — ${sync.messagesScanned.toLocaleString()} emails so far…`
       )
-    : sync.error ||
-      sync.summary ||
-      titleCase(
-        viewMode === "people"
-          ? "Bucketed by how recently and often you've emailed each person."
-          : "Grouped by email domain — no separate enrichment step."
-      );
+    : paused
+      ? titleCase(
+          `Paused at ${sync.messagesScanned} emails — resume to continue from here.`
+        )
+      : sync.error ||
+        sync.summary ||
+        titleCase(
+          viewMode === "people"
+            ? "Bucketed by how recently and often you've emailed each person."
+            : "Grouped by email domain — no separate enrichment step."
+        );
 
   return (
     <div className="space-y-4 border-t border-[var(--color-border)] pt-6">
@@ -187,14 +206,33 @@ export function SyncedContactsSection({
           onClick={() => (syncing ? requestContactSyncStop() : requestContactSyncRun())}
           className="btn-ghost inline-flex shrink-0 items-center gap-1.5 px-3"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
-          {titleCase(syncing ? "Stop syncing" : "Sync from mailbox")}
+          {syncing ? (
+            <Pause className="h-3.5 w-3.5" />
+          ) : paused ? (
+            <Play className="h-3.5 w-3.5" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
+          {titleCase(
+            syncing ? "Pause syncing" : paused ? "Resume syncing" : "Sync from mailbox"
+          )}
         </button>
       </div>
 
       {syncing && (
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-offset)]">
-          <div className="h-full w-2/5 animate-pulse rounded-full bg-[var(--color-copper)]" />
+          {syncPercent === null ? (
+            // No denominator to work with (incremental runs, or the first page
+            // hasn't returned yet). A full-width pulse reads as "working"; a
+            // part-width one reads as a percentage, which is what made the old
+            // fixed 40% bar look permanently stuck midway.
+            <div className="h-full w-full animate-pulse rounded-full bg-[var(--color-copper)]" />
+          ) : (
+            <div
+              className="h-full rounded-full bg-[var(--color-copper)] transition-[width] duration-700 ease-out"
+              style={{ width: `${syncPercent}%` }}
+            />
+          )}
         </div>
       )}
 

@@ -432,6 +432,16 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const signOut = useCallback(async () => {
     clearSecondaryFeaturePrefetchCache();
     clearMeMailboxCache();
+    // Pause an in-progress mailbox sync before the session goes away — this needs
+    // a valid session, so it has to happen ahead of signOut(). Without it the run
+    // is left "idle with a cursor", which the next login treats as resumable and
+    // silently restarts; pausing makes the next session ask first. No-ops when
+    // there's nothing in flight (the handler only pauses a run that has a cursor),
+    // and is time-boxed so a slow request can't hold up signing out.
+    await fetch("/api/directory-contacts/sync", {
+      method: "DELETE",
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => {});
     await supabase.auth.signOut();
     window.location.href = "/";
   }, [supabase]);

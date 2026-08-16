@@ -1,21 +1,14 @@
 /**
- * Skeleton for the Broadcasting route — header, channel tab bar
- * (Mail / SMS / WhatsApp), then a 2-column form (recipients + message).
+ * Skeleton for the Broadcasting route — header, then the WhatsApp panel's
+ * two-column form (recipients + message).
  */
 export default function BroadcastingLoading() {
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       {/* Header */}
       <div>
         <div className="skeleton-shimmer h-7 w-40 rounded" />
         <div className="skeleton-shimmer mt-1.5 h-3 w-full max-w-md rounded" />
-      </div>
-
-      {/* Channel tab bar */}
-      <div className="inline-flex gap-1 rounded-xl border border-zinc-200 bg-zinc-50 p-0.5 dark:border-zinc-800 dark:bg-zinc-900/80">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="skeleton-shimmer h-9 w-24 rounded-lg" />
-        ))}
       </div>
 
       {/* Form card */}

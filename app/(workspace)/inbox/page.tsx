@@ -969,13 +969,13 @@ export default function InboxPage() {
   const [composeFieldError, setComposeFieldError] = useState<string | null>(null);
 
   /** Show the snackbar and auto-dismiss it after `ms` milliseconds. */
-  function showSendSnack(state: SendSnackState, autoDismissMs?: number) {
+  const showSendSnack = useCallback((state: SendSnackState, autoDismissMs?: number) => {
     if (sendSnackTimerRef.current) clearTimeout(sendSnackTimerRef.current);
     setSendSnack(state);
     if (autoDismissMs) {
       sendSnackTimerRef.current = setTimeout(() => setSendSnack(null), autoDismissMs);
     }
-  }
+  }, []);
 
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeTo, setComposeTo] = useState("");
@@ -2442,15 +2442,26 @@ export default function InboxPage() {
       void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
         method: "DELETE",
       })
-        .then(() => {
+        .then(async (res) => {
+          // The old handler treated any response as success — a 4xx/5xx left
+          // the draft on the server while the count said otherwise.
+          if (!res.ok) {
+            const j = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(j.error || "Could not delete draft");
+          }
           if (folder === "drafts") void loadThreads({ append: false });
           scheduleCountRefresh();
+          showSendSnack({ phase: "sent", message: "Draft deleted" }, 3000);
         })
-        .catch(() => {
+        .catch((e) => {
           adjustDraftCount(1);
+          showSendSnack({
+            phase: "error",
+            message: e instanceof Error ? e.message : "Could not delete draft",
+          });
         });
     }
-  }, [folder, scheduleCountRefresh, loadThreads, adjustDraftCount]);
+  }, [folder, scheduleCountRefresh, loadThreads, adjustDraftCount, showSendSnack]);
 
   useEffect(() => { void loadCounts(); }, [loadCounts]);
   // Refresh counts after the list reloads (bulk actions, refresh).

@@ -22,6 +22,12 @@ export type GmailComposeFooterProps = {
   /** Secondary "Review mail" action, shown when the draft uses variables. */
   onReview?: () => void;
   reviewDisabled?: boolean;
+  /**
+   * Hides Send entirely. Used while a variable-bearing campaign is still in
+   * the editor: the merged result has to be looked at once before it can go
+   * out, so Review is the only way forward and Send appears on that screen.
+   */
+  sendHidden?: boolean;
   /** Inserts `{` at the caret. Omit to hide — mass sending only. */
   onInsertVariable?: () => void;
 };
@@ -41,6 +47,7 @@ export function GmailComposeFooter({
   onBack,
   onReview,
   reviewDisabled,
+  sendHidden,
   onInsertVariable,
 }: GmailComposeFooterProps) {
   const label = sending ? "Sending…" : sendLabel ?? "Send";
@@ -134,17 +141,19 @@ export function GmailComposeFooter({
           </button>
         )}
 
-        <button
-          type="button"
-          disabled={sendDisabled || sending}
-          onClick={onSend}
-          className={cn(
-            "ml-1 flex shrink-0 items-center gap-2 rounded-full bg-[var(--color-copper)] px-6 py-[7px] text-[14px] font-medium leading-none text-white hover:bg-[var(--color-copper-hover)] disabled:pointer-events-none disabled:opacity-50"
-          )}
-        >
-          {!sending && <Send className="h-4 w-4" strokeWidth={2} />}
-          {label}
-        </button>
+        {!sendHidden && (
+          <button
+            type="button"
+            disabled={sendDisabled || sending}
+            onClick={onSend}
+            className={cn(
+              "ml-1 flex shrink-0 items-center gap-2 rounded-full bg-[var(--color-copper)] px-6 py-[7px] text-[14px] font-medium leading-none text-white hover:bg-[var(--color-copper-hover)] disabled:pointer-events-none disabled:opacity-50"
+            )}
+          >
+            {!sending && <Send className="h-4 w-4" strokeWidth={2} />}
+            {label}
+          </button>
+        )}
       </div>
     </div>
   );

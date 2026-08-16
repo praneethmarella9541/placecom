@@ -142,6 +142,9 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
     if (pathname.includes("/whatsapp") || pathname.endsWith("/parse-wa-merge")) return "whatsapp";
     // Shared by SMS + WhatsApp session import — gated by sign-in only.
     if (pathname.endsWith("/parse-phones")) return null;
+    // The spreadsheet parser now serves the inbox's mass sending, not the
+    // retired mail channel — gate it with the composer that uses it.
+    if (pathname.endsWith("/parse-mail-merge")) return "inbox";
     return "broadcasting";
   }
 

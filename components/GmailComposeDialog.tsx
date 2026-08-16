@@ -594,6 +594,9 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             onBack={reviewing ? onBackToEditor : undefined}
             onReview={reviewing ? undefined : onReview}
             reviewDisabled={reviewDisabled}
+            // A draft that needs reviewing offers Review *instead of* Send —
+            // there is no path to a merged send that skips looking at one.
+            sendHidden={!!onReview && !reviewing}
             onInsertVariable={
               variables?.length
                 ? () => {

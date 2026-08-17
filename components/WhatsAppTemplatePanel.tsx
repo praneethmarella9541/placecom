@@ -58,7 +58,7 @@ export function WhatsAppTemplatePanel({
       className={cn(
         "mb-2 overflow-hidden rounded-2xl border bg-[var(--color-surface)] transition-all duration-200",
         needsTemplate
-          ? "border-[var(--color-copper)]/25 shadow-[0_2px_12px_rgba(196,92,26,0.08)]"
+          ? "border-[var(--color-whatsapp-green)]/25 shadow-[0_2px_12px_rgba(37,211,102,0.08)]"
           : "border-[var(--color-border)] shadow-[var(--shadow-sm)]",
       )}
     >
@@ -72,8 +72,8 @@ export function WhatsAppTemplatePanel({
           className={cn(
             "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-[13px] font-bold",
             needsTemplate
-              ? "bg-[var(--color-copper)] text-white shadow-[0_2px_8px_rgba(196,92,26,0.25)]"
-              : "bg-[var(--color-copper-tint)] text-[var(--color-copper)]",
+              ? "bg-[var(--color-whatsapp-green)] text-white shadow-[0_2px_8px_rgba(37,211,102,0.25)]"
+              : "bg-[var(--color-whatsapp-green-tint)] text-[var(--color-whatsapp-green)]",
           )}
         >
           {needsTemplate ? "!" : "T"}
@@ -85,11 +85,11 @@ export function WhatsAppTemplatePanel({
               {needsTemplate ? titleCase("Approved template required") : titleCase("Template options")}
             </span>
             {needsTemplate ? (
-              <span className="rounded-full bg-[var(--color-copper-tint)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-copper)]">
+              <span className="rounded-full bg-[var(--color-whatsapp-green-tint)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-whatsapp-green)]">
                 {titleCase("Session closed")}
               </span>
             ) : forceTemplate ? (
-              <span className="rounded-full bg-[var(--color-copper-tint)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-copper)]">
+              <span className="rounded-full bg-[var(--color-whatsapp-green-tint)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-whatsapp-green)]">
                 {titleCase("Force template")}
               </span>
             ) : null}
@@ -143,11 +143,11 @@ export function WhatsAppTemplatePanel({
             )}
 
             <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/80 p-3">
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-copper)]/70">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-whatsapp-green)]/70">
                 {titleCase("Preview")}
               </p>
               <div className="flex justify-end">
-                <div className="max-w-[92%] rounded-xl rounded-tr-sm bg-[var(--color-copper-tint)] px-3 py-2 text-[13px] leading-relaxed text-[var(--color-text)] shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
+                <div className="max-w-[92%] rounded-xl rounded-tr-sm bg-[var(--color-whatsapp-green-tint)] px-3 py-2 text-[13px] leading-relaxed text-[var(--color-text)] shadow-[0_1px_2px_rgba(0,0,0,0.06)]">
                   {templatePreview || "…"}
                 </div>
               </div>
@@ -165,7 +165,7 @@ export function WhatsAppTemplatePanel({
                         className={cn(
                           "flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold",
                           filled
-                            ? "bg-[var(--color-copper)] text-white"
+                            ? "bg-[var(--color-whatsapp-green)] text-white"
                             : "bg-[var(--color-surface-offset)] text-[var(--color-text-faint)]",
                         )}
                       >
@@ -188,10 +188,10 @@ export function WhatsAppTemplatePanel({
               })}
             </div>
 
-            <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 transition-colors hover:border-[var(--color-copper)]/30">
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 transition-colors hover:border-[var(--color-whatsapp-green)]/30">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-[var(--color-border-strong)] text-[var(--color-copper)] focus:ring-[var(--color-copper)]/30"
+                className="h-4 w-4 rounded border-[var(--color-border-strong)] text-[var(--color-whatsapp-green)] focus:ring-[var(--color-whatsapp-green)]/30"
                 checked={forceTemplate}
                 onChange={(e) => onForceTemplateChange(e.target.checked)}
               />

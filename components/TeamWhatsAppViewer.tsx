@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconMessageChat, IconUsers } from "@/components/Icons";
+import { useDirectoryContacts } from "@/hooks/useDirectoryContacts";
+import { buildContactNameMap, canonicalPeer, resolveContactName } from "@/lib/wa-contacts-display";
+import { mediaListPreview } from "@/lib/whatsapp-media-helpers";
 
 type TeamMember = {
   id: string;
@@ -60,6 +63,21 @@ export function TeamWhatsAppViewer() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [msgLoading, setMsgLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Same shared team directory WhatsAppMessaging uses, so a peer already
+  // saved as a contact shows their name here instead of a raw number.
+  const { contacts: directoryContacts } = useDirectoryContacts();
+  const contactNameMap = useMemo(
+    () =>
+      buildContactNameMap(
+        directoryContacts.filter((c) => c.phone).map((c) => ({ peer_e164: canonicalPeer(c.phone!), name: c.name }))
+      ),
+    [directoryContacts]
+  );
+  const peerLabel = useCallback(
+    (p: string) => resolveContactName(contactNameMap, p) || p,
+    [contactNameMap]
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -146,8 +164,8 @@ export function TeamWhatsAppViewer() {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-4 py-2">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--color-border)] px-4 py-2 shrink-0">
         <span className="text-xs font-medium text-[var(--color-text-muted)]">Viewing:</span>
         {members.map((m) => (
           <button
@@ -164,9 +182,9 @@ export function TeamWhatsAppViewer() {
         ))}
       </div>
 
-      {error && <div className="px-4 py-2 text-xs text-[var(--color-danger)]">{error}</div>}
+      {error && <div className="shrink-0 px-4 py-2 text-xs text-[var(--color-danger)]">{error}</div>}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="w-64 shrink-0 overflow-y-auto border-r border-[var(--color-border)]">
           {convLoading ? (
             <div className="p-4 text-xs text-[var(--color-text-muted)]">Loading…</div>
@@ -186,17 +204,25 @@ export function TeamWhatsAppViewer() {
                   peer === c.peer_e164 ? "bg-[var(--color-surface-offset)]" : ""
                 }`}
               >
-                <div className="font-medium">{c.peer_e164}</div>
-                <div className="truncate text-xs text-[var(--color-text-muted)]">
-                  {c.last_dir === "outbound" ? "You: " : ""}
-                  {c.last_body || "…"}
+                <div className="truncate font-medium">{peerLabel(c.peer_e164)}</div>
+                <div className="flex items-center gap-1 truncate text-xs text-[var(--color-text-muted)]">
+                  {c.last_dir === "outbound" && <span className="shrink-0">You:</span>}
+                  {(() => {
+                    const media = mediaListPreview(c.last_body);
+                    return media ? <span className="truncate">{media.label}</span> : <span className="truncate">{c.last_body || "…"}</span>;
+                  })()}
                 </div>
               </button>
             ))
           )}
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {peer && (
+            <div className="shrink-0 border-b border-[var(--color-border)] px-4 py-2.5 text-sm font-medium">
+              {peerLabel(peer)}
+            </div>
+          )}
           {!peer ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 text-sm text-[var(--color-text-muted)]">
               <IconMessageChat className="h-6 w-6 opacity-50" />
@@ -205,7 +231,7 @@ export function TeamWhatsAppViewer() {
           ) : msgLoading ? (
             <div className="p-4 text-xs text-[var(--color-text-muted)]">Loading…</div>
           ) : (
-            <div className="flex-1 space-y-2 overflow-y-auto p-4">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
               {messages.map((m) => (
                 <div
                   key={m.id}
@@ -214,7 +240,7 @@ export function TeamWhatsAppViewer() {
                   <div
                     className={`max-w-[70%] rounded-lg px-3 py-2 text-sm ${
                       m.direction === "outbound"
-                        ? "bg-[var(--color-copper)] text-[var(--color-surface)]"
+                        ? "bg-[var(--color-whatsapp-bubble-out)] text-[var(--color-text)]"
                         : "bg-[var(--color-surface-offset)]"
                     }`}
                   >

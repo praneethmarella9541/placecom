@@ -6,7 +6,9 @@
     "dev": "node --max-old-space-size=8192 ./node_modules/next/dist/bin/next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "env:prod": "cp .env.prod .env.local && echo 'Switched .env.local -> prod DB'",
+    "env:testdb": "cp .env.testdb .env.local && echo 'Switched .env.local -> test DB'"
   },
   "dependencies": {
     "@fullcalendar/daygrid": "^6.1.20",

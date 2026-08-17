@@ -68,6 +68,18 @@ export function peerInitials(peer: string, name?: string): string {
   return peer.slice(0, 2).toUpperCase() || "?";
 }
 
+/**
+ * Fold a legacy mis-dialed alias (`+8489431508`, missing the `91` country
+ * code — see legacyMisdialedPeerAliases in whatsapp-peer.ts) back to its real
+ * canonical form, so it dedupes against the properly-normalized entry instead
+ * of surviving as a second, differently-formatted row.
+ */
+function dedupeKey(raw: string): string {
+  const canonical = canonicalPeer(raw);
+  const misdialed = /^\+([6-9]\d{9})$/.exec(canonical);
+  return misdialed ? `+91${misdialed[1]}` : canonical;
+}
+
 /** Saved contacts filtered by name or phone query (for forward / new chat pickers). */
 export function filterSavedContacts(
   contacts: Record<string, string>,
@@ -80,7 +92,7 @@ export function filterSavedContacts(
   for (const [peer, name] of Object.entries(contacts)) {
     const trimmed = name.trim();
     if (!peer.trim() || !trimmed) continue;
-    const canonical = canonicalPeer(peer);
+    const canonical = dedupeKey(peer);
     if (!canonical || seen.has(canonical)) continue;
     seen.add(canonical);
     rows.push({ peer_e164: canonical, name: trimmed });

@@ -62,6 +62,13 @@
     --color-copper-grad-to: #C45C1A;
     --color-hairline: #C4BCAE;
 
+    /* ── WhatsApp accent (WhatsApp messaging screens only — deliberately
+     * breaks from the app's copper accent so the channel reads as WhatsApp) ── */
+    --color-whatsapp-green: #25D366;
+    --color-whatsapp-green-hover: #1DA851;
+    --color-whatsapp-green-tint: rgba(37, 211, 102, 0.12);
+    --color-whatsapp-bubble-out: #DCF8C6;
+
     /* ── Sidebar (warm light — matches app shell) ─────────────── */
     --sidebar-bg: #FDFCFA;
     --sidebar-border: rgba(20, 18, 14, 0.09);

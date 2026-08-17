@@ -7,7 +7,13 @@ import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { isValidE164, normalizePhone } from "@/lib/phone";
 import { formatPhone, peerInitials, buildContactNameMap, resolveContactName, canonicalPeer, allPeerLookupKeys } from "@/lib/wa-contacts-display";
-import { categorizeWhatsAppMedia, mediaFilenameFromMessage, type WhatsAppMediaCategory } from "@/lib/whatsapp-media-helpers";
+import {
+  categorizeWhatsAppMedia,
+  mediaFilenameFromMessage,
+  mediaListPreview,
+  type MediaListPreviewKind,
+  type WhatsAppMediaCategory,
+} from "@/lib/whatsapp-media-helpers";
 import { resolveWhatsAppMediaUrl } from "@/lib/whatsapp-media-url-client";
 import { ForwardChatModal } from "@/components/ForwardChatModal";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
@@ -41,6 +47,7 @@ import {
 import { showWhatsAppFailureDetail, WhatsAppTicks } from "@/components/WhatsAppTicks";
 import { titleCase } from "@/lib/title-case";
 import {
+  IconCamera,
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
@@ -50,13 +57,16 @@ import {
   IconFile,
   IconForward,
   IconInfo,
+  IconMapPin,
   IconMessageChat,
+  IconMic,
   IconPin,
   IconPlay,
   IconPlus,
   IconRefresh,
   IconReply,
   IconStar,
+  IconVideoCamera,
   IconX,
 } from "@/components/Icons";
 
@@ -109,6 +119,23 @@ function previewOutboundBody(
 function isMediaPlaceholder(body: string | null): boolean {
   if (!body) return true;
   return /^\[(?:image|video|audio|document|sticker|location|template)(?::[^\]]+)?\]$/i.test(body.trim());
+}
+
+/** Icon for each mediaListPreview() kind — kept here so lib/whatsapp-media-helpers.ts stays icon-agnostic. */
+function mediaListPreviewIcon(kind: MediaListPreviewKind): React.ReactNode {
+  switch (kind) {
+    case "photo":
+    case "sticker":
+      return <IconCamera className="h-3.5 w-3.5" />;
+    case "video":
+      return <IconVideoCamera className="h-3.5 w-3.5" />;
+    case "audio":
+      return <IconMic className="h-3.5 w-3.5" />;
+    case "location":
+      return <IconMapPin className="h-3.5 w-3.5" />;
+    case "document":
+      return <IconFile className="h-3.5 w-3.5" />;
+  }
 }
 
 function formatListTime(iso: string): string {
@@ -1015,10 +1042,22 @@ export function WhatsAppMessaging({
                   </span>
                 </span>
                 <span className={cn(
-                  "mt-0.5 line-clamp-1 text-[13px]",
+                  "mt-0.5 flex items-center gap-1 text-[13px]",
                   hasUnread ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]"
                 )}>
-                  {c.last_dir === "outbound" ? "You: " : ""}{c.last_body || "—"}
+                  {c.last_dir === "outbound" && <span className="shrink-0">You:</span>}
+                  {(() => {
+                    const media = mediaListPreview(c.last_body);
+                    if (media) {
+                      return (
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="shrink-0 text-[var(--color-text-faint)]">{mediaListPreviewIcon(media.kind)}</span>
+                          <span className="truncate">{media.label}</span>
+                        </span>
+                      );
+                    }
+                    return <span className="truncate">{c.last_body || "—"}</span>;
+                  })()}
                 </span>
               </span>
               {hasUnread ? (
@@ -1062,7 +1101,7 @@ export function WhatsAppMessaging({
           <>
             <button
               type="button"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper)] text-[13px] font-bold text-white transition-opacity hover:opacity-90"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper)] text-[13px] font-bold text-white ring-2 ring-[var(--color-copper)]/15 transition-[opacity,transform] hover:opacity-90 hover:scale-[1.03]"
               onClick={() => { setGalleryTab("image"); setGalleryOpen(true); }}
               title={titleCase("View media, links and docs")}
             >
@@ -1074,34 +1113,35 @@ export function WhatsAppMessaging({
               title={titleCase("View media, links and docs")}
             >
               <div className="flex items-center gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-[15px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
-                  {savedContactName(peer) && (
-                    <p className="truncate text-[11px] text-[var(--color-text-faint)]">{formatPhone(peer)}</p>
-                  )}
-                </div>
+                <p className="truncate text-[15px] font-semibold text-[var(--color-text)]">{displayName(peer)}</p>
+                {sessionOpen !== null && (
+                  <span
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      sessionOpen
+                        ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
+                        : "bg-[var(--color-warning-light)] text-[var(--color-warning)]",
+                    )}
+                  >
+                    <span className={cn("h-1.5 w-1.5 rounded-full", sessionOpen ? "bg-[var(--color-success)]" : "bg-[var(--color-warning)]")} />
+                    {sessionOpen ? titleCase("Session open") : titleCase("Template required")}
+                  </span>
+                )}
+              </div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+                {savedContactName(peer) && (
+                  <span className="truncate text-[var(--color-text-faint)]">{formatPhone(peer)}</span>
+                )}
+                {savedContactName(peer) && <span className="text-[var(--color-text-faint)]/50">·</span>}
                 <button
                   data-testid="wa-edit-name-btn"
                   type="button"
-                  className="shrink-0 rounded-full border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-faint)] hover:border-[var(--color-copper)] hover:text-[var(--color-copper)] transition-colors"
+                  className="shrink-0 font-medium text-[var(--color-copper)] hover:underline"
                   onClick={(e) => { e.stopPropagation(); openContactModalForPeer(peer); }}
                 >
                   {savedContactName(peer) ? "Edit contact" : "Save contact"}
                 </button>
               </div>
-              {sessionOpen !== null && (
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                    sessionOpen
-                      ? "bg-[var(--color-success-light)] text-[var(--color-success)]"
-                      : "bg-[var(--color-warning-light)] text-[var(--color-warning)]",
-                  )}
-                >
-                  <span className={cn("h-1.5 w-1.5 rounded-full", sessionOpen ? "bg-[var(--color-success)]" : "bg-[var(--color-warning)]")} />
-                  {sessionOpen ? titleCase("Session open") : titleCase("Template required")}
-                </span>
-              )}
             </div>
           </>
         ) : (
@@ -1240,7 +1280,7 @@ export function WhatsAppMessaging({
                     className={cn(
                       "relative max-w-[min(80%,34rem)] rounded-2xl px-3 py-2 text-[15px] leading-relaxed shadow-sm",
                       outbound
-                        ? "rounded-br-sm bg-[var(--color-copper-tint)] text-[var(--color-text)]"
+                        ? "rounded-br-sm bg-[var(--color-whatsapp-bubble-out)] text-[var(--color-text)]"
                         : "rounded-bl-sm bg-[var(--color-surface)] text-[var(--color-text)]",
                       selectMode && selected && "ring-2 ring-[var(--color-copper)]",
                     )}

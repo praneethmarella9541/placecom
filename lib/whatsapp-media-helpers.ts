@@ -42,6 +42,36 @@ export function categorizeWhatsAppMedia(message: MediaMessage): WhatsAppMediaCat
   return "document";
 }
 
+export type MediaListPreviewKind = "photo" | "video" | "audio" | "sticker" | "document" | "location";
+
+/**
+ * WhatsApp-style icon-kind + label for a conversation-list preview whose last
+ * message is media with no caption (body is just the "[Image]"-style system
+ * placeholder written at send/receive time — see whatsapp-outbound-content.ts
+ * and exotel-webhook-parse.ts) — mirrors how WhatsApp itself shows
+ * "📷 Photo" / "📄 filename" in the chat list instead of raw brackets.
+ * Returns only the *kind*, not an icon — callers own their own icon set.
+ */
+export function mediaListPreview(body: string | null): { kind: MediaListPreviewKind; label: string } | null {
+  if (!body) return null;
+  const trimmed = body.trim();
+  const doc = /^\[Document(?::\s*(.+))?\]$/i.exec(trimmed);
+  if (doc) return { kind: "document", label: doc[1]?.trim() || "Document" };
+  if (/^\[Location\]/i.test(trimmed)) return { kind: "location", label: "Location" };
+  switch (trimmed.toLowerCase()) {
+    case "[image]":
+      return { kind: "photo", label: "Photo" };
+    case "[video]":
+      return { kind: "video", label: "Video" };
+    case "[audio]":
+      return { kind: "audio", label: "Audio" };
+    case "[sticker]":
+      return { kind: "sticker", label: "Sticker" };
+    default:
+      return null;
+  }
+}
+
 export function mediaFilenameFromMessage(message: MediaMessage): string {
   const stored = message.media_filename?.trim();
   if (stored) return stored;

@@ -191,7 +191,7 @@ export function WhatsAppTemplatePanel({
             <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 transition-colors hover:border-[var(--color-whatsapp-green)]/30">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-[var(--color-border-strong)] text-[var(--color-whatsapp-green)] focus:ring-[var(--color-whatsapp-green)]/30"
+                className="h-4 w-4 rounded border-[var(--color-border-strong)] [accent-color:var(--color-whatsapp-green)] focus:outline focus:outline-2 focus:outline-offset-1 focus:outline-[var(--color-whatsapp-green)]/40"
                 checked={forceTemplate}
                 onChange={(e) => onForceTemplateChange(e.target.checked)}
               />

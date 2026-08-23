@@ -205,7 +205,12 @@ function SourceTab({ items }: { items: TimelineItem[] | "loading" | "error" | un
   if (items.length === 0) {
     return <p className="text-[13px] italic text-[var(--color-text-muted)]">{titleCase("No activity yet.")}</p>;
   }
-  return <TimelineList items={items} />;
+  // Same newest-first ordering as the merged "All Interaction" tab — the API
+  // returns each source (Gmail, calls, calendar, WhatsApp) in its own native
+  // order, which isn't guaranteed to be newest-first (calendar events come
+  // back oldest-first), so this can't just trust the fetch order.
+  const sorted = [...items].sort((a, b) => (b.at || "").localeCompare(a.at || ""));
+  return <TimelineList items={sorted} />;
 }
 
 function TimelineList({

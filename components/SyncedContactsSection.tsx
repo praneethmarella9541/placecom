@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, RefreshCw, Search, UserPlus } from "lucide-react";
+import { Pause, Play, RefreshCw, Search, Settings, UserPlus } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconBuilding, IconLinkedin } from "@/components/Icons";
 import { CompanyLogo } from "@/components/CompanyLogo";
 import { CONNECTION_STRENGTH_DOT } from "@/lib/connection-strength-ui";
-import type { EmailConnectionStrength } from "@/lib/email-connection-strength";
+import type { ConnectionStrengthSettings, EmailConnectionStrength } from "@/lib/email-connection-strength";
 import type { DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { requestContactSyncRun, requestContactSyncStop, useContactSyncSnapshot } from "@/lib/contact-sync-store";
 import { linkedInSearchUrl, personNameForSearch } from "@/lib/contact-directory";
@@ -15,6 +15,8 @@ import { timeAgo, truncateChars } from "@/lib/utils";
 import type { SyncedCompanyRow } from "@/app/api/synced-contacts/companies/route";
 import { SyncedPersonModal } from "@/components/SyncedPersonModal";
 import { SyncedCompanyModal } from "@/components/SyncedCompanyModal";
+import { ConnectionStrengthSettingsModal } from "@/components/ConnectionStrengthSettingsModal";
+import { SimpleDropdown, type DropdownOption } from "@/components/SimpleDropdown";
 
 type SyncedContactRow = {
   id: string;
@@ -31,11 +33,35 @@ type SyncedContactRow = {
 
 const BUCKET_ORDER: EmailConnectionStrength[] = ["Good", "Weak", "Very weak", "No communication"];
 
+type StrengthFilter = "all" | EmailConnectionStrength;
+
+const STRENGTH_OPTIONS: DropdownOption<StrengthFilter>[] = [
+  { value: "all", label: "All" },
+  ...BUCKET_ORDER.map((tier) => ({ value: tier, label: tier })),
+];
+
 type ViewMode = "people" | "companies";
 
 function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+/**
+ * Both lists here are deliberately *not* part of the eager login-time prefetch
+ * chain (unlike Team Directory) — this data only needs to be fresh right after
+ * an explicit "Sync from Mailbox" run, so a simple fetch-once-then-cache
+ * (invalidated by the sync-finished effect below) is enough; no benefit to
+ * always-revalidating on every mount.
+ */
+let contactsCache: SyncedContactRow[] | null = null;
+let companiesCache: SyncedCompanyRow[] | null = null;
+
+/**
+ * Prefetched alongside the contacts list (not on-demand when the settings
+ * modal opens) so opening it is instant instead of showing its own "Loading…"
+ * every time — the previous version fetched fresh on every open.
+ */
+export let strengthSettingsCache: { settings: ConnectionStrengthSettings; isDefault: boolean } | null = null;
 
 /**
  * People + Companies auto-derived from the shared mailbox, read-only, re-syncable.
@@ -51,14 +77,16 @@ export function SyncedContactsSection({
   onAddToDirectory: (input: DirectoryContactInput) => void;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("people");
-  const [contacts, setContacts] = useState<SyncedContactRow[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [contacts, setContacts] = useState<SyncedContactRow[]>(contactsCache ?? []);
+  const [loading, setLoading] = useState(contactsCache === null);
   const [error, setError] = useState<string | null>(null);
-  const [companies, setCompanies] = useState<SyncedCompanyRow[]>([]);
-  const [companiesLoaded, setCompaniesLoaded] = useState(false);
+  const [companies, setCompanies] = useState<SyncedCompanyRow[]>(companiesCache ?? []);
+  const [companiesLoaded, setCompaniesLoaded] = useState(companiesCache !== null);
   const [companiesLoading, setCompaniesLoading] = useState(false);
   const [companiesError, setCompaniesError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>("all");
+  const [strengthSettingsOpen, setStrengthSettingsOpen] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState<SyncedContactRow | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<SyncedCompanyRow | null>(null);
   const sync = useContactSyncSnapshot();
@@ -71,7 +99,9 @@ export function SyncedContactsSection({
       const res = await fetch("/api/synced-contacts");
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Failed to load synced contacts");
-      setContacts(json.contacts || []);
+      const rows = json.contacts || [];
+      contactsCache = rows;
+      setContacts(rows);
     } catch (e) {
       setError(errMessage(e));
     } finally {
@@ -86,7 +116,9 @@ export function SyncedContactsSection({
       const res = await fetch("/api/synced-contacts/companies");
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Failed to load companies");
-      setCompanies(json.companies || []);
+      const rows = json.companies || [];
+      companiesCache = rows;
+      setCompanies(rows);
       setCompaniesLoaded(true);
     } catch (e) {
       setCompaniesError(errMessage(e));
@@ -96,8 +128,24 @@ export function SyncedContactsSection({
   }, []);
 
   useEffect(() => {
+    if (contactsCache !== null) return;
     void loadContacts();
   }, [loadContacts]);
+
+  // Prefetched once so opening the settings modal is instant rather than
+  // showing its own "Loading…" every time.
+  useEffect(() => {
+    if (strengthSettingsCache !== null) return;
+    (async () => {
+      try {
+        const res = await fetch("/api/user-settings/connection-strength");
+        const json = await res.json().catch(() => ({}));
+        if (res.ok) strengthSettingsCache = { settings: json.settings, isDefault: json.isDefault };
+      } catch {
+        /* the modal falls back to fetching on open if this didn't land */
+      }
+    })();
+  }, []);
 
   // Companies is a secondary view — fetch lazily on first switch rather than always.
   useEffect(() => {
@@ -119,8 +167,12 @@ export function SyncedContactsSection({
 
   const filteredContacts = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return contacts;
-    return contacts.filter((c) => {
+    let rows = contacts;
+    if (strengthFilter !== "all") {
+      rows = rows.filter((c) => (c.connection_strength ?? "No communication") === strengthFilter);
+    }
+    if (!q) return rows;
+    return rows.filter((c) => {
       return (
         (c.display_name ?? "").toLowerCase().includes(q) ||
         c.email.toLowerCase().includes(q) ||
@@ -128,7 +180,7 @@ export function SyncedContactsSection({
         (c.domain ?? "").toLowerCase().includes(q)
       );
     });
-  }, [contacts, search]);
+  }, [contacts, search, strengthFilter]);
 
   const buckets = useMemo(() => {
     const groups = new Map<EmailConnectionStrength, SyncedContactRow[]>();
@@ -264,19 +316,50 @@ export function SyncedContactsSection({
       </div>
 
       {(viewMode === "people" ? contacts.length > 0 : companies.length > 0) && (
-        <div className="relative max-w-sm">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
-          <input
-            data-testid="synced-contacts-search-input"
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={titleCase(
-              viewMode === "people" ? "Search by name, company, or email" : "Search by company"
-            )}
-            className="input-field w-full pl-9 text-[13px]"
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative max-w-sm flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <input
+              data-testid="synced-contacts-search-input"
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={titleCase(
+                viewMode === "people" ? "Search by name, company, or email" : "Search by company"
+              )}
+              className="input-field w-full pl-9 text-[13px]"
+            />
+          </div>
+          {viewMode === "people" && (
+            <>
+              <SimpleDropdown
+                label="Strength"
+                value={strengthFilter}
+                options={STRENGTH_OPTIONS}
+                onChange={setStrengthFilter}
+              />
+              <button
+                type="button"
+                title={titleCase("Connection strength settings")}
+                onClick={() => setStrengthSettingsOpen(true)}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-copper)] hover:text-[var(--color-copper)]"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            </>
+          )}
         </div>
+      )}
+
+      {strengthSettingsOpen && (
+        <ConnectionStrengthSettingsModal
+          initial={strengthSettingsCache}
+          onClose={() => setStrengthSettingsOpen(false)}
+          onSaved={(next) => {
+            strengthSettingsCache = next;
+            void loadContacts();
+          }}
+        />
       )}
 
       {viewMode === "companies" ? (

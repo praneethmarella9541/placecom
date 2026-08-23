@@ -64,6 +64,9 @@ function domainOf(email: string): string {
 
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
 
+/** See migration 0053's comment for why 300 never causes a false negative in practice. */
+const RECENT_DATES_CAP = 300;
+
 // Leaves margin under the route's `maxDuration = 300` — a batch call stops paging
 // and persists its resume cursor once this budget is spent, rather than risking a
 // mid-page timeout that would lose the in-flight page's work.
@@ -184,7 +187,14 @@ async function processHeadersPage(
   ownEmail: string | undefined,
   headers: GmailMessageHeaders[]
 ): Promise<string[]> {
-  type ContactAgg = { displayName: string | null; domain: string; dates: number[]; hasOutbound: boolean };
+  type ContactAgg = {
+    displayName: string | null;
+    domain: string;
+    dates: number[];
+    hasOutbound: boolean;
+    /** Ever seen in From (inbound) or To (outbound) — false means every sighting so far was Cc-only. */
+    hasDirect: boolean;
+  };
   const pageContacts = new Map<string, ContactAgg>();
 
   for (const msg of headers) {
@@ -198,11 +208,11 @@ async function processHeadersPage(
     const isOutboundMessage = !!ownEmail && fromAddr?.email.toLowerCase() === ownEmail;
 
     const addresses = [
-      ...parseAddressHeader(msg.from).map((a) => ({ ...a, fromToOrCc: false as const })),
-      ...parseAddressHeader(msg.to).map((a) => ({ ...a, fromToOrCc: true as const })),
-      ...parseAddressHeader(msg.cc).map((a) => ({ ...a, fromToOrCc: true as const })),
+      ...parseAddressHeader(msg.from).map((a) => ({ ...a, role: "from" as const })),
+      ...parseAddressHeader(msg.to).map((a) => ({ ...a, role: "to" as const })),
+      ...parseAddressHeader(msg.cc).map((a) => ({ ...a, role: "cc" as const })),
     ];
-    for (const { name, email, fromToOrCc } of addresses) {
+    for (const { name, email, role } of addresses) {
       const domain = domainOf(email);
       if (!domain) continue;
       // No domain-based exclusion at all: colleagues on the mailbox's own domain
@@ -213,14 +223,26 @@ async function processHeadersPage(
       if (ownEmail && email === ownEmail) continue;
       if (isLikelyAutomatedAddress(email)) continue;
 
+      const fromToOrCc = role !== "from";
       const outboundHit = isOutboundMessage && fromToOrCc;
+      // Direct = they wrote it (From) or were actually addressed (To) —
+      // being Cc'd on a thread doesn't count, that's the whole point of
+      // this signal (see the migration adding has_direct_contact).
+      const directHit = role !== "cc";
       const agg = pageContacts.get(email);
       if (agg) {
         agg.dates.push(msg.internalDate);
         if (!agg.displayName && name) agg.displayName = name;
         if (outboundHit) agg.hasOutbound = true;
+        if (directHit) agg.hasDirect = true;
       } else {
-        pageContacts.set(email, { displayName: name, domain, dates: [msg.internalDate], hasOutbound: outboundHit });
+        pageContacts.set(email, {
+          displayName: name,
+          domain,
+          dates: [msg.internalDate],
+          hasOutbound: outboundHit,
+          hasDirect: directHit,
+        });
       }
     }
   }
@@ -242,12 +264,13 @@ async function processHeadersPage(
     lastInteractionMs: number;
     messageCountTotal: number;
     messageCount90d: number;
+    recentDates: number[];
   };
   const existingByEmail = new Map<string, ExistingStats>();
   const { data: existingRows } = await supabase
     .from("synced_contacts")
     .select(
-      "email, display_name, has_outbound_contact, last_interaction_at, message_count_total, message_count_90d"
+      "email, display_name, has_outbound_contact, last_interaction_at, message_count_total, message_count_90d, recent_message_dates"
     )
     .eq("mailbox_owner_id", mailboxOwnerId)
     .in("email", pageEmails);
@@ -259,6 +282,7 @@ async function processHeadersPage(
       lastInteractionMs: Number.isNaN(parsedLast) ? 0 : parsedLast,
       messageCountTotal: Number(row.message_count_total ?? 0),
       messageCount90d: Number(row.message_count_90d ?? 0),
+      recentDates: Array.isArray(row.recent_message_dates) ? (row.recent_message_dates as number[]) : [],
     });
   }
 
@@ -286,7 +310,32 @@ async function processHeadersPage(
       existing && now - existing.lastInteractionMs <= NINETY_DAYS_MS ? existing.messageCount90d : 0;
     const recentCount90d = carriedRecent90d + pageRecent90d;
 
-    const connectionStrength = bucketEmailConnection({ lastInteractionAt, recentCount90d });
+    const hasOutboundContact = agg.hasOutbound || existing?.hasOutbound === true;
+    // Deliberately NOT ORed with `existing` the way hasOutbound is. Every
+    // pre-0051 row's stored has_direct_contact is a placeholder default
+    // (true, "not yet disproven" — see that migration), not real evidence,
+    // so ORing a fresh, accurate `false` against it would always lose to
+    // the placeholder and the signal could never actually self-correct even
+    // once a real resync determined the truth. agg.hasDirect alone is
+    // authoritative for any contact this call actually touched — it already
+    // accumulates correctly across every message seen in this one call.
+    const hasDirectContact = agg.hasDirect;
+
+    // Merge with whatever dates earlier syncs already found, dedupe, cap to
+    // the most recent 300 (see migration 0053) — this is what lets the
+    // bucketing rule compute "N messages in the last W days" for whatever W
+    // each user configures, not just the fixed 90 message_count_90d rolls up.
+    const mergedDates = Array.from(new Set([...(existing?.recentDates ?? []), ...agg.dates]))
+      .sort((a, b) => b - a)
+      .slice(0, RECENT_DATES_CAP);
+
+    const connectionStrength = bucketEmailConnection({
+      lastInteractionAt,
+      messageDates: mergedDates,
+      recentCount90dFallback: recentCount90d,
+      hasOutboundContact,
+      hasDirectContact,
+    });
     return {
       email,
       // Keep a name an earlier page found rather than blanking it. Plenty of
@@ -301,7 +350,9 @@ async function processHeadersPage(
       connection_strength: connectionStrength,
       message_count_90d: recentCount90d,
       message_count_total: (existing?.messageCountTotal ?? 0) + agg.dates.length,
-      has_outbound_contact: agg.hasOutbound || existing?.hasOutbound === true,
+      has_outbound_contact: hasOutboundContact,
+      has_direct_contact: hasDirectContact,
+      recent_message_dates: mergedDates,
       synced_at: syncedAt,
       synced_by: syncedByUserId,
       mailbox_owner_id: mailboxOwnerId,

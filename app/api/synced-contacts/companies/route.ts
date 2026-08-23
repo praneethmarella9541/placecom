@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
 import { getAllCachedLogos } from "@/lib/company-enrichment";
-import type { EmailConnectionStrength } from "@/lib/email-connection-strength";
+import { bucketEmailConnection, type EmailConnectionStrength } from "@/lib/email-connection-strength";
+import { getConnectionStrengthSettings } from "@/lib/connection-strength-settings";
 import { isLikelyAutomatedAddress } from "@/lib/mail-noise-filter";
 
 export const runtime = "nodejs";
@@ -34,9 +35,41 @@ type Row = {
   company_name: string | null;
   last_interaction_at: string | null;
   connection_strength: EmailConnectionStrength | null;
+  message_count_90d: number | null;
   message_count_total: number | null;
   has_outbound_contact?: boolean | null;
+  has_direct_contact?: boolean | null;
+  recent_message_dates?: number[] | null;
 };
+
+const SELECT_COLUMNS =
+  "email, domain, company_name, last_interaction_at, connection_strength, message_count_90d, message_count_total, has_outbound_contact, has_direct_contact, recent_message_dates";
+
+/**
+ * Recomputes connection_strength per row against the caller's own thresholds
+ * before grouping, so bestConnectionStrength reflects their personal
+ * settings rather than whatever lib/people-mailbox-sync.ts last stored using
+ * the default thresholds — see app/api/synced-contacts/route.ts's twin of
+ * this function.
+ */
+function withLiveStrength(
+  rows: Row[],
+  settings: Awaited<ReturnType<typeof getConnectionStrengthSettings>>
+): Row[] {
+  return rows.map((row) => ({
+    ...row,
+    connection_strength: bucketEmailConnection(
+      {
+        lastInteractionAt: row.last_interaction_at,
+        messageDates: Array.isArray(row.recent_message_dates) ? row.recent_message_dates : [],
+        recentCount90dFallback: row.message_count_90d ?? 0,
+        hasOutboundContact: Boolean(row.has_outbound_contact),
+        hasDirectContact: row.has_direct_contact !== false,
+      },
+      settings
+    ),
+  }));
+}
 
 function groupByDomain(rows: Row[]): SyncedCompanyRow[] {
   const groups = new Map<string, SyncedCompanyRow>();
@@ -100,13 +133,15 @@ export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const settings = await getConnectionStrengthSettings(supabase, user.id);
+
   // `email` is unique on this table (migration 0037) — a stable, total sort
   // key on its own, needed so fetchAllRows' page boundaries don't skip or
   // duplicate rows.
   const { data, error } = await fetchAllRows<Row>((from, to) =>
     supabase
       .from("synced_contacts")
-      .select("email, domain, company_name, last_interaction_at, connection_strength, message_count_total, has_outbound_contact")
+      .select(SELECT_COLUMNS)
       .order("email", { ascending: true })
       .range(from, to)
   );
@@ -132,15 +167,15 @@ export async function GET(request: Request) {
       const fallback = await fetchAllRows<Row>((from, to) =>
         supabase
           .from("synced_contacts")
-          .select("email, domain, company_name, last_interaction_at, connection_strength, message_count_total")
+          .select("email, domain, company_name, last_interaction_at, connection_strength, message_count_90d, message_count_total")
           .order("email", { ascending: true })
           .range(from, to)
       );
       if (fallback.error) return NextResponse.json({ error: fallback.error }, { status: 500 });
-      return NextResponse.json({ companies: await withLogos(groupByDomain(fallback.data)) });
+      return NextResponse.json({ companies: await withLogos(groupByDomain(withLiveStrength(fallback.data, settings))) });
     }
     return NextResponse.json({ error }, { status: 500 });
   }
 
-  return NextResponse.json({ companies: await withLogos(groupByDomain(data)) });
+  return NextResponse.json({ companies: await withLogos(groupByDomain(withLiveStrength(data, settings))) });
 }

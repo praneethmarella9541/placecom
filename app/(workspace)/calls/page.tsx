@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PhoneIncoming, PhoneOutgoing, PlayCircle } from "lucide-react";
 import { titleCase } from "@/lib/title-case";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
+import { useDirectoryContacts } from "@/hooks/useDirectoryContacts";
+import { buildContactNameMap, canonicalPeer, formatPhone, resolveContactName } from "@/lib/wa-contacts-display";
 import { SimpleDropdown, type DropdownOption } from "@/components/SimpleDropdown";
 
 type TeamMember = {
@@ -93,6 +95,19 @@ export default function CallsPage() {
   const [direction, setDirection] = useState<DirectionFilter>("all");
   const [status, setStatus] = useState<string>("all");
   const [sort, setSort] = useState<SortKey>("newest");
+
+  const { contacts: directoryContacts } = useDirectoryContacts();
+  const contactNameMap = useMemo(
+    () =>
+      buildContactNameMap(
+        directoryContacts.filter((c) => c.phone).map((c) => ({ peer_e164: canonicalPeer(c.phone!), name: c.name }))
+      ),
+    [directoryContacts]
+  );
+  const contactName = useCallback(
+    (peer: string | null) => (peer ? resolveContactName(contactNameMap, peer) : undefined),
+    [contactNameMap]
+  );
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -228,12 +243,27 @@ export default function CallsPage() {
                 <tr key={c.id} className="text-[var(--color-text)]">
                   <td className="px-4 py-2.5">
                     {c.direction === "incoming" ? (
-                      <PhoneIncoming className="h-4 w-4 text-[var(--color-primary)]" />
+                      <PhoneIncoming className="h-4 w-4 text-[var(--color-copper)]" />
                     ) : (
                       <PhoneOutgoing className="h-4 w-4 text-[var(--color-text-muted)]" />
                     )}
                   </td>
-                  <td className="px-4 py-2.5 font-medium">{c.peer_number || "—"}</td>
+                  <td className="px-4 py-2.5 font-medium">
+                    {c.peer_number ? (
+                      contactName(c.peer_number) ? (
+                        <>
+                          <div className="text-[var(--color-text)]">{contactName(c.peer_number)}</div>
+                          <div className="text-xs font-normal text-[var(--color-text-faint)]">
+                            {formatPhone(c.peer_number)}
+                          </div>
+                        </>
+                      ) : (
+                        c.peer_number
+                      )
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   {isAdmin && selectedMember === "all" && (
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{memberLabel(c.user_id)}</td>
                   )}
@@ -256,7 +286,7 @@ export default function CallsPage() {
                       ) : (
                         <button
                           onClick={() => setPlayingId(c.id)}
-                          className="flex items-center gap-1 text-[var(--color-primary)] hover:underline"
+                          className="flex items-center gap-1 text-[var(--color-copper)] hover:underline"
                         >
                           <PlayCircle className="h-4 w-4" /> Play
                         </button>

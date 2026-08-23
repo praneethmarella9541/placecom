@@ -1,9 +1,10 @@
 /**
- * Session-scoped prefetch for WhatsApp, Calendar, Forms, and Sheets.
+ * Session-scoped prefetch for Contacts, WhatsApp, Calendar, Forms, and Sheets.
  * Runs after mail + drive warm on login; pages read caches for instant paint (SWR).
  */
 
 import type { FeatureKey } from "@/lib/feature-access";
+import type { DirectoryContact } from "@/lib/contact-directory";
 import { prefetchDriveListViews } from "@/lib/drive-list-prefetch";
 import { clearAdminTeamPrefetchCache } from "@/lib/admin-team-prefetch";
 import {
@@ -13,6 +14,26 @@ import {
 } from "@/lib/login-prefetch-session";
 import { clearMailThreadPrefetchCache, warmMailListsThenThreadBodies } from "@/lib/mail-thread-prefetch";
 import { clearWhatsAppThreadPrefetchCache, prefetchWhatsAppThreads } from "@/lib/whatsapp-thread-prefetch";
+
+/* ─── Directory contacts (Contact Book → Team Directory) ────── */
+
+let directoryContactsCache: DirectoryContact[] | null = null;
+
+export function getDirectoryContactsPrefetchCache(): DirectoryContact[] | null {
+  return directoryContactsCache;
+}
+
+export function setDirectoryContactsPrefetchCache(contacts: DirectoryContact[]): void {
+  directoryContactsCache = contacts;
+}
+
+async function prefetchDirectoryContactsData(signal?: AbortSignal): Promise<void> {
+  const res = await fetch("/api/directory-contacts", { cache: "no-store", signal });
+  if (signal?.aborted || !res.ok) return;
+  const data = (await res.json()) as { contacts?: DirectoryContact[] };
+  if (signal?.aborted) return;
+  setDirectoryContactsPrefetchCache(data.contacts ?? []);
+}
 
 /* ─── WhatsApp ─────────────────────────────────────────────── */
 
@@ -295,6 +316,15 @@ export async function prefetchSecondaryFeaturesInOrder(opts?: {
   const restricted = new Set(opts?.restrictedFeatures ?? []);
   const signal = opts?.signal;
 
+  // Not gated by restrictedFeatures — Contacts isn't a toggleable FeatureKey,
+  // it's always available. Warmed early since WhatsApp/SMS/Team-viewer all
+  // resolve names against this same cache. The auto-synced-from-mail list
+  // (SyncedContactsSection) deliberately isn't warmed here — it only needs
+  // to be fresh right after an explicit "Sync from Mailbox" run, so it keeps
+  // its own simple fetch-once-then-cache-until-sync-finishes behavior.
+  await prefetchDirectoryContactsData(signal);
+  if (signal?.aborted) return;
+
   if (!restricted.has("whatsapp")) {
     await prefetchWhatsAppData(signal);
   }
@@ -362,6 +392,7 @@ export async function runLoginPrefetchChain(opts?: {
 
 /** Clear secondary feature caches (e.g. on sign-out if needed later). */
 export function clearSecondaryFeaturePrefetchCache(): void {
+  directoryContactsCache = null;
   whatsappCache = null;
   calendarCache = null;
   formsCache = null;

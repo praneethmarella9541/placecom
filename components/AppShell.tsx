@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getCachedAuthUser } from "@/lib/auth-user";
 import { WorkspaceChrome } from "@/components/WorkspaceChrome";
 import { MailboxSessionSync } from "@/components/MailboxSessionSync";
+import { PostHogIdentify } from "@/components/PostHogIdentify";
 
 export default async function AppShell({
   children,
@@ -17,6 +18,7 @@ export default async function AppShell({
   return (
     <div className="min-h-screen bg-[var(--color-bg)]">
       <MailboxSessionSync />
+      <PostHogIdentify />
       <WorkspaceChrome>{children}</WorkspaceChrome>
     </div>
   );

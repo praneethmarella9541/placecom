@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Sora, Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
+import { PostHogProvider } from "@/components/PostHogProvider";
 import "./globals.css";
 
 const sora = Sora({
@@ -61,7 +62,7 @@ export default function RootLayout({
         ) : null}
       </head>
       <body className="min-h-screen text-[15px] leading-relaxed antialiased">
-        {children}
+        <PostHogProvider>{children}</PostHogProvider>
       </body>
     </html>
   );

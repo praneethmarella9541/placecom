@@ -20,8 +20,25 @@ type Body = {
   recipients: string[];
   subject: string;
   textBody: string;
+  /** Rich HTML from RichTextEditor (components/RichTextEditor.tsx) — the web
+   *  compose flow always sends this now, textBody empty; sendMailViaGmail
+   *  derives the text/plain part from it. */
+  htmlBody?: string;
   attachments?: AttachmentPayload[];
 };
+
+/** Mirrors richTextIsEmpty (components/RichTextEditor.tsx) without importing a "use client" module here. */
+function isBlankHtml(html: string): boolean {
+  return (
+    html
+      .replace(/<br\s*\/?>/gi, "")
+      .replace(/<p[^>]*><\/p>/gi, "")
+      .replace(/<div[^>]*><\/div>/gi, "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/gi, " ")
+      .trim().length === 0
+  );
+}
 
 export async function POST(request: Request) {
   const auth = await requireGmailAccessToken(request);
@@ -57,10 +74,11 @@ export async function POST(request: Request) {
 
   const subject = (body.subject ?? "").trim();
   const textBody = body.textBody ?? "";
+  const htmlBody = body.htmlBody ?? "";
   if (!subject) {
     return NextResponse.json({ error: "Subject is required" }, { status: 400 });
   }
-  if (!textBody.trim()) {
+  if (!textBody.trim() && isBlankHtml(htmlBody)) {
     return NextResponse.json({ error: "Message body is required" }, { status: 400 });
   }
 
@@ -80,6 +98,7 @@ export async function POST(request: Request) {
         to,
         subject,
         textBody,
+        htmlBody: htmlBody || undefined,
         attachments,
       });
       sentOk.push(to);

@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { titleCase } from "@/lib/title-case";
 import { mergeTemplate, listPlaceholdersInTemplate, type MailMergeRow } from "@/lib/mail-merge";
 import { IconMail, IconPaperclip, IconSend, IconX } from "@/components/Icons";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 type PendingFile = { file: File; base64: string };
 
@@ -38,7 +39,7 @@ export function MailMergePanel() {
     "Placement update for {{name}}"
   );
   const [bodyTemplate, setBodyTemplate] = useState(
-    "Dear {{name}},\n\nWe are reaching out from the placement office.\n\nBest regards,\nPlacement Team"
+    "<p>Dear {{name}},</p><p>We are reaching out from the placement office.</p><p>Best regards,<br>Placement Team</p>"
   );
   const [previewIndex, setPreviewIndex] = useState(0);
 
@@ -299,13 +300,17 @@ export function MailMergePanel() {
             <label className="mb-1.5 block text-xs font-medium text-zinc-500">
               {titleCase("Body")}
             </label>
-            <textarea
-              value={bodyTemplate}
-              onChange={(e) => setBodyTemplate(e.target.value)}
-              rows={10}
-              className="input-field resize-y font-mono text-sm"
-              placeholder={"Dear {{name}},\n\nYour number: {{phone}}"}
-            />
+            {/* No overflow-hidden here — the editor's link/font/color/emoji
+                popovers are position:absolute and float outside its own box;
+                clipping the wrapper would clip them too. */}
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-700">
+              <RichTextEditor
+                value={bodyTemplate}
+                onChange={setBodyTemplate}
+                placeholder="Dear {{name}}, your number: {{phone}}"
+                className="min-h-[260px]"
+              />
+            </div>
           </div>
           <div>
             <input
@@ -376,9 +381,14 @@ export function MailMergePanel() {
           <p className="mt-2 text-xs font-medium text-zinc-500">{titleCase("Subject")}</p>
           <p className="text-sm text-zinc-800 dark:text-zinc-200">{previewSubject || "—"}</p>
           <p className="mt-3 text-xs font-medium text-zinc-500">{titleCase("Body")}</p>
-          <pre className="mt-1 whitespace-pre-wrap rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
-            {previewBody || "—"}
-          </pre>
+          {previewBody ? (
+            <div
+              className="mt-1 rounded-lg border border-zinc-200 bg-white p-3 text-sm leading-relaxed text-zinc-700 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-300 [&_a]:text-blue-600 [&_a]:underline [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
+              dangerouslySetInnerHTML={{ __html: previewBody }}
+            />
+          ) : (
+            <p className="mt-1 rounded-lg border border-zinc-200 bg-white p-3 text-sm text-zinc-400 dark:border-zinc-700 dark:bg-zinc-950">—</p>
+          )}
           {placeholderHints.length > 0 ? (
             <p className="mt-2 text-[11px] text-zinc-400">
               {titleCase("Detected fields:")} {placeholderHints.map((h) => `{{${h}}}`).join(", ")}

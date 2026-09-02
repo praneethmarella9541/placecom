@@ -84,13 +84,19 @@ export async function POST(request: Request) {
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const subject = mergeTemplate(subjectTemplate, row.fields);
-    const textBody = mergeTemplate(bodyTemplate, row.fields);
+    // bodyTemplate is rich HTML from the same RichTextEditor the Inbox compose
+    // uses (components/RichTextEditor.tsx) — mergeTemplate is just placeholder
+    // substitution, so it works the same on an HTML string. Mirrors how
+    // app/api/gmail/send handles compose: textBody empty, sendMailViaGmail
+    // derives the text/plain part from htmlBody itself.
+    const htmlBody = mergeTemplate(bodyTemplate, row.fields);
 
     try {
       await sendMailViaGmail(auth.accessToken, {
         to: row.email,
         subject,
-        textBody,
+        textBody: "",
+        htmlBody,
         attachments,
       });
       sentOk.push(row.email);

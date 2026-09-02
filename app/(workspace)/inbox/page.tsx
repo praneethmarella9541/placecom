@@ -46,7 +46,6 @@ import { RecipientField, type RecipientSuggestion } from "@/components/Recipient
 import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, timeAgo } from "@/lib/utils";
-import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import {
   buildDateSearchClauses,
@@ -4384,15 +4383,15 @@ export default function InboxPage() {
                   const subjectW = i % 4 === 0 ? "w-[70%]" : i % 4 === 1 ? "w-[55%]" : i % 4 === 2 ? "w-[85%]" : "w-[40%]";
                   const dateW = i % 2 === 0 ? "w-[58px]" : "w-[72px]";
                   return (
-                    <li key={i} className="flex items-start gap-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
-                      <Skeleton className="skeleton-shimmer h-[34px] w-[34px] shrink-0 rounded-full" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <Skeleton className={cn("skeleton-shimmer h-3 rounded", senderW)} />
-                          <span className="flex-1" />
-                          <Skeleton className={cn("skeleton-shimmer h-2.5 rounded", dateW)} />
+                    <li key={i} className="flex w-full items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
+                      <div className="skeleton-shimmer h-[34px] w-[34px] shrink-0 rounded-full" />
+                      <div className="min-w-0 w-full flex-1">
+                        <div className="flex w-full items-center gap-2">
+                          <div className={cn("skeleton-shimmer h-3 shrink-0 rounded", senderW)} />
+                          <span className="min-w-2 flex-1" />
+                          <div className={cn("skeleton-shimmer h-2.5 shrink-0 rounded", dateW)} />
                         </div>
-                        <Skeleton className={cn("skeleton-shimmer mt-2 h-2.5 rounded", subjectW)} />
+                        <div className={cn("skeleton-shimmer mt-2 h-2.5 rounded", subjectW)} />
                       </div>
                     </li>
                   );
@@ -4715,15 +4714,15 @@ export default function InboxPage() {
                   const subjectW = i % 4 === 0 ? "w-[70%]" : i % 4 === 1 ? "w-[55%]" : i % 4 === 2 ? "w-[85%]" : "w-[40%]";
                   const dateW = i % 2 === 0 ? "w-[58px]" : "w-[72px]";
                   return (
-                    <li key={`skel-${i}`} className="flex items-start gap-3 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
-                      <Skeleton className="skeleton-shimmer h-[34px] w-[34px] shrink-0 rounded-full" />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <Skeleton className={cn("skeleton-shimmer h-3 rounded", senderW)} />
-                          <span className="flex-1" />
-                          <Skeleton className={cn("skeleton-shimmer h-2.5 rounded", dateW)} />
+                    <li key={`skel-${i}`} className="flex w-full items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
+                      <div className="skeleton-shimmer h-[34px] w-[34px] shrink-0 rounded-full" />
+                      <div className="min-w-0 w-full flex-1">
+                        <div className="flex w-full items-center gap-2">
+                          <div className={cn("skeleton-shimmer h-3 shrink-0 rounded", senderW)} />
+                          <span className="min-w-2 flex-1" />
+                          <div className={cn("skeleton-shimmer h-2.5 shrink-0 rounded", dateW)} />
                         </div>
-                        <Skeleton className={cn("skeleton-shimmer mt-2 h-2.5 rounded", subjectW)} />
+                        <div className={cn("skeleton-shimmer mt-2 h-2.5 rounded", subjectW)} />
                       </div>
                     </li>
                   );
@@ -4759,17 +4758,17 @@ export default function InboxPage() {
                     <ThreadPaneNavButton variant="close" onClick={closeThread} className="ml-auto hidden md:inline-flex" />
                   </div>
                   <div className="mb-3 flex items-center gap-3 px-2 md:px-0">
-                    <Skeleton className="skeleton-shimmer h-5 w-2/3 rounded md:h-6" />
+                    <div className="skeleton-shimmer h-5 w-2/3 rounded md:h-6" />
                   </div>
                   {/* Sender + email + date row (pl-12 in real header) */}
                   <div className="flex items-center gap-3 pl-12">
-                    <Skeleton className="skeleton-shimmer h-3.5 w-28 rounded" />
-                    <Skeleton className="skeleton-shimmer h-3 w-44 rounded" />
-                    <Skeleton className="skeleton-shimmer ml-auto h-3 w-20 rounded" />
+                    <div className="skeleton-shimmer h-3.5 w-28 rounded" />
+                    <div className="skeleton-shimmer h-3 w-44 rounded" />
+                    <div className="skeleton-shimmer ml-auto h-3 w-20 rounded" />
                   </div>
                   {/* "N messages in thread" caption */}
                   <div className="mt-2 pl-12">
-                    <Skeleton className="skeleton-shimmer h-2.5 w-32 rounded" />
+                    <div className="skeleton-shimmer h-2.5 w-32 rounded" />
                   </div>
                 </div>
 
@@ -4783,23 +4782,23 @@ export default function InboxPage() {
                       {/* Top row: avatar + from/to + date */}
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2">
-                          <Skeleton className="skeleton-shimmer h-7 w-7 rounded-full" />
+                          <div className="skeleton-shimmer h-7 w-7 rounded-full" />
                           <div className="space-y-1.5">
-                            <Skeleton className="skeleton-shimmer h-3 w-36 rounded" />
-                            <Skeleton className="skeleton-shimmer h-2.5 w-24 rounded" />
+                            <div className="skeleton-shimmer h-3 w-36 rounded" />
+                            <div className="skeleton-shimmer h-2.5 w-24 rounded" />
                           </div>
                         </div>
-                        <Skeleton className="skeleton-shimmer h-2.5 w-16 shrink-0 rounded" />
+                        <div className="skeleton-shimmer h-2.5 w-16 shrink-0 rounded" />
                       </div>
                       {/* Body lines — multiple at varying widths */}
                       <div className="mt-4 space-y-2">
-                        <Skeleton className="skeleton-shimmer h-3 w-full rounded" />
-                        <Skeleton className="skeleton-shimmer h-3 w-[92%] rounded" />
-                        <Skeleton className="skeleton-shimmer h-3 w-[78%] rounded" />
+                        <div className="skeleton-shimmer h-3 w-full rounded" />
+                        <div className="skeleton-shimmer h-3 w-[92%] rounded" />
+                        <div className="skeleton-shimmer h-3 w-[78%] rounded" />
                         {idx === 0 && (
                           <>
-                            <Skeleton className="skeleton-shimmer h-3 w-[88%] rounded" />
-                            <Skeleton className="skeleton-shimmer h-3 w-[40%] rounded" />
+                            <div className="skeleton-shimmer h-3 w-[88%] rounded" />
+                            <div className="skeleton-shimmer h-3 w-[40%] rounded" />
                           </>
                         )}
                       </div>

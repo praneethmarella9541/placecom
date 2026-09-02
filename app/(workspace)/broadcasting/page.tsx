@@ -15,6 +15,7 @@ import {
 } from "@/components/Icons";
 import { WhatsAppBroadcastPanel } from "@/components/WhatsAppBroadcastPanel";
 import { MailMergePanel } from "@/components/MailMergePanel";
+import { RichTextEditor } from "@/components/RichTextEditor";
 
 type Channel = "mail" | "whatsapp";
 type MailSubView = "broadcast" | "merge";
@@ -189,7 +190,8 @@ function BroadcastingPageInner() {
         body: JSON.stringify({
           recipients,
           subject: subject.trim(),
-          textBody: body,
+          textBody: "",
+          htmlBody: body,
           attachments: att.length ? att : undefined,
         }),
       });
@@ -388,14 +390,17 @@ function BroadcastingPageInner() {
                     <p className="mb-1.5 text-[12px] font-medium text-[var(--color-text-muted)]">
                       {titleCase("Body")}
                     </p>
-                    <textarea
-                      data-testid="broadcast-body-input"
-                      value={body}
-                      onChange={(e) => setBody(e.target.value)}
-                      rows={10}
-                      className="input-field resize-y text-[13px]"
-                      placeholder={titleCase("Write the message…")}
-                    />
+                    {/* No overflow-hidden here — the editor's link/font/color/emoji
+                        popovers are position:absolute and float outside its own
+                        box; clipping the wrapper would clip them too. */}
+                    <div className="rounded-lg border border-[var(--color-border)]">
+                      <RichTextEditor
+                        value={body}
+                        onChange={setBody}
+                        placeholder={titleCase("Write the message…")}
+                        className="min-h-[260px]"
+                      />
+                    </div>
                   </div>
 
                   {/* Attachments */}

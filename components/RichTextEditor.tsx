@@ -17,6 +17,14 @@ export function richTextIsEmpty(html: string): boolean {
   return stripped.length === 0;
 }
 
+/** Link text/href go through insertHTML, so they must not be able to break out of the markup. */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/"/g, "&quot;");
+}
+
 export type RichTextEditorHandle = {
   insertLink: () => void;
 };
@@ -92,6 +100,10 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkText, setLinkText] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
+  // "view" = Gmail-style compact "Go to link: url | Change | Remove" bar
+  // (default when opening on an existing link); "edit" = the actual
+  // text+url input form, shown for a brand-new link or after "Change".
+  const [linkViewMode, setLinkViewMode] = useState<"view" | "edit">("edit");
   const [activeColor, setActiveColor] = useState("#000000");
   const [activeAlign, setActiveAlign] = useState<"left" | "center" | "right" | "justify">("left");
   const [activeFont, setActiveFont] = useState("Sans Serif");
@@ -99,6 +111,12 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
 
   // Saved selection for when picker popups steal focus
   const savedRangeRef = useRef<Range | null>(null);
+  // The <a> being edited when the link popover was opened on top of an
+  // existing link — lets Apply update it in place instead of nesting a new
+  // <a> inside it (which is what happened before: the popover always opened
+  // blank, with no memory of an existing link's href).
+  const editingAnchorRef = useRef<HTMLAnchorElement | null>(null);
+  const [isEditingLink, setIsEditingLink] = useState(false);
 
   function saveSelection() {
     const sel = window.getSelection();
@@ -121,11 +139,15 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
+    // Rebuilding innerHTML detaches every child node — including the <a>
+    // the link popover is currently pointing at — so hold off while it's
+    // open; the next value change after it closes will resync.
+    if (linkOpen) return;
     if (value !== lastSetValueRef.current) {
       el.innerHTML = value;
       lastSetValueRef.current = value;
     }
-  }, [value]);
+  }, [value, linkOpen]);
 
   useEffect(() => {
     if (autoFocus) editorRef.current?.focus();
@@ -167,6 +189,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
         setAlignOpen(false);
         setEmojiOpen(false);
         setLinkOpen(false);
+        editingAnchorRef.current = null;
+        setIsEditingLink(false);
+        setLinkViewMode("edit");
       }
     }
     document.addEventListener("mousedown", onDoc);
@@ -235,13 +260,21 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
     exec("insertText", emoji);
   }
 
-  function openLinkPopover() {
-    saveSelection();
-    // Pre-fill text with selected text
+  /** Opens the Gmail-style "Go to link" bar for an already-existing <a> — shared by the toolbar button and clicking directly on a link (see onClick below). */
+  function openLinkViewFor(existingLink: HTMLAnchorElement) {
+    // Select the whole link's contents so the saved range (and Apply) acts
+    // on this exact <a>, not just wherever the cursor happened to be.
     const sel = window.getSelection();
-    const selectedText = sel && sel.rangeCount > 0 ? sel.toString() : "";
-    setLinkText(selectedText);
-    setLinkUrl("");
+    const range = document.createRange();
+    range.selectNodeContents(existingLink);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    editingAnchorRef.current = existingLink;
+    setIsEditingLink(true);
+    setLinkViewMode("view");
+    setLinkText(existingLink.textContent || "");
+    setLinkUrl(existingLink.getAttribute("href") || "");
+    saveSelection();
     setLinkOpen(true);
     setFontOpen(false);
     setSizeOpen(false);
@@ -250,20 +283,84 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
     setEmojiOpen(false);
   }
 
-  function applyLink() {
-    if (!linkUrl.trim()) { setLinkOpen(false); return; }
-    const href = /^https?:\/\//i.test(linkUrl.trim()) ? linkUrl.trim() : `https://${linkUrl.trim()}`;
-    restoreSelection();
+  function openLinkPopover() {
     const sel = window.getSelection();
-    // If no text selected and linkText provided, insert as new text
-    if (linkText.trim() && sel && sel.isCollapsed) {
-      exec("insertHTML", `<a href="${href}">${linkText.trim()}</a>`);
-    } else {
-      exec("createLink", href);
+    const anchorNode = sel?.anchorNode ?? null;
+    const startEl = anchorNode instanceof Element ? anchorNode : anchorNode?.parentElement ?? null;
+    const existingLink = startEl?.closest("a") ?? null;
+    const editingExisting = !!existingLink && !!editorRef.current?.contains(existingLink);
+
+    if (editingExisting && existingLink) {
+      openLinkViewFor(existingLink);
+      return;
     }
+
+    editingAnchorRef.current = null;
+    setIsEditingLink(false);
+    setLinkViewMode("edit");
+    const selectedText = sel && sel.rangeCount > 0 ? sel.toString() : "";
+    setLinkText(selectedText);
+    setLinkUrl("");
+
+    saveSelection();
+    setLinkOpen(true);
+    setFontOpen(false);
+    setSizeOpen(false);
+    setColorOpen(false);
+    setAlignOpen(false);
+    setEmojiOpen(false);
+  }
+
+  function closeLinkPopover() {
+    editingAnchorRef.current = null;
+    setIsEditingLink(false);
+    setLinkViewMode("edit");
     setLinkOpen(false);
     setLinkText("");
     setLinkUrl("");
+  }
+
+  function applyLink() {
+    const rawUrl = linkUrl.trim();
+    if (!rawUrl) { closeLinkPopover(); return; }
+    const href = /^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`;
+    const text = linkText.trim();
+
+    // Only trust the stored anchor if it's still actually in the document —
+    // a `value` resync rebuilds innerHTML, which would leave this pointing at
+    // a detached node whose mutations silently go nowhere.
+    const a = editingAnchorRef.current;
+    if (a && editorRef.current?.contains(a)) {
+      a.setAttribute("href", href);
+      if (text && text !== a.textContent) a.textContent = text;
+      emit();
+      closeLinkPopover();
+      return;
+    }
+
+    restoreSelection();
+    const sel = window.getSelection();
+    const selectedText = sel && !sel.isCollapsed ? sel.toString() : "";
+    // createLink keeps whatever text was selected, so it can't honour an
+    // edited Text field — insert our own anchor whenever the text differs
+    // from (or there is no) selection, and only fall back to createLink when
+    // the user left the selected text exactly as-is.
+    if (!selectedText || (text && text !== selectedText)) {
+      exec("insertHTML", `<a href="${escapeAttr(href)}">${escapeHtml(text || href)}</a>`);
+    } else {
+      exec("createLink", href);
+    }
+    closeLinkPopover();
+  }
+
+  function removeLink() {
+    const a = editingAnchorRef.current;
+    if (a && editorRef.current?.contains(a)) {
+      const text = document.createTextNode(a.textContent || "");
+      a.parentNode?.replaceChild(text, a);
+      emit();
+    }
+    closeLinkPopover();
   }
 
   useImperativeHandle(ref, () => ({ insertLink: openLinkPopover }));
@@ -303,6 +400,17 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
           onKeyUp={saveSelection}
           onMouseUp={saveSelection}
           onPaste={handlePaste}
+          onClick={(e) => {
+            // Gmail-style: clicking directly on a link shows its "Go to
+            // link / Change / Remove" bar immediately — no need to select
+            // the text and reach for the toolbar button first.
+            const el = e.target as HTMLElement;
+            const a = el.closest?.("a");
+            if (a && editorRef.current?.contains(a)) {
+              e.preventDefault();
+              openLinkViewFor(a as HTMLAnchorElement);
+            }
+          }}
           className="min-h-[200px] w-full px-3 py-3 text-[13px] leading-relaxed text-[#202124] outline-none [overflow-wrap:anywhere] [&_a]:text-[#1a73e8] [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-[#ccc] [&_blockquote]:pl-3 [&_blockquote]:text-[#666] [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
           role="textbox"
           aria-multiline="true"
@@ -479,28 +587,68 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
 
         {/* Link popover */}
         <div className="relative" data-rte-popover>
-          <ToolbarBtn title="Insert link (Ctrl+K)" onClick={openLinkPopover}>
+          <ToolbarBtn title={isEditingLink ? "Edit link (Ctrl+K)" : "Insert link (Ctrl+K)"} onClick={openLinkPopover}>
             <LinkIcon className="h-[15px] w-[15px]" strokeWidth={2.5} />
           </ToolbarBtn>
           {linkOpen && (
-            <div className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" data-rte-popover>
-              {/* Text field */}
-              <div className="mb-2 flex items-center rounded border border-[#dadce0] bg-white px-2 focus-within:border-[#0b57d0] focus-within:ring-1 focus-within:ring-[#0b57d0]">
-                <span className="mr-2 shrink-0 text-[#5f6368]">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                </span>
-                <input
-                  type="text"
-                  value={linkText}
-                  onChange={(e) => setLinkText(e.target.value)}
-                  placeholder="Text"
-                  autoFocus
-                  className="flex-1 py-1.5 text-[13px] text-[#202124] outline-none placeholder:text-[#80868b]"
-                />
+            isEditingLink && linkViewMode === "view" ? (
+              // Gmail-style compact bar — the default view when the popover
+              // opens on top of an existing link. Editing fields only show
+              // once "Change" is clicked, instead of always cramming a text
+              // field + url field + Remove + Apply into one small box (which
+              // is what pushed the url off-screen before).
+              <div
+                className="absolute bottom-full right-0 z-50 mb-1 flex max-w-[420px] items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#dadce0] bg-white px-3 py-2 text-[13px] text-[#202124] shadow-xl"
+                data-rte-popover
+              >
+                <span className="shrink-0 text-[#5f6368]">Go to link:</span>
+                <a
+                  href={linkUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={linkUrl}
+                  className="min-w-0 truncate text-[#1a73e8] underline"
+                >
+                  {linkUrl}
+                </a>
+                <span className="shrink-0 text-[#dadce0]">|</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); setLinkViewMode("edit"); }}
+                  className="shrink-0 font-medium text-[#0b57d0] hover:text-[#1a73e8]"
+                >
+                  Change
+                </button>
+                <span className="shrink-0 text-[#dadce0]">|</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeLink(); }}
+                  className="shrink-0 font-medium text-[#d93025] hover:text-[#b3261e]"
+                >
+                  Remove
+                </button>
               </div>
-              {/* URL field + Apply */}
-              <div className="flex items-center gap-2">
-                <div className="flex flex-1 items-center rounded border border-[#dadce0] bg-white px-2 focus-within:border-[#0b57d0] focus-within:ring-1 focus-within:ring-[#0b57d0]">
+            ) : (
+              <div className="absolute bottom-full right-0 z-50 mb-1 w-80 rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" data-rte-popover>
+                {isEditingLink && (
+                  <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[#5f6368]">Edit link</p>
+                )}
+                {/* Text field */}
+                <div className="mb-2 flex items-center rounded border border-[#dadce0] bg-white px-2 focus-within:border-[#0b57d0] focus-within:ring-1 focus-within:ring-[#0b57d0]">
+                  <span className="mr-2 shrink-0 text-[#5f6368]">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+                  </span>
+                  <input
+                    type="text"
+                    value={linkText}
+                    onChange={(e) => setLinkText(e.target.value)}
+                    placeholder="Text"
+                    autoFocus
+                    className="flex-1 py-1.5 text-[13px] text-[#202124] outline-none placeholder:text-[#80868b]"
+                  />
+                </div>
+                {/* URL field */}
+                <div className="mb-2 flex items-center rounded border border-[#dadce0] bg-white px-2 focus-within:border-[#0b57d0] focus-within:ring-1 focus-within:ring-[#0b57d0]">
                   <span className="mr-2 shrink-0 text-[#5f6368]">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
                   </span>
@@ -513,15 +661,27 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
                     className="flex-1 py-1.5 text-[13px] text-[#202124] outline-none placeholder:text-[#80868b]"
                   />
                 </div>
-                <button
-                  type="button"
-                  onMouseDown={(e) => { e.preventDefault(); applyLink(); }}
-                  className={`shrink-0 text-[13px] font-medium ${linkUrl.trim() ? "text-[#0b57d0] hover:text-[#1a73e8]" : "text-[#80868b] cursor-not-allowed"}`}
-                >
-                  Apply
-                </button>
+                {/* Actions */}
+                <div className="flex items-center justify-end gap-3">
+                  {isEditingLink && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); removeLink(); }}
+                      className="shrink-0 text-[13px] font-medium text-[#d93025] hover:text-[#b3261e]"
+                    >
+                      Remove
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); applyLink(); }}
+                    className={`shrink-0 text-[13px] font-medium ${linkUrl.trim() ? "text-[#0b57d0] hover:text-[#1a73e8]" : "text-[#80868b] cursor-not-allowed"}`}
+                  >
+                    Apply
+                  </button>
+                </div>
               </div>
-            </div>
+            )
           )}
         </div>
 

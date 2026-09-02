@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Upload } from "lucide-react";
@@ -22,7 +22,7 @@ import { DriveMoveModal } from "@/components/DriveMoveModal";
 import { DriveDetailsPanel } from "@/components/DriveDetailsPanel";
 import { DriveUploadQueue, type UploadQueueItem } from "@/components/DriveUploadQueue";
 import { GmailAvatar } from "@/components/GmailAvatar";
-import { formatDriveOwnerLabel, primaryDriveOwner } from "@/lib/drive";
+import { formatDriveOwnerLabel, primaryDriveOwner, recentActivityMs } from "@/lib/drive";
 import { DriveMimeIcon } from "@/lib/drive-mime-icon";
 import {
   driveUploadResultToRow,
@@ -33,6 +33,7 @@ import {
   buildDriveListCacheKey,
   buildDriveFetchOrderBy,
   bumpDriveListMutationEpoch,
+  DEFAULT_LIST_SORT,
   clearDriveListSessionCache,
   getDriveListMutationEpoch,
   getDriveListSessionCache,
@@ -80,6 +81,13 @@ const DRIVE_SIMPLE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 const DRIVE_UPLOAD_CONCURRENCY = 6;
 const DRIVE_FOLDER_CREATE_CONCURRENCY = 4;
 const LIST_MUTATION_OVERRIDE_TTL_MS = 8_000;
+// Safety net only. Upload overrides are normally retired the moment the server
+// lists the row itself (see confirmUploadOverrides) — Drive's files.list index
+// can lag well past any fixed timeout, so we don't rely on one.
+const UPLOAD_OVERRIDE_TTL_MS = 5 * 60_000;
+// How long a located upload stays ringed — also the window during which the
+// row is kept centred as background refreshes reorder the list.
+const UPLOAD_HIGHLIGHT_MS = 4_000;
 
 type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
 type SharedDrive = { id: string; name: string };
@@ -275,6 +283,29 @@ export default function DrivePage() {
   // Upload-button dropdown ("File upload" / "Folder upload") open state.
   const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
   const uploadAbortRef = useRef<AbortController | null>(null);
+  // Where the current upload batch is being dropped — snapshotted when the
+  // batch starts so "Show file location" can jump back even after the user
+  // has navigated elsewhere.
+  const uploadDestRef = useRef<{
+    view: DriveView | "shared-drive";
+    pathStack: PathCrumb[];
+    sharedDrive: SharedDrive | null;
+    parentId: string;
+  } | null>(null);
+  // Freshly uploaded rows, re-injected into the list until Drive's own index
+  // catches up — mirrors the star/move override pattern so a background refetch
+  // (or a re-sort that reloads from cache) can't make new uploads disappear.
+  const uploadOverridesRef = useRef<
+    Map<string, { file: DriveFileRow; parentId: string }>
+  >(new Map());
+  const uploadOverrideTimersRef = useRef<
+    Map<string, ReturnType<typeof setTimeout>>
+  >(new Map());
+  // Row id to briefly ring after a "Show file location" jump.
+  const [uploadHighlightId, setUploadHighlightId] = useState<string | null>(null);
+  const uploadHighlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Whether we're still re-centring the highlighted row as the list settles.
+  const uploadHighlightFollowRef = useRef(false);
 
   const cancelUpload = useCallback(() => {
     uploadAbortRef.current?.abort();
@@ -412,6 +443,44 @@ export default function DrivePage() {
   const sharedDriveIdForApi =
     view === "shared-drive" && currentSharedDrive ? currentSharedDrive.id : null;
 
+  /**
+   * The sort is part of the request now, so each order caches separately.
+   * Recent is the exception — it always fetches by activity time regardless of
+   * the sort column, so pinning it keeps one cache entry (and lets the
+   * background prefetch warm it).
+   */
+  const recentIgnoresSort =
+    view === "recent" && pathStack.length === 0 && !driveSearch;
+  const driveListSortKey = recentIgnoresSort
+    ? DEFAULT_LIST_SORT
+    : `${sortKey}:${sortDir}`;
+
+  /** Same listing identity minus the sort — lets us tell a sort toggle apart
+   *  from an actual folder/view change. */
+  const driveListBaseKey = useMemo(
+    () =>
+      buildDriveListCacheKey({
+        parent: currentParentId,
+        view,
+        search: driveSearch,
+        mimeFilter,
+        pathDepth: pathStack.length,
+        sharedDriveId: sharedDriveIdForApi,
+        sort: "",
+      }),
+    [
+      currentParentId,
+      view,
+      driveSearch,
+      mimeFilter,
+      pathStack.length,
+      sharedDriveIdForApi,
+    ]
+  );
+  const lastLoadedContextRef = useRef<{ baseKey: string; sort: string } | null>(
+    null
+  );
+
   const driveListContextKey = useMemo(
     () =>
       buildDriveListCacheKey({
@@ -421,6 +490,7 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth: pathStack.length,
         sharedDriveId: sharedDriveIdForApi,
+        sort: driveListSortKey,
       }),
     [
       currentParentId,
@@ -429,6 +499,7 @@ export default function DrivePage() {
       mimeFilter,
       pathStack.length,
       sharedDriveIdForApi,
+      driveListSortKey,
     ]
   );
 
@@ -447,6 +518,18 @@ export default function DrivePage() {
     },
     [driveListContextKey]
   );
+
+  /**
+   * Drop cached listings for the given sidebar views (matched on the `view`
+   * segment of the cache key) so the next visit refetches. Used after uploads
+   * so freshly added items show up in Recent without a full page reload.
+   */
+  const invalidateDriveViewCaches = useCallback((views: readonly string[]) => {
+    const set = new Set(views);
+    for (const key of Array.from(driveListCacheRef.current.keys())) {
+      if (set.has(key.split("\0")[1])) driveListCacheRef.current.delete(key);
+    }
+  }, []);
 
   const applyStarOverrides = useCallback((files: DriveFileRow[]): DriveFileRow[] => {
     const overrides = starOverridesRef.current;
@@ -511,10 +594,65 @@ export default function DrivePage() {
     [view]
   );
 
+  /** Re-inject rows for uploads Drive's list index hasn't surfaced yet. */
+  const applyUploadOverrides = useCallback(
+    (files: DriveFileRow[], parentId: string): DriveFileRow[] => {
+      const overrides = uploadOverridesRef.current;
+      if (overrides.size === 0) return files;
+      // Only folder listings show a parent's direct children.
+      if (view !== "my-drive" && view !== "shared-drive") return files;
+      const present = new Set(files.map((f) => f.id));
+      const missing = Array.from(overrides.values())
+        .filter((o) => o.parentId === parentId && !present.has(o.file.id))
+        .map((o) => o.file);
+      return missing.length > 0 ? [...missing, ...files] : files;
+    },
+    [view]
+  );
+
   const applyListMutationOverrides = useCallback(
     (files: DriveFileRow[], parentId: string): DriveFileRow[] =>
-      applyStarOverrides(applyMoveOverrides(files, parentId)),
-    [applyStarOverrides, applyMoveOverrides]
+      applyUploadOverrides(
+        applyStarOverrides(applyMoveOverrides(files, parentId)),
+        parentId
+      ),
+    [applyStarOverrides, applyMoveOverrides, applyUploadOverrides]
+  );
+
+  const setUploadOverride = useCallback(
+    (file: DriveFileRow, parentId: string) => {
+      uploadOverridesRef.current.set(file.id, { file, parentId });
+      // Stops an in-flight stale refetch from overwriting the session cache.
+      bumpDriveListMutationEpoch();
+      const existing = uploadOverrideTimersRef.current.get(file.id);
+      if (existing) clearTimeout(existing);
+      const t = setTimeout(() => {
+        uploadOverridesRef.current.delete(file.id);
+        uploadOverrideTimersRef.current.delete(file.id);
+      }, UPLOAD_OVERRIDE_TTL_MS);
+      uploadOverrideTimersRef.current.set(file.id, t);
+    },
+    []
+  );
+
+  const clearUploadOverride = useCallback((fileId: string) => {
+    if (!uploadOverridesRef.current.delete(fileId)) return;
+    const t = uploadOverrideTimersRef.current.get(fileId);
+    if (t) clearTimeout(t);
+    uploadOverrideTimersRef.current.delete(fileId);
+  }, []);
+
+  /**
+   * Retire upload overrides that the server has now listed itself — the real
+   * row supersedes our optimistic snapshot. Anything still missing stays
+   * pinned, however long Drive's index takes (or if it landed on a later page).
+   */
+  const confirmUploadOverrides = useCallback(
+    (serverFiles: readonly DriveFileRow[]) => {
+      if (uploadOverridesRef.current.size === 0) return;
+      for (const f of serverFiles) clearUploadOverride(f.id);
+    },
+    [clearUploadOverride]
   );
 
   const setMoveOverride = useCallback(
@@ -541,6 +679,10 @@ export default function DrivePage() {
 
   const applyLocalMoveState = useCallback(
     (file: DriveFileRow, sourceParentId: string, destParentId: string, trackOverride: boolean) => {
+      // The row no longer belongs to the folder it was uploaded into — drop the
+      // upload override so it can't be resurrected there; the move override
+      // takes over from here.
+      clearUploadOverride(file.id);
       if (trackOverride) setMoveOverride(file, sourceParentId, destParentId);
       else bumpDriveListMutationEpoch();
 
@@ -564,7 +706,7 @@ export default function DrivePage() {
         destParentId
       );
     },
-    [currentParentId, syncDriveListCache, setMoveOverride, view]
+    [currentParentId, syncDriveListCache, setMoveOverride, clearUploadOverride, view]
   );
 
   const revertLocalMoveState = useCallback(
@@ -614,6 +756,7 @@ export default function DrivePage() {
           mimeFilter,
           pathDepth: 0,
           sharedDriveId: null,
+          sort: driveListSortKey,
         });
         const starredEntry = driveListCacheRef.current.get(starredKey);
         if (!starredEntry) {
@@ -623,7 +766,7 @@ export default function DrivePage() {
 
       patchDriveStarInSessionCache(driveListCacheRef.current, row, starred);
     },
-    [syncDriveListCache, view, setStarOverride, mimeFilter]
+    [syncDriveListCache, view, setStarOverride, mimeFilter, driveListSortKey]
   );
 
   const buildFilesListParams = useCallback(
@@ -635,7 +778,7 @@ export default function DrivePage() {
       if (pageToken) params.set("pageToken", pageToken);
       if (driveSearch) params.set("search", driveSearch);
       if (!driveSearch) {
-        params.set("orderBy", buildDriveFetchOrderBy(view, pathDepth));
+        params.set("orderBy", buildDriveFetchOrderBy(view, pathDepth, sortKey, sortDir));
       }
       if (
         !driveSearch &&
@@ -644,15 +787,17 @@ export default function DrivePage() {
       ) {
         params.set("view", view);
       }
-      if (mimeFilter === "folders") {
-        params.set("mimeType", "application/vnd.google-apps.folder");
+      // Filter server-side: the listing is paginated, so narrowing one fetched
+      // page client-side would miss matches sitting on later pages.
+      if (mimeFilter !== "all") {
+        params.set("mimeCategory", mimeFilter);
       }
       if (view === "shared-drive" && currentSharedDrive) {
         params.set("sharedDriveId", currentSharedDrive.id);
       }
       return params;
     },
-    [driveSearch, view, mimeFilter, currentSharedDrive]
+    [driveSearch, view, mimeFilter, currentSharedDrive, sortKey, sortDir]
   );
 
   const fetchDriveListPage = useCallback(
@@ -669,6 +814,7 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth,
         sharedDriveId: sharedDriveIdForApi,
+        sort: driveListSortKey,
       });
       const inflightKey = `${cacheKey}\0${pageToken ?? ""}`;
       if (!bust) {
@@ -721,7 +867,14 @@ export default function DrivePage() {
       });
       return promise;
     },
-    [view, driveSearch, mimeFilter, sharedDriveIdForApi, buildFilesListParams]
+    [
+      view,
+      driveSearch,
+      mimeFilter,
+      sharedDriveIdForApi,
+      driveListSortKey,
+      buildFilesListParams,
+    ]
   );
 
   const prefetchDriveFolder = useCallback(
@@ -734,11 +887,19 @@ export default function DrivePage() {
         mimeFilter,
         pathDepth,
         sharedDriveId: sharedDriveIdForApi,
+        sort: driveListSortKey,
       });
       if (driveListCacheRef.current.has(cacheKey)) return;
       void fetchDriveListPage(folderId, pathDepth);
     },
-    [view, mimeFilter, pathStack.length, sharedDriveIdForApi, fetchDriveListPage]
+    [
+      view,
+      mimeFilter,
+      pathStack.length,
+      sharedDriveIdForApi,
+      driveListSortKey,
+      fetchDriveListPage,
+    ]
   );
 
   const prefetchVisibleFolders = useCallback(
@@ -754,7 +915,21 @@ export default function DrivePage() {
   const loadDriveFiles = useCallback(
     async (opts: { append: boolean; pageToken?: string; bust?: boolean }) => {
       const loadId = `${driveListContextKey}\0${opts.pageToken ?? ""}\0${opts.append ? "a" : "f"}`;
+      // Same listing, different sort column: the rows on screen are still the
+      // right rows, so re-sort them in place while the authoritative order
+      // loads rather than flashing an empty list.
+      const prevContext = lastLoadedContextRef.current;
+      const sortOnlyChange =
+        !opts.append &&
+        !!prevContext &&
+        prevContext.baseKey === driveListBaseKey &&
+        prevContext.sort !== driveListSortKey &&
+        driveFilesRef.current.length > 0;
       if (!opts.append) {
+        lastLoadedContextRef.current = {
+          baseKey: driveListBaseKey,
+          sort: driveListSortKey,
+        };
         activeDriveListLoadRef.current = loadId;
         setDriveListError(null);
         if (opts.bust) driveListCacheRef.current.delete(driveListContextKey);
@@ -769,8 +944,13 @@ export default function DrivePage() {
           setDriveNextPageToken(cached.nextPageToken);
           setLoadingDrive(false);
           setRefreshingDrive(true);
+        } else if (sortOnlyChange) {
+          // Drop the page token — it belongs to the previous sort's query.
+          setDriveNextPageToken(undefined);
+          setLoadingDrive(false);
+          setRefreshingDrive(true);
         } else {
-          // New context (filter/sort/view) with no cache — don't show the previous list.
+          // New context (filter/view/folder) with no cache — don't show the previous list.
           setDriveFiles([]);
           setLoadingDrive(true);
           setRefreshingDrive(false);
@@ -787,6 +967,9 @@ export default function DrivePage() {
           opts.bust
         );
         if (!opts.append && activeDriveListLoadRef.current !== loadId) return;
+        // Drop overrides for uploads the server is now listing itself; the rest
+        // stay pinned so a refresh can't make a just-uploaded row vanish.
+        confirmUploadOverrides(data.files);
         setDriveFiles((prev) => {
           const serverFiles = dedupeDriveListById(
             applyListMutationOverrides(data.files, currentParentId),
@@ -796,7 +979,11 @@ export default function DrivePage() {
             : (() => {
                 // Search / mime filters: replace entirely — merging an unfiltered
                 // list (e.g. after switching to Folders) would show wrong types.
-                if (driveSearch || mimeFilter !== "all") return serverFiles;
+                // Same for a sort change: `prev` is the previous order's page
+                // window, whose extra rows don't belong in the new one.
+                if (driveSearch || mimeFilter !== "all" || sortOnlyChange) {
+                  return serverFiles;
+                }
                 // Browse + All types: keep local-only rows (fresh uploads).
                 const serverIds = new Set(serverFiles.map((f) => f.id));
                 const localOnly = prev.filter((f) => !serverIds.has(f.id));
@@ -831,26 +1018,67 @@ export default function DrivePage() {
       fetchDriveListPage,
       prefetchVisibleFolders,
       applyListMutationOverrides,
+      confirmUploadOverrides,
       mimeFilter,
+      driveListBaseKey,
+      driveListSortKey,
     ]
   );
 
-  /** Client sort — toggling columns reorders instantly without refetching. */
+  /** Recent (view root) is always ranked by real activity time, like Google Drive. */
+  const recentRoot = recentIgnoresSort;
+
+  /**
+   * The server already returns the page in `sortKey`/`sortDir` order; this
+   * re-application keeps optimistic rows (fresh uploads) in their right place
+   * and reorders instantly while a sort change is still in flight.
+   */
   const displayFiles = useMemo(() => {
     let rows = dedupeDriveListById(driveFiles);
+    // Keep just-uploaded rows visible even if a background refetch / re-sort
+    // rebuilt the list from a cache snapshot taken before the upload landed.
+    if (!driveSearch) rows = applyUploadOverrides(rows, currentParentId);
     if (!driveSearch && mimeFilter !== "all") {
       rows = rows.filter((f) => matchesMimeFilter(f, mimeFilter));
     }
+    // Recent: ignore the column sort — order by "last touched by me" so fresh
+    // uploads/edits and recently opened files sit at the top.
+    if (recentRoot) {
+      return [...rows].sort((a, b) => recentActivityMs(b) - recentActivityMs(a));
+    }
     // Search uses Drive relevance order by default; fullText queries cannot use
     // orderBy server-side, so apply client sort when the user picks a column.
-    const keepFetchOrder =
-      sortKey === "name" &&
-      sortDir === "asc" &&
-      (driveSearch ||
-        (view === "recent" && pathStack.length === 0));
+    const keepFetchOrder = sortKey === "name" && sortDir === "asc" && !!driveSearch;
     if (keepFetchOrder) return rows;
     return sortDriveListRows(rows, sortKey, sortDir);
-  }, [driveFiles, mimeFilter, driveSearch, view, pathStack.length, sortKey, sortDir]);
+  }, [
+    driveFiles,
+    mimeFilter,
+    driveSearch,
+    recentRoot,
+    sortKey,
+    sortDir,
+    applyUploadOverrides,
+    currentParentId,
+  ]);
+
+  /**
+   * First file id in each Recent date bucket → the bucket label, so a group
+   * header row ("Today", "Last week", …) is rendered above it in the list.
+   */
+  const recentGroupHeaders = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!recentRoot) return map;
+    let prev: string | null = null;
+    for (const f of displayFiles) {
+      const label = recentBucketLabel(recentActivityMs(f));
+      if (label !== prev) {
+        map.set(f.id, label);
+        prev = label;
+      }
+    }
+    return map;
+  }, [recentRoot, displayFiles]);
 
   /** Clear the visible list and cancel in-flight loads when changing folders. */
   function beginFolderNavigation() {
@@ -915,6 +1143,78 @@ export default function DrivePage() {
     await loadDriveFiles({ append: false, bust: true });
     warmDriveListCachesAfterRefresh();
   }, [loadDriveFiles, warmDriveListCachesAfterRefresh]);
+
+  /** "Show file location" from the upload queue — jump to the folder the
+   *  batch was dropped into and briefly highlight the uploaded row. */
+  const locateUploadedItem = useCallback(
+    (item: UploadQueueItem) => {
+      const dest = uploadDestRef.current ?? {
+        view: "my-drive" as const,
+        pathStack: [] as PathCrumb[],
+        sharedDrive: null,
+      };
+      const samePath =
+        dest.view === view &&
+        dest.pathStack.length === pathStack.length &&
+        dest.pathStack.every((c, i) => c.id === pathStack[i]?.id);
+      setPreviewFile(null);
+      // Only tear down the list when we're actually navigating away — clearing
+      // it while staying put would leave the view stuck empty (no context change
+      // to retrigger a load).
+      if (!samePath || driveSearch) {
+        setDriveSearchInput("");
+        setDriveSearch("");
+        beginFolderNavigation();
+        setView(dest.view);
+        setCurrentSharedDrive(dest.sharedDrive);
+        setPathStack(dest.pathStack);
+      }
+      if (item.targetId) {
+        setUploadHighlightId(item.targetId);
+        uploadHighlightFollowRef.current = true;
+        if (uploadHighlightTimerRef.current) {
+          clearTimeout(uploadHighlightTimerRef.current);
+        }
+        uploadHighlightTimerRef.current = setTimeout(() => {
+          uploadHighlightFollowRef.current = false;
+          setUploadHighlightId(null);
+        }, UPLOAD_HIGHLIGHT_MS);
+      }
+    },
+    [view, pathStack, driveSearch]
+  );
+
+  /**
+   * Keep a located row centred while the list settles. Landing in the folder
+   * usually kicks off a background refresh, and when those rows arrive the
+   * located file moves to its real sorted position — a one-shot scroll on mount
+   * would leave the viewport parked wherever the old row order put it.
+   */
+  useEffect(() => {
+    if (!uploadHighlightId || !uploadHighlightFollowRef.current) return;
+    const scroller = listScrollRef.current;
+    if (!scroller) return;
+    const row = scroller.querySelector<HTMLElement>(
+      `[data-drive-row-id="${CSS.escape(uploadHighlightId)}"]`
+    );
+    row?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [uploadHighlightId, displayFiles]);
+
+  /** Hand scrolling back to the user the moment they take over. */
+  useEffect(() => {
+    if (!uploadHighlightId) return;
+    const scroller = listScrollRef.current;
+    if (!scroller) return;
+    const stopFollowing = () => {
+      uploadHighlightFollowRef.current = false;
+    };
+    scroller.addEventListener("wheel", stopFollowing, { passive: true });
+    scroller.addEventListener("touchmove", stopFollowing, { passive: true });
+    return () => {
+      scroller.removeEventListener("wheel", stopFollowing);
+      scroller.removeEventListener("touchmove", stopFollowing);
+    };
+  }, [uploadHighlightId]);
 
   // Auto-load more: observe the sentinel <li> inside the scrollable list.
   // Re-subscribes whenever driveNextPageToken changes so the new token is captured.
@@ -1019,6 +1319,13 @@ export default function DrivePage() {
   /** Multi-file upload with bounded parallelism (like Google Drive). */
   async function onUploadFiles(files: FileList | null) {
     if (!files?.length) return;
+    const parentAtUpload = currentParentId;
+    uploadDestRef.current = {
+      view,
+      pathStack: [...pathStack],
+      sharedDrive: currentSharedDrive,
+      parentId: parentAtUpload,
+    };
     const list = Array.from(files);
     const items: UploadQueueItem[] = list.map((file, i) => ({
       id: `f-${Date.now()}-${i}`,
@@ -1035,11 +1342,12 @@ export default function DrivePage() {
         const item = items[i];
         updateQueueItem(item.id, { status: "uploading", percent: 1 });
         try {
-          const uploaded = await uploadSingleFile(file, currentParentId, (pct) => {
+          const uploaded = await uploadSingleFile(file, parentAtUpload, (pct) => {
             updateQueueItem(item.id, { percent: pct });
           }, signal);
           if (signal.aborted) return;
-          updateQueueItem(item.id, { status: "done", percent: 100 });
+          updateQueueItem(item.id, { status: "done", percent: 100, targetId: uploaded.id });
+          setUploadOverride(uploaded, parentAtUpload);
           syncDriveListCache((prev) => {
             if (prev.some((r) => r.id === uploaded.id)) return prev;
             return [uploaded, ...prev];
@@ -1059,12 +1367,23 @@ export default function DrivePage() {
       uploadAbortRef.current = null;
       setUploadBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+      // Recent (and any other aux views) now have stale caches — drop them so
+      // the new files show up without a full page reload.
+      invalidateDriveViewCaches(["recent"]);
+      if (view === "recent") void loadDriveFiles({ append: false, bust: true });
     }
   }
 
   /** Folder upload — create subfolders by depth, then upload files in parallel. */
   async function onUploadFolder(files: FileList | null) {
     if (!files?.length) return;
+    const parentAtUpload = currentParentId;
+    uploadDestRef.current = {
+      view,
+      pathStack: [...pathStack],
+      sharedDrive: currentSharedDrive,
+      parentId: parentAtUpload,
+    };
     const list = Array.from(files);
 
     // Collect unique parent-directory paths from each file's
@@ -1252,16 +1571,19 @@ export default function DrivePage() {
         for (const item of rootFolderItems) {
           if (item.status === "error" || item.status === "cancelled") continue;
           const hadErrors = fileErrors.get(item.name);
+          const createdRow = topLevelFolderRows.find((r) => r.name === item.name);
           updateQueueItem(item.id, {
             status: hadErrors ? "error" : "done",
             percent: hadErrors ? maxDisplayPctByRoot.get(item.name) : 100,
             error: hadErrors ? "Some files failed to upload" : undefined,
+            targetId: createdRow?.id,
           });
         }
       }
 
       // Prepend top-level folder(s) so they appear without reloading the whole list.
       if (topLevelFolderRows.length > 0) {
+        for (const row of topLevelFolderRows) setUploadOverride(row, parentAtUpload);
         syncDriveListCache((prev) => {
           const ids = new Set(topLevelFolderRows.map((f) => f.id));
           return [...topLevelFolderRows, ...prev.filter((f) => !ids.has(f.id))];
@@ -1271,6 +1593,8 @@ export default function DrivePage() {
       uploadAbortRef.current = null;
       setUploadBusy(false);
       if (folderInputRef.current) folderInputRef.current.value = "";
+      invalidateDriveViewCaches(["recent"]);
+      if (view === "recent") void loadDriveFiles({ append: false, bust: true });
     }
   }
 
@@ -1966,13 +2290,19 @@ export default function DrivePage() {
             {/* Column headers — frozen above the scrolling file list (list view only). */}
             {viewMode === "list" && (
             <div className="flex shrink-0 items-center gap-3.5 border-b border-[var(--color-border)] px-5 py-3.5">
-              <SortHeader
-                label="Name"
-                active={sortKey === "name"}
-                dir={sortDir}
-                onClick={() => toggleSort("name")}
-                className="min-w-0 flex-1"
-              />
+              {recentRoot ? (
+                <span className="font-mono min-w-0 flex-1 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--sidebar-text-whisper)]">
+                  {titleCase("Name")}
+                </span>
+              ) : (
+                <SortHeader
+                  label="Name"
+                  active={sortKey === "name"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("name")}
+                  className="min-w-0 flex-1"
+                />
+              )}
               <span className="font-mono hidden w-[140px] shrink-0 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--sidebar-text-whisper)] md:block">
                 {titleCase("Owner")}
               </span>
@@ -1981,20 +2311,30 @@ export default function DrivePage() {
                   {titleCase("Location")}
                 </span>
               )}
-              <SortHeader
-                label="Modified"
-                active={sortKey === "modifiedTime"}
-                dir={sortDir}
-                onClick={() => toggleSort("modifiedTime")}
-                className="hidden w-[150px] shrink-0 sm:flex"
-              />
-              <SortHeader
-                label="Size"
-                active={sortKey === "size"}
-                dir={sortDir}
-                onClick={() => toggleSort("size")}
-                className="hidden w-[90px] shrink-0 sm:flex"
-              />
+              {recentRoot ? (
+                <span className="font-mono hidden w-[150px] shrink-0 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--sidebar-text-whisper)] sm:block">
+                  {titleCase("Last activity")}
+                </span>
+              ) : (
+                <SortHeader
+                  label="Modified"
+                  active={sortKey === "modifiedTime"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("modifiedTime")}
+                  className="hidden w-[150px] shrink-0 sm:flex"
+                />
+              )}
+              {recentRoot ? (
+                <span className="hidden w-[90px] shrink-0 sm:block" aria-hidden />
+              ) : (
+                <SortHeader
+                  label="Size"
+                  active={sortKey === "size"}
+                  dir={sortDir}
+                  onClick={() => toggleSort("size")}
+                  className="hidden w-[90px] shrink-0 sm:flex"
+                />
+              )}
               <span className="w-7 shrink-0" aria-hidden />
             </div>
             )}
@@ -2013,13 +2353,21 @@ export default function DrivePage() {
                 const sizeNum = file.size ? parseInt(file.size, 10) : NaN;
                 const sizeLabel =
                   isFolder ? "—" : !Number.isNaN(sizeNum) ? formatBytes(sizeNum) : "—";
-                const dateLabel = file.modifiedTime ? formatDate(file.modifiedTime) : "—";
+                const activityMs = recentRoot ? recentActivityMs(file) : 0;
+                const dateLabel = recentRoot
+                  ? activityMs > 0
+                    ? formatDate(new Date(activityMs).toISOString())
+                    : "—"
+                  : file.modifiedTime
+                    ? formatDate(file.modifiedTime)
+                    : "—";
                 const ownerLabel = formatDriveOwnerLabel(file.owners);
                 const owner = primaryDriveOwner(file.owners);
                 const ownerEmail = owner?.emailAddress?.trim().toLowerCase();
                 const ownerName = owner?.me ? "me" : owner?.displayName?.trim() || ownerEmail || ownerLabel;
                 const ownerSeed = owner?.me ? "me" : ownerEmail || ownerName;
                 const isRenaming = renameTargetId === file.id;
+                const isUploadHighlighted = file.id === uploadHighlightId;
 
                 const rowMenuActions = (
                   <>
@@ -2142,8 +2490,13 @@ export default function DrivePage() {
                   return (
                     <li
                       key={file.id}
+                      data-drive-row-id={file.id}
                       data-testid={`drive-item-${file.id}`}
-                      className="group relative flex flex-col gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--color-copper)]/40 hover:shadow-[var(--shadow-md)] hover:bg-[var(--color-surface-offset)]/40"
+                      className={cn(
+                        "group relative flex flex-col gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-all duration-150 hover:-translate-y-0.5 hover:border-[var(--color-copper)]/40 hover:shadow-[var(--shadow-md)] hover:bg-[var(--color-surface-offset)]/40",
+                        isUploadHighlighted &&
+                          "!border-[var(--color-copper)] ring-2 ring-[var(--color-copper)]/30"
+                      )}
                       onContextMenu={(e) => openRowContextMenu(e, file)}
                       onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                       onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
@@ -2204,14 +2557,26 @@ export default function DrivePage() {
                   );
                 }
 
+                const groupHeader = recentGroupHeaders.get(file.id);
+
                 return (
+                  <Fragment key={file.id}>
+                  {groupHeader && (
+                    <li className="font-mono bg-[var(--color-surface-offset)] px-5 pb-2 pt-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-text-whisper)]">
+                      {groupHeader}
+                    </li>
+                  )}
                   <li
-                    key={file.id}
+                    data-drive-row-id={file.id}
                     role="button"
                     tabIndex={0}
                     onClick={rowOnClick}
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); rowOnClick(); } }}
-                    className="group flex cursor-pointer items-center gap-3.5 px-5 py-4 transition-colors hover:bg-[var(--color-surface-offset)]"
+                    className={cn(
+                      "group flex cursor-pointer items-center gap-3.5 px-5 py-4 transition-colors hover:bg-[var(--color-surface-offset)]",
+                      isUploadHighlighted &&
+                        "bg-[var(--color-copper)]/10 ring-2 ring-inset ring-[var(--color-copper)]/40"
+                    )}
                     onContextMenu={(e) => openRowContextMenu(e, file)}
                     onMouseEnter={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
                     onMouseDown={isFolder ? () => prefetchDriveFolder(file.id) : undefined}
@@ -2279,7 +2644,7 @@ export default function DrivePage() {
 
                     {/* File size */}
                     <span className="hidden w-[90px] shrink-0 text-[13px] text-[var(--color-text-faint)] sm:block">
-                      {sizeLabel}
+                      {recentRoot ? "" : sizeLabel}
                     </span>
 
                     {/* Actions — stop propagation so kebab doesn't trigger row click */}
@@ -2287,6 +2652,7 @@ export default function DrivePage() {
                       {RowMenu}
                     </div>
                   </li>
+                  </Fragment>
                 );
               })}
 
@@ -2560,6 +2926,7 @@ export default function DrivePage() {
         busy={uploadBusy}
         onCancel={cancelUpload}
         onClose={() => setUploadQueue([])}
+        onLocate={locateUploadedItem}
       />
 
       {/* New folder modal */}
@@ -2624,6 +2991,40 @@ export default function DrivePage() {
  * it wasn't the active one. Shows the up/down arrow only on the active
  * column, matching Google Drive.
  */
+/**
+ * Date bucket for a Recent-tab row, mirroring Google Drive's group headers
+ * ("Today", "Yesterday", "Last week", …). `ms` is the row's recent-activity time.
+ */
+function recentBucketLabel(ms: number): string {
+  if (!ms) return "Older";
+  const now = new Date();
+  const dayMs = 86_400_000;
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  ).getTime();
+  if (ms >= startOfToday) return "Today";
+  if (ms >= startOfToday - dayMs) return "Yesterday";
+  // Week starts Monday.
+  const startOfWeek = startOfToday - ((now.getDay() + 6) % 7) * dayMs;
+  if (ms >= startOfWeek) return "Earlier this week";
+  if (ms >= startOfWeek - 7 * dayMs) return "Last week";
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  if (ms >= startOfMonth) return "Earlier this month";
+  const startOfLastMonth = new Date(
+    now.getFullYear(),
+    now.getMonth() - 1,
+    1
+  ).getTime();
+  if (ms >= startOfLastMonth) return "Last month";
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, {
+    month: "long",
+    ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+  });
+}
+
 function SortHeader({
   label,
   active,

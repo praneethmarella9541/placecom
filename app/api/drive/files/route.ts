@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { listDriveFilesPage, type DriveView } from "@/lib/drive";
+import {
+  listDriveFilesPage,
+  DRIVE_MIME_CATEGORIES,
+  type DriveView,
+  type DriveMimeCategory,
+} from "@/lib/drive";
 
 export const runtime = "nodejs";
 
@@ -24,6 +29,13 @@ export async function GET(request: Request) {
   // requests from the Move modal) — the filtered set is much smaller so
   // a larger page is still fast. Default cap is 50 for mixed listings.
   const mimeTypeFilter = searchParams.get("mimeType")?.trim() || undefined;
+  const mimeCategoryRaw = searchParams.get("mimeCategory")?.trim() as
+    | DriveMimeCategory
+    | null;
+  const mimeCategory: DriveMimeCategory | undefined =
+    mimeCategoryRaw && DRIVE_MIME_CATEGORIES.includes(mimeCategoryRaw)
+      ? mimeCategoryRaw
+      : undefined;
   const sharedDriveId = searchParams.get("sharedDriveId")?.trim() || undefined;
   const orderBy = searchParams.get("orderBy")?.trim() || undefined;
   const maxPageSize = 100;
@@ -40,6 +52,7 @@ export async function GET(request: Request) {
       parentId,
       view,
       mimeTypeFilter,
+      mimeCategory,
       sharedDriveId,
       orderBy,
     });

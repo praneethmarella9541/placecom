@@ -50,6 +50,10 @@ export type DriveFileRow = {
   name: string;
   mimeType: string;
   modifiedTime: string;
+  /** Populated for Recent-tab rows — used to rank by real "recent activity". */
+  modifiedByMeTime?: string;
+  viewedByMeTime?: string;
+  createdTime?: string;
   size?: string;
   webViewLink?: string;
   starred?: boolean;
@@ -132,17 +136,71 @@ function buildFilesListQ(
     return "starred = true and trashed = false";
   }
   if (atViewRoot && view === "recent") {
-    return "trashed = false";
+    // Mirror Google Drive's Recent: files only, no folders.
+    return "trashed = false and mimeType != 'application/vnd.google-apps.folder'";
   }
   const pid = escapeDriveQFragment(parentId);
   return `'${pid}' in parents and trashed = false`;
+}
+
+/** Sidebar "type" filter categories — mirrors the drive page's MimeFilter. */
+export type DriveMimeCategory =
+  | "folders"
+  | "documents"
+  | "spreadsheets"
+  | "images"
+  | "videos"
+  | "pdfs";
+
+export const DRIVE_MIME_CATEGORIES: readonly DriveMimeCategory[] = [
+  "folders",
+  "documents",
+  "spreadsheets",
+  "images",
+  "videos",
+  "pdfs",
+] as const;
+
+const DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder";
+
+/**
+ * Drive `q` fragment for a type filter. Note `contains` on mimeType is a
+ * prefix match, so category buckets that aren't a mime prefix (documents,
+ * spreadsheets) have to enumerate their types.
+ */
+function mimeCategoryQFragment(category: DriveMimeCategory): string | undefined {
+  switch (category) {
+    case "folders":
+      return `mimeType = '${DRIVE_FOLDER_MIME}'`;
+    case "images":
+      return "mimeType contains 'image/'";
+    case "videos":
+      return "mimeType contains 'video/'";
+    case "pdfs":
+      return "mimeType = 'application/pdf'";
+    case "documents":
+      return (
+        "(mimeType = 'application/vnd.google-apps.document'" +
+        " or mimeType = 'application/msword'" +
+        " or mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'" +
+        " or mimeType contains 'text/')"
+      );
+    case "spreadsheets":
+      return (
+        "(mimeType = 'application/vnd.google-apps.spreadsheet'" +
+        " or mimeType = 'application/vnd.ms-excel'" +
+        " or mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')"
+      );
+    default:
+      return undefined;
+  }
 }
 
 const LIST_FILE_FIELDS =
   "id, name, mimeType, modifiedTime, size, webViewLink, starred, thumbnailLink, iconLink, owners(displayName,emailAddress,me)";
 
 const LIST_FILE_FIELDS_RECENT =
-  `${LIST_FILE_FIELDS}, parents, driveId, sharedWithMeTime`;
+  `${LIST_FILE_FIELDS}, parents, driveId, sharedWithMeTime, modifiedByMeTime, viewedByMeTime, createdTime`;
 
 type FolderMeta = {
   id: string;
@@ -288,6 +346,12 @@ export async function listDriveFilesPage(
      * a full-page result client-side.
      */
     mimeTypeFilter?: string;
+    /**
+     * Sidebar type filter ("images", "pdfs", …). Applied server-side for the
+     * same reason: the list is paginated, so filtering a single fetched page
+     * client-side would silently miss matches on later pages.
+     */
+    mimeCategory?: DriveMimeCategory;
     /** When listing inside a shared drive, pass its id so Drive uses corpora=drive. */
     sharedDriveId?: string;
     /** Drive files.list orderBy — e.g. "folder,name_natural". */
@@ -309,6 +373,10 @@ export async function listDriveFilesPage(
   if (options.mimeTypeFilter) {
     q = `${q} and mimeType = '${escapeDriveQFragment(options.mimeTypeFilter)}'`;
   }
+  const categoryQ = options.mimeCategory
+    ? mimeCategoryQFragment(options.mimeCategory)
+    : undefined;
+  if (categoryQ) q = `${q} and ${categoryQ}`;
   const includeRecentLocation = !hasSearch && atViewRoot && view === "recent";
   // Also fetch parents/driveId for search so we can resolve locations.
   const includeLocation = includeRecentLocation || hasSearch;
@@ -351,7 +419,11 @@ export async function listDriveFilesPage(
     if (orderBy) {
       params.set("orderBy", orderBy);
     } else if (atViewRoot && view === "recent") {
-      params.set("orderBy", "viewedByMeTime desc");
+      // "modifiedByMeTime" covers uploads and edits (a bare "viewedByMeTime"
+      // buries files you never opened, e.g. fresh uploads). The route then
+      // re-ranks the page by the max of viewed/modified/created time so a
+      // recently *opened* file also floats up.
+      params.set("orderBy", "modifiedByMeTime desc");
     } else {
       params.set("orderBy", "folder,name_natural");
     }
@@ -402,12 +474,17 @@ export async function listDriveFilesPage(
     nextPageToken?: string;
   };
 
+  const isRecentRoot = atViewRoot && view === "recent" && !hasSearch;
+
   const files: DriveFileRow[] = (data.files || []).map(
     ({
       id,
       name,
       mimeType,
       modifiedTime,
+      modifiedByMeTime,
+      viewedByMeTime,
+      createdTime,
       size,
       webViewLink,
       starred,
@@ -425,8 +502,15 @@ export async function listDriveFilesPage(
       thumbnailLink,
       iconLink,
       owners,
+      ...(isRecentRoot
+        ? { modifiedByMeTime, viewedByMeTime, createdTime }
+        : {}),
     })
   );
+
+  if (isRecentRoot) {
+    files.sort((a, b) => recentActivityMs(b) - recentActivityMs(a));
+  }
 
   if (includeLocation && files.length > 0) {
     await enrichRecentFileLocations(accessToken, files, data.files || []);
@@ -436,6 +520,27 @@ export async function listDriveFilesPage(
     files,
     nextPageToken: data.nextPageToken,
   };
+}
+
+/**
+ * "Recent activity" timestamp for a Recent-tab row — the most recent of when
+ * the user last opened, last modified, or created the file (falling back to the
+ * file's own modifiedTime). Mirrors how Google Drive's Recent view ranks items.
+ */
+export function recentActivityMs(f: DriveFileRow): number {
+  const times = [
+    f.viewedByMeTime,
+    f.modifiedByMeTime,
+    f.createdTime,
+    f.modifiedTime,
+  ];
+  let max = 0;
+  for (const t of times) {
+    if (!t) continue;
+    const ms = Date.parse(t);
+    if (!Number.isNaN(ms) && ms > max) max = ms;
+  }
+  return max;
 }
 
 const FORM_MIME = "application/vnd.google-apps.form";

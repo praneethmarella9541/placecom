@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronUp, X, CheckCircle2, AlertCircle, Loader2, Ban } from "lucide-react";
+import { ChevronDown, ChevronUp, X, CheckCircle2, AlertCircle, Loader2, Ban, FolderOpen } from "lucide-react";
 import { IconFile, IconFolder } from "@/components/Icons";
 
 /** Status of a single item in the upload queue. */
@@ -18,6 +18,11 @@ export type UploadQueueItem = {
   percent?: number;
   /** Populated when status === "error". */
   error?: string;
+  /**
+   * Drive id of the uploaded file / top-level folder, set once the row is
+   * done. Enables the "Show file location" action.
+   */
+  targetId?: string;
 };
 
 type Props = {
@@ -28,6 +33,8 @@ type Props = {
   onCancel?: () => void;
   /** Dismiss the card (only offered once the queue settles). */
   onClose: () => void;
+  /** Navigate to the folder that contains a finished upload and highlight it. */
+  onLocate?: (item: UploadQueueItem) => void;
 };
 
 /**
@@ -36,7 +43,7 @@ type Props = {
  * collapses the per-item list, and one row per file/folder with a live
  * status icon (spinner → check, or error). Mirrors Drive's upload toast.
  */
-export function DriveUploadQueue({ items, busy, onCancel, onClose }: Props) {
+export function DriveUploadQueue({ items, busy, onCancel, onClose, onLocate }: Props) {
   const [collapsed, setCollapsed] = useState(false);
   if (items.length === 0) return null;
 
@@ -121,6 +128,17 @@ export function DriveUploadQueue({ items, busy, onCancel, onClose }: Props) {
               <span className="min-w-0 flex-1 truncate text-[13px] text-zinc-700 dark:text-zinc-200" title={item.name}>
                 {item.name}
               </span>
+              {item.status === "done" && item.targetId && onLocate ? (
+                <button
+                  type="button"
+                  onClick={() => onLocate(item)}
+                  className="shrink-0 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                  aria-label="Show file location"
+                  title="Show file location"
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </button>
+              ) : null}
               <span className="shrink-0 tabular-nums text-[11px] text-zinc-500">
                 {item.status === "uploading" ? (
                   item.percent != null ? (

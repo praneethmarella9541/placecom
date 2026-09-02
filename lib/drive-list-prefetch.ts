@@ -32,6 +32,8 @@ export const DRIVE_ROOT_PREFETCH_SPECS: readonly DriveListPrefetchSpec[] = [
 ] as const;
 
 const DEFAULT_MIME_FILTER = "all";
+/** Matches the drive page's initial sortKey/sortDir. */
+export const DEFAULT_LIST_SORT = "name:asc";
 
 const SESSION_CACHE = new Map<string, DriveListCacheSnapshot>();
 const PREFETCH_IN_FLIGHT = new Set<string>();
@@ -69,6 +71,11 @@ export function clearDriveListSessionCache(): void {
   activePrefetchAbort = null;
 }
 
+/**
+ * NOTE: segments are positional — `drive-move-session-sync` and
+ * `drive-star-session-sync` read parent (0), view (1) and pathDepth (4) out of
+ * the key. Only ever append new segments.
+ */
 export function buildDriveListCacheKey(parts: {
   parent: string;
   view: string;
@@ -76,6 +83,8 @@ export function buildDriveListCacheKey(parts: {
   mimeFilter: string;
   pathDepth: number;
   sharedDriveId: string | null;
+  /** `"<sortKey>:<sortDir>"` — the list is fetched pre-sorted by the server. */
+  sort?: string;
 }): string {
   return [
     parts.parent,
@@ -84,13 +93,35 @@ export function buildDriveListCacheKey(parts: {
     parts.mimeFilter,
     String(parts.pathDepth),
     parts.sharedDriveId ?? "",
+    parts.sort ?? DEFAULT_LIST_SORT,
   ].join("\0");
 }
 
 /** Stable fetch order for list API + pagination; UI sort is applied client-side. */
-export function buildDriveFetchOrderBy(view: string, pathDepth: number): string {
-  if (pathDepth === 0 && view === "recent") return "viewedByMeTime desc";
-  return "folder,name_natural";
+/**
+ * Fetch order sent to the Drive API. This must match the column the UI is
+ * sorted by: the list is paginated, so sorting only the rows already fetched
+ * would hide matches sitting on a later page.
+ * `folder` stays ascending in every case so folders keep leading the list.
+ */
+export function buildDriveFetchOrderBy(
+  view: string,
+  pathDepth: number,
+  sortKey: string = "name",
+  sortDir: "asc" | "desc" = "asc"
+): string {
+  // Recent ranks by "last touched by me" so fresh uploads/edits surface; the
+  // API route re-ranks the page by max(viewed/modified/created) time.
+  if (pathDepth === 0 && view === "recent") return "modifiedByMeTime desc";
+  const dir = sortDir === "desc" ? " desc" : "";
+  switch (sortKey) {
+    case "modifiedTime":
+      return `folder,modifiedTime${dir}`;
+    case "size":
+      return `folder,quotaBytesUsed${dir}`;
+    default:
+      return `folder,name_natural${dir}`;
+  }
 }
 
 function buildPrefetchParams(spec: DriveListPrefetchSpec): URLSearchParams {

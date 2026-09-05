@@ -484,6 +484,23 @@ export function WhatsAppMessaging({
     );
   }, []);
 
+  /**
+   * The 24h session window is server-side state that changes on its own — an
+   * inbound reply opens it, and it lapses on a timer — so it has to be
+   * re-checked as messages arrive, not just once when the thread is opened.
+   * (Previously it only ran on peer change, so a reply that had just opened
+   * the window still showed "Template required" until you left and came back.)
+   */
+  const refreshSession = useCallback(async (rawPeer: string) => {
+    const p = recipientE164(rawPeer);
+    if (!p || !isValidE164(p)) { setSessionOpen(null); return; }
+    try {
+      const res = await fetch(`/api/whatsapp/session?peer=${encodeURIComponent(p)}`);
+      const data = (await res.json()) as { sessionOpen?: boolean };
+      if (res.ok) setSessionOpen(data.sessionOpen ?? false);
+    } catch { setSessionOpen(null); }
+  }, []);
+
   const loadMessages = useCallback(async (p: string, opts?: { silent?: boolean; force?: boolean }) => {
     const silent = opts?.silent ?? false;
     const force = opts?.force ?? false;
@@ -501,7 +518,12 @@ export function WhatsAppMessaging({
           setStickToBottom(true);
           return incoming;
         }
-        if (hasNewMessages(prev, incoming)) queueMicrotask(() => setStickToBottom(true));
+        if (hasNewMessages(prev, incoming)) {
+          queueMicrotask(() => setStickToBottom(true));
+          // A newly arrived inbound reply is exactly what opens the window —
+          // re-check instead of leaving the composer stuck on "Template required".
+          void refreshSession(p);
+        }
         return mergeFetchedMessages(prev, incoming);
       });
       clearUnreadForPeer(p);
@@ -511,7 +533,7 @@ export function WhatsAppMessaging({
     } finally {
       if (peerRef.current === p && !silent) setLoadingThread(false);
     }
-  }, [clearUnreadForPeer, markThreadRead]);
+  }, [clearUnreadForPeer, markThreadRead, refreshSession]);
 
   const resetThreadUi = useCallback(() => {
     setStickToBottom(true);
@@ -586,7 +608,10 @@ export function WhatsAppMessaging({
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         void loadConversations({ silent: true });
-        if (peerRef.current) void loadMessages(peerRef.current, { silent: true, force: true });
+        if (peerRef.current) {
+          void loadMessages(peerRef.current, { silent: true, force: true });
+          void refreshSession(peerRef.current);
+        }
       }
     };
     document.addEventListener("visibilitychange", onVisible);
@@ -599,9 +624,12 @@ export function WhatsAppMessaging({
     const t = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void loadMessages(peer, { silent: true, force: true });
+      // Also covers the other direction: a window that lapses while the
+      // thread sits open should go back to "Template required" on its own.
+      void refreshSession(peer);
     }, POLL_MS);
     return () => window.clearInterval(t);
-  }, [peer, loadMessages]);
+  }, [peer, loadMessages, refreshSession]);
 
   useEffect(() => () => { if (highlightClearRef.current) clearTimeout(highlightClearRef.current); }, []);
 
@@ -616,16 +644,9 @@ export function WhatsAppMessaging({
 
   useEffect(() => {
     const raw = peer || newPhone.trim();
-    const p = recipientE164(raw);
-    if (!raw || !isValidE164(p)) { setSessionOpen(null); return; }
-    void (async () => {
-      try {
-        const res = await fetch(`/api/whatsapp/session?peer=${encodeURIComponent(p)}`);
-        const data = (await res.json()) as { sessionOpen?: boolean };
-        if (res.ok) setSessionOpen(data.sessionOpen ?? false);
-      } catch { setSessionOpen(null); }
-    })();
-  }, [peer, newPhone]);
+    if (!raw || !isValidE164(recipientE164(raw))) { setSessionOpen(null); return; }
+    void refreshSession(raw);
+  }, [peer, newPhone, refreshSession]);
 
   const onThreadScroll = useCallback(() => {
     const el = scrollThreadRef.current;

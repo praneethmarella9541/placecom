@@ -93,7 +93,6 @@ import {
   buildMailListCacheKey,
   clearMailListSessionCache,
   getMailListSessionCache,
-  MAIL_LIST_PREFETCH_SPECS,
   prefetchMailListViewIfMissing,
   prefetchMailListViews,
   setMailListCache,
@@ -105,6 +104,7 @@ import {
   rememberOpenThread,
   rememberPrefetchThread,
   prefetchMailThreadBodies,
+  prefetchMailBodiesForWarmedCategories,
   startMailListAndBodyPrefetchWarm,
 } from "@/lib/mail-thread-prefetch";
 import { isPrefetchPausedAfterBrowserReload } from "@/lib/login-prefetch-session";
@@ -2306,20 +2306,22 @@ export default function InboxPage() {
   }, [folder, category, effectiveLabelId, mailSearch, prefetchBodiesForRows]);
 
   // Warm list + body caches on first visit only — after F5 use sessionStorage instead.
+  //
+  // Body warming goes through prefetchMailBodiesForWarmedCategories rather
+  // than firing prefetchMailThreadBodies per spec here: that helper pools
+  // every warmed folder/category into ONE shared, low-concurrency worker set
+  // (and guards against overlapping runs), whereas calling
+  // prefetchMailThreadBodies independently per spec stacks each spec's own
+  // (much higher) default concurrency on top of the others with nothing
+  // coordinating the total — easily dozens of simultaneous
+  // threads.get(format=full) calls, which is exactly what was blowing past
+  // Gmail's per-user "units per minute" quota on inbox load.
   useEffect(() => {
     if (isPrefetchPausedAfterBrowserReload()) return;
 
     void prefetchMailListViews({ concurrency: 4 }).then(() => {
       if (MAIL_THREAD_PREFETCH_DISABLED) return;
-      const cache = getMailListSessionCache();
-      for (const spec of MAIL_LIST_PREFETCH_SPECS) {
-        const key = buildMailListCacheKey(spec.apiFolder, spec.labelId ?? null, "");
-        const page = cache.get(key);
-        if (!page?.threads.length) continue;
-        void prefetchMailThreadBodies(
-          page.threads.filter((t) => !t.draftId).map((t) => t.id)
-        );
-      }
+      void prefetchMailBodiesForWarmedCategories();
     });
   }, []);
 

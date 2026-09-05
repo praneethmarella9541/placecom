@@ -9,6 +9,9 @@
     "app/api/meetings/sync/route.ts": {
       "maxDuration": 120
     },
+    "app/api/cron/sequences/route.ts": {
+      "maxDuration": 300
+    },
     "app/api/drive/upload-chunk/route.ts": {
       "maxDuration": 120
     },

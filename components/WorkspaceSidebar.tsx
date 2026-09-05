@@ -21,6 +21,7 @@ import {
   Radio,
   UserRound,
   Users,
+  Workflow,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
@@ -41,6 +42,7 @@ const commsNav = [
   { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
   { href: "/calls", label: "Calls", Icon: Phone },
   { href: "/broadcasting", label: "Broadcasting", Icon: Radio },
+  { href: "/sequences", label: "Sequences", Icon: Workflow },
   { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;
 

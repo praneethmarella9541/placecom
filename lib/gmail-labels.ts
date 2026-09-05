@@ -1,5 +1,8 @@
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
+import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
+
+type LabelCallOpts = { mailboxKey?: string };
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -48,13 +51,17 @@ export function prettyLabelName(label: GmailLabel): string {
   return stripped.charAt(0) + stripped.slice(1).toLowerCase();
 }
 
-export async function listLabels(accessToken: string): Promise<GmailLabel[]> {
+export async function listLabels(
+  accessToken: string,
+  opts?: LabelCallOpts
+): Promise<GmailLabel[]> {
   let res: Response;
   try {
-    res = await fetch(`${GMAIL_API}/labels`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: "no-store",
-    });
+    res = await fetchGmail(
+      `${GMAIL_API}/labels`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.labelsList }
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (labels list)"));
   }
@@ -93,7 +100,8 @@ export async function listLabels(accessToken: string): Promise<GmailLabel[]> {
 
 export async function createLabel(
   accessToken: string,
-  input: { name: string; color?: { textColor: string; backgroundColor: string } }
+  input: { name: string; color?: { textColor: string; backgroundColor: string } },
+  opts?: LabelCallOpts
 ): Promise<GmailLabel> {
   const payload: Record<string, unknown> = {
     name: input.name,
@@ -105,14 +113,18 @@ export async function createLabel(
 
   let res: Response;
   try {
-    res = await fetch(`${GMAIL_API}/labels`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
+    res = await fetchGmail(
+      `${GMAIL_API}/labels`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       },
-      body: JSON.stringify(payload),
-    });
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.labelsList }
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (create label)"));
   }
@@ -151,21 +163,26 @@ export async function createLabel(
 export async function updateLabel(
   accessToken: string,
   labelId: string,
-  input: { name: string }
+  input: { name: string },
+  opts?: LabelCallOpts
 ): Promise<GmailLabel> {
   const name = input.name.trim();
   if (!name) throw new Error("Label name is required");
 
   let res: Response;
   try {
-    res = await fetch(`${GMAIL_API}/labels/${encodeURIComponent(labelId)}`, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
+    res = await fetchGmail(
+      `${GMAIL_API}/labels/${encodeURIComponent(labelId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name }),
       },
-      body: JSON.stringify({ name }),
-    });
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.labelsList }
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (update label)"));
   }
@@ -198,13 +215,18 @@ export async function updateLabel(
 }
 
 /** Deletes a user label from Gmail; messages keep their other labels. */
-export async function deleteLabel(accessToken: string, labelId: string): Promise<void> {
+export async function deleteLabel(
+  accessToken: string,
+  labelId: string,
+  opts?: LabelCallOpts
+): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${GMAIL_API}/labels/${encodeURIComponent(labelId)}`, {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    res = await fetchGmail(
+      `${GMAIL_API}/labels/${encodeURIComponent(labelId)}`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.labelsList }
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (delete label)"));
   }
@@ -233,13 +255,15 @@ const FOLDER_LABELS = new Set([
 
 export async function getThreadLabels(
   accessToken: string,
-  threadId: string
+  threadId: string,
+  opts?: LabelCallOpts
 ): Promise<string[]> {
   let res: Response;
   try {
-    res = await fetch(
+    res = await fetchGmail(
       `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?format=minimal`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.threadsGet }
     );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (thread labels)"));
@@ -271,7 +295,8 @@ export async function getThreadLabels(
 export async function modifyThreadLabels(
   accessToken: string,
   threadId: string,
-  changes: { add?: string[]; remove?: string[] }
+  changes: { add?: string[]; remove?: string[] },
+  opts?: LabelCallOpts
 ): Promise<{ labelIds: string[] }> {
   const body: Record<string, unknown> = {};
   if (changes.add && changes.add.length > 0) body.addLabelIds = changes.add;
@@ -281,7 +306,7 @@ export async function modifyThreadLabels(
   }
   let res: Response;
   try {
-    res = await fetch(
+    res = await fetchGmail(
       `${GMAIL_API}/threads/${encodeURIComponent(threadId)}/modify`,
       {
         method: "POST",
@@ -290,7 +315,8 @@ export async function modifyThreadLabels(
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
-      }
+      },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.threadsModify }
     );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (modify thread labels)"));

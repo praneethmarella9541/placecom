@@ -52,7 +52,7 @@ export async function PATCH(
   }
 
   try {
-    const label = await updateLabel(auth.accessToken, id, { name });
+    const label = await updateLabel(auth.accessToken, id, { name }, { mailboxKey: auth.mailboxOwnerId });
     return NextResponse.json({ label });
   } catch (e) {
     return errResponse(e);
@@ -73,7 +73,7 @@ export async function DELETE(
   }
 
   try {
-    await deleteLabel(auth.accessToken, id);
+    await deleteLabel(auth.accessToken, id, { mailboxKey: auth.mailboxOwnerId });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return errResponse(e);

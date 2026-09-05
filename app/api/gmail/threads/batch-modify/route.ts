@@ -56,6 +56,7 @@ export async function POST(request: Request) {
   // Token / scope errors should fail the whole batch fast (otherwise we'd
   // hammer Gmail with N 401s). Detect by sampling the first call's outcome.
   const accessToken = auth.accessToken;
+  const mailboxKey = auth.mailboxOwnerId;
   const succeeded: string[] = [];
   const failed: { threadId: string; error: string }[] = [];
 
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
       const i = cursor++;
       const id = threadIds[i];
       try {
-        await modifyThreadLabels(accessToken, id, { add, remove });
+        await modifyThreadLabels(accessToken, id, { add, remove }, { mailboxKey });
         succeeded.push(id);
       } catch (e) {
         const err = e as Error & { code?: string };

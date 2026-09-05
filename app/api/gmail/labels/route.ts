@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
   try {
-    const labels = await listLabels(auth.accessToken);
+    const labels = await listLabels(auth.accessToken, { mailboxKey: auth.mailboxOwnerId });
     // Sort: user labels first (alpha), then surfaced system labels.
     const sorted = labels.slice().sort((a, b) => {
       if (a.type !== b.type) return a.type === "user" ? -1 : 1;
@@ -73,10 +73,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Label name is too long (max 100)" }, { status: 400 });
   }
   try {
-    const label: GmailLabel = await createLabel(auth.accessToken, {
-      name,
-      color: body.color,
-    });
+    const label: GmailLabel = await createLabel(
+      auth.accessToken,
+      { name, color: body.color },
+      { mailboxKey: auth.mailboxOwnerId }
+    );
     return NextResponse.json({ label }, { status: 201 });
   } catch (e) {
     return errResponse(e);

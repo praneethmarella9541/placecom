@@ -32,6 +32,7 @@ export async function POST(request: Request) {
   // Bound outside the workers — the narrowing from `auth.ok` above does not
   // survive into a closure.
   const accessToken = auth.accessToken;
+  const mailboxKey = auth.mailboxOwnerId;
 
   let body: { emails?: unknown };
   try {
@@ -69,6 +70,7 @@ export async function POST(request: Request) {
           folder: "allmail",
           maxResults: 1,
           searchQuery: gmailAddressQuery(email),
+          mailboxKey,
         });
         const at = page.threads[0]?.date;
         if (at) dates[email] = at;

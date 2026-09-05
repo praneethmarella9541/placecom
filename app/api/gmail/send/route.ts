@@ -104,6 +104,7 @@ export async function POST(request: Request) {
       inReplyToMessageId: body.inReplyToMessageId,
       trackingPixelUrl,
       attachments,
+      mailboxKey: auth.mailboxOwnerId,
     });
 
     if (trackRow) {

@@ -10,6 +10,7 @@ import { IconX } from "@/components/Icons";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
 import type { RecipientSuggestion } from "@/components/RecipientField";
 import { titleCase } from "@/lib/title-case";
+import { previewLineFromBody } from "@/lib/utils";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { findInvalidRecipient, formatRecipientError } from "@/lib/validate-mail-recipients";
@@ -51,9 +52,15 @@ type ComposeKind = "reply" | "replyAll" | "forward";
 /**
  * Small in-app "View email" popup (like Attio's) instead of leaving the app
  * to open the thread in Gmail — same rendering path (EmailHtmlBody) the main
- * Inbox reading pane uses, layered above whatever modal opened it. Shows the
- * latest message in the thread; older messages typically already appear
- * inline as quoted text within that message's own HTML body.
+ * Inbox reading pane uses, layered above whatever modal opened it.
+ *
+ * Shows the WHOLE thread, matching the Inbox reading pane: older messages as
+ * collapsed one-line rows, the newest expanded. It used to render only the
+ * newest message on the assumption that older ones would be visible as quoted
+ * text inside it — but that only holds when each message actually quotes its
+ * parent. A follow-up typed fresh above the quote (or sent from a client that
+ * strips the quote) left the earlier messages with nowhere to appear at all,
+ * so a three-message thread looked like a one-message thread.
  *
  * Reply/Reply All/Forward reuse the exact same compose dock
  * (GmailComposeDialog) the Inbox tab uses, wired up locally here — but with
@@ -63,25 +70,49 @@ type ComposeKind = "reply" | "replyAll" | "forward";
  * meant to be a lightweight popup.
  */
 export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: string; onClose: () => void }) {
-  const [message, setMessage] = useState<ThreadMessageView | "loading" | "error">("loading");
+  const [thread, setThread] = useState<ThreadMessageView[] | "loading" | "error">("loading");
+  /** Which messages are open. Gmail's rule: the newest starts expanded, the rest collapsed. */
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
-    setMessage("loading");
+    setThread("loading");
+    setExpandedIds(new Set());
     fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((json: { messages?: ThreadMessageView[] }) => {
         if (cancelled) return;
-        const last = json.messages?.[json.messages.length - 1];
-        setMessage(last ?? "error");
+        const list = json.messages ?? [];
+        if (list.length === 0) {
+          setThread("error");
+          return;
+        }
+        setThread(list);
+        setExpandedIds(new Set([list[list.length - 1].id]));
       })
       .catch(() => {
-        if (!cancelled) setMessage("error");
+        if (!cancelled) setThread("error");
       });
     return () => {
       cancelled = true;
     };
   }, [threadId]);
+
+  // Reply/Reply All/Forward act on the newest message, as they did when this
+  // popup rendered only that one — replying to a thread means replying to its
+  // latest message regardless of which older ones the reader has expanded.
+  const message: ThreadMessageView | "loading" | "error" = Array.isArray(thread)
+    ? thread[thread.length - 1]
+    : thread;
+
+  function toggleExpanded(id: string) {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   // ── Reply / Reply All / Forward — same compose dock the Inbox uses ──────
   const [composeOpen, setComposeOpen] = useState(false);
@@ -259,59 +290,92 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {message === "loading" ? (
+          {thread === "loading" ? (
             <div className="flex items-center justify-center gap-2 py-16 text-[13px] text-[var(--color-text-muted)]">
               <Loader2 className="h-4 w-4 animate-spin" />
               {titleCase("Loading…")}
             </div>
-          ) : message === "error" ? (
+          ) : thread === "error" ? (
             <p className="px-5 py-8 text-center text-[13px] text-[var(--color-danger)]">
               {titleCase("Failed to load this email.")}
             </p>
           ) : (
             <div className="px-5 py-4">
-              <h2 className="text-[16px] font-semibold text-[var(--color-text)]">
-                {message.subject || titleCase("(no subject)")}
-              </h2>
-              <div className="mt-3 flex items-start gap-3 border-b border-[var(--color-border)] pb-3">
-                <GmailAvatar seed={message.from} name={senderName(message.from)} size={36} />
-                <div className="min-w-0 flex-1 text-[13px]">
-                  <p className="font-medium text-[var(--color-text)]">{senderName(message.from)}</p>
-                  <p className="truncate text-[12px] text-[var(--color-text-muted)]">
-                    {titleCase("to")} {message.to || "—"}
-                  </p>
-                </div>
-                <p className="shrink-0 text-[12px] text-[var(--color-text-faint)]">
-                  {message.date ? new Date(message.date).toLocaleString() : ""}
-                </p>
+              <div className="flex items-start gap-2">
+                <h2 className="flex-1 text-[16px] font-semibold text-[var(--color-text)]">
+                  {thread[0].subject || titleCase("(no subject)")}
+                </h2>
+                {thread.length > 1 && (
+                  <span
+                    className="mt-0.5 shrink-0 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-text-muted)]"
+                    title={`${thread.length} messages in this thread`}
+                  >
+                    {thread.length}
+                  </span>
+                )}
               </div>
-              <div className="mt-3">
-                <EmailHtmlBody
-                  html={message.bodyHtml}
-                  plain={message.body}
-                  messageId={message.id}
-                  attachments={message.attachments}
-                />
+
+              <div className="mt-3 divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
+                {thread.map((msg) => {
+                  const open = expandedIds.has(msg.id);
+                  // EmailHtmlBody only uses `attachments` to rewrite inline
+                  // cid: images already shown in the body — real downloadable
+                  // files (a resume, a PDF) need this separate chip strip or
+                  // they never show up at all. Same filtering as the Inbox
+                  // reading pane.
+                  const files = (msg.attachments ?? []).filter(
+                    (a) =>
+                      !/invite\.ics$/i.test(a.filename) &&
+                      !/^text\/calendar/i.test(a.mimeType) &&
+                      !isInlinePartReferencedInHtml(msg.bodyHtml, a.contentId, a.filename)
+                  );
+                  return (
+                    <div key={msg.id} className="py-3">
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(msg.id)}
+                        aria-expanded={open}
+                        className="flex w-full items-start gap-3 text-left"
+                      >
+                        <GmailAvatar seed={msg.from} name={senderName(msg.from)} size={36} />
+                        <div className="min-w-0 flex-1 text-[13px]">
+                          <p className="font-medium text-[var(--color-text)]">
+                            {senderName(msg.from)}
+                          </p>
+                          {open ? (
+                            <p className="truncate text-[12px] text-[var(--color-text-muted)]">
+                              {titleCase("to")} {msg.to || "—"}
+                            </p>
+                          ) : (
+                            <p className="truncate text-[12px] text-[var(--color-text-muted)]">
+                              {previewLineFromBody(msg.body)}
+                            </p>
+                          )}
+                        </div>
+                        <p className="shrink-0 text-[12px] text-[var(--color-text-faint)]">
+                          {msg.date ? new Date(msg.date).toLocaleString() : ""}
+                        </p>
+                      </button>
+
+                      {open && (
+                        <div className="mt-3">
+                          <EmailHtmlBody
+                            html={msg.bodyHtml}
+                            plain={msg.body}
+                            messageId={msg.id}
+                            attachments={msg.attachments}
+                          />
+                          {files.length > 0 && (
+                            <div className="mt-4">
+                              <GmailAttachmentPreviews attachments={files} messageId={msg.id} />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              {(() => {
-                // Same filtering as the Inbox reading pane: EmailHtmlBody
-                // only uses `attachments` to rewrite inline cid: images
-                // already shown in the body — real downloadable files (a
-                // resume, a PDF) need this separate chip strip, or they
-                // never show up at all.
-                const files = (message.attachments ?? []).filter(
-                  (a) =>
-                    !/invite\.ics$/i.test(a.filename) &&
-                    !/^text\/calendar/i.test(a.mimeType) &&
-                    !isInlinePartReferencedInHtml(message.bodyHtml, a.contentId, a.filename)
-                );
-                if (files.length === 0) return null;
-                return (
-                  <div className="mt-4">
-                    <GmailAttachmentPreviews attachments={files} messageId={message.id} />
-                  </div>
-                );
-              })()}
             </div>
           )}
         </div>

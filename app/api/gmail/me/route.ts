@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
 
 export const runtime = "nodejs";
 
@@ -24,9 +25,10 @@ export async function GET(request: Request) {
 
   // Fallback: hit the Gmail profile endpoint.
   try {
-    const res = await fetch(
+    const res = await fetchGmail(
       "https://www.googleapis.com/gmail/v1/users/me/profile",
-      { headers: { Authorization: `Bearer ${auth.accessToken}` } }
+      { headers: { Authorization: `Bearer ${auth.accessToken}` } },
+      { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.getProfile }
     );
     if (!res.ok) {
       return NextResponse.json({ error: "Failed to fetch Gmail profile" }, { status: 502 });

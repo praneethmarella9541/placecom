@@ -160,10 +160,11 @@ async function checkThreadForExit(
   threadId: string,
   enrollment: EnrollmentRow,
   mailboxAddress: string | undefined,
+  mailboxKey: string,
 ): Promise<"replied" | "bounced" | null> {
   let messages;
   try {
-    ({ messages } = await getThreadMessages(accessToken, threadId));
+    ({ messages } = await getThreadMessages(accessToken, threadId, { mailboxKey }));
   } catch {
     // Thread deleted or momentarily unavailable — never block the send on this.
     return null;
@@ -192,6 +193,8 @@ async function checkThreadForExit(
 
 type MailboxContext = {
   accessToken: string;
+  /** Mailbox owner id — bills this run's Gmail calls to the right quota bucket. */
+  ownerId: string;
   mailboxAddress?: string;
   sentTodayBySequence: Map<string, number>;
 };
@@ -239,6 +242,7 @@ async function processEnrollment(
       enrollment.gmail_thread_id,
       enrollment,
       mailbox.mailboxAddress,
+      mailbox.ownerId,
     );
     if (outcome === "replied") {
       ctx.summary.replied += 1;
@@ -379,6 +383,7 @@ async function processEnrollment(
       threadId: threading ? enrollment.gmail_thread_id ?? undefined : undefined,
       inReplyToMessageId: threading ? enrollment.last_gmail_message_id ?? undefined : undefined,
       trackingPixelUrl,
+      mailboxKey: mailbox.ownerId,
     });
 
     const sentAt = new Date().toISOString();
@@ -569,6 +574,7 @@ export async function runSequencesCron(options: { dryRun?: boolean } = {}): Prom
 
       const mailbox: MailboxContext = {
         accessToken: token.accessToken,
+        ownerId,
         mailboxAddress: token.gmailAddress,
         sentTodayBySequence: new Map(),
       };

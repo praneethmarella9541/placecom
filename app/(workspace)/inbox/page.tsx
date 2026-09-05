@@ -1014,7 +1014,8 @@ export default function InboxPage() {
       const ids = threadIdsForPrefetch(rows);
       if (!ids.length || MAIL_THREAD_PREFETCH_DISABLED) return;
       void prefetchMailThreadBodies(ids, {
-        concurrency: 12,
+        // Left to prefetchMailThreadBodies' own cap — passing 12 here was what
+        // overrode it and put a folder switch's whole first screen in flight.
         forceRefresh: opts?.forceRefresh,
         append: opts?.append,
         landing: true,

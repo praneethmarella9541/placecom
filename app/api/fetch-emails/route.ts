@@ -41,12 +41,17 @@ export async function POST(request: Request) {
   }
 
   let accessToken = body.accessToken?.trim();
+  // Bills this scan to the mailbox's shared quota bucket. A caller-supplied
+  // token has no mailbox identity attached, so those calls stay unmetered —
+  // fetchGmail's backoff is their only protection.
+  let mailboxKey: string | undefined;
   if (!accessToken) {
     const auth = await requireGmailAccessToken();
     if (!auth.ok) {
       return NextResponse.json({ error: auth.message }, { status: auth.status });
     }
     accessToken = auth.accessToken;
+    mailboxKey = auth.mailboxOwnerId;
   }
 
   const rawMaxEmails = body.maxEmails ?? 50;
@@ -81,10 +86,12 @@ export async function POST(request: Request) {
             excludeIds,
             onListProgress: ({ listed, skipped }) =>
               send({ type: "listing", listed, skipped }),
+            mailboxKey,
           });
           send({ type: "list", total: messageIds.length, skipped: skippedCount });
           const emails = await fetchGmailMessagesByIds(accessToken, messageIds, {
             onProgress: (done, total) => send({ type: "bodies", done, total }),
+            mailboxKey,
           });
           send({ type: "complete", emails, skippedCount });
         } catch (e) {
@@ -128,6 +135,7 @@ export async function POST(request: Request) {
     const emails = await fetchEmailsWithDetails(accessToken, {
       maxEmails,
       labelFilter,
+      mailboxKey,
     });
 
     return NextResponse.json({ emails });

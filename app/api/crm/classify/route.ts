@@ -85,6 +85,7 @@ export async function POST(request: Request) {
   const auth = await requireGmailAccessToken(request);
   const accessToken = auth.ok ? auth.accessToken : undefined;
   const ownAddress = auth.ok ? auth.gmailAddress : undefined;
+  const gmailMailboxKey = auth.ok ? auth.mailboxOwnerId : undefined;
 
   try {
     const withEvidence = [];
@@ -92,7 +93,12 @@ export async function POST(request: Request) {
       const evidence = await gatherLeadEvidence(
         supabase,
         { id: lead.id, email: lead.email, phone: lead.phone },
-        { accessToken, ownAddress, seasonStart: settings.season_start_date }
+        {
+          accessToken,
+          mailboxKey: gmailMailboxKey,
+          ownAddress,
+          seasonStart: settings.season_start_date,
+        }
       );
       withEvidence.push({
         lead: { id: lead.id, company_name: lead.company_name, contact_name: lead.contact_name },

@@ -1,55 +1,24 @@
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
+import {
+  fetchGmail,
+  GMAIL_COST,
+  GmailRateLimitError,
+  isRateLimitedResponse,
+} from "@/lib/gmail-quota";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
-// Gmail's per-user ceiling is `defaultPerMinutePerUser` — 15,000 quota units per
-// MINUTE, not per second. Once it's exhausted, nothing succeeds until that minute
-// window rolls over, so the backoff has to be able to outlast a full window: these
-// values give waits of ~1s, 2s, 4s, 8s, 16s, 32s ≈ 63s total. The previous 5
-// attempts capped at 8s spent ~7.5s in total and so always gave up inside the very
-// minute it was being throttled in, surfacing the 403 to the caller.
-const RATE_LIMIT_MAX_ATTEMPTS = 7;
-const RATE_LIMIT_MAX_BACKOFF_MS = 60_000;
-
-/** Retries exhausted against a quota error — the caller should back off, not fail outright. */
-export class GmailRateLimitError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "GmailRateLimitError";
-  }
-}
-
-function isRateLimitedResponse(status: number, bodyText: string): boolean {
-  if (status === 429) return true;
-  // Gmail's older quota system reports this as 403 with one of these reasons rather than 429.
-  if (status === 403) return /rateLimitExceeded|userRateLimitExceeded|quotaExceeded/i.test(bodyText);
-  return false;
-}
-
 /**
- * fetch() with exponential backoff + jitter on Gmail's per-user quota errors (429, and the
- * 403-with-rate-limit-reason variant). Non-rate-limit errors (401, 404, insufficient scope, …)
- * are returned immediately for the caller's existing handling — only quota exhaustion retries.
+ * Quota accounting, backoff and the rate-limit error type all live in
+ * lib/gmail-quota.ts now, so this module and lib/gmail-inbox.ts draw on ONE
+ * per-mailbox budget instead of each retrying against a limit it could not see
+ * the other spending. Re-exported because callers (lib/people-mailbox-sync.ts)
+ * import GmailRateLimitError from here.
  */
-async function fetchGmailWithRetry(url: string, init: RequestInit): Promise<Response> {
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, init);
-    if (res.ok || attempt >= RATE_LIMIT_MAX_ATTEMPTS - 1) return res;
+export { GmailRateLimitError } from "@/lib/gmail-quota";
 
-    const bodyText = await res.clone().text();
-    if (!isRateLimitedResponse(res.status, bodyText)) return res;
-
-    const retryAfterHeader = res.headers.get("Retry-After");
-    // Jitter is a full second rather than 250ms because every in-flight worker
-    // hits the quota wall at once — without spreading them out they all wake
-    // together and re-exhaust the next window as a thundering herd.
-    const backoffMs = retryAfterHeader
-      ? Number(retryAfterHeader) * 1000
-      : Math.min(RATE_LIMIT_MAX_BACKOFF_MS, 1000 * 2 ** attempt) + Math.random() * 1000;
-    await new Promise((resolve) => setTimeout(resolve, backoffMs));
-  }
-}
+type GmailCallOpts = { mailboxKey?: string };
 
 export type GmailLabelFilter = "inbox" | "sent" | "all";
 
@@ -139,14 +108,17 @@ function extractionImageLimits(): { maxPerEmail: number; maxBytes: number } {
 export async function fetchGmailAttachmentBytes(
   accessToken: string,
   messageId: string,
-  attachmentId: string
+  attachmentId: string,
+  opts?: GmailCallOpts
 ): Promise<Buffer | null> {
   const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`;
   let res: Response;
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    res = await fetchGmail(
+      url,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.attachmentsGet }
+    );
   } catch {
     return null;
   }
@@ -227,14 +199,17 @@ function collectPlainTextParts(payload: Record<string, unknown>): string[] {
 
 export async function fetchGmailMessage(
   accessToken: string,
-  messageId: string
+  messageId: string,
+  opts?: GmailCallOpts
 ): Promise<GmailMessageSummary> {
   const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?format=full`;
   let res: Response;
   try {
-    res = await fetchGmailWithRetry(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    res = await fetchGmail(
+      url,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.messagesGet }
+    );
   } catch (e) {
     throw new Error(
       describeUpstreamFetchError(
@@ -310,7 +285,8 @@ export type GmailMessageHeaders = {
  */
 export async function fetchGmailMessageHeaders(
   accessToken: string,
-  messageId: string
+  messageId: string,
+  opts?: GmailCallOpts
 ): Promise<GmailMessageHeaders> {
   const params = new URLSearchParams({ format: "metadata" });
   params.append("metadataHeaders", "From");
@@ -321,7 +297,11 @@ export async function fetchGmailMessageHeaders(
 
   let res: Response;
   try {
-    res = await fetchGmailWithRetry(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    res = await fetchGmail(
+      url,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.messagesGet }
+    );
   } catch (e) {
     throw new Error(
       describeUpstreamFetchError(
@@ -371,7 +351,11 @@ export async function fetchGmailMessageHeaders(
 export async function fetchGmailMessageHeadersByIds(
   accessToken: string,
   ids: string[],
-  opts?: { onProgress?: (fetched: number, target: number) => void; concurrency?: number }
+  opts?: {
+    onProgress?: (fetched: number, target: number) => void;
+    concurrency?: number;
+    mailboxKey?: string;
+  }
 ): Promise<GmailMessageHeaders[]> {
   if (ids.length === 0) return [];
   const concurrency = opts?.concurrency ?? gmailFetchConcurrency();
@@ -382,7 +366,9 @@ export async function fetchGmailMessageHeadersByIds(
     concurrency,
     async (id) => {
       try {
-        return await fetchGmailMessageHeaders(accessToken, id);
+        return await fetchGmailMessageHeaders(accessToken, id, {
+          mailboxKey: opts?.mailboxKey,
+        });
       } catch (e) {
         // Quota exhaustion is NOT a per-message defect — every remaining id in
         // this page would fail the same way, and skipping them would drop those
@@ -430,6 +416,7 @@ export async function listMessageIdsPage(
     maxResults: number;
     pageToken?: string;
     q?: string;
+    mailboxKey?: string;
   }
 ): Promise<ListMessagesResult> {
   const params = new URLSearchParams({
@@ -441,9 +428,11 @@ export async function listMessageIdsPage(
   const url = `${GMAIL_API}/messages?${params.toString()}`;
   let res: Response;
   try {
-    res = await fetchGmailWithRetry(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    res = await fetchGmail(
+      url,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: options.mailboxKey, cost: GMAIL_COST.messagesList }
+    );
   } catch (e) {
     throw new Error(
       describeUpstreamFetchError(
@@ -485,10 +474,15 @@ export async function listMessageIdsPage(
 }
 
 /** Current mailbox historyId — the incremental contact sync's starting cursor (lib/people-mailbox-sync.ts). */
-export async function fetchGmailHistoryId(accessToken: string): Promise<string | null> {
-  const res = await fetchGmailWithRetry(`${GMAIL_API}/profile`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+export async function fetchGmailHistoryId(
+  accessToken: string,
+  opts?: GmailCallOpts
+): Promise<string | null> {
+  const res = await fetchGmail(
+    `${GMAIL_API}/profile`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.getProfile }
+  );
   if (!res.ok) return null;
   const data = (await res.json()) as { historyId?: string };
   return data.historyId?.trim() || null;
@@ -519,15 +513,18 @@ export class GmailHistoryExpiredError extends Error {
 export async function fetchGmailHistoryPage(
   accessToken: string,
   startHistoryId: string,
-  pageToken?: string
+  pageToken?: string,
+  opts?: GmailCallOpts
 ): Promise<GmailHistoryPage> {
   const params = new URLSearchParams({ startHistoryId, maxResults: "500" });
   params.append("historyTypes", "messageAdded");
   if (pageToken) params.set("pageToken", pageToken);
 
-  const res = await fetchGmailWithRetry(`${GMAIL_API}/history?${params.toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const res = await fetchGmail(
+    `${GMAIL_API}/history?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.historyList }
+  );
 
   if (res.status === 404) throw new GmailHistoryExpiredError();
   if (!res.ok) {
@@ -603,6 +600,7 @@ export async function collectMessageIdsForFetch(
     labelFilter: GmailLabelFilter;
     excludeIds?: Set<string>;
     onListProgress?: (progress: { listed: number; skipped: number }) => void;
+    mailboxKey?: string;
   }
 ): Promise<CollectIdsResult> {
   const q = buildListQuery(options.labelFilter);
@@ -629,6 +627,7 @@ export async function collectMessageIdsForFetch(
       maxResults: pageSize,
       pageToken,
       q: q || undefined,
+      mailboxKey: options.mailboxKey,
     });
     if (page.messageIds.length === 0) break;
 
@@ -663,6 +662,7 @@ export async function fetchGmailMessagesByIds(
   opts?: {
     onProgress?: (fetched: number, target: number) => void;
     concurrency?: number;
+    mailboxKey?: string;
   }
 ): Promise<GmailMessageSummary[]> {
   if (ids.length === 0) return [];
@@ -672,7 +672,7 @@ export async function fetchGmailMessagesByIds(
   return mapWithConcurrency(
     ids,
     concurrency,
-    (id) => fetchGmailMessage(accessToken, id),
+    (id) => fetchGmailMessage(accessToken, id, { mailboxKey: opts?.mailboxKey }),
     () => {
       done += 1;
       opts?.onProgress?.(done, total);
@@ -686,14 +686,17 @@ export async function fetchEmailsWithDetails(
     maxEmails: number | "all";
     labelFilter: GmailLabelFilter;
     onProgress?: (fetched: number, target: number) => void;
+    mailboxKey?: string;
   }
 ): Promise<GmailMessageSummary[]> {
   const { messageIds } = await collectMessageIdsForFetch(accessToken, {
     maxEmails: options.maxEmails,
     labelFilter: options.labelFilter,
+    mailboxKey: options.mailboxKey,
   });
   return fetchGmailMessagesByIds(accessToken, messageIds, {
     onProgress: options.onProgress,
+    mailboxKey: options.mailboxKey,
   });
 }
 
@@ -715,14 +718,18 @@ export async function sendGmailMessage(
   const rawEmail = Buffer.from(emailLines.join("\r\n")).toString("base64url");
   
   const url = `${GMAIL_API}/messages/send`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
+  const res = await fetchGmail(
+    url,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ raw: rawEmail }),
     },
-    body: JSON.stringify({ raw: rawEmail }),
-  });
+    { cost: GMAIL_COST.messagesSend }
+  );
 
   if (!res.ok) {
     const text = await res.text();

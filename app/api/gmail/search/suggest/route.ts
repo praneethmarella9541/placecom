@@ -42,7 +42,9 @@ export async function GET(request: Request) {
   try {
     const [people, threads] = await Promise.all([
       searchContactsByQuery(auth.accessToken, q),
-      listThreadSearchSuggestions(auth.accessToken, q, 5),
+      listThreadSearchSuggestions(auth.accessToken, q, 5, {
+        mailboxKey: auth.mailboxOwnerId,
+      }),
     ]);
 
     const fromThreads = suggestEmailsFromThreads(threads, q);

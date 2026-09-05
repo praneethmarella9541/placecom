@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
+import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
 
 export const runtime = "nodejs";
 
@@ -13,16 +14,20 @@ const MAX_LABELS_PER_REQUEST = 100;
  * counts that don't match Gmail's UI. Gmail's sidebar number is the
  * resultSizeEstimate from threads.list with q=is:unread — use that instead.
  */
-async function fetchInboxUnreadViaSearch(accessToken: string): Promise<number> {
+async function fetchInboxUnreadViaSearch(
+  accessToken: string,
+  mailboxKey: string
+): Promise<number> {
   const params = new URLSearchParams({
     labelIds: "INBOX",
     q: "is:unread",
     maxResults: "1", // we only need resultSizeEstimate, not the actual threads
   });
-  const res = await fetch(`${GMAIL_API}/threads?${params.toString()}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: "no-store",
-  });
+  const res = await fetchGmail(
+    `${GMAIL_API}/threads?${params.toString()}`,
+    { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
+    { mailboxKey, cost: GMAIL_COST.threadsList }
+  );
   if (!res.ok) return 0;
   const j = (await res.json()) as { resultSizeEstimate?: number };
   return j.resultSizeEstimate ?? 0;
@@ -63,12 +68,13 @@ export async function GET(request: Request) {
   }
 
   const accessToken = auth.accessToken;
+  const mailboxKey = auth.mailboxOwnerId;
   const counts: Record<string, { total: number; unread: number }> = {};
   let scopeError: string | null = null;
 
   // Kick off the accurate INBOX unread search in parallel with the label fetches.
   const inboxUnreadPromise = ids.includes("INBOX")
-    ? fetchInboxUnreadViaSearch(accessToken).catch(() => null)
+    ? fetchInboxUnreadViaSearch(accessToken, mailboxKey).catch(() => null)
     : Promise.resolve(null);
 
   let cursor = 0;
@@ -77,9 +83,10 @@ export async function GET(request: Request) {
       const i = cursor++;
       const id = ids[i];
       try {
-        const res = await fetch(
+        const res = await fetchGmail(
           `${GMAIL_API}/labels/${encodeURIComponent(id)}`,
-          { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" }
+          { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
+          { mailboxKey, cost: GMAIL_COST.labelsGet }
         );
         if (res.status === 401) {
           scopeError = "UNAUTHORIZED";

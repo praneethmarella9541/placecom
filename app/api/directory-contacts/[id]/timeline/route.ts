@@ -79,6 +79,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
         folder: "allmail",
         maxResults: 50,
         searchQuery: gmailAddressQuery(contact.email),
+        mailboxKey: auth.mailboxOwnerId,
       });
       const items: TimelineItem[] = page.threads.map((t) => ({
         id: t.id,

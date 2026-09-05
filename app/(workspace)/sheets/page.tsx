@@ -126,7 +126,7 @@ export default function SheetsListPage() {
   const empty = useMemo(() => !loading && sheets.length === 0, [loading, sheets.length]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-[1400px] space-y-6">
       <div className="flex items-center justify-between gap-3">
         <h1 className="font-display text-[19px] font-bold tracking-tight text-[var(--color-text)]">
           {titleCase("Sheets")}

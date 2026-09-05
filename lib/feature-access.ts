@@ -5,12 +5,13 @@ export const FEATURE_KEYS = [
   "sheets",
   "docs",
   "broadcasting",
+  "sequences",
   "dashboard",
   "crm",
   "calendar",
-  "meetings",
   "sms",
   "whatsapp",
+  "calls",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -22,12 +23,13 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   sheets: "Sheets",
   docs: "Docs",
   broadcasting: "Broadcasting",
+  sequences: "Sequences",
   dashboard: "Extraction",
   crm: "CRM",
   calendar: "Calendar",
-  meetings: "Meetings",
   sms: "SMS",
   whatsapp: "WhatsApp",
+  calls: "Calls",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -38,8 +40,11 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "sheets",
   "docs",
   "broadcasting",
+  "sequences",
   "calendar",
   "whatsapp",
+  "calls",
+  "crm",
 ];
 
 const SET = new Set<string>(FEATURE_KEYS);
@@ -78,16 +83,17 @@ export function pathToFeature(pathname: string, search: URLSearchParams): Featur
   if (pathname.startsWith("/dashboard")) return "dashboard";
   if (pathname.startsWith("/crm")) return "crm";
   if (pathname.startsWith("/calendar")) return "calendar";
-  if (pathname.startsWith("/meetings")) return "meetings";
   if (pathname.startsWith("/broadcasting")) {
     const channel = search.get("channel");
     if (channel === "sms") return "sms";
     if (channel === "whatsapp") return "whatsapp";
     return "broadcasting";
   }
+  if (pathname.startsWith("/sequences")) return "sequences";
   if (pathname.startsWith("/sms")) return "sms";
   if (pathname.startsWith("/whatsapp")) return "whatsapp";
   if (pathname.startsWith("/contacts")) return "whatsapp";
+  if (pathname.startsWith("/calls")) return "calls";
   return null;
 }
 
@@ -96,6 +102,9 @@ const API_PUBLIC_PREFIXES = [
   "/api/me/",
   "/api/track/",
   "/api/auth/",
+  // Scheduler ticks arrive from an external pinger with no session; they carry
+  // their own CRON_SECRET bearer check.
+  "/api/cron/",
 ] as const;
 
 /**
@@ -119,6 +128,8 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
 
   if (pathname.startsWith("/api/docs")) return "docs";
 
+  if (pathname.startsWith("/api/sequences")) return "sequences";
+
   if (
     pathname.startsWith("/api/extract") ||
     pathname.startsWith("/api/delete-extractions") ||
@@ -131,8 +142,7 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";
-
-  if (pathname.startsWith("/api/meetings")) return "meetings";
+  if (pathname.startsWith("/api/calls")) return "calls";
 
   if (pathname.startsWith("/api/sms") || pathname.startsWith("/api/twilio/sms")) return "sms";
   if (pathname.startsWith("/api/whatsapp") || pathname.startsWith("/api/twilio/whatsapp")) return "whatsapp";
@@ -142,10 +152,11 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
     if (pathname.includes("/whatsapp") || pathname.endsWith("/parse-wa-merge")) return "whatsapp";
     // Shared by SMS + WhatsApp session import — gated by sign-in only.
     if (pathname.endsWith("/parse-phones")) return null;
+    // The spreadsheet parser now serves the inbox's mass sending, not the
+    // retired mail channel — gate it with the composer that uses it.
+    if (pathname.endsWith("/parse-mail-merge")) return "inbox";
     return "broadcasting";
   }
-
-  if (pathname.startsWith("/api/webhooks/fireflies")) return "meetings";
 
   return null;
 }
@@ -164,9 +175,11 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
     { path: "/sheets" },
     { path: "/docs" },
     { path: "/broadcasting" },
+    { path: "/sequences" },
     { path: "/dashboard" },
     { path: "/calendar" },
     { path: "/whatsapp" },
+    { path: "/calls" },
     { path: "/contacts" },
   ];
   for (const { path, search = "" } of candidates) {

@@ -216,7 +216,7 @@ export default function HomePage() {
     { n: "01", text: "Shared inbox for the whole placement team" },
     { n: "02", text: "Auto-extract recruiter contacts from every email" },
     { n: "03", text: "Outbound calls with recordings & AI transcripts" },
-    { n: "04", text: "Calendar sync + meeting summaries that write themselves" },
+    { n: "04", text: "Calendar sync across the whole placement team" },
   ];
 
   return (

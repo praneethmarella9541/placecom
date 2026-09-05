@@ -3,6 +3,7 @@ import { getUserOr401 } from "@/lib/request-auth";
 import { getUserWhatsAppLine } from "@/lib/whatsapp-telephony";
 import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
 import { resolveStoredWhatsAppMediaUrl } from "@/lib/whatsapp-media-resolve";
+import { normalizePhone } from "@/lib/phone";
 
 export const runtime = "nodejs";
 
@@ -12,13 +13,24 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
-  const lineResult = await getUserWhatsAppLine(supabase, user.id);
-  if (!lineResult.ok) {
-    return NextResponse.json({ error: lineResult.error }, { status: lineResult.status });
-  }
-  const businessLine = lineResult.data.line;
+  const url = new URL(request.url);
 
-  const peer = new URL(request.url).searchParams.get("peer")?.trim();
+  // `?line=<E164>` lets an admin read a team member's thread instead of their
+  // own — see the matching comment in /api/whatsapp/conversations. RLS alone
+  // decides what actually comes back.
+  const requestedLine = url.searchParams.get("line")?.trim();
+  let businessLine: string;
+  if (requestedLine) {
+    businessLine = normalizePhone(requestedLine);
+  } else {
+    const lineResult = await getUserWhatsAppLine(supabase, user.id);
+    if (!lineResult.ok) {
+      return NextResponse.json({ error: lineResult.error }, { status: lineResult.status });
+    }
+    businessLine = lineResult.data.line;
+  }
+
+  const peer = url.searchParams.get("peer")?.trim();
   if (!peer) {
     return NextResponse.json({ error: "peer query required (E.164, e.g. +15551234567)" }, { status: 400 });
   }

@@ -60,8 +60,8 @@ const SPECIAL: Record<string, string> = {
   ios: "iOS",
   id: "ID",
   mgt: "Mgt",
-  gmeet: "GMeet",
   ai: "AI",
+  linkedin: "LinkedIn",
 };
 
 function formatChunk(

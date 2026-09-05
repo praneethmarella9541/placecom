@@ -1,10 +1,17 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Bold, Italic, Underline, Strikethrough,
   List, ListOrdered, Link as LinkIcon,
 } from "lucide-react";
+import {
+  filterComposeVariables,
+  wrapVariablesInHtml,
+  VARIABLE_SPAN_CLASS,
+  type ComposeVariable,
+} from "@/lib/compose-variables";
 
 export function richTextIsEmpty(html: string): boolean {
   const stripped = html
@@ -27,6 +34,9 @@ function escapeAttr(s: string): string {
 
 export type RichTextEditorHandle = {
   insertLink: () => void;
+  /** Insert `{` at the caret and open the variable picker. */
+  insertVariableTrigger: () => void;
+  isFocused: () => boolean;
 };
 
 type Props = {
@@ -35,7 +45,53 @@ type Props = {
   placeholder?: string;
   className?: string;
   autoFocus?: boolean;
+  /**
+   * When non-empty, typing `{` opens a merge-variable picker. Left undefined
+   * everywhere except mass-send compose, so ordinary emails containing a brace
+   * (code snippets, JSON) behave exactly as before.
+   */
+  variables?: ComposeVariable[];
 };
+
+/** Caret context for an in-progress `{query` the user is typing. */
+type VariableTrigger = {
+  node: Text;
+  /** Offset of the opening `{` within the text node. */
+  braceOffset: number;
+  /** Caret offset within the text node. */
+  caretOffset: number;
+  query: string;
+};
+
+/**
+ * Find an unterminated `{query` immediately before the caret.
+ *
+ * Scoped to the caret's own text node and stops at whitespace-heavy or closing
+ * characters, so `{` typed in prose without a following variable never leaves a
+ * menu hanging open, and an already-closed `{name}` is not re-triggered.
+ */
+function findVariableTrigger(): VariableTrigger | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return null;
+
+  const node = sel.anchorNode;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return null;
+
+  const text = node.textContent ?? "";
+  const caretOffset = sel.anchorOffset;
+  const before = text.slice(0, caretOffset);
+
+  const braceOffset = before.lastIndexOf("{");
+  if (braceOffset === -1) return null;
+
+  const query = before.slice(braceOffset + 1);
+  // A closed placeholder or a brace used as punctuation — not an active trigger.
+  if (/[}{\n]/.test(query)) return null;
+  // Allow spaces so "company na" still matches, but bail once it reads as prose.
+  if (query.length > 40 || /\s{2,}/.test(query)) return null;
+
+  return { node: node as Text, braceOffset, caretOffset, query };
+}
 
 type FormatCmd =
   | "bold" | "italic" | "underline" | "strikeThrough"
@@ -86,7 +142,7 @@ const EMOJI_GROUPS = [
   { label: "Objects", emojis: ["📎","📏","📐","✂️","🗃️","🗄️","🗑️","🔒","🔓","🔏","🔐","🔑","🗝️","🔨","🪓","⛏️","⚒️","🛠️","🗡️","⚔️","🔫","🪃","🏹","🛡️","🪚","🔧","🪛","🔩","⚙️","🗜️","⚖️","🦯","🔗","⛓️","🪝","🧲","🔮","🪄","🧿","🪬","🧸","🪅","🎭","🖼️","🎨","🧵","🪡","🧶","🪢"] },
 ];
 
-export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function RichTextEditor({ value, onChange, placeholder, className, autoFocus }: Props, ref) {
+export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function RichTextEditor({ value, onChange, placeholder, className, autoFocus, variables }: Props, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastSetValueRef = useRef<string>("");
   const [activeCmds, setActiveCmds] = useState<Record<string, boolean>>({});
@@ -108,6 +164,16 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   const [activeAlign, setActiveAlign] = useState<"left" | "center" | "right" | "justify">("left");
   const [activeFont, setActiveFont] = useState("Sans Serif");
   const [colorTab, setColorTab] = useState<"text" | "bg">("text");
+
+  // Merge-variable picker (only armed when `variables` is supplied)
+  const variablesEnabled = (variables?.length ?? 0) > 0;
+  const [varMenu, setVarMenu] = useState<{
+    matches: ComposeVariable[];
+    index: number;
+    top: number;
+    left: number;
+  } | null>(null);
+  const triggerRef = useRef<VariableTrigger | null>(null);
 
   // Saved selection for when picker popups steal focus
   const savedRangeRef = useRef<Range | null>(null);
@@ -192,6 +258,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
         editingAnchorRef.current = null;
         setIsEditingLink(false);
         setLinkViewMode("edit");
+        setVarMenu(null);
       }
     }
     document.addEventListener("mousedown", onDoc);
@@ -204,6 +271,169 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
     const html = el.innerHTML;
     lastSetValueRef.current = html;
     onChange(html);
+  }
+
+  /**
+   * Tint any `{variable}` the user typed by hand.
+   *
+   * Blur-only: rewriting innerHTML mid-edit would collapse the caret, and
+   * variables inserted from the picker are already wrapped, so this only has
+   * to catch manual typing — where waiting until focus leaves costs nothing.
+   */
+  function highlightVariablesOnBlur() {
+    const el = editorRef.current;
+    if (!variablesEnabled || !el) return;
+    const wrapped = wrapVariablesInHtml(el.innerHTML, variables);
+    if (wrapped !== el.innerHTML) el.innerHTML = wrapped;
+  }
+
+  /** Re-evaluate whether a variable menu should be showing, and where. */
+  function syncVariableMenu() {
+    if (!variablesEnabled) return;
+
+    const trigger = findVariableTrigger();
+    triggerRef.current = trigger;
+    if (!trigger) {
+      setVarMenu(null);
+      return;
+    }
+
+    const matches = filterComposeVariables(trigger.query, variables);
+    if (matches.length === 0) {
+      setVarMenu(null);
+      return;
+    }
+
+    // Measure the `{query` span rather than the collapsed caret — a collapsed
+    // range reports a zero-width rect at the wrong x in some browsers.
+    const measure = document.createRange();
+    measure.setStart(trigger.node, trigger.braceOffset);
+    measure.setEnd(trigger.node, trigger.caretOffset);
+    const rect = measure.getBoundingClientRect();
+
+    setVarMenu((prev) => ({
+      matches,
+      // Keep the highlighted row while the user narrows the query, but never
+      // let a stale index point past the end of a now-shorter list.
+      index: prev ? Math.min(prev.index, matches.length - 1) : 0,
+      top: rect.bottom + 4,
+      left: rect.left,
+    }));
+  }
+
+  function closeVariableMenu() {
+    setVarMenu(null);
+    triggerRef.current = null;
+  }
+
+  /** Replace the typed `{query` with a complete `{key}` placeholder. */
+  function insertVariable(v: ComposeVariable) {
+    const trigger = triggerRef.current;
+    const el = editorRef.current;
+    if (!trigger || !el) return;
+
+    el.focus();
+    // Select the partial text and overwrite it via execCommand so the
+    // insertion joins the browser's native undo stack.
+    const range = document.createRange();
+    range.setStart(trigger.node, trigger.braceOffset);
+    range.setEnd(trigger.node, trigger.caretOffset);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    // Trailing &nbsp; sits outside the span so continued typing isn't
+    // swallowed into the tinted token.
+    document.execCommand(
+      "insertHTML",
+      false,
+      `<span class="${VARIABLE_SPAN_CLASS}">{${v.key}}</span>&nbsp;`
+    );
+
+    closeVariableMenu();
+    emit();
+    saveSelection();
+  }
+
+  /**
+   * The tinted `{variable}` span adjacent to a collapsed caret, if any.
+   *
+   * Checks three positions: inside the span, at the start of the text node
+   * following it, and at an element boundary between children — the caret can
+   * legitimately be in any of them after normal editing.
+   */
+  function adjacentVariableSpan(back: boolean): HTMLElement | null {
+    const el = editorRef.current;
+    const sel = window.getSelection();
+    if (!el || !sel || !sel.isCollapsed || sel.rangeCount === 0) return null;
+
+    const { startContainer: node, startOffset: offset } = sel.getRangeAt(0);
+    if (!el.contains(node)) return null;
+
+    // Caret sits within the token itself.
+    const within = (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)
+      ?.closest(`.${VARIABLE_SPAN_CLASS}`);
+    if (within) return within as HTMLElement;
+
+    const atEdge = back ? offset === 0 : offset === (node.textContent?.length ?? 0);
+    if (node.nodeType === Node.TEXT_NODE && atEdge) {
+      const sib = back ? node.previousSibling : node.nextSibling;
+      if (sib instanceof HTMLElement && sib.classList.contains(VARIABLE_SPAN_CLASS)) return sib;
+    }
+
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const kids = (node as Element).childNodes;
+      const cand = back ? kids[offset - 1] : kids[offset];
+      if (cand instanceof HTMLElement && cand.classList.contains(VARIABLE_SPAN_CLASS)) return cand;
+    }
+
+    return null;
+  }
+
+  /** Backspace/Delete removes a whole variable token rather than one character. */
+  function handleVariableDelete(e: React.KeyboardEvent<HTMLDivElement>): boolean {
+    if (!variablesEnabled) return false;
+    if (e.key !== "Backspace" && e.key !== "Delete") return false;
+
+    const span = adjacentVariableSpan(e.key === "Backspace");
+    if (!span) return false;
+
+    const range = document.createRange();
+    range.selectNode(span);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    // execCommand rather than span.remove() so the deletion is undoable.
+    document.execCommand("delete");
+
+    closeVariableMenu();
+    emit();
+    saveSelection();
+    return true;
+  }
+
+  /** Arrow/Enter/Tab/Esc navigation while the picker is open. */
+  function handleVariableKeyDown(e: React.KeyboardEvent<HTMLDivElement>): boolean {
+    if (!varMenu) return false;
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const delta = e.key === "ArrowDown" ? 1 : -1;
+      setVarMenu((m) =>
+        m ? { ...m, index: (m.index + delta + m.matches.length) % m.matches.length } : m
+      );
+      return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      insertVariable(varMenu.matches[varMenu.index]);
+      return true;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeVariableMenu();
+      return true;
+    }
+    return false;
   }
 
   function exec(cmd: string, arg?: string) {
@@ -363,7 +593,21 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
     closeLinkPopover();
   }
 
-  useImperativeHandle(ref, () => ({ insertLink: openLinkPopover }));
+  useImperativeHandle(ref, () => ({
+    insertLink: openLinkPopover,
+    insertVariableTrigger: () => {
+      const el = editorRef.current;
+      if (!el) return;
+      el.focus();
+      // Restore the caret the toolbar click just stole, so the brace lands
+      // where the user was typing rather than at the start of the body.
+      restoreSelection();
+      document.execCommand("insertText", false, "{");
+      emit();
+      syncVariableMenu();
+    },
+    isFocused: () => !!editorRef.current && document.activeElement === editorRef.current,
+  }));
 
   function handlePaste(e: React.ClipboardEvent<HTMLDivElement>) {
     const text = e.clipboardData.getData("text/plain");
@@ -385,7 +629,12 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   return (
     <div className={`flex min-h-0 flex-1 flex-col ${className ?? ""}`}>
       {/* Editor surface */}
-      <div className="relative min-h-0 flex-1 overflow-y-auto">
+      {/* Caret coordinates are captured once, so a scroll would leave the
+          picker floating detached from its anchor — close it instead. */}
+      <div
+        className="relative min-h-0 flex-1 overflow-y-auto"
+        onScroll={varMenu ? closeVariableMenu : undefined}
+      >
         {isEmpty && placeholder && (
           <div className="pointer-events-none absolute left-3 top-3 select-none text-[13px] text-[#70757a]">
             {placeholder}
@@ -395,11 +644,20 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
           ref={editorRef}
           contentEditable
           suppressContentEditableWarning
-          onInput={emit}
-          onBlur={emit}
-          onKeyUp={saveSelection}
-          onMouseUp={saveSelection}
-          onPaste={handlePaste}
+          onInput={() => { emit(); syncVariableMenu(); }}
+          onBlur={() => { highlightVariablesOnBlur(); emit(); }}
+          onKeyDown={(e) => {
+            if (handleVariableDelete(e)) { e.preventDefault(); return; }
+            handleVariableKeyDown(e);
+          }}
+          onKeyUp={(e) => {
+            saveSelection();
+            // Caret moves that don't fire onInput still change trigger context.
+            if (e.key.startsWith("Arrow") || e.key === "Home" || e.key === "End") {
+              syncVariableMenu();
+            }
+          }}
+          onMouseUp={() => { saveSelection(); syncVariableMenu(); }}
           onClick={(e) => {
             // Gmail-style: clicking directly on a link shows its "Go to
             // link / Change / Remove" bar immediately — no need to select
@@ -411,12 +669,55 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
               openLinkViewFor(a as HTMLAnchorElement);
             }
           }}
-          className="min-h-[200px] w-full px-3 py-3 text-[13px] leading-relaxed text-[#202124] outline-none [overflow-wrap:anywhere] [&_a]:text-[#1a73e8] [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-[#ccc] [&_blockquote]:pl-3 [&_blockquote]:text-[#666] [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
+          onPaste={handlePaste}
+          className="min-h-[200px] w-full px-3 py-3 text-[13px] leading-relaxed text-[#202124] outline-none [overflow-wrap:anywhere] [&_.cv-var]:rounded [&_.cv-var]:bg-[#e8f0fe] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[#1967d2] [&_a]:text-[#1a73e8] [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-[#ccc] [&_blockquote]:pl-3 [&_blockquote]:text-[#666] [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
           role="textbox"
           aria-multiline="true"
           aria-label={placeholder || "Message body"}
         />
       </div>
+
+      {/*
+        Merge-variable picker — anchored to the caret in viewport coordinates.
+        Portalled to <body> because the centered compose dialog carries a
+        translate transform, and a transformed ancestor becomes the containing
+        block for position:fixed children — which would resolve these
+        coordinates against the dialog instead of the screen.
+      */}
+      {varMenu && typeof document !== "undefined" && createPortal(
+        <div
+          data-rte-popover
+          className="fixed z-[1000] max-h-[260px] w-[264px] overflow-y-auto rounded-lg border border-[#dadce0] bg-white py-1 shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+          style={{ top: varMenu.top, left: varMenu.left }}
+          role="listbox"
+          aria-label="Insert variable"
+        >
+          <p className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#70757a]">
+            Insert variable
+          </p>
+          {varMenu.matches.map((v, i) => (
+            <button
+              key={v.key}
+              type="button"
+              role="option"
+              aria-selected={i === varMenu.index}
+              // Keep the caret/selection intact — a plain click would blur the
+              // editor and drop the range insertVariable needs.
+              onMouseDown={(e) => { e.preventDefault(); insertVariable(v); }}
+              onMouseEnter={() => setVarMenu((m) => (m ? { ...m, index: i } : m))}
+              className={`flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left ${
+                i === varMenu.index ? "bg-[#e8f0fe]" : "hover:bg-[#f1f3f4]"
+              }`}
+            >
+              <span className="text-[13px] font-medium text-[#202124]">{v.label}</span>
+              <span className="text-[11px] text-[#5f6368]">
+                {`{${v.key}}`} · {v.hint}
+              </span>
+            </button>
+          ))}
+        </div>,
+        document.body
+      )}
 
       {/* Formatting toolbar */}
       <div className="flex shrink-0 flex-wrap items-center gap-0.5 border-t border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5">
@@ -629,7 +930,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
                 </button>
               </div>
             ) : (
-              <div className="absolute bottom-full right-0 z-50 mb-1 w-80 rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" data-rte-popover>
+              <div className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-lg border border-[#dadce0] bg-white p-3 shadow-xl" data-rte-popover>
                 {isEditingLink && (
                   <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[#5f6368]">Edit link</p>
                 )}

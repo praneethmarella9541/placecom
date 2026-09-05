@@ -4,7 +4,7 @@ import { resolveMailboxGoogleAccessToken } from "@/lib/mailbox-google-access";
 import { getAuthedRequest } from "@/lib/api-auth";
 
 export type GmailAuthResult =
-  | { ok: true; accessToken: string; userId: string; gmailAddress?: string }
+  | { ok: true; accessToken: string; userId: string; mailboxOwnerId: string; gmailAddress?: string }
   | { ok: false; status: number; message: string };
 
 /**
@@ -28,6 +28,7 @@ export async function requireGmailAccessToken(request?: Request): Promise<GmailA
     ok: true,
     accessToken: resolved.accessToken,
     userId: resolved.sessionUserId,
+    mailboxOwnerId: resolved.mailboxOwnerId,
     gmailAddress: resolved.gmailAddress,
   };
 }

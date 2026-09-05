@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
+import { fetchAllRows } from "@/lib/supabase-fetch-all";
 
 export const runtime = "nodejs";
 
@@ -11,20 +12,26 @@ export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data, error } = await supabase
-    .from("wa_contacts")
-    .select("peer_e164, name")
-    .eq("user_id", user.id)
-    .order("name", { ascending: true });
+  // Paged (see lib/supabase-fetch-all.ts) rather than a plain .select(), which
+  // silently caps at 1000 rows once this user has saved that many contacts.
+  const { data, error } = await fetchAllRows<ContactRow>((from, to) =>
+    supabase
+      .from("wa_contacts")
+      .select("peer_e164, name")
+      .eq("user_id", user.id)
+      .order("name", { ascending: true })
+      .order("peer_e164", { ascending: true })
+      .range(from, to)
+  );
 
   if (error) {
-    if (/relation.*wa_contacts.*does not exist/i.test(error.message)) {
+    if (/relation.*wa_contacts.*does not exist/i.test(error)) {
       return NextResponse.json({ contacts: [] });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error }, { status: 500 });
   }
 
-  return NextResponse.json({ contacts: (data ?? []) as ContactRow[] });
+  return NextResponse.json({ contacts: data });
 }
 
 /** POST /api/whatsapp/contacts — upsert a contact name */

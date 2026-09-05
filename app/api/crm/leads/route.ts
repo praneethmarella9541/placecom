@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { fetchAllRows } from "@/lib/supabase-fetch-all";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 
@@ -13,16 +15,28 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Fetch leads
-  const { data: leads, error } = await supabase
-    .from("leads")
-    .select("*")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
+  // Fetch leads — paged (see lib/supabase-fetch-all.ts) rather than a plain
+  // .select(), which silently caps at 1000 rows once this user has that many.
+  //
+  // Explicit .eq("user_id", ...), not left to RLS alone: `leads`' own RLS
+  // (0048) is broader than what the CRM board wants — it still lets an admin
+  // read their whole team's rows, which other features (the Contacts
+  // directory's Status column) rely on. The CRM board itself is personal per
+  // user (0055): each team member's kanban is their own, so this route must
+  // narrow to "my own leads" even for an admin account.
+  const { data: leads, error } = await fetchAllRows((from, to) =>
+    supabase
+      .from("leads")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: true })
+      .range(from, to)
+  );
 
   if (error) {
     console.error("GET Leads error:", error);
-    return NextResponse.json({ error: "Database error: " + error.message }, { status: 500 });
+    return NextResponse.json({ error: "Database error: " + error }, { status: 500 });
   }
 
   // Fetch all interactions for these leads to compute last_interaction_at
@@ -77,10 +91,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Company name is required" }, { status: 400 });
     }
 
+    const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
+
     const { data: newLead, error } = await supabase
       .from("leads")
       .insert({
         user_id: user.id,
+        mailbox_owner_id: mailboxOwnerId,
         company_name,
         contact_name: contact_name || null,
         email: email || null,

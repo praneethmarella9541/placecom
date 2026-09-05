@@ -18,7 +18,6 @@ type PatchBody = {
   start?: { dateTime?: string; date?: string; timeZone?: string };
   end?: { dateTime?: string; date?: string; timeZone?: string };
   attendees?: { email: string }[];
-  addMeet?: boolean;
   sendUpdates?: SendUpdates;
   recurrence?: string[];
 };

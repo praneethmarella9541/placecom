@@ -22,7 +22,6 @@ export type CalendarEventItem = {
     self?: boolean;
   }[];
   organizer?: { email?: string; displayName?: string; self?: boolean };
-  hangoutLink?: string;
   recurrence?: string[];
   recurringEventId?: string;
 };
@@ -61,7 +60,7 @@ export type CalendarEventsPage = {
 };
 
 /**
- * List events from any Google Calendar (e.g. the Meet-organizer calendar).
+ * List events from any Google Calendar.
  * For the signed-in user's primary calendar, prefer listPrimaryCalendarEvents.
  */
 export async function listCalendarEventsPage(
@@ -281,8 +280,6 @@ export async function updateCalendarEventRsvp(
  * Generic create — accepts the Google Calendar event shape directly.
  * Used by POST /api/calendar/events from both web and mobile.
  *
- * Pass `addMeet: true` to auto-create a Google Meet link (requires
- * the conferenceDataVersion=1 query param, set below).
  * Pass `sendUpdates` to control attendee email notifications.
  */
 export async function createCalendarEvent(
@@ -294,23 +291,13 @@ export async function createCalendarEvent(
     start: { dateTime?: string; date?: string; timeZone?: string };
     end: { dateTime?: string; date?: string; timeZone?: string };
     attendees?: { email: string }[];
-    addMeet?: boolean;
     sendUpdates?: SendUpdates;
     recurrence?: string[];
   }
 ): Promise<CalendarEventItem> {
-  const { addMeet, sendUpdates, ...rest } = input;
+  const { sendUpdates, ...rest } = input;
   const payload: Record<string, unknown> = { ...rest };
-  if (addMeet) {
-    payload.conferenceData = {
-      createRequest: {
-        requestId: `meet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        conferenceSolutionKey: { type: "hangoutsMeet" },
-      },
-    };
-  }
   const params = new URLSearchParams();
-  if (addMeet) params.set("conferenceDataVersion", "1");
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
   const qs = params.toString();
   const url = qs
@@ -353,23 +340,13 @@ export async function patchCalendarEvent(
     start?: { dateTime?: string; date?: string; timeZone?: string };
     end?: { dateTime?: string; date?: string; timeZone?: string };
     attendees?: { email: string }[];
-    addMeet?: boolean;
     sendUpdates?: SendUpdates;
     recurrence?: string[];
   }
 ): Promise<CalendarEventItem> {
-  const { addMeet, sendUpdates, ...rest } = input;
+  const { sendUpdates, ...rest } = input;
   const payload: Record<string, unknown> = { ...rest };
-  if (addMeet) {
-    payload.conferenceData = {
-      createRequest: {
-        requestId: `meet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        conferenceSolutionKey: { type: "hangoutsMeet" },
-      },
-    };
-  }
   const params = new URLSearchParams();
-  if (addMeet) params.set("conferenceDataVersion", "1");
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
   const qs = params.toString();
   const base = `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`;
@@ -431,9 +408,8 @@ export async function deleteCalendarEvent(
 }
 
 /**
- * Placement-meeting / recruiter-call create. Builds a structured event with
- * Google Meet attached. The calendar id can be the user's "primary" or a
- * dedicated Meet-organizer calendar id; when using a dedicated calendar,
+ * Placement-meeting / recruiter-call create. Builds a structured event.
+ * The calendar id can be the user's "primary" or another calendar id;
  * pass admin/owner email(s) via `extraAttendeeEmails` so they get invites.
  *
  * (Was named `createCalendarEvent` on the chetan branch — renamed to
@@ -454,8 +430,6 @@ export async function createPlacementMeetingEvent(
     timeZone?: string;
     /** Extra invitees added to the event. */
     extraAttendeeEmails?: string[];
-    /** Whether to attach a Google Meet conference. Defaults to true. */
-    addMeet?: boolean;
     /** Whether to send invite emails to attendees. Defaults to "all". */
     sendUpdates?: SendUpdates;
     recurrence?: string[];
@@ -475,7 +449,6 @@ export async function createPlacementMeetingEvent(
     add(email);
   }
 
-  const wantMeet = input.addMeet !== false; // default true
   const sendUpdates: SendUpdates = input.sendUpdates ?? "all"; // default: send emails
   const payload: Record<string, unknown> = {
     summary: input.title.trim(),
@@ -492,21 +465,12 @@ export async function createPlacementMeetingEvent(
     attendees,
     guestsCanInviteOthers: false,
     ...(input.recurrence?.length ? { recurrence: input.recurrence } : {}),
-    ...(wantMeet && {
-      conferenceData: {
-        createRequest: {
-          requestId: `meet-${Date.now()}`,
-          conferenceSolutionKey: { type: "hangoutsMeet" },
-        },
-      },
-    }),
   };
 
   let res: Response;
   try {
     const cal = encodeURIComponent(calendarId.trim() || "primary");
     const qp = new URLSearchParams();
-    if (wantMeet) qp.set("conferenceDataVersion", "1");
     qp.set("sendUpdates", sendUpdates);
     res = await fetch(`${CALENDAR_API}/calendars/${cal}/events?${qp.toString()}`, {
       method: "POST",

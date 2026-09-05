@@ -19,8 +19,6 @@ Add it to:
 
 Without this secret, stored **refresh tokens** cannot be renewed after ~1 hour. Users see “Google token expired” on Dashboard/Inbox/Calendar (admin mailbox).
 
-Meet scheduling for `g24072@astra.xlri.ac.in` can still work via app sign-in, but long-term refresh for **both** organizer and admin mailbox needs this secret.
-
 ---
 
 ## 2. Authorized redirect URIs (already required for login)
@@ -32,12 +30,6 @@ https://<YOUR_SUPABASE_PROJECT_REF>.supabase.co/auth/v1/callback
 ```
 
 Example for this project: `https://ljaelwxmgzmirofitacm.supabase.co/auth/v1/callback`
-
-Optional (only if using `npm run auth:meet-organizer` locally):
-
-```
-http://127.0.0.1:3456/oauth/callback
-```
 
 ---
 
@@ -81,8 +73,7 @@ Supabase Dashboard → **Authentication** → **Providers** → **Google**:
 ## 6. After deploy
 
 1. Set `GOOGLE_OAUTH_CLIENT_SECRET` on Vercel → redeploy.  
-2. Admin (`chetangalla248@gmail.com`) signs in with Google once on production → refreshes stored mailbox token.  
-3. Organizer (`g24072@astra.xlri.ac.in`) signs in once if using Meet host account → refreshes organizer token in DB.
+2. Admin (`chetangalla248@gmail.com`) signs in with Google once on production → refreshes stored mailbox token.
 
 ---
 
@@ -95,13 +86,3 @@ Supabase Dashboard → **Authentication** → **Providers** → **Google**:
 | Supabase session | Separate | Sign-in session; not the same as Gmail/Calendar API token |
 
 **“Expire fast”** usually means missing **client secret** or admin has not re-signed in after secret was added.
-
----
-
-## Meet organizer (current setup)
-
-- Meet links: **`g24072@astra.xlri.ac.in`**
-- Always invited: **`chetangalla248@gmail.com`**
-- Env (optional overrides): `GOOGLE_MEET_ORGANIZER_EMAIL`, `GOOGLE_MEET_ORGANIZER_ADMIN_EMAIL`
-
-No extra Cloud Console step beyond sections 1–5.

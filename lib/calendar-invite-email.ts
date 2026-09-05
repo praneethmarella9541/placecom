@@ -11,7 +11,6 @@ export type CalendarInviteParsed = {
   organizer?: string;
   organizerEmail?: string;
   guests: string[];
-  meetLink?: string;
   viewEventLink?: string;
   rsvp: {
     yes?: string;
@@ -206,12 +205,6 @@ export function parseCalendarInviteHtml(
     }
   }
 
-  const meetLink =
-    findHref(html, [
-      /href="(https:\/\/meet\.google\.com\/[a-z0-9-]+)"/i,
-      /(https:\/\/meet\.google\.com\/[a-z0-9-]+)/i,
-    ]) || lines.find((l) => /^meet\.google\.com\//i.test(l) || l.includes("meet.google.com/"));
-
   const viewEventLink = findHref(html, [
     /href="(https:\/\/calendar\.google\.com\/calendar\/event[^"]+)"/i,
   ]);
@@ -225,7 +218,6 @@ export function parseCalendarInviteHtml(
     organizer,
     organizerEmail,
     guests,
-    meetLink: meetLink?.startsWith("http") ? meetLink : meetLink ? `https://${meetLink}` : undefined,
     viewEventLink,
     rsvp: {
       yes: findRsvpLink(html, "Yes"),
@@ -243,7 +235,7 @@ export function parseCalendarInviteHtml(
 /** True when we have enough structure to render the Gmail-style invite card. */
 export function hasCalendarInviteCardData(parsed: CalendarInviteParsed | null): boolean {
   if (!parsed) return false;
-  if (parsed.rsvp.yes || parsed.rsvp.no || parsed.rsvp.maybe || parsed.meetLink || parsed.viewEventLink) {
+  if (parsed.rsvp.yes || parsed.rsvp.no || parsed.rsvp.maybe || parsed.viewEventLink) {
     return true;
   }
   if (parsed.when && (parsed.organizer || parsed.guests.length > 0)) return true;

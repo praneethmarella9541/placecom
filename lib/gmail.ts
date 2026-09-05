@@ -3,6 +3,54 @@ import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
+// Gmail's per-user ceiling is `defaultPerMinutePerUser` — 15,000 quota units per
+// MINUTE, not per second. Once it's exhausted, nothing succeeds until that minute
+// window rolls over, so the backoff has to be able to outlast a full window: these
+// values give waits of ~1s, 2s, 4s, 8s, 16s, 32s ≈ 63s total. The previous 5
+// attempts capped at 8s spent ~7.5s in total and so always gave up inside the very
+// minute it was being throttled in, surfacing the 403 to the caller.
+const RATE_LIMIT_MAX_ATTEMPTS = 7;
+const RATE_LIMIT_MAX_BACKOFF_MS = 60_000;
+
+/** Retries exhausted against a quota error — the caller should back off, not fail outright. */
+export class GmailRateLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GmailRateLimitError";
+  }
+}
+
+function isRateLimitedResponse(status: number, bodyText: string): boolean {
+  if (status === 429) return true;
+  // Gmail's older quota system reports this as 403 with one of these reasons rather than 429.
+  if (status === 403) return /rateLimitExceeded|userRateLimitExceeded|quotaExceeded/i.test(bodyText);
+  return false;
+}
+
+/**
+ * fetch() with exponential backoff + jitter on Gmail's per-user quota errors (429, and the
+ * 403-with-rate-limit-reason variant). Non-rate-limit errors (401, 404, insufficient scope, …)
+ * are returned immediately for the caller's existing handling — only quota exhaustion retries.
+ */
+async function fetchGmailWithRetry(url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(url, init);
+    if (res.ok || attempt >= RATE_LIMIT_MAX_ATTEMPTS - 1) return res;
+
+    const bodyText = await res.clone().text();
+    if (!isRateLimitedResponse(res.status, bodyText)) return res;
+
+    const retryAfterHeader = res.headers.get("Retry-After");
+    // Jitter is a full second rather than 250ms because every in-flight worker
+    // hits the quota wall at once — without spreading them out they all wake
+    // together and re-exhaust the next window as a thundering herd.
+    const backoffMs = retryAfterHeader
+      ? Number(retryAfterHeader) * 1000
+      : Math.min(RATE_LIMIT_MAX_BACKOFF_MS, 1000 * 2 ** attempt) + Math.random() * 1000;
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+  }
+}
+
 export type GmailLabelFilter = "inbox" | "sent" | "all";
 
 export function buildListQuery(label: GmailLabelFilter): string {
@@ -184,7 +232,7 @@ export async function fetchGmailMessage(
   const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?format=full`;
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetchGmailWithRetry(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
   } catch (e) {
@@ -246,9 +294,134 @@ export async function fetchGmailMessage(
   };
 }
 
+export type GmailMessageHeaders = {
+  id: string;
+  threadId?: string;
+  from: string;
+  to: string;
+  cc: string;
+  internalDate: number;
+};
+
+/**
+ * Header-only fetch (format=metadata) — skips Google's body/attachment walk entirely,
+ * so it's materially cheaper than fetchGmailMessage() when bulk-scanning for
+ * sender/recipient addresses (e.g. people/company auto-population) rather than content.
+ */
+export async function fetchGmailMessageHeaders(
+  accessToken: string,
+  messageId: string
+): Promise<GmailMessageHeaders> {
+  const params = new URLSearchParams({ format: "metadata" });
+  params.append("metadataHeaders", "From");
+  params.append("metadataHeaders", "To");
+  params.append("metadataHeaders", "Cc");
+  params.append("metadataHeaders", "Date");
+  const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?${params.toString()}`;
+
+  let res: Response;
+  try {
+    res = await fetchGmailWithRetry(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(
+        e,
+        "Gmail API (message headers) — your server must reach https://gmail.googleapis.com"
+      )
+    );
+  }
+
+  if (res.status === 401) {
+    const err = new Error("Gmail access token expired or invalid") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    if (isRateLimitedResponse(res.status, text)) {
+      throw new GmailRateLimitError(`Gmail message-headers quota exhausted: ${text}`);
+    }
+    const err = new Error(`Gmail API error ${res.status}: ${text}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+
+  const data = (await res.json()) as {
+    id: string;
+    threadId?: string;
+    internalDate?: string;
+    payload?: { headers?: GmailHeader[] };
+  };
+
+  const headers = data.payload?.headers;
+  const internalMs = data.internalDate ? parseInt(data.internalDate, 10) : 0;
+
+  return {
+    id: data.id,
+    threadId: data.threadId,
+    from: getHeader(headers, "From"),
+    to: getHeader(headers, "To"),
+    cc: getHeader(headers, "Cc"),
+    internalDate: Number.isNaN(internalMs) ? 0 : internalMs,
+  };
+}
+
+export async function fetchGmailMessageHeadersByIds(
+  accessToken: string,
+  ids: string[],
+  opts?: { onProgress?: (fetched: number, target: number) => void; concurrency?: number }
+): Promise<GmailMessageHeaders[]> {
+  if (ids.length === 0) return [];
+  const concurrency = opts?.concurrency ?? gmailFetchConcurrency();
+  const total = ids.length;
+  let done = 0;
+  const results = await mapWithConcurrency(
+    ids,
+    concurrency,
+    async (id) => {
+      try {
+        return await fetchGmailMessageHeaders(accessToken, id);
+      } catch (e) {
+        // Quota exhaustion is NOT a per-message defect — every remaining id in
+        // this page would fail the same way, and skipping them would drop those
+        // messages from the scan permanently and silently (the caller advances
+        // its cursor past the page regardless). Propagate so the batch can stop
+        // and be retried against a fresh quota window.
+        if (e instanceof GmailRateLimitError) throw e;
+
+        // Skipping is only ever safe for a message Gmail will NEVER return —
+        // callers advance their cursor past this page either way, so anything
+        // skipped here is dropped from the scan permanently and silently. A 4xx
+        // is a property of the message (Google Chat threads under the "Chats"
+        // label 400 with "Precondition check failed" on format=metadata); a 5xx
+        // or a network fault is transient and would succeed on a retry, so it
+        // must propagate and let the page be re-fetched instead.
+        const status = (e as { status?: number } | null)?.status;
+        const permanent = typeof status === "number" && status >= 400 && status < 500;
+        if (!permanent) throw e;
+
+        console.warn(`fetchGmailMessageHeaders(${id}) unreadable (${status}), skipping:`, e);
+        return null;
+      }
+    },
+    () => {
+      done += 1;
+      opts?.onProgress?.(done, total);
+    }
+  );
+  return results.filter((r): r is GmailMessageHeaders => r !== null);
+}
+
 export type ListMessagesResult = {
   messageIds: string[];
   nextPageToken?: string;
+  /**
+   * Gmail's own estimate of how many messages match the query. Approximate —
+   * treat it as a denominator for a progress indicator, never as an exact count.
+   */
+  resultSizeEstimate?: number;
 };
 
 export async function listMessageIdsPage(
@@ -268,7 +441,7 @@ export async function listMessageIdsPage(
   const url = `${GMAIL_API}/messages?${params.toString()}`;
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetchGmailWithRetry(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
   } catch (e) {
@@ -291,20 +464,102 @@ export async function listMessageIdsPage(
   if (!res.ok) {
     const text = await res.text();
     throwIfGmailInsufficientScope(res.status, text);
+    if (isRateLimitedResponse(res.status, text)) {
+      throw new GmailRateLimitError(`Gmail list quota exhausted: ${text}`);
+    }
     throw new Error(`Gmail list error ${res.status}: ${text}`);
   }
 
   const data = (await res.json()) as {
     messages?: { id: string }[];
     nextPageToken?: string;
+    resultSizeEstimate?: number;
   };
 
   const messageIds = (data.messages || []).map((m) => m.id);
-  return { messageIds, nextPageToken: data.nextPageToken };
+  return {
+    messageIds,
+    nextPageToken: data.nextPageToken,
+    resultSizeEstimate: data.resultSizeEstimate,
+  };
+}
+
+/** Current mailbox historyId — the incremental contact sync's starting cursor (lib/people-mailbox-sync.ts). */
+export async function fetchGmailHistoryId(accessToken: string): Promise<string | null> {
+  const res = await fetchGmailWithRetry(`${GMAIL_API}/profile`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { historyId?: string };
+  return data.historyId?.trim() || null;
+}
+
+export type GmailHistoryPage = {
+  messagesAdded: { id: string; threadId: string; labelIds: string[] }[];
+  nextPageToken?: string;
+  /** Latest historyId Gmail reports for this page — advance the stored cursor to this. */
+  historyId?: string;
+};
+
+/** Thrown when Gmail reports the historyId has expired (>30 days idle) — caller falls back to a date-based catch-up. */
+export class GmailHistoryExpiredError extends Error {
+  constructor() {
+    super("Gmail historyId expired");
+  }
+}
+
+/**
+ * Pages Gmail's history.list — an exact changelog of mailbox events since
+ * startHistoryId, cheaper and precise unlike an `after:<date>` search rescan
+ * (which can double-count or miss messages at the boundary). Only messageAdded
+ * events are surfaced; callers that don't need deletions (e.g. the contact
+ * sync, which never removes a contact just because a message was deleted)
+ * can ignore that Gmail also reports messageDeleted in the same feed.
+ */
+export async function fetchGmailHistoryPage(
+  accessToken: string,
+  startHistoryId: string,
+  pageToken?: string
+): Promise<GmailHistoryPage> {
+  const params = new URLSearchParams({ startHistoryId, maxResults: "500" });
+  params.append("historyTypes", "messageAdded");
+  if (pageToken) params.set("pageToken", pageToken);
+
+  const res = await fetchGmailWithRetry(`${GMAIL_API}/history?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (res.status === 404) throw new GmailHistoryExpiredError();
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail history error ${res.status}: ${text}`);
+  }
+
+  const data = (await res.json()) as {
+    history?: { messagesAdded?: { message: { id: string; threadId: string; labelIds?: string[] } }[] }[];
+    historyId?: string;
+    nextPageToken?: string;
+  };
+
+  const messagesAdded: GmailHistoryPage["messagesAdded"] = [];
+  for (const entry of data.history || []) {
+    for (const a of entry.messagesAdded || []) {
+      messagesAdded.push({ id: a.message.id, threadId: a.message.threadId, labelIds: a.message.labelIds || [] });
+    }
+  }
+
+  return { messagesAdded, nextPageToken: data.nextPageToken, historyId: data.historyId };
 }
 
 const ALL_MAIL_CAP = 10_000;
 
+// 15,000 units/min ÷ 5 units per messages.get = 3,000 requests/min = 50/sec, the
+// hard per-user ceiling. At ~250ms per request a concurrency of 12 lands just under
+// that; the previous default of 20 sustained ~80/sec, i.e. roughly 1.6x over quota,
+// which is why bulk scans leaned on backoff to throttle themselves and eventually
+// tripped `defaultPerMinutePerUser`. Raising this does not buy throughput — the
+// quota, not the client, is the limit.
 function gmailFetchConcurrency(): number {
   const n = parseInt(process.env.GMAIL_FETCH_CONCURRENCY || "12", 10);
   if (!Number.isFinite(n) || n < 1) return 12;

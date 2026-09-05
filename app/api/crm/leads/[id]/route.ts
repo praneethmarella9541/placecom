@@ -17,12 +17,28 @@ export async function PATCH(
   try {
     const leadId = params.id;
     const body = await request.json();
-    const { stage, score, company_name, contact_name, email, phone, staff_name, lead_type, jd_count } = body;
+    const { stage, stage_id, stage_set_by, score, company_name, contact_name, email, phone, staff_name, lead_type, jd_count } = body;
 
     const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (stage !== undefined) {
       updates.stage = stage;
       updates.stage_updated_at = new Date().toISOString();
+    }
+    // Board placement (crm_stages, migration 0054). Moving a card by hand
+    // stamps stage_set_by='human' so a later re-classify won't undo it —
+    // and clears the stale AI rationale, which no longer explains where the
+    // card actually is.
+    if (stage_id !== undefined) {
+      updates.stage_id = stage_id || null;
+      updates.stage_updated_at = new Date().toISOString();
+      if (stage_set_by === undefined) updates.stage_set_by = "human";
+    }
+    if (stage_set_by === "human" || stage_set_by === "ai") {
+      updates.stage_set_by = stage_set_by;
+      if (stage_set_by === "human") {
+        updates.ai_rationale = null;
+        updates.ai_confidence = null;
+      }
     }
     if (score !== undefined) updates.score = score;
     if (company_name !== undefined) updates.company_name = company_name;

@@ -16,6 +16,32 @@ import { GmailAttachmentPreviews } from "@/components/GmailAttachmentPreviews";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
+import {
+  MassRecipientsPanel,
+  type MassImport,
+  type MassRecipient,
+  type MassSource,
+} from "@/components/MassRecipientsPanel";
+import {
+  MassSendingToggleDialog,
+  type MassToggleDirection,
+} from "@/components/MassSendingToggleDialog";
+import { useDirectoryContacts } from "@/hooks/useDirectoryContacts";
+import { useSyncedContacts } from "@/hooks/useSyncedContacts";
+import type { DirectoryContact } from "@/lib/contact-directory";
+import {
+  COMPOSE_VARIABLES,
+  columnsToComposeVariables,
+  contactToMergeFields,
+  formatInteractionDate,
+  mergeFieldSources,
+  reportMissingVariables,
+  stripVariableSpans,
+  syncedContactToMergeFields,
+  templateUsesVariables,
+  type ComposeVariable,
+} from "@/lib/compose-variables";
+import { listPlaceholdersInTemplate, mergeTemplate, type MailMergeRow } from "@/lib/mail-merge";
 import { GmailInlineReply } from "@/components/GmailInlineReply";
 import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
 import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
@@ -45,7 +71,7 @@ import { useWorkspaceTopbarActionsNode } from "@/lib/workspace-topbar-context";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
-import { cn, formatDate, timeAgo } from "@/lib/utils";
+import { cn, formatDate, previewLineFromBody, timeAgo } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import {
   buildDateSearchClauses,
@@ -66,7 +92,6 @@ import {
   buildMailListCacheKey,
   clearMailListSessionCache,
   getMailListSessionCache,
-  MAIL_LIST_PREFETCH_SPECS,
   prefetchMailListViewIfMissing,
   prefetchMailListViews,
   setMailListCache,
@@ -78,6 +103,7 @@ import {
   rememberOpenThread,
   rememberPrefetchThread,
   prefetchMailThreadBodies,
+  prefetchMailBodiesForWarmedCategories,
   startMailListAndBodyPrefetchWarm,
 } from "@/lib/mail-thread-prefetch";
 import { isPrefetchPausedAfterBrowserReload } from "@/lib/login-prefetch-session";
@@ -91,6 +117,7 @@ import {
   IconEye,
   IconCheck,
   IconCalendar,
+  IconInfo,
 } from "@/components/Icons";
 
 type Folder = "inbox" | "sent" | "drafts" | "starred" | "important" | "trash" | "spam" | "allmail";
@@ -283,6 +310,10 @@ type MsgView = {
   body: string;
   bodyHtml?: string;
   attachments?: AttachmentView[];
+  /** "Show details" popover fields — see lib/gmail-inbox.ts's getThreadMessages. */
+  replyTo?: string;
+  mailedBy?: string;
+  signedBy?: string;
 };
 
 type TrackingRow = {
@@ -292,9 +323,164 @@ type TrackingRow = {
   open_count: number;
 };
 
+/**
+ * Gmail-style "N skipped messages" row — a thread with more than a handful
+ * of messages doesn't render every one collapsed in a row (which is what
+ * this view used to do); it shows the first message, hides the middle run
+ * behind this divider, and shows the last two. Clicking expands that run in
+ * place, each still collapsed like any older message. Purely a count of how
+ * many rows are hidden, not a preview — Gmail's own divider carries no
+ * content either, since anything meaningful there would defeat hiding it.
+ */
+function ThreadMiddleDivider({ count, onExpand }: { count: number; onExpand: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onExpand}
+      className="group flex w-full items-center gap-3 px-4 py-1.5 md:px-6"
+      aria-label={`Show ${count} earlier ${count === 1 ? "message" : "messages"}`}
+    >
+      <span className="h-px flex-1 bg-[var(--color-border)]" />
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] text-[11px] font-medium text-[var(--color-text-faint)] transition-colors group-hover:border-[var(--color-copper)] group-hover:text-[var(--color-copper)]">
+        {count}
+      </span>
+      <span className="h-px flex-1 bg-[var(--color-border)]" />
+    </button>
+  );
+}
+
+/**
+ * Gmail's "Show details" popover — the row of from/reply-to/to/cc/date/
+ * subject/mailed-by/signed-by you get from the caret next to "to me". Mailed-
+ * by/signed-by are the Return-Path and DKIM-Signature domains respectively
+ * (see lib/gmail-inbox.ts's getThreadMessages) — Gmail computes them the same
+ * way, which is why they can differ from the From address (e.g. a marketing
+ * platform sending "on behalf of" a brand, or a relay like amazonses.com).
+ */
+/**
+ * Rendered via a portal to document.body, positioned with `position: fixed`
+ * from the trigger button's own measured rect — not CSS `position: absolute`
+ * nested under the trigger. The message body directly below it can be an
+ * `<iframe>` (see EmailHtmlBody) for HTML mail, and iframes get their own
+ * compositing layer in every major browser: they can paint over a
+ * same-stacking-context absolutely-positioned sibling regardless of z-index,
+ * a well-known cross-browser quirk rather than anything specific to this
+ * layout. A portal sidesteps it categorically by not being a descendant of
+ * anything that could stack under the iframe in the first place — the same
+ * reasoning as this file's other portal-based overlays (the fullscreen
+ * reader below, EmailThreadPreviewModal).
+ *
+ * Closes on scroll rather than re-tracking position while scrolling — this
+ * is meant for a quick glance at headers, not something kept open while
+ * scrolling past it.
+ */
+function MessageDetailsPopover({
+  m,
+  anchorRect,
+  triggerEl,
+  onDismiss,
+  onClose,
+}: {
+  m: MsgView;
+  anchorRect: { top: number; left: number; bottom: number };
+  /** Excluded from "outside" — the trigger button's own onClick handles its own toggle. */
+  triggerEl: HTMLElement | null;
+  /** A deliberate click away from the whole trigger+popover — also collapses the message. */
+  onDismiss: () => void;
+  /** Anchor invalidated by scroll/resize — just close, no collapse; the user didn't ask to be done with the message. */
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDocDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (ref.current?.contains(target)) return;
+      if (triggerEl?.contains(target)) return;
+      onDismiss();
+    }
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [onDismiss, triggerEl]);
+
+  useEffect(() => {
+    // capture:true so this catches scroll on the thread pane's own
+    // overflow-y-auto container, not just window-level scroll — "scroll"
+    // doesn't bubble, but a capturing listener on an ancestor still sees it.
+    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  if (typeof document === "undefined") return null;
+
+  const recipientParts = formatMessageRecipientsLine(m);
+  const toFull = recipientParts.find((p) => p.label === "to")?.title;
+  const ccFull = recipientParts.find((p) => p.label === "cc")?.title;
+
+  const rows: { label: string; value: string; bold?: boolean }[] = [
+    { label: "from", value: formatFromHeader(m.from || ""), bold: true },
+    ...(m.replyTo ? [{ label: "reply-to", value: formatFromHeader(m.replyTo) }] : []),
+    { label: "to", value: toFull || "—" },
+    ...(ccFull ? [{ label: "cc", value: ccFull }] : []),
+    { label: "date", value: formatDate(m.date) },
+    { label: "subject", value: m.subject || "(no subject)" },
+    ...(m.mailedBy ? [{ label: "mailed-by", value: m.mailedBy }] : []),
+    ...(m.signedBy ? [{ label: "signed-by", value: m.signedBy }] : []),
+  ];
+
+  const POPOVER_WIDTH = 360;
+  const left = Math.min(anchorRect.left, Math.max(8, window.innerWidth - POPOVER_WIDTH - 8));
+
+  return createPortal(
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={titleCase("Message details")}
+      onClick={(e) => e.stopPropagation()}
+      // cursor-text overrides the cursor-pointer the trigger button sits
+      // under in the collapsible header — this panel is read-only, selectable
+      // metadata, not another click target, so it shouldn't show a hand
+      // cursor over the whole thing.
+      style={{ position: "fixed", top: anchorRect.bottom + 4, left }}
+      className="z-[200] w-[360px] max-w-[92vw] cursor-text rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3.5 text-[13px] shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+    >
+      <dl className="space-y-1.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex gap-2.5">
+            {/* w-[68px] was too narrow for "signed-by:"/"reply-to:" (10 chars) —
+                it wrapped to two lines, and the right-aligned second line
+                ("by:") rendered outside the card's own bottom edge instead of
+                pushing the box taller. whitespace-nowrap makes wrapping
+                impossible rather than just less likely at a wider guess. */}
+            <dt className="w-[80px] shrink-0 whitespace-nowrap text-right text-[var(--color-text-faint)]">
+              {r.label}:
+            </dt>
+            <dd
+              className={cn(
+                "min-w-0 flex-1 break-words text-[var(--color-text)]",
+                r.bold && "font-semibold"
+              )}
+            >
+              {r.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>,
+    document.body
+  );
+}
+
 /* ── Collapsible message bubble ──────────────────────────────
  * Defined outside the page so useState is a valid hook call.
  * All older messages (not last) start collapsed; the last is open.
+ * Clicking the header row toggles collapse either direction — clicking
+ * inside the body (links, attachments, the details caret) must not, so
+ * those all stop propagation before it reaches the header's handler.
  * ────────────────────────────────────────────────────────── */
 function MessageBubble({
   m,
@@ -315,6 +501,12 @@ function MessageBubble({
 }) {
   const [expanded, setExpanded] = useState(isLast);
   const [fullscreen, setFullscreen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // Measured from the trigger button when it's clicked open — the popover is
+  // portal-rendered and `position: fixed`, so it needs real viewport
+  // coordinates rather than a CSS-relative ancestor. See MessageDetailsPopover.
+  const [detailsAnchor, setDetailsAnchor] = useState<{ top: number; left: number; bottom: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const hasThreadActions = Boolean(onReply && onReplyAll && onForward);
 
   const runThreadAction = (fn?: () => void) => {
@@ -360,33 +552,51 @@ function MessageBubble({
     </>
   );
 
+  // A <span>, not a <p> — this now also renders inside the "show details"
+  // <button> below, whose content model (phrasing content) a <p> doesn't fit;
+  // `block` keeps its own-line layout wherever it's used standalone.
   const recipientLine = (
-    <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-faint)]">
+    <span className="mt-0.5 block text-[12px] leading-snug text-[var(--color-text-faint)]">
       {(() => {
         const parts = formatMessageRecipientsLine(m);
         if (parts.length === 0) return <>{titleCase("to")} —</>;
         return parts.map((part, i) => (
-          <span key={part.label} className={i > 0 ? "ml-1" : undefined}>
+          <span key={part.label} className={i > 0 ? "ml-1" : undefined} title={part.title || undefined}>
             {i > 0 ? "· " : null}
             <span className="text-[var(--color-text-faint)]">{part.label}</span>{" "}
             <span>{part.value}</span>
           </span>
         ));
       })()}
-    </p>
+    </span>
   );
 
   return (
     <>
-      <article
-        className={cn(
-          "border-b border-[var(--color-border)]",
-          isCollapsed && "cursor-pointer hover:bg-[var(--color-surface-offset)]"
-        )}
-        onClick={isCollapsed ? () => setExpanded(true) : undefined}
-      >
-        {/* Always-visible header */}
-        <div className="flex items-start gap-3 px-4 py-3 md:px-6">
+      <article className="border-b border-[var(--color-border)]">
+        {/* Always-visible header — clicking it toggles collapse either way
+            (Gmail lets you re-collapse an open message the same way you
+            opened it); interactive children below stop propagation so
+            clicking them doesn't also toggle it.
+            While the details popover is open, this must collapse rather than
+            toggle: a click on the header (outside the trigger+popover, but
+            still inside this div) is exactly the natural "click away to
+            dismiss the popover" gesture, and it fires alongside — not instead
+            of — the popover's own outside-click handler. A toggle here would read the
+            still-true detailsOpen from this render's closure and flip
+            `expanded` straight back to true right after that handler set it
+            false, silently undoing the collapse. */}
+        <div
+          className="flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-[var(--color-surface-offset)] md:px-6"
+          onClick={() => {
+            if (detailsOpen) {
+              setDetailsOpen(false);
+              setExpanded(false);
+            } else {
+              setExpanded((v) => !v);
+            }
+          }}
+        >
           <GmailAvatar seed={fromEmail || fromName} name={fromName} email={fromEmail || undefined} size={36} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
@@ -427,12 +637,49 @@ function MessageBubble({
                 )}
               </div>
             </div>
-            {/* Collapsed: snippet; Expanded: to/cc */}
+            {/* Collapsed: snippet; Expanded: to/cc, with a "show details" caret */}
             {isCollapsed ? (
               <p className="mt-0.5 truncate text-[13px] text-[var(--color-text-faint)]">
-                {m.body?.split("\n").find((l) => l.trim()) ?? "(no preview)"}
+                {previewLineFromBody(m.body) || "(no preview)"}
               </p>
-            ) : recipientLine}
+            ) : (
+              <div>
+                <button
+                  ref={triggerRef}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (detailsOpen) {
+                      setDetailsOpen(false);
+                      return;
+                    }
+                    const rect = triggerRef.current?.getBoundingClientRect();
+                    if (rect) {
+                      setDetailsAnchor({ top: rect.top, left: rect.left, bottom: rect.bottom });
+                    }
+                    setDetailsOpen(true);
+                  }}
+                  aria-label={titleCase("Show details")}
+                  aria-expanded={detailsOpen}
+                  className="-ml-1 inline-flex items-center gap-0.5 rounded px-1 hover:bg-[var(--color-border)]/60"
+                >
+                  {recipientLine}
+                  <ChevronDown className="h-3 w-3 shrink-0 text-[var(--color-text-faint)]" />
+                </button>
+                {detailsOpen && detailsAnchor && (
+                  <MessageDetailsPopover
+                    m={m}
+                    anchorRect={detailsAnchor}
+                    triggerEl={triggerRef.current}
+                    onDismiss={() => {
+                      setDetailsOpen(false);
+                      setExpanded(false);
+                    }}
+                    onClose={() => setDetailsOpen(false)}
+                  />
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -908,6 +1155,14 @@ export default function InboxPage() {
   // bulkBusy removed — actions are fire-and-forget with instant optimistic UI
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Whether the "N skipped messages" divider (see ThreadMiddleDivider) has
+  // been clicked open for the currently-open thread. Reset per-thread below —
+  // otherwise opening a long thread, expanding its middle run, then opening a
+  // different long thread would show that one already expanded too.
+  const [middleExpanded, setMiddleExpanded] = useState(false);
+  useEffect(() => {
+    setMiddleExpanded(false);
+  }, [selectedId]);
   const [messages, setMessages] = useState<MsgView[] | null>(null);
   const [threadLabelIds, setThreadLabelIds] = useState<string[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -929,21 +1184,25 @@ export default function InboxPage() {
   // stays visible while the API call runs in the background, then shows
   // success or error. On error the user can retry (re-opens compose).
   type SendSnackState =
-    | { phase: "sending" }
-    | { phase: "sent" }
-    | { phase: "error"; message: string; retry: () => void };
+    // `message` overrides the default copy — a mass send reports a count
+    // ("Sent to 12 recipients") where a single send just says "Message sent".
+    | { phase: "sending"; message?: string }
+    | { phase: "sent"; message?: string }
+    // Retry is optional: a partially-delivered campaign can't be safely
+    // replayed wholesale, so it reports the outcome without offering one.
+    | { phase: "error"; message: string; retry?: () => void };
   const [sendSnack, setSendSnack] = useState<SendSnackState | null>(null);
   const sendSnackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [composeFieldError, setComposeFieldError] = useState<string | null>(null);
 
   /** Show the snackbar and auto-dismiss it after `ms` milliseconds. */
-  function showSendSnack(state: SendSnackState, autoDismissMs?: number) {
+  const showSendSnack = useCallback((state: SendSnackState, autoDismissMs?: number) => {
     if (sendSnackTimerRef.current) clearTimeout(sendSnackTimerRef.current);
     setSendSnack(state);
     if (autoDismissMs) {
       sendSnackTimerRef.current = setTimeout(() => setSendSnack(null), autoDismissMs);
     }
-  }
+  }, []);
 
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeTo, setComposeTo] = useState("");
@@ -961,6 +1220,261 @@ export default function InboxPage() {
   const [composeMinimized, setComposeMinimized] = useState(false);
   const [composeFullscreen, setComposeFullscreen] = useState(false);
   const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+
+  // ── Mass sending ────────────────────────────────────────────────────────
+  // One personalised copy per recipient, addressed individually (never a
+  // shared To/Cc list), with {variables} resolved from each contact's card.
+  const [massSending, setMassSending] = useState(false);
+  const [massRecipients, setMassRecipients] = useState<MassRecipient[]>([]);
+  /**
+   * Which of the two audiences is live. They are mutually exclusive by
+   * design: hand-picked contacts merge from their directory/mailbox cards,
+   * imported rows merge from spreadsheet columns, and the two variable sets
+   * have nothing in common — so a mixed list would leave one half of the
+   * campaign with placeholders that can never resolve.
+   */
+  const [massSource, setMassSource] = useState<MassSource>("contacts");
+  const [massImport, setMassImport] = useState<
+    | (MassImport & {
+        rows: MailMergeRow[];
+      })
+    | null
+  >(null);
+  const [massImportBusy, setMassImportBusy] = useState(false);
+  const [massImportError, setMassImportError] = useState<string | null>(null);
+  /** Pending mass-sending toggle awaiting confirmation; null when none. */
+  const [massToggleConfirm, setMassToggleConfirm] = useState<MassToggleDirection | null>(null);
+  /** Email currently shown on the review screen; null means "still editing". */
+  const [reviewEmail, setReviewEmail] = useState<string | null>(null);
+  const [massSendProgress, setMassSendProgress] = useState<{ sent: number; total: number } | null>(null);
+  /**
+   * Campaign-wide default per variable key, set from the review screen's
+   * warning banner. Applies to every recipient missing that field, not just
+   * the one being previewed — typing it per person for a 50-name list would
+   * be unusable.
+   */
+  const [variableFallbacks, setVariableFallbacks] = useState<Record<string, string>>({});
+  const { contacts: directoryContacts } = useDirectoryContacts();
+  // Loaded only once mass sending is switched on — see useSyncedContacts.
+  // An imported list merges from its own columns, so the sync is dead weight.
+  const { contacts: syncedContacts } = useSyncedContacts(
+    massSending && massSource === "contacts"
+  );
+
+  /**
+   * The campaign audience, whichever source produced it. Imported rows are
+   * deduplicated on email so nobody in a spreadsheet with repeat rows gets the
+   * same mail twice; the first row wins, matching the contacts picker.
+   */
+  const massAudience = useMemo<MassRecipient[]>(() => {
+    if (massSource === "contacts") return massRecipients;
+    const seen = new Set<string>();
+    const out: MassRecipient[] = [];
+    for (const row of massImport?.rows ?? []) {
+      const email = row.email.trim().toLowerCase();
+      if (!email || seen.has(email)) continue;
+      seen.add(email);
+      out.push({ email, name: row.fields.name?.trim() || "" });
+    }
+    return out;
+  }, [massSource, massRecipients, massImport]);
+
+  /**
+   * Variables the `{` picker offers. Imported columns replace the contact-card
+   * set rather than joining it — {job_title} on a spreadsheet recipient has
+   * nothing behind it, so offering it would only produce empty merges.
+   */
+  const massVariables = useMemo<ComposeVariable[]>(
+    () => (massSource === "contacts" ? COMPOSE_VARIABLES : massImport?.variables ?? []),
+    [massSource, massImport]
+  );
+
+  /**
+   * Email → ISO date of the newest thread exchanged with them, fetched only
+   * for the campaign audience and only when the draft actually uses
+   * {last_mail_interaction}. This is the same Gmail search the contact's
+   * Emails tab runs, so the merged date is the one a user would see there.
+   * Addresses already looked up (including those with no mail, stored as "")
+   * are never re-requested.
+   */
+  const [lastMailByEmail, setLastMailByEmail] = useState<Record<string, string>>({});
+  const lastMailFetchingRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    // Imported rows merge from their own columns, so there is no contact to
+    // look mail up for.
+    if (!massSending || massSource !== "contacts") return;
+    const used = new Set([
+      ...listPlaceholdersInTemplate(composeSubject),
+      ...listPlaceholdersInTemplate(composeBody),
+    ]);
+    if (!used.has("last_mail_interaction")) return;
+
+    const wanted = massAudience
+      .map((r) => r.email.toLowerCase())
+      .filter((e) => !(e in lastMailByEmail) && !lastMailFetchingRef.current.has(e));
+    if (wanted.length === 0) return;
+
+    for (const e of wanted) lastMailFetchingRef.current.add(e);
+    void (async () => {
+      try {
+        const res = await fetch("/api/gmail/last-mail-interaction", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emails: wanted }),
+        });
+        const data = (await res.json()) as { dates?: Record<string, string> };
+        if (!res.ok) return;
+        setLastMailByEmail((prev) => {
+          const next = { ...prev };
+          // Record the misses as "" too — an address with no mail history is a
+          // settled answer, not a reason to ask Gmail again on every keystroke.
+          for (const e of wanted) next[e] = data.dates?.[e] ?? "";
+          return next;
+        });
+      } catch {
+        // Leave them unrecorded so the next edit retries.
+      } finally {
+        for (const e of wanted) lastMailFetchingRef.current.delete(e);
+      }
+    })();
+  }, [massSending, massSource, massAudience, composeSubject, composeBody, lastMailByEmail]);
+
+  // The rail owns the audience while mass sending is on; the To field is a
+  // read-only mirror of it. Kept in sync here so the draft that gets autosaved
+  // still carries the recipient list.
+  useEffect(() => {
+    if (!massSending) return;
+    setComposeTo(massAudience.map((r) => r.email).join(", "));
+  }, [massSending, massAudience]);
+
+  /**
+   * Drop the imported list and everything written against it.
+   *
+   * The draft goes too: a subject/body written for a spreadsheet is full of
+   * `{column}` tokens that resolve to nothing once the file is gone, so
+   * keeping the text would only leave literal braces in a later send.
+   */
+  const clearMassImport = useCallback(() => {
+    setMassImport(null);
+    setMassImportError(null);
+    setReviewEmail(null);
+    setVariableFallbacks({});
+    setComposeSubject("");
+    setComposeBody("");
+  }, []);
+
+  /**
+   * Wipe every trace of a campaign. Compose fields are not touched here —
+   * their owners (the close-reset effect, closeMassCompose) clear those.
+   */
+  const resetMassState = useCallback(() => {
+    setMassSending(false);
+    setMassRecipients([]);
+    setMassSource("contacts");
+    setMassImport(null);
+    setMassImportError(null);
+    setMassImportBusy(false);
+    setMassToggleConfirm(null);
+    setReviewEmail(null);
+    setVariableFallbacks({});
+  }, []);
+
+  /**
+   * Flip mass sending, discarding whatever the other mode owns. Callers are
+   * expected to have confirmed first — see the toggle handler on the compose
+   * dialog, which routes anything destructive through a dialog.
+   */
+  const applyMassSending = useCallback((on: boolean) => {
+    setMassSending(on);
+    setReviewEmail(null);
+    setMassToggleConfirm(null);
+    if (on) {
+      // Anyone already typed into To becomes the starting audience — the
+      // draft is being converted, not restarted, so losing the addresses the
+      // user just entered would be the wrong reading of "convert".
+      setMassRecipients((prev) => {
+        if (prev.length > 0) return prev;
+        return extractAllEmailsFromText(composeStateRef.current.to).map((email) => ({
+          email,
+          name: "",
+        }));
+      });
+      // A campaign addresses each recipient individually and ignores Cc/Bcc;
+      // leaving stale ones in the hidden fields would let the autosaved draft
+      // carry recipients the send never uses.
+      setComposeCc("");
+      setComposeBcc("");
+      setComposeCcBccOpen(false);
+    } else {
+      setMassRecipients([]);
+      setMassSource("contacts");
+      setMassImport(null);
+      setMassImportError(null);
+      setVariableFallbacks({});
+      // The To field is only a mirror of the rail while mass sending is on,
+      // and the effect that maintains it stops here — so it has to be cleared
+      // explicitly, or the audience survives as a plain address list.
+      setComposeTo("");
+      // The draft goes with the audience it was written for — its variables
+      // would otherwise send as literal `{name}` text to a single recipient.
+      setComposeSubject("");
+      setComposeBody("");
+    }
+  }, []);
+
+  /**
+   * Parse a CSV/Excel file into merge rows. Reuses the broadcast mail-merge
+   * parser endpoint — same header detection, email-column resolution and row
+   * cap, so an import behaves identically in both places.
+   */
+  const importMassFile = useCallback(async (file: File) => {
+    setMassImportBusy(true);
+    setMassImportError(null);
+    try {
+      const fd = new FormData();
+      fd.set("file", file);
+      const res = await fetch("/api/broadcast/parse-mail-merge", { method: "POST", body: fd });
+      const data = (await res.json()) as {
+        error?: string;
+        headersFound?: string;
+        detectedHeaders?: string[];
+        headerLabels?: string[];
+        columns?: string[];
+        rows?: MailMergeRow[];
+        skipped?: number;
+        truncated?: boolean;
+        maxRows?: number;
+      };
+      if (!res.ok) {
+        const headers = data.headersFound || data.detectedHeaders?.join(", ");
+        throw new Error(
+          (data.error || "Import failed") + (headers ? ` Headers found: ${headers}.` : "")
+        );
+      }
+      const rows = data.rows ?? [];
+      if (rows.length === 0) throw new Error("No rows with a valid email address in that file.");
+
+      const headerLabels = data.headerLabels ?? data.detectedHeaders ?? [];
+      setMassImport({
+        fileName: file.name,
+        rows,
+        count: rows.length,
+        skipped: data.skipped,
+        truncated: data.truncated,
+        maxRows: data.maxRows,
+        variables: columnsToComposeVariables(data.columns ?? [], headerLabels),
+      });
+      // A new file means new columns — any fallback typed against the old
+      // ones is meaningless, and the review screen must be re-entered.
+      setReviewEmail(null);
+      setVariableFallbacks({});
+    } catch (e) {
+      setMassImportError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setMassImportBusy(false);
+    }
+  }, []);
 
   // In-flight guard for openDraft. A ref (vs state) keeps the useCallback
   // identity stable so click handlers don't rebind on every flip.
@@ -1329,6 +1843,10 @@ export default function InboxPage() {
       setComposeSubject("");
       setComposeBody("");
       setComposeFiles([]);
+      // Mass state lives outside the compose fields, so discarding or closing
+      // the window would otherwise leave the campaign standing — and the To
+      // mirror would refill the "cleared" field from it on reopen.
+      resetMassState();
       draftLastSavedRef.current = "";
       clearDraftSaveStatusTimer();
       setDraftSaveStatus("idle");
@@ -1337,7 +1855,7 @@ export default function InboxPage() {
     if (composeCc.trim() || composeBcc.trim()) {
       setComposeCcBccOpen(true);
     }
-  }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer]);
+  }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer, resetMassState]);
 
   // Auto-open compose when navigated here with ?composeTo=email (e.g. from Google Contacts).
   // Must be registered AFTER the reset effect above so this runs last and wins.
@@ -1407,6 +1925,50 @@ export default function InboxPage() {
       displayName: label !== email ? label : undefined,
     }));
   }, [googleContacts, recruiterSuggestions, threadDerivedEmails]);
+
+  /**
+   * Search pool for the mass-send rail, ordered by how much merge data each
+   * source carries: Team Directory (all five variables), then mailbox-synced
+   * people (name / company / last interaction), then the plain Gmail
+   * suggestions the To field uses (name only).
+   */
+  const massSuggestions = useMemo((): RecipientSuggestion[] => {
+    const seen = new Set<string>();
+    const out: RecipientSuggestion[] = [];
+
+    const push = (email: string, displayName?: string) => {
+      const key = email.trim().toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      out.push({ email: key, displayName: displayName?.trim() || undefined });
+    };
+
+    for (const c of directoryContacts) push(c.email ?? "", c.name);
+    for (const s of syncedContacts) push(s.email, s.display_name ?? undefined);
+    for (const s of composeRecipientSuggestions) push(s.email, s.displayName);
+
+    return out;
+  }, [directoryContacts, syncedContacts, composeRecipientSuggestions]);
+
+  /** Full merge data — badged "Directory" in the rail. */
+  const directoryEmails = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of directoryContacts) {
+      const e = (c.email ?? "").trim().toLowerCase();
+      if (e) set.add(e);
+    }
+    return set;
+  }, [directoryContacts]);
+
+  /** Partial merge data (no title/phone) — badged "Synced" in the rail. */
+  const syncedEmails = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of syncedContacts) {
+      const e = s.email?.trim().toLowerCase();
+      if (e) set.add(e);
+    }
+    return set;
+  }, [syncedContacts]);
 
   const [trackingMap, setTrackingMap] = useState<Record<string, TrackingRow>>({});
 
@@ -1743,20 +2305,22 @@ export default function InboxPage() {
   }, [folder, category, effectiveLabelId, mailSearch, prefetchBodiesForRows]);
 
   // Warm list + body caches on first visit only — after F5 use sessionStorage instead.
+  //
+  // Body warming goes through prefetchMailBodiesForWarmedCategories rather
+  // than firing prefetchMailThreadBodies per spec here: that helper pools
+  // every warmed folder/category into ONE shared, low-concurrency worker set
+  // (and guards against overlapping runs), whereas calling
+  // prefetchMailThreadBodies independently per spec stacks each spec's own
+  // (much higher) default concurrency on top of the others with nothing
+  // coordinating the total — easily dozens of simultaneous
+  // threads.get(format=full) calls, which is exactly what was blowing past
+  // Gmail's per-user "units per minute" quota on inbox load.
   useEffect(() => {
     if (isPrefetchPausedAfterBrowserReload()) return;
 
     void prefetchMailListViews({ concurrency: 4 }).then(() => {
       if (MAIL_THREAD_PREFETCH_DISABLED) return;
-      const cache = getMailListSessionCache();
-      for (const spec of MAIL_LIST_PREFETCH_SPECS) {
-        const key = buildMailListCacheKey(spec.apiFolder, spec.labelId ?? null, "");
-        const page = cache.get(key);
-        if (!page?.threads.length) continue;
-        void prefetchMailThreadBodies(
-          page.threads.filter((t) => !t.draftId).map((t) => t.id)
-        );
-      }
+      void prefetchMailBodiesForWarmedCategories();
     });
   }, []);
 
@@ -2107,15 +2671,26 @@ export default function InboxPage() {
       void fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
         method: "DELETE",
       })
-        .then(() => {
+        .then(async (res) => {
+          // The old handler treated any response as success — a 4xx/5xx left
+          // the draft on the server while the count said otherwise.
+          if (!res.ok) {
+            const j = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(j.error || "Could not delete draft");
+          }
           if (folder === "drafts") void loadThreads({ append: false });
           scheduleCountRefresh();
+          showSendSnack({ phase: "sent", message: "Draft deleted" }, 3000);
         })
-        .catch(() => {
+        .catch((e) => {
           adjustDraftCount(1);
+          showSendSnack({
+            phase: "error",
+            message: e instanceof Error ? e.message : "Could not delete draft",
+          });
         });
     }
-  }, [folder, scheduleCountRefresh, loadThreads, adjustDraftCount]);
+  }, [folder, scheduleCountRefresh, loadThreads, adjustDraftCount, showSendSnack]);
 
   useEffect(() => { void loadCounts(); }, [loadCounts]);
   // Refresh counts after the list reloads (bulk actions, refresh).
@@ -2601,6 +3176,35 @@ export default function InboxPage() {
     }
     return ids;
   }, [threadLabelIds, selectedId, threads]);
+
+  /**
+   * What actually renders in the open thread pane — Gmail's rule, not "every
+   * message gets a row": show the first message, hide any run of messages
+   * strictly between it and the last two behind a single count divider
+   * (ThreadMiddleDivider), and always show the last two (the very last one
+   * expanded, via MessageBubble's own isLast prop). With 3 or fewer messages
+   * there's no "middle" to hide, so nothing collapses into a divider.
+   */
+  const threadRows = useMemo(() => {
+    type Row =
+      | { kind: "message"; message: MsgView; isLast: boolean }
+      | { kind: "divider"; count: number };
+    if (!messages) return [] as Row[];
+    const n = messages.length;
+    if (n <= 3 || middleExpanded) {
+      return messages.map((message, i) => ({
+        kind: "message" as const,
+        message,
+        isLast: i === n - 1,
+      }));
+    }
+    return [
+      { kind: "message" as const, message: messages[0]!, isLast: false },
+      { kind: "divider" as const, count: n - 3 },
+      { kind: "message" as const, message: messages[n - 2]!, isLast: false },
+      { kind: "message" as const, message: messages[n - 1]!, isLast: true },
+    ];
+  }, [messages, middleExpanded]);
 
   // Prefetch a draft on pointer-down so openDraft can reuse the in-flight response.
   const prefetchDraft = useCallback((draftId: string) => {
@@ -3588,6 +4192,242 @@ export default function InboxPage() {
     setComposeOpen(true);
   }
 
+  /**
+   * Merge fields per selected recipient, keyed by email. Recipients whose
+   * contact card has since been deleted fall back to name/email only, so a
+   * stale selection degrades to a plain email rather than blocking the send.
+   *
+   * An imported list skips the card lookup entirely — the spreadsheet row is
+   * the only source of truth for those recipients.
+   */
+  const massMergeRows = useMemo(() => {
+    if (massSource === "import") {
+      const seen = new Set<string>();
+      const rows: Array<{
+        email: string;
+        name: string;
+        baseFields: Record<string, string>;
+        fields: Record<string, string>;
+        hasCard: boolean;
+      }> = [];
+      for (const row of massImport?.rows ?? []) {
+        const email = row.email.trim().toLowerCase();
+        if (!email || seen.has(email)) continue;
+        seen.add(email);
+        const baseFields: Record<string, string> = { ...row.fields, email };
+        rows.push({
+          email,
+          name: baseFields.name?.trim() || email,
+          baseFields,
+          // Fallbacks fill columns the row left blank, exactly as they do for
+          // contact-card recipients.
+          fields: mergeFieldSources(baseFields, variableFallbacks),
+          // No card is expected here, so the review banner should not claim
+          // one is missing — a blank cell is a blank cell.
+          hasCard: true,
+        });
+      }
+      return rows;
+    }
+
+    const cardByEmail = new Map<string, DirectoryContact>();
+    const cardByName = new Map<string, DirectoryContact>();
+    for (const c of directoryContacts) {
+      const email = (c.email ?? "").trim().toLowerCase();
+      if (email && !cardByEmail.has(email)) cardByEmail.set(email, c);
+      const name = c.name.trim().toLowerCase();
+      // First card wins on a duplicate name — with no email to disambiguate,
+      // picking arbitrarily among namesakes would be worse than being stable.
+      if (name && !cardByName.has(name)) cardByName.set(name, c);
+    }
+
+    const syncedByEmail = new Map(
+      syncedContacts
+        .filter((s) => s.email?.trim())
+        .map((s) => [s.email.trim().toLowerCase(), s])
+    );
+
+    return massRecipients.map((r) => {
+      const key = r.email.toLowerCase();
+      // Email is the reliable key; the display name is a fallback for people
+      // whose card was filed under a different (or missing) address.
+      const card =
+        cardByEmail.get(key) ??
+        (r.name.trim() ? cardByName.get(r.name.trim().toLowerCase()) : undefined);
+      const synced = syncedByEmail.get(key);
+
+      // The live Gmail lookup owns {last_mail_interaction} — it is the only
+      // source that is actually "last email exchanged". Then the Team
+      // Directory card field-by-field, the mailbox sync for whatever the card
+      // left blank, and the Gmail display name as a last resort.
+      const liveLastMail = lastMailByEmail[key];
+      const baseFields = mergeFieldSources(
+        liveLastMail
+          ? { last_mail_interaction: formatInteractionDate(liveLastMail) }
+          : undefined,
+        card ? contactToMergeFields(card) : undefined,
+        synced ? syncedContactToMergeFields(synced) : undefined,
+        { email: r.email, name: r.name }
+      );
+      // Always mail the address that was actually selected, not the card's.
+      baseFields.email = r.email;
+
+      // User-typed fallbacks are the weakest source — real data always wins.
+      // Kept separate from baseFields so the review banner can keep listing a
+      // field as "missing" (and therefore editable) after a fallback is set.
+      const fields = mergeFieldSources(baseFields, variableFallbacks);
+
+      return {
+        email: r.email,
+        name: fields.name || r.email,
+        baseFields,
+        fields,
+        hasCard: !!card || !!synced,
+      };
+    });
+  }, [
+    massSource,
+    massImport,
+    massRecipients,
+    directoryContacts,
+    syncedContacts,
+    lastMailByEmail,
+    variableFallbacks,
+  ]);
+
+  /**
+   * Missing variables measured against the *real* data only, ignoring
+   * fallbacks — so the banner keeps listing a field after you give it a
+   * fallback, letting you edit or clear it instead of having the control
+   * vanish the moment it's used.
+   */
+  const massMissing = useMemo(
+    () =>
+      reportMissingVariables(
+        composeSubject,
+        composeBody,
+        massMergeRows.map((r) => ({ email: r.email, fields: r.baseFields })),
+        massVariables
+      ),
+    [composeSubject, composeBody, massMergeRows, massVariables]
+  );
+
+  /**
+   * What is *still* missing once fallbacks are applied — the recipient rail's
+   * warning badge. Measured against the resolved fields rather than the raw
+   * ones so typing a fallback clears the badge for everyone it covers, which
+   * is the whole point of the badge being there.
+   */
+  const massUnresolved = useMemo(
+    () =>
+      reportMissingVariables(
+        composeSubject,
+        composeBody,
+        massMergeRows.map((r) => ({ email: r.email, fields: r.fields })),
+        massVariables
+      ).byRecipient,
+    [composeSubject, composeBody, massMergeRows, massVariables]
+  );
+
+  /** Only a variable-bearing draft needs the review gate before sending. */
+  const massTemplateHasVariables = useMemo(
+    () => templateUsesVariables(composeSubject, composeBody),
+    [composeSubject, composeBody]
+  );
+
+  /** The row currently being previewed on the review screen. */
+  const reviewRow = useMemo(() => {
+    if (!reviewEmail) return null;
+    return massMergeRows.find((r) => r.email.toLowerCase() === reviewEmail.toLowerCase()) ?? null;
+  }, [reviewEmail, massMergeRows]);
+
+  async function sendMassCampaign() {
+    const rows = massMergeRows;
+    if (rows.length === 0) return;
+
+    const snapshot = {
+      subject: composeSubject,
+      body: composeBody,
+      files: composeFiles,
+      draftId: composeDraftId,
+    };
+
+    setMassSendProgress({ sent: 0, total: rows.length });
+
+    let sent = 0;
+    const failed: string[] = [];
+    try {
+      const attachments = await resolveAttachmentsForUpload(snapshot.files);
+
+      // Sequential, not Promise.all — Gmail rate-limits concurrent sends and a
+      // partial failure mid-campaign must not lose the count of what got out.
+      for (const row of rows) {
+        const htmlBody = appendDriveLinksToHtml(
+          stripVariableSpans(mergeTemplate(snapshot.body, row.fields)),
+          snapshot.files
+        );
+        try {
+          const res = await fetch("/api/gmail/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              to: row.email,
+              subject: mergeTemplate(snapshot.subject, row.fields),
+              textBody: "",
+              htmlBody,
+              attachments: attachments.length ? attachments : undefined,
+            }),
+          });
+          if (!res.ok) {
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            throw new Error(data.error || "Send failed");
+          }
+          sent += 1;
+          setMassSendProgress({ sent, total: rows.length });
+        } catch {
+          failed.push(row.email);
+        }
+      }
+    } catch (e) {
+      setMassSendProgress(null);
+      showSendSnack({
+        phase: "error",
+        message: e instanceof Error ? e.message : "Could not send campaign",
+      });
+      return;
+    }
+
+    setMassSendProgress(null);
+    closeMassCompose();
+
+    if (failed.length === 0) {
+      showSendSnack({ phase: "sent", message: `Sent to ${sent} recipient${sent === 1 ? "" : "s"}` });
+    } else {
+      showSendSnack({
+        phase: "error",
+        message: `Sent ${sent} of ${rows.length}. Failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`,
+      });
+    }
+
+    if (snapshot.draftId) {
+      void fetch(`/api/gmail/drafts/${snapshot.draftId}`, { method: "DELETE" }).catch(() => {});
+    }
+    void loadThreads({ append: false, forceRefresh: true });
+  }
+
+  /** Reset compose + all mass state after a campaign finishes. */
+  function closeMassCompose() {
+    setComposeOpen(false);
+    setComposeTo("");
+    setComposeCc("");
+    setComposeBcc("");
+    setComposeSubject("");
+    setComposeBody("");
+    setComposeFiles([]);
+    setComposeDraftId(null);
+    resetMassState();
+  }
+
   async function sendCompose() {
     const invalid = findInvalidRecipient({
       to: composeTo,
@@ -3662,7 +4502,12 @@ export default function InboxPage() {
     try {
       const attachments = await resolveAttachmentsForUpload(snapshot.files);
 
-      const finalHtmlBody = appendDriveLinksToHtml(snapshot.htmlBody, snapshot.files);
+      // Strip editor-only variable tinting here too — a draft written with
+      // mass sending on can be sent as a normal single email after toggling off.
+      const finalHtmlBody = appendDriveLinksToHtml(
+        stripVariableSpans(snapshot.htmlBody),
+        snapshot.files
+      );
 
       const res = await fetch("/api/gmail/send", {
         method: "POST",
@@ -4428,9 +5273,14 @@ export default function InboxPage() {
                 </p>
               </div>
             ) : (
+              // Flat Gmail-style colors (no border/shadow), but rounded,
+              // spaced-out rows rather than Gmail's own flush hairline-divided
+              // list — gap-1.5 back instead of divide-y, since rounded corners
+              // on edge-to-edge rows would cut a straight divider line across
+              // a curved corner.
               <ul
                 ref={listScrollRef}
-                className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-3"
+                className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overscroll-y-contain p-3"
               >
                 {threads.map((t) => {
                   const name = senderName(t.from);
@@ -4459,12 +5309,10 @@ export default function InboxPage() {
                         else void openThread(t.id);
                       }}
                       className={cn(
-                        "group relative cursor-pointer rounded-xl border text-[13px] transition-all",
-                        isActiveThread
-                          ? "border-transparent bg-[var(--color-copper-tint)] shadow-[0_0_0_1.5px_var(--color-copper)]"
-                          : isSelected
-                            ? "border-transparent bg-[var(--color-copper-tint)]"
-                            : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)] hover:shadow-md",
+                        "group relative cursor-pointer rounded-xl text-[13px] transition-colors",
+                        isActiveThread || isSelected
+                          ? "bg-[var(--color-copper-tint)]"
+                          : "bg-[var(--color-surface)] hover:bg-[var(--color-surface-offset)]",
                         isUnread && !isActiveThread && !isSelected && "font-semibold",
                       )}
                     >
@@ -4872,18 +5720,26 @@ export default function InboxPage() {
 
                 {/* Messages + reply actions (scroll together like Gmail) */}
                 <div className="scrollbar-thin flex-1 overflow-y-auto">
-                  {messages.map((m, msgIdx) => (
-                    <MessageBubble
-                      key={m.id}
-                      m={m}
-                      isLast={msgIdx === messages.length - 1}
-                      trackingRow={trackingMap[m.id]}
-                      myEmail={myEmail}
-                      onReply={() => openReply("reply")}
-                      onReplyAll={() => openReply("replyAll")}
-                      onForward={() => openForward()}
-                    />
-                  ))}
+                  {threadRows.map((row) =>
+                    row.kind === "divider" ? (
+                      <ThreadMiddleDivider
+                        key="middle-divider"
+                        count={row.count}
+                        onExpand={() => setMiddleExpanded(true)}
+                      />
+                    ) : (
+                      <MessageBubble
+                        key={row.message.id}
+                        m={row.message}
+                        isLast={row.isLast}
+                        trackingRow={trackingMap[row.message.id]}
+                        myEmail={myEmail}
+                        onReply={() => openReply("reply")}
+                        onReplyAll={() => openReply("replyAll")}
+                        onForward={() => openForward()}
+                      />
+                    )
+                  )}
 
                   <GmailInlineReply
                     onStartReply={() => openReply("reply")}
@@ -4932,7 +5788,7 @@ export default function InboxPage() {
           {sendSnack.phase === "sent" && (
             <>
               <IconCheck className="h-4 w-4 shrink-0 text-green-400" />
-              <span>Message sent</span>
+              <span>{sendSnack.message ?? "Message sent"}</span>
               <button
                 type="button"
                 onClick={() => setSendSnack(null)}
@@ -4949,13 +5805,15 @@ export default function InboxPage() {
                 <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
               </svg>
               <span className="max-w-[220px] truncate">{sendSnack.message}</span>
-              <button
-                type="button"
-                onClick={sendSnack.retry}
-                className="ml-1 rounded bg-[var(--color-surface)]/15 px-2 py-0.5 text-[12px] font-semibold hover:bg-[var(--color-surface)]/25"
-              >
-                Retry
-              </button>
+              {sendSnack.retry && (
+                <button
+                  type="button"
+                  onClick={sendSnack.retry}
+                  className="ml-1 rounded bg-[var(--color-surface)]/15 px-2 py-0.5 text-[12px] font-semibold hover:bg-[var(--color-surface)]/25"
+                >
+                  Retry
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setSendSnack(null)}
@@ -4990,14 +5848,122 @@ export default function InboxPage() {
         onCcBccOpenChange={setComposeCcBccOpen}
         suggestions={composeRecipientSuggestions}
         contactsHint={contactsHint}
-        sendDisabled={!composeTo.trim()}
+        sendDisabled={massSending ? massMergeRows.length === 0 : !composeTo.trim()}
         composeError={composeFieldError}
         onDismissComposeError={() => setComposeFieldError(null)}
         onMinimize={() => setComposeMinimized((m) => !m)}
         onToggleFullscreen={() => setComposeFullscreen((v) => !v)}
         onClose={closeComposeAndSaveDraft}
-        onSend={() => void sendCompose()}
+        onSend={() => {
+          if (!massSending) return void sendCompose();
+          void sendMassCampaign();
+        }}
+        onReview={
+          massSending && massTemplateHasVariables
+            ? () => setReviewEmail(massMergeRows[0]?.email ?? null)
+            : undefined
+        }
+        reviewDisabled={massMergeRows.length === 0}
         onDiscard={discardComposeDraft}
+        placement="centered"
+        variables={massSending ? massVariables : undefined}
+        // A normal compose has no variables to offer, but hiding the button
+        // makes that look like a missing feature — it stays and explains,
+        // with a one-click way to get what the user was reaching for.
+        onVariableBlocked={
+          !massSending ? () => setMassToggleConfirm("blocked") : undefined
+        }
+        recipientsLocked={massSending}
+        lockedRecipientCount={massAudience.length}
+        massSending={massSending}
+        onMassSendingChange={(on) => {
+          // Confirm only when the flip actually destroys something: To
+          // addresses survive the conversion, so going in only costs Cc/Bcc,
+          // while coming out clears the audience and the draft written for it.
+          const losesWork = on
+            ? !!(composeCc.trim() || composeBcc.trim())
+            : massAudience.length > 0 ||
+              !!massImport ||
+              !!composeSubject.trim() ||
+              !richTextIsEmpty(composeBody);
+          if (losesWork) {
+            setMassToggleConfirm(on ? "on" : "off");
+            return;
+          }
+          applyMassSending(on);
+        }}
+        massToggleDisabled={!!massSendProgress}
+        sending={!!massSendProgress}
+        sendLabel={
+          massSendProgress
+            ? `Sending ${massSendProgress.sent}/${massSendProgress.total}…`
+            : massSending
+            ? `Send emails (${massMergeRows.length})`
+            : "Send email"
+        }
+        review={
+          reviewRow
+            ? {
+                toLabel: reviewRow.name || reviewRow.email,
+                subject: mergeTemplate(composeSubject, reviewRow.fields),
+                // Tinting is an editor affordance — the review screen shows
+                // the mail exactly as the recipient will receive it.
+                bodyHtml: stripVariableSpans(mergeTemplate(composeBody, reviewRow.fields)),
+                missingKeys: massMissing.byRecipient.get(reviewRow.email),
+                noContactCard: !reviewRow.hasCard,
+                fallbacks: variableFallbacks,
+                onFallbackChange: (key, value) =>
+                  setVariableFallbacks((prev) => {
+                    const next = { ...prev };
+                    if (value.trim()) next[key] = value.trim();
+                    else delete next[key];
+                    return next;
+                  }),
+              }
+            : null
+        }
+        onBackToEditor={() => setReviewEmail(null)}
+        footerNotice={
+          massSending ? (
+            <div className="flex shrink-0 items-center gap-2 border-t border-[#f1f3f4] bg-white px-4 py-2 text-[12px] text-[#5f6368]">
+              <IconInfo className="h-3.5 w-3.5 shrink-0" />
+              <span>Delivery time will depend on items in your outbox.</span>
+            </div>
+          ) : null
+        }
+        sidePanel={
+          massSending ? (
+            <MassRecipientsPanel
+              suggestions={massSuggestions}
+              directoryEmails={directoryEmails}
+              syncedEmails={syncedEmails}
+              selected={massAudience}
+              onChange={setMassRecipients}
+              missingByEmail={massUnresolved}
+              readOnly={!!reviewEmail}
+              activeEmail={reviewEmail}
+              onActiveEmailChange={setReviewEmail}
+              source={massSource}
+              onSourceChange={(next) => {
+                setMassSource(next);
+                setMassImportError(null);
+                setReviewEmail(null);
+                // Variables differ per source, so fallbacks typed against the
+                // old set would silently attach to unrelated keys — and any
+                // draft written with them would carry tokens the new source
+                // cannot fill. Both start clean.
+                setVariableFallbacks({});
+                setComposeSubject("");
+                setComposeBody("");
+              }}
+              imported={massImport}
+              onImportFile={(file) => void importMassFile(file)}
+              onClearImport={clearMassImport}
+              importBusy={massImportBusy}
+              importError={massImportError}
+            />
+          ) : null
+        }
         fileInputRef={composeFileRef}
         onAttachClick={() => composeFileRef.current?.click()}
         onFileChange={(files) => void handleFileSelect(files)}
@@ -5011,6 +5977,14 @@ export default function InboxPage() {
           />
         }
       />
+
+      {massToggleConfirm ? (
+        <MassSendingToggleDialog
+          direction={massToggleConfirm}
+          onCancel={() => setMassToggleConfirm(null)}
+          onConfirm={() => applyMassSending(massToggleConfirm !== "off")}
+        />
+      ) : null}
 
     </>
   );

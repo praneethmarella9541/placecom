@@ -13,12 +13,15 @@ import {
   FileText,
   Folder,
   Frame,
+  KanbanSquare,
   LogOut,
   Mail,
   MessageCircle,
+  Phone,
   Radio,
   UserRound,
   Users,
+  Workflow,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
@@ -37,11 +40,15 @@ const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 const commsNav = [
   { href: "/inbox", label: "Mail", Icon: Mail },
   { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
+  { href: "/calls", label: "Calls", Icon: Phone },
   { href: "/broadcasting", label: "Broadcasting", Icon: Radio },
+  { href: "/sequences", label: "Sequences", Icon: Workflow },
   { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;
 
-const pipelineNav: readonly { href: string; label: string; Icon: React.ElementType }[] = [];
+const pipelineNav: readonly { href: string; label: string; Icon: React.ElementType }[] = [
+  { href: "/crm", label: "CRM", Icon: KanbanSquare },
+];
 
 const opsNav = [
   { href: "/drive", label: "Drive", Icon: Folder },
@@ -430,6 +437,16 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const signOut = useCallback(async () => {
     clearSecondaryFeaturePrefetchCache();
     clearMeMailboxCache();
+    // Pause an in-progress mailbox sync before the session goes away — this needs
+    // a valid session, so it has to happen ahead of signOut(). Without it the run
+    // is left "idle with a cursor", which the next login treats as resumable and
+    // silently restarts; pausing makes the next session ask first. No-ops when
+    // there's nothing in flight (the handler only pauses a run that has a cursor),
+    // and is time-boxed so a slow request can't hold up signing out.
+    await fetch("/api/directory-contacts/sync", {
+      method: "DELETE",
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => {});
     await supabase.auth.signOut();
     window.location.href = "/";
   }, [supabase]);

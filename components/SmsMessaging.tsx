@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
-import { formatPhone, peerInitials } from "@/lib/wa-contacts-display";
-import { useWaContacts } from "@/hooks/useWaContacts";
+import { formatPhone, peerInitials, buildContactNameMap, resolveContactName, canonicalPeer, allPeerLookupKeys } from "@/lib/wa-contacts-display";
+import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
+import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
 import { IconRefresh, IconSend, IconSettings, IconSms, IconX } from "@/components/Icons";
 
 type Conv = { peer_e164: string; last_body: string | null; last_at: string; last_dir: string };
@@ -62,23 +63,35 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
   const [mobileShowThread, setMobileShowThread] = useState(false);
   const [stickToBottom, setStickToBottom] = useState(true);
   const scrollThreadRef = useRef<HTMLDivElement>(null);
-  const { saveContact, deleteContact, resolveName } = useWaContacts();
-  const [editingName, setEditingName] = useState<string | null>(null);
-  const [nameInput, setNameInput] = useState("");
+  // Contact names now come from the shared team directory (directory_contacts)
+  // instead of the old per-user wa_contacts table — same universal address
+  // book as WhatsApp/Contacts.
+  const { contacts: directoryContacts } = useDirectoryContacts();
+  const contactList = useMemo(
+    () =>
+      directoryContacts
+        .filter((c) => c.phone)
+        .map((c) => ({ peer_e164: canonicalPeer(c.phone!), name: c.name })),
+    [directoryContacts]
+  );
+  const nameMap = useMemo(() => buildContactNameMap(contactList), [contactList]);
+  const resolveName = useCallback((p: string) => resolveContactName(nameMap, p), [nameMap]);
+  const [contactModal, setContactModal] = useState<{
+    editingId: string | null;
+    initial: DirectoryContactInput;
+  } | null>(null);
 
-  async function saveName(peer: string, name: string) {
-    const trimmed = name.trim();
-    setEditingName(null);
-    setNameInput("");
-    try {
-      if (trimmed) {
-        await saveContact(peer, trimmed);
-      } else {
-        await deleteContact(peer);
-      }
-    } catch {
-      // ignore
-    }
+  function findDirectoryContactByPeer(p: string) {
+    const keys = new Set(allPeerLookupKeys(p));
+    return directoryContacts.find((c) => c.phone && allPeerLookupKeys(c.phone).some((k) => keys.has(k)));
+  }
+
+  function openContactModalForPeer(p: string) {
+    const existing = findDirectoryContactByPeer(p);
+    setContactModal({
+      editingId: existing?.id ?? null,
+      initial: existing ? contactToFormInput(existing) : { ...emptyContactForm, phone: p },
+    });
   }
 
   const displayName = useCallback(
@@ -403,46 +416,21 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
             >
               ←
             </button>
-            {peer && editingName === peer ? (
-              <div className="flex min-w-0 flex-1 items-center gap-2">
-                <input
-                  data-testid="sms-contact-name-input"
-                  autoFocus
-                  className="input-field min-w-0 flex-1 text-sm"
-                  placeholder={titleCase("Contact name")}
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void saveName(peer, nameInput);
-                    if (e.key === "Escape") { setEditingName(null); setNameInput(""); }
-                  }}
-                />
-                <button
-                  data-testid="sms-save-name-btn"
-                  type="button"
-                  className="btn-primary shrink-0 px-3 py-1.5 text-xs"
-                  onClick={() => void saveName(peer, nameInput)}
-                >
-                  {titleCase("Save")}
-                </button>
-              </div>
-            ) : (
-              <div className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                  {peer ? displayName(peer) : titleCase("Select a chat")}
-                </span>
-                {peer && savedContactName(peer) ? (
-                  <span className="truncate text-[11px] text-zinc-400">{formatPhone(peer)}</span>
-                ) : null}
-              </div>
-            )}
-            {peer && editingName !== peer ? (
+            <div className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+                {peer ? displayName(peer) : titleCase("Select a chat")}
+              </span>
+              {peer && savedContactName(peer) ? (
+                <span className="truncate text-[11px] text-zinc-400">{formatPhone(peer)}</span>
+              ) : null}
+            </div>
+            {peer ? (
               <button
                 type="button"
                 className="shrink-0 rounded-lg px-2 py-1 text-xs text-sky-700 hover:bg-sky-50 dark:text-sky-300 dark:hover:bg-sky-950/50"
-                onClick={() => { setEditingName(peer); setNameInput(savedContactName(peer) || ""); }}
+                onClick={() => openContactModalForPeer(peer)}
               >
-                {savedContactName(peer) ? titleCase("Edit name") : titleCase("Save name")}
+                {savedContactName(peer) ? titleCase("Edit contact") : titleCase("Save contact")}
               </button>
             ) : null}
           </div>
@@ -527,6 +515,14 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
           </div>
         </main>
       </div>
+      {contactModal && (
+        <ContactFormModal
+          editingId={contactModal.editingId}
+          initial={contactModal.initial}
+          onClose={() => setContactModal(null)}
+          onSaved={() => setContactModal(null)}
+        />
+      )}
     </div>
   );
 }

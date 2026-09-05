@@ -11,6 +11,33 @@ import {
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
 import { peerKeysForQuery } from "@/lib/whatsapp-peer";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
+
+/**
+ * Saved name for a phone number, from the shared Team Directory
+ * (directory_contacts) — replaces the old per-user wa_contacts lookup so
+ * push notifications show whatever name any team member saved, not just
+ * the notified user's own.
+ */
+async function directoryContactLabel(ownerUserId: string, peerE164: string): Promise<string> {
+  try {
+    const svc = createServiceSupabase();
+    const keys = peerKeysForQuery(peerE164);
+    if (!keys.length) return formatPeer(peerE164);
+    const mailboxOwnerId = await resolveMailboxOwnerId(svc, ownerUserId);
+    if (!mailboxOwnerId) return formatPeer(peerE164);
+    const { data } = await svc
+      .from("directory_contacts")
+      .select("name")
+      .eq("mailbox_owner_id", mailboxOwnerId)
+      .in("phone", keys)
+      .limit(1);
+    const name = (data?.[0]?.name as string | undefined)?.trim();
+    return name || formatPeer(peerE164);
+  } catch {
+    return formatPeer(peerE164);
+  }
+}
 
 function truncate(text: string, max: number): string {
   const t = text.replace(/\s+/g, " ").trim();
@@ -134,23 +161,6 @@ async function resolveWhatsAppPushRecipients(
   return Array.from(ids);
 }
 
-async function waContactLabel(ownerUserId: string, peerE164: string): Promise<string> {
-  try {
-    const svc = createServiceSupabase();
-    const keys = peerKeysForQuery(peerE164);
-    if (!keys.length) return formatPeer(peerE164);
-    const { data } = await svc
-      .from("wa_contacts")
-      .select("name")
-      .eq("user_id", ownerUserId)
-      .in("peer_e164", keys)
-      .limit(1);
-    const name = (data?.[0]?.name as string | undefined)?.trim();
-    return name || formatPeer(peerE164);
-  } catch {
-    return formatPeer(peerE164);
-  }
-}
 
 export async function notifyWhatsAppInbound(params: {
   ownerUserId: string | null;
@@ -180,7 +190,7 @@ export async function notifyWhatsAppInbound(params: {
   }
 
   const labelUserId = ownerUserId ?? recipients[0];
-  const label = await waContactLabel(labelUserId, params.peerE164);
+  const label = await directoryContactLabel(labelUserId, params.peerE164);
   const richImage = whatsAppPushRichImageUrl({
     mediaUrl: params.mediaUrl,
     messageType: params.messageType,
@@ -245,25 +255,6 @@ export async function notifyWhatsAppInbound(params: {
   }
 }
 
-/** Resolve saved WhatsApp/contact name for a phone number (shared contact book). */
-async function contactLabelForPhone(ownerUserId: string, peerE164: string): Promise<string> {
-  try {
-    const svc = createServiceSupabase();
-    const keys = peerKeysForQuery(peerE164);
-    if (!keys.length) return formatPeer(peerE164);
-    const { data } = await svc
-      .from("wa_contacts")
-      .select("name")
-      .eq("user_id", ownerUserId)
-      .in("peer_e164", keys)
-      .limit(1);
-    const name = (data?.[0]?.name as string | undefined)?.trim();
-    return name || formatPeer(peerE164);
-  } catch {
-    return formatPeer(peerE164);
-  }
-}
-
 /** Alert agent on device while Exotel rings their mobile (shows real caller, not virtual CLI). */
 export async function notifyIncomingCall(params: {
   userId: string;
@@ -280,7 +271,7 @@ export async function notifyIncomingCall(params: {
     return;
   }
 
-  const label = await contactLabelForPhone(userId, caller);
+  const label = await directoryContactLabel(userId, caller);
   const payload = {
     title: `Incoming call — ${label}`,
     body: formatPeer(caller),

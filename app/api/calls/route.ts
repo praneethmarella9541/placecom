@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { listConfiguredExotelNumbers } from "@/lib/exotel-numbers";
-import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
+import { isValidE164, normalizePhone } from "@/lib/phone";
+import { deriveCallDirection, ourNumbersForRows } from "@/lib/call-log-peer";
 import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
 import { rowNeedsTalkDurationBackfill } from "@/lib/call-talk-seconds";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 
@@ -54,14 +56,26 @@ export async function GET(request: Request) {
     .eq("id", user.id)
     .maybeSingle();
 
-  const { data, error } = await supabase
+  // Default (no params) stays "my own calls only" — unchanged, so the mobile
+  // dialer keeps working exactly as before. The web Calls page (admin-only
+  // team view) passes one of these instead; RLS (0048 migration) is what
+  // actually enforces the boundary — a non-admin passing `member`/`scope`
+  // just gets their own rows back regardless, same as WhatsApp's `?line=`.
+  const url = new URL(request.url);
+  const memberParam = url.searchParams.get("member")?.trim();
+  const scopeTeam = url.searchParams.get("scope") === "team";
+
+  let logsQuery = supabase
     .from("call_logs")
     .select(
-      "id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, conversation_duration_seconds, started_at, ended_at, created_at, recording_sid, recording_duration_seconds, transcript, transcript_segments"
-    )
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(200);
+      "id, user_id, call_sid, to_number, from_number, agent_number, company_name, notes, status, duration_seconds, conversation_duration_seconds, started_at, ended_at, created_at, recording_sid, recording_duration_seconds, transcript, transcript_segments"
+    );
+  if (memberParam) {
+    logsQuery = logsQuery.eq("user_id", memberParam);
+  } else if (!scopeTeam) {
+    logsQuery = logsQuery.eq("user_id", user.id);
+  }
+  const { data, error } = await logsQuery.order("created_at", { ascending: false }).limit(200);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -89,30 +103,13 @@ export async function GET(request: Request) {
   }
 
   // Derive direction + peer (the "other party" number, never our own).
-  // Incoming: from_number = external caller, to_number = our agent.
-  // Outbound: from_number = our virtual number, to_number = destination.
   const userMobile = (telephony?.mobile_phone as string | null) ?? "";
   const userExotel = (telephony?.exotel_virtual_number as string | null) ?? "";
-  const allVirtuals = [
-    ...listConfiguredExotelNumbers(),
-    ...(userExotel ? [normalizePhone(userExotel)] : []),
-  ].filter((v, i, a) => v && a.indexOf(v) === i);
+  const ourNumbers = ourNumbersForRows(rows, [userMobile, userExotel]);
 
   const enriched = rows.map((r) => {
-    const fromIsVirtual = allVirtuals.some((v) => phoneMatches(v, r.from_number ?? ""));
-    const toIsUserMobile = userMobile && phoneMatches(userMobile, r.to_number ?? "");
-    const fromIsExternal =
-      r.from_number &&
-      !allVirtuals.some((v) => phoneMatches(v, r.from_number ?? "")) &&
-      !(userMobile && phoneMatches(userMobile, r.from_number ?? ""));
-
-    let direction: "incoming" | "outbound" = "outbound";
-    if (fromIsVirtual) direction = "outbound";
-    else if (toIsUserMobile && fromIsExternal) direction = "incoming";
-    else if (fromIsExternal) direction = "incoming";
-
-    const peer_number = direction === "incoming" ? r.from_number : r.to_number;
-    return { ...r, direction, peer_number };
+    const { direction, peerNumber } = deriveCallDirection(r, ourNumbers);
+    return { ...r, direction, peer_number: peerNumber };
   });
 
   return NextResponse.json({
@@ -181,10 +178,13 @@ export async function POST(request: Request) {
     );
   }
 
+  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
+
   const { data, error } = await supabase
     .from("call_logs")
     .insert({
       user_id: user.id,
+      mailbox_owner_id: mailboxOwnerId,
       call_sid: `pending_${Date.now()}`,
       to_number: normalizePhone(to),
       from_number: normalizePhone(exotelLine),

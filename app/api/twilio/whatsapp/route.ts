@@ -7,6 +7,7 @@ import { peerFromInboundWebhook, stripWhatsAppPrefix } from "@/lib/whatsapp-addr
 import { normalizePhone } from "@/lib/phone";
 import { findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
 import { notifyWhatsAppInbound } from "@/lib/push-notifications";
+import { resolveMailboxOwnerId } from "@/lib/team-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -123,9 +124,11 @@ export async function POST(request: Request) {
     ? normalizePhone(stripWhatsAppPrefix(ourFrom))
     : normalizePhone(stripWhatsAppPrefix(to));
   const ownerUserId = businessE164 ? await findUserIdForBusinessLine(businessE164) : null;
+  const mailboxOwnerId = ownerUserId ? await resolveMailboxOwnerId(supabase, ownerUserId) : null;
 
   const insertRow: Record<string, unknown> = {
     user_id: ownerUserId,
+    mailbox_owner_id: mailboxOwnerId,
     direction: "inbound",
     peer_e164: peer,
     business_e164: businessE164 || null,

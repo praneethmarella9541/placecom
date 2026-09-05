@@ -67,7 +67,7 @@ export function ForwardChatModal({ open, contacts, onClose, onForward }: Props) 
 
         <div className="px-4 pt-3">
           <input
-            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2.5 text-[14px] text-[var(--color-text)] outline-none focus:border-[#25D366]"
+            className="w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-3 py-2.5 text-[14px] text-[var(--color-text)] outline-none focus:border-[var(--color-copper)]"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
             placeholder="Name or number"
@@ -83,7 +83,7 @@ export function ForwardChatModal({ open, contacts, onClose, onForward }: Props) 
               className="flex w-full items-center gap-3 rounded-xl px-2 py-2.5 text-left transition-colors hover:bg-[var(--color-surface-offset)]"
               onClick={() => pick(item.peer_e164)}
             >
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#075E54] text-[13px] font-bold text-white">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-copper)] text-[13px] font-bold text-white">
                 {peerInitials(item.peer_e164, item.name)}
               </div>
               <div className="min-w-0 flex-1">
@@ -106,7 +106,7 @@ export function ForwardChatModal({ open, contacts, onClose, onForward }: Props) 
             type="button"
             disabled={!validPhone}
             className={cn(
-              "w-full rounded-xl bg-[#25D366] py-3 text-[14px] font-semibold text-white transition-opacity",
+              "w-full rounded-xl bg-[var(--color-copper)] py-3 text-[14px] font-semibold text-white transition-[opacity,background-color] hover:bg-[var(--color-copper-hover)]",
               !validPhone && "cursor-not-allowed opacity-45"
             )}
             onClick={() => pick(normalized)}

@@ -161,6 +161,7 @@ async function mailEvidence(
     maxResults: limits.maxMail,
     searchQuery: dated,
     mailboxKey,
+    priority: "batch",
   });
 
   const me = ownAddress?.trim().toLowerCase();
@@ -195,7 +196,10 @@ async function mailEvidence(
     const results = await Promise.all(
       chunk.map(async (thread) => {
         try {
-          const { messages } = await getThreadMessages(accessToken, thread.id, { mailboxKey });
+          const { messages } = await getThreadMessages(accessToken, thread.id, {
+            mailboxKey,
+            priority: "batch",
+          });
           return { thread, messages };
         } catch {
           // One unreadable thread shouldn't cost us the rest of the evidence —

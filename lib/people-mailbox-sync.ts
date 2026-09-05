@@ -533,7 +533,7 @@ async function runBackfillPhase(
     // window it covers overlaps the backfill rather than starting after it. Re-
     // processing that overlap is free — every contact write is an idempotent
     // upsert — whereas a gap between the two phases loses mail outright.
-    historyIdAtStart = await fetchGmailHistoryId(accessToken, { mailboxKey: mailboxOwnerId });
+    historyIdAtStart = await fetchGmailHistoryId(accessToken, { mailboxKey: mailboxOwnerId, priority: "batch" });
 
     await supabase
       .from("contact_sync_state")
@@ -597,6 +597,7 @@ async function runBackfillPhase(
         pageToken,
         q: backfillQuery,
         mailboxKey: mailboxOwnerId,
+        priority: "batch",
       }
     );
     pagesThisRun += 1;
@@ -633,6 +634,7 @@ async function runBackfillPhase(
     if (messageIds.length > 0) {
       const headers = await fetchGmailMessageHeadersByIds(accessToken, messageIds, {
         mailboxKey: mailboxOwnerId,
+        priority: "batch",
       });
 
       // messages_scanned_total counts headers actually retrieved, so a page that
@@ -712,7 +714,7 @@ async function runBackfillPhase(
     // arrived while the backfill was running was excluded by the `before:` bound
     // above, and this is what lets the incremental phase go back and collect it.
     // Re-deriving here is only a fallback for a start-time capture that failed.
-    const historyId = historyIdAtStart ?? (await fetchGmailHistoryId(accessToken, { mailboxKey: mailboxOwnerId }));
+    const historyId = historyIdAtStart ?? (await fetchGmailHistoryId(accessToken, { mailboxKey: mailboxOwnerId, priority: "batch" }));
     // Cumulative, NOT this batch. A backfill spans however many batches its work
     // needs, and the final one is usually a short tail — reporting only that made
     // a 36,000-message backfill sign off as "Synced 486 emails". messagesScanned-
@@ -781,7 +783,7 @@ async function runIncrementalPhase(
   if (!state.history_id) {
     // Shouldn't normally happen (backfill always captures one) — re-derive from
     // "now" rather than fail outright; costs only the mail since this call.
-    const historyId = await fetchGmailHistoryId(accessToken, { mailboxKey: mailboxOwnerId });
+    const historyId = await fetchGmailHistoryId(accessToken, { mailboxKey: mailboxOwnerId, priority: "batch" });
     await supabase
       .from("contact_sync_state")
       .update({
@@ -816,6 +818,7 @@ async function runIncrementalPhase(
     while (Date.now() - startedAt < BATCH_TIME_BUDGET_MS) {
       const page = await fetchGmailHistoryPage(accessToken, state.history_id, pageToken, {
         mailboxKey: mailboxOwnerId,
+        priority: "batch",
       });
 
       // Filtered by label rather than by query — history.list has no `q`, so
@@ -826,6 +829,7 @@ async function runIncrementalPhase(
       if (ids.length > 0) {
         const headers = await fetchGmailMessageHeadersByIds(accessToken, ids, {
           mailboxKey: mailboxOwnerId,
+          priority: "batch",
         });
         const upserted = await processHeadersPage(
           supabase,
@@ -880,10 +884,12 @@ async function runIncrementalPhase(
         pageToken: catchUpToken,
         q,
         mailboxKey: mailboxOwnerId,
+        priority: "batch",
       });
       if (messageIds.length > 0) {
         const headers = await fetchGmailMessageHeadersByIds(accessToken, messageIds, {
         mailboxKey: mailboxOwnerId,
+        priority: "batch",
       });
         for (const msg of headers) {
           if (msg.internalDate) newestSeen = Math.max(newestSeen, msg.internalDate);
@@ -919,7 +925,7 @@ async function runIncrementalPhase(
       if (persisted && persisted.status !== "running") break; // stopped by the user
     } while (catchUpToken && Date.now() - startedAt < BATCH_TIME_BUDGET_MS);
 
-    latestHistoryId = (await fetchGmailHistoryId(accessToken, { mailboxKey: mailboxOwnerId })) ?? latestHistoryId;
+    latestHistoryId = (await fetchGmailHistoryId(accessToken, { mailboxKey: mailboxOwnerId, priority: "batch" })) ?? latestHistoryId;
     doneAllPages = !catchUpToken;
   }
 

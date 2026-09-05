@@ -35,24 +35,67 @@ export const GMAIL_COST = {
 } as const;
 
 /**
- * Units per minute we allow ourselves. Deliberately below Gmail's own ceiling:
- * this bucket lives in one server instance's memory, so N warm instances serving
- * the same mailbox each hold their own. The headroom is what keeps their sum
- * under the real limit; `fetchGmail`'s backoff covers whatever slips past.
+ * Units per minute we allow ourselves, below Gmail's own per-user ceiling
+ * (6,000 for this project). Two different things eat that margin:
+ *
+ *  - This bucket lives in one server instance's memory, so N warm instances
+ *    serving the same mailbox each hold their own. Their sum is what Gmail
+ *    actually sees, and `fetchGmail`'s backoff covers whatever slips past.
+ *  - Gmail's own accounting is not perfectly synchronous with ours.
+ *
+ * It used to sit at 4,000 — 2,000 units/min permanently unspent purely so an
+ * interactive request would find room. That headroom is now dynamic (see
+ * INTERACTIVE_RESERVE), so the static margin can be smaller and the batch jobs
+ * get the difference back.
  */
 function budgetPerMinute(): number {
-  const n = parseInt(process.env.GMAIL_QUOTA_UNITS_PER_MIN || "4000", 10);
-  if (!Number.isFinite(n) || n < 100) return 4000;
+  const n = parseInt(process.env.GMAIL_QUOTA_UNITS_PER_MIN || "5200", 10);
+  if (!Number.isFinite(n) || n < 100) return 5200;
   return n;
 }
+
+/**
+ * Units held back from batch work while a person is actively using the app.
+ * Enough for an inbox list page plus its thread opens without ever queueing
+ * behind a 500-message sync page.
+ */
+function interactiveReserve(): number {
+  const n = parseInt(process.env.GMAIL_QUOTA_INTERACTIVE_RESERVE || "1200", 10);
+  if (!Number.isFinite(n) || n < 0) return 1200;
+  return Math.min(n, Math.floor(budgetPerMinute() / 2));
+}
+
+/**
+ * How long after an interactive call we keep reserving for it. A person reading
+ * mail makes bursty, gappy requests — expiring the reserve the instant one
+ * finishes would let a sync refill the bucket during the gap between opening
+ * two threads, which is exactly when it must not.
+ */
+const INTERACTIVE_ACTIVE_MS = 20_000;
+
+/**
+ * Batch work yields to people. `interactive` is anything a user is waiting on;
+ * `batch` is background scanning (contact sync, CRM evidence, bulk fetch,
+ * sequence sends) that should soak up spare capacity and get out of the way.
+ */
+export type GmailPriority = "interactive" | "batch";
 
 const REFILL_WINDOW_MS = 60_000;
 
 type Bucket = {
   tokens: number;
   lastRefillAt: number;
-  /** Serialises waiters so they wake in arrival order instead of all at once. */
-  tail: Promise<void>;
+  /**
+   * One queue per lane, so a waiting batch call can never sit in front of an
+   * interactive one. A single shared chain made this FIFO across both lanes —
+   * an inbox request could land behind a contact sync's 500-message page and
+   * wait out the whole thing, which is the head-of-line blocking the reserve
+   * exists to prevent. Within a lane, arrival order still holds.
+   */
+  tailInteractive: Promise<void>;
+  tailBatch: Promise<void>;
+  /** When an interactive caller last spent — drives the reserve's activation. */
+  lastInteractiveAt: number;
 };
 
 const buckets = new Map<string, Bucket>();
@@ -60,7 +103,13 @@ const buckets = new Map<string, Bucket>();
 function bucketFor(key: string): Bucket {
   let b = buckets.get(key);
   if (!b) {
-    b = { tokens: budgetPerMinute(), lastRefillAt: Date.now(), tail: Promise.resolve() };
+    b = {
+      tokens: budgetPerMinute(),
+      lastRefillAt: Date.now(),
+      tailInteractive: Promise.resolve(),
+      tailBatch: Promise.resolve(),
+      lastInteractiveAt: 0,
+    };
     buckets.set(key, b);
   }
   return b;
@@ -78,29 +127,52 @@ function refill(b: Bucket): void {
 /**
  * Block until `cost` units are available for `key`, then spend them.
  *
+ * Interactive callers spend down to zero. Batch callers must leave
+ * INTERACTIVE_RESERVE untouched, but ONLY while someone is actually using the
+ * app — a static split would cap a sync at (budget - reserve) forever, even at
+ * 3am with nobody logged in, which is slower than having no lanes at all. The
+ * reserve is a yield, not a quota.
+ *
  * A cost larger than the whole budget would otherwise wait forever, so it is
  * clamped — one oversized call is allowed through and simply drains the bucket.
  */
-export async function spendGmailQuota(key: string, cost: number): Promise<void> {
+export async function spendGmailQuota(
+  key: string,
+  cost: number,
+  priority: GmailPriority = "interactive"
+): Promise<void> {
   const b = bucketFor(key);
   const want = Math.min(Math.max(cost, 0), budgetPerMinute());
+  const isBatch = priority === "batch";
 
-  const wait = b.tail.then(async () => {
+  // Claim the reserve up front, not inside the waiter: a batch call already
+  // queued must start yielding the moment a person shows up, rather than only
+  // after it reaches the head of its own queue.
+  if (!isBatch) b.lastInteractiveAt = Date.now();
+
+  const run = async () => {
     for (;;) {
       refill(b);
-      if (b.tokens >= want) {
+      const reserve =
+        isBatch && Date.now() - b.lastInteractiveAt < INTERACTIVE_ACTIVE_MS
+          ? interactiveReserve()
+          : 0;
+      if (b.tokens - reserve >= want) {
         b.tokens -= want;
         return;
       }
-      const deficit = want - b.tokens;
+      const deficit = want - (b.tokens - reserve);
       const ms = Math.ceil((deficit * REFILL_WINDOW_MS) / budgetPerMinute());
-      await new Promise((r) => setTimeout(r, Math.min(ms, REFILL_WINDOW_MS)));
+      await new Promise((r) => setTimeout(r, Math.min(Math.max(ms, 5), REFILL_WINDOW_MS)));
     }
-  });
+  };
+
+  const wait = isBatch ? b.tailBatch.then(run) : b.tailInteractive.then(run);
 
   // The queue advances even when a waiter throws, so one failure can't wedge
   // every later caller behind a rejected tail.
-  b.tail = wait.catch(() => {});
+  if (isBatch) b.tailBatch = wait.catch(() => {});
+  else b.tailInteractive = wait.catch(() => {});
   return wait;
 }
 
@@ -129,6 +201,8 @@ export type GmailFetchOptions = {
   mailboxKey?: string;
   /** Quota units this call costs; see GMAIL_COST. */
   cost?: number;
+  /** Defaults to "interactive" — background scans must opt into yielding. */
+  priority?: GmailPriority;
 };
 
 /**
@@ -146,7 +220,7 @@ export async function fetchGmail(
   const key = opts?.mailboxKey;
 
   for (let attempt = 0; ; attempt++) {
-    if (key) await spendGmailQuota(key, cost);
+    if (key) await spendGmailQuota(key, cost, opts?.priority);
     const res = await fetch(url, init);
     if (res.ok || attempt >= RATE_LIMIT_MAX_ATTEMPTS - 1) return res;
 

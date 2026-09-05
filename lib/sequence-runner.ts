@@ -164,7 +164,10 @@ async function checkThreadForExit(
 ): Promise<"replied" | "bounced" | null> {
   let messages;
   try {
-    ({ messages } = await getThreadMessages(accessToken, threadId, { mailboxKey }));
+    ({ messages } = await getThreadMessages(accessToken, threadId, {
+      mailboxKey,
+      priority: "batch",
+    }));
   } catch {
     // Thread deleted or momentarily unavailable — never block the send on this.
     return null;
@@ -384,6 +387,7 @@ async function processEnrollment(
       inReplyToMessageId: threading ? enrollment.last_gmail_message_id ?? undefined : undefined,
       trackingPixelUrl,
       mailboxKey: mailbox.ownerId,
+      priority: "batch",
     });
 
     const sentAt = new Date().toISOString();

@@ -87,11 +87,13 @@ export async function POST(request: Request) {
             onListProgress: ({ listed, skipped }) =>
               send({ type: "listing", listed, skipped }),
             mailboxKey,
+            priority: "batch",
           });
           send({ type: "list", total: messageIds.length, skipped: skippedCount });
           const emails = await fetchGmailMessagesByIds(accessToken, messageIds, {
             onProgress: (done, total) => send({ type: "bodies", done, total }),
             mailboxKey,
+            priority: "batch",
           });
           send({ type: "complete", emails, skippedCount });
         } catch (e) {
@@ -136,6 +138,7 @@ export async function POST(request: Request) {
       maxEmails,
       labelFilter,
       mailboxKey,
+      priority: "batch",
     });
 
     return NextResponse.json({ emails });

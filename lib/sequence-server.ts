@@ -138,6 +138,7 @@ type EnrollmentRecord = {
   replied_at: string | null;
   last_error: string | null;
   merge_fields: Record<string, string> | null;
+  cc: string | null;
 };
 
 export function toEnrollmentDto(row: EnrollmentRecord): SequenceEnrollment {
@@ -153,6 +154,7 @@ export function toEnrollmentDto(row: EnrollmentRecord): SequenceEnrollment {
     repliedAt: row.replied_at,
     lastError: row.last_error,
     mergeFields: row.merge_fields ?? {},
+    cc: row.cc,
   };
 }
 

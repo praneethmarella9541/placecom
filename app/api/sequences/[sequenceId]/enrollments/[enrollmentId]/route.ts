@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { normalizeMergeFieldKey } from "@/lib/mail-merge";
 import { planNextEmailStep } from "@/lib/sequence-schedule";
 import {
@@ -21,10 +22,11 @@ type PatchBody = {
   action?: "pause" | "resume" | "restart";
   displayName?: string | null;
   mergeFields?: Record<string, string>;
+  cc?: string | null;
 };
 
 const ENROLLMENT_COLUMNS =
-  "id, email, display_name, status, current_step_order, next_run_at, first_sent_at, last_sent_at, replied_at, last_error, merge_fields";
+  "id, email, display_name, status, current_step_order, next_run_at, first_sent_at, last_sent_at, replied_at, last_error, merge_fields, cc";
 
 export async function PATCH(request: Request, { params }: Params) {
   const ctx = await getSequenceContext(request);
@@ -61,6 +63,9 @@ export async function PATCH(request: Request, { params }: Params) {
       if (typeof value === "string") fields[normalizeMergeFieldKey(key)] = value;
     }
     patch.merge_fields = fields;
+  }
+  if (body.cc !== undefined) {
+    patch.cc = body.cc === null ? null : extractAllEmailsFromText(body.cc).join(", ") || null;
   }
 
   if (body.action === "pause") {

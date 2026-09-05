@@ -58,12 +58,22 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Add at least one email step first." }, { status: 400 });
   }
 
-  const incomplete = emailSteps.find(
-    (s) => !s.subjectTemplate?.trim() || !s.bodyHtml?.trim(),
-  );
-  if (incomplete) {
+  // When threading is on, every email after the first is sent as a reply and
+  // deliberately has no subject of its own (SequenceStepList locks that field
+  // blank) — only the first email step needs one. The step's position in
+  // sequence_steps counts delay steps too, so it's re-numbered here against
+  // just the email steps to match what the editor actually shows the user
+  // ("Email 2"), not the raw step_order the DB gap would otherwise report.
+  for (let i = 0; i < emailSteps.length; i++) {
+    const s = emailSteps[i];
+    const needsSubject = !sequence.thread_emails || i === 0;
+    const missingSubject = needsSubject && !s.subjectTemplate?.trim();
+    const missingBody = !s.bodyHtml?.trim();
+    if (!missingSubject && !missingBody) continue;
+
+    const what = missingSubject && missingBody ? "a subject and a body" : missingSubject ? "a subject" : "a body";
     return NextResponse.json(
-      { error: `Step ${incomplete.stepOrder} needs both a subject and a body.` },
+      { error: `Email ${i + 1} needs ${what}.` },
       { status: 400 },
     );
   }

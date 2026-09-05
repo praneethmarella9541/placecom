@@ -22,7 +22,7 @@ const MAX_PER_REQUEST = 200;
 type Params = { params: { sequenceId: string } };
 
 const ENROLLMENT_COLUMNS =
-  "id, email, display_name, status, current_step_order, next_run_at, first_sent_at, last_sent_at, replied_at, last_error, merge_fields";
+  "id, email, display_name, status, current_step_order, next_run_at, first_sent_at, last_sent_at, replied_at, last_error, merge_fields, cc";
 
 /** GET /api/sequences/[id]/enrollments?status=&q= */
 export async function GET(request: Request, { params }: Params) {
@@ -108,6 +108,22 @@ export async function POST(request: Request, { params }: Params) {
     .in("email", unique);
   const already = new Set(((existingRows ?? []) as { email: string }[]).map((r) => r.email));
 
+  // {{first_name}}/{{last_name}}/{{company}} in a step template only ever
+  // resolve from merge_fields, and nothing in the UI sends body.mergeFields —
+  // so without this every recipient came in with none of those set, and
+  // buildStepEmail's "missing placeholder" check silently skipped every send.
+  // Fill them in here from whatever contact card matches the email, the same
+  // way the recipient picker itself is sourced.
+  const { data: directoryMatches } = await ctx.svc
+    .from("directory_contacts")
+    .select("email, name, company")
+    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+    .in("email", unique);
+  const directoryByEmail = new Map<string, { name: string | null; company: string | null }>();
+  for (const row of (directoryMatches ?? []) as { email: string | null; name: string | null; company: string | null }[]) {
+    if (row.email) directoryByEmail.set(row.email.trim().toLowerCase(), { name: row.name, company: row.company });
+  }
+
   // Being in two sequences from the same mailbox means two unrelated threads —
   // worth surfacing, but not worth blocking.
   const { data: elsewhere } = await ctx.svc
@@ -146,8 +162,18 @@ export async function POST(request: Request, { params }: Params) {
       skipped.push({ email, reason: "duplicate" });
       continue;
     }
-    const custom = body.mergeFields?.[email] ?? {};
+    const contact = directoryByEmail.get(email);
+    const fullName = (nameByEmail.get(email) ?? contact?.name ?? "").trim();
+    const [firstName, ...rest] = fullName.split(/\s+/).filter(Boolean);
     const mergeFields: Record<string, string> = {};
+    if (fullName) mergeFields.name = fullName;
+    if (firstName) mergeFields.first_name = firstName;
+    if (rest.length) mergeFields.last_name = rest.join(" ");
+    if (contact?.company?.trim()) mergeFields.company = contact.company.trim();
+
+    // Explicit mergeFields from the request (unused by today's UI, but kept
+    // for API callers) win over the directory-derived defaults above.
+    const custom = body.mergeFields?.[email] ?? {};
     for (const [key, value] of Object.entries(custom)) {
       if (typeof value === "string") mergeFields[normalizeMergeFieldKey(key)] = value;
     }
@@ -159,6 +185,9 @@ export async function POST(request: Request, { params }: Params) {
       email,
       display_name: nameByEmail.get(email) ?? null,
       merge_fields: mergeFields,
+      // Cc is per-recipient only — set afterward from that row's own "⋮"
+      // menu, never applied in bulk when adding a batch of recipients.
+      cc: null,
       next_step_id: plan?.stepId ?? null,
       next_run_at: plan ? jitteredStart(plan.runAt).toISOString() : null,
     });

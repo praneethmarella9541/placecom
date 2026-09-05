@@ -83,6 +83,8 @@ export type SequenceEnrollment = {
   repliedAt: string | null;
   lastError: string | null;
   mergeFields: Record<string, string>;
+  /** Comma-separated extra recipients cc'd on every step sent to this enrollment. */
+  cc: string | null;
 };
 
 export type SequenceSend = {

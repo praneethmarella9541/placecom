@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Plus, Search, Users, Workflow } from "lucide-react";
+import { Plus, Search, Users, Workflow } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
@@ -15,13 +15,9 @@ import {
   setSequencesPrefetchCache,
 } from "@/lib/workspace-feature-prefetch";
 
-/** If the external pinger stops, sequences quietly stall — warn past this. */
-const SCHEDULER_STALE_MS = 60 * 60 * 1000;
-
 export default function SequencesPage() {
   const router = useRouter();
   const [sequences, setSequences] = useState<SequenceListItem[]>([]);
-  const [schedulerLastRunAt, setSchedulerLastRunAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -32,7 +28,6 @@ export default function SequencesPage() {
     const cached = getSequencesPrefetchCache();
     if (cached?.sequences.length) {
       setSequences(cached.sequences as SequenceListItem[]);
-      setSchedulerLastRunAt(cached.schedulerLastRunAt);
       setLoading(false);
     } else {
       setLoading(true);
@@ -47,7 +42,6 @@ export default function SequencesPage() {
       };
       if (!res.ok) throw new Error(data.error || "Failed to load sequences");
       setSequences(data.sequences || []);
-      setSchedulerLastRunAt(data.schedulerLastRunAt ?? null);
       setSequencesPrefetchCache({
         sequences: data.sequences || [],
         schedulerLastRunAt: data.schedulerLastRunAt ?? null,
@@ -91,11 +85,6 @@ export default function SequencesPage() {
     return sequences.filter((s) => s.name.toLowerCase().includes(q));
   }, [sequences, search]);
 
-  const hasActive = sequences.some((s) => s.status === "active");
-  const schedulerStale =
-    hasActive &&
-    (!schedulerLastRunAt || Date.now() - Date.parse(schedulerLastRunAt) > SCHEDULER_STALE_MS);
-
   const empty = !loading && sequences.length === 0;
 
   return (
@@ -138,17 +127,6 @@ export default function SequencesPage() {
       {error && !showCreatePopup ? (
         <div className="rounded-[var(--radius-md)] border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3 text-[13px] text-[var(--color-danger)]">
           {error}
-        </div>
-      ) : null}
-
-      {schedulerStale ? (
-        <div className="flex items-start gap-2.5 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-[13px] text-amber-700 dark:text-amber-400">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={2} />
-          <span>
-            {titleCase(
-              "No sequence email has gone out in the last hour. If that looks wrong, check that the scheduler is still calling /api/cron/sequences.",
-            )}
-          </span>
         </div>
       ) : null}
 

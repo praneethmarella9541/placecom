@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ChevronLeft, Loader2, Mail, MoreVertical, Settings2, Trash2, Users, X } from "lucide-react";
+import { ChevronLeft, Loader2, Mail, MoreVertical, Settings2, Trash2, Users } from "lucide-react";
 import { SequenceStatusPill } from "@/components/SequenceStatusPill";
 import { SequenceStepList } from "@/components/SequenceStepList";
 import { SequenceRecipientsTab } from "@/components/SequenceRecipientsTab";
 import { SequenceSettingsTab } from "@/components/SequenceSettingsTab";
+import { buildStepEmail } from "@/lib/sequence-body";
 import { titleCase } from "@/lib/title-case";
 import type {
   EnrollmentCounts,
@@ -21,6 +22,12 @@ type Tab = "editor" | "recipients" | "settings";
 const TABS: Tab[] = ["editor", "recipients", "settings"];
 
 type Preview = { subject: string; html: string; missing: string[]; previewFor: string };
+type PreviewRecipient = {
+  id: string;
+  email: string;
+  displayName: string | null;
+  mergeFields: Record<string, string>;
+};
 
 export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
   const router = useRouter();
@@ -39,7 +46,17 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [preview, setPreview] = useState<Preview | null>(null);
+  // Inline, in-place preview (mirrors mass sending's "review" pane rather than
+  // a popup) — the step being previewed swaps its editable fields for the
+  // rendered result in place, with a recipient picker to see it merged for
+  // someone specific. Rendered client-side from the *current, possibly
+  // unsaved* editor state (not re-fetched from the saved step), so what you
+  // see always matches what's in the box — no stale content from before your
+  // last edit, and no need to save first just to look at it.
+  const [previewingIndex, setPreviewingIndex] = useState<number | null>(null);
+  const [previewEnrollmentId, setPreviewEnrollmentId] = useState<string | null>(null);
+  const [previewRecipients, setPreviewRecipients] = useState<PreviewRecipient[]>([]);
+  const [previewRecipientsLoading, setPreviewRecipientsLoading] = useState(false);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -214,25 +231,73 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     }
   }
 
-  async function openPreview(index: number) {
-    const step = steps[index];
-    if (!step?.id) {
-      setError("Save the sequence before previewing this step.");
+  function openPreview(index: number) {
+    if (previewingIndex === index) {
+      setPreviewingIndex(null);
       return;
     }
-    try {
-      const res = await fetch(`/api/sequences/${encodeURIComponent(sequenceId)}/preview`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stepId: step.id }),
-      });
-      const data = (await res.json()) as Preview & { error?: string };
-      if (!res.ok) throw new Error(data.error || "Could not build preview");
-      setPreview(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not build preview");
+    setPreviewingIndex(index);
+    setPreviewEnrollmentId(null);
+
+    if (previewRecipients.length === 0 && !previewRecipientsLoading) {
+      setPreviewRecipientsLoading(true);
+      void fetch(`/api/sequences/${encodeURIComponent(sequenceId)}/enrollments`)
+        .then((res) => res.json())
+        .then(
+          (data: {
+            enrollments?: {
+              id: string;
+              email: string;
+              displayName: string | null;
+              mergeFields?: Record<string, string>;
+            }[];
+          }) => {
+            setPreviewRecipients(
+              (data.enrollments ?? []).map((e) => ({
+                id: e.id,
+                email: e.email,
+                displayName: e.displayName,
+                mergeFields: e.mergeFields ?? {},
+              }))
+            );
+          }
+        )
+        .catch(() => {})
+        .finally(() => setPreviewRecipientsLoading(false));
     }
   }
+
+  function selectPreviewRecipient(enrollmentId: string) {
+    setPreviewEnrollmentId(enrollmentId);
+  }
+
+  // Sample data stands in until a recipient is enrolled, or none is picked —
+  // matches what the standalone preview API used to default to.
+  const previewData = useMemo<Preview | null>(() => {
+    if (previewingIndex === null) return null;
+    const step = steps[previewingIndex];
+    if (!step || step.kind !== "email" || !sequence) return null;
+
+    const chosen = previewEnrollmentId
+      ? previewRecipients.find((r) => r.id === previewEnrollmentId)
+      : previewRecipients[0];
+
+    const recipient = chosen
+      ? { email: chosen.email, displayName: chosen.displayName, mergeFields: chosen.mergeFields }
+      : { email: "recipient@example.com", displayName: "Sample Recipient", mergeFields: {} };
+
+    const built = buildStepEmail(
+      {
+        subjectTemplate: step.subjectTemplate ?? "",
+        bodyHtml: step.bodyHtml ?? "",
+        includeSignature: sequence.includeSignature,
+        signatureHtml: sequence.signatureHtml,
+      },
+      recipient
+    );
+
+    return { subject: built.subject, html: built.html, missing: built.missing, previewFor: recipient.email };
+  }, [previewingIndex, previewEnrollmentId, previewRecipients, steps, sequence]);
 
   if (loading) {
     return (
@@ -395,7 +460,12 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
           threadEmails={sequence.threadEmails}
           disabled={saving}
           onChange={setSteps}
-          onPreview={(index) => void openPreview(index)}
+          onPreview={openPreview}
+          previewingIndex={previewingIndex}
+          previewData={previewData}
+          previewRecipients={previewRecipients}
+          previewEnrollmentId={previewEnrollmentId}
+          onSelectPreviewRecipient={selectPreviewRecipient}
         />
       ) : null}
 
@@ -411,46 +481,6 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
         />
       ) : null}
 
-      {preview ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in"
-          onClick={() => setPreview(null)}
-        >
-          <div
-            className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl animate-scale-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
-              <div className="min-w-0">
-                <p className="truncate text-[14.5px] font-semibold text-[var(--color-text)]">
-                  {preview.subject || titleCase("(no subject)")}
-                </p>
-                <p className="font-mono mt-0.5 truncate text-[11.5px] text-[var(--color-text-faint)]">
-                  {titleCase("To")} {preview.previewFor}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPreview(null)}
-                aria-label="Close preview"
-                className="rounded-lg p-1.5 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
-              >
-                <X className="h-4 w-4" strokeWidth={2} />
-              </button>
-            </div>
-            {preview.missing.length > 0 ? (
-              <p className="border-b border-[var(--color-border)] bg-amber-500/5 px-5 py-3 text-[12.5px] text-amber-700 dark:text-amber-400">
-                {titleCase("These recipients will be skipped until these fields have values")}:{" "}
-                {preview.missing.join(", ")}
-              </p>
-            ) : null}
-            <div
-              className="prose-sm max-w-none overflow-y-auto px-5 py-4 text-[14px] text-[var(--color-text)]"
-              dangerouslySetInnerHTML={{ __html: preview.html }}
-            />
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }

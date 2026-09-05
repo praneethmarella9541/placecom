@@ -61,6 +61,7 @@ type EnrollmentRow = {
   email: string;
   display_name: string | null;
   merge_fields: Record<string, string> | null;
+  cc: string | null;
   current_step_order: number;
   next_step_id: string | null;
   attempt_count: number;
@@ -371,6 +372,7 @@ async function processEnrollment(
   try {
     const result = await sendMailViaGmail(mailbox.accessToken, {
       to: enrollment.email,
+      cc: enrollment.cc || undefined,
       subject: threading ? "" : built.subject,
       textBody: built.text,
       htmlBody: built.html,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, MoreVertical, Play, Pause, RotateCcw, Trash2, UserPlus } from "lucide-react";
+import { Loader2, MoreVertical, Play, Pause, RotateCcw, Trash2, UserPlus, Users } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { EnrollmentStatusPill } from "@/components/SequenceStatusPill";
 import { Skeleton } from "@/components/Skeleton";
@@ -27,6 +27,9 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [editingCcId, setEditingCcId] = useState<string | null>(null);
+  const [ccDraft, setCcDraft] = useState("");
+  const [savingCc, setSavingCc] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -112,6 +115,30 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
     }
   }
 
+  function startEditCc(enrollment: SequenceEnrollment) {
+    setOpenMenu(null);
+    setEditingCcId(enrollment.id);
+    setCcDraft(enrollment.cc ?? "");
+  }
+
+  async function saveCc(enrollmentId: string) {
+    setSavingCc(true);
+    try {
+      await fetch(
+        `/api/sequences/${encodeURIComponent(sequence.id)}/enrollments/${encodeURIComponent(enrollmentId)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cc: ccDraft }),
+        },
+      );
+      setEditingCcId(null);
+      await load();
+    } finally {
+      setSavingCc(false);
+    }
+  }
+
   async function act(enrollmentId: string, action: "pause" | "resume" | "restart") {
     setOpenMenu(null);
     await fetch(
@@ -172,6 +199,11 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
             {titleCase(adding ? "Adding…" : "Enroll")}
           </button>
         </div>
+        <p className="mt-3 text-[12px] text-[var(--color-text-faint)]">
+          {titleCase(
+            'Add Cc addresses for a specific recipient afterward, from the "⋮" menu on their row below.',
+          )}
+        </p>
         {sequence.status !== "active" ? (
           <p className="mt-3 text-[12.5px] text-[var(--color-text-faint)]">
             {titleCase(
@@ -203,8 +235,9 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
             <li
               key={e.id}
               data-testid={`sequence-recipient-${e.id}`}
-              className="flex items-center justify-between gap-4 px-5 py-3.5"
+              className="flex flex-col gap-2.5 px-5 py-3.5"
             >
+              <div className="flex items-center justify-between gap-4">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[14px] font-medium text-[var(--color-text)]">
                   {e.displayName?.trim() || e.email}
@@ -214,11 +247,23 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
                   {e.lastError
                     ? e.lastError
                     : e.nextRunAt
-                      ? `${titleCase("Next")} ${formatInTimeZone(new Date(e.nextRunAt), sequence.timezone)}`
+                      ? new Date(e.nextRunAt).getTime() <= Date.now()
+                        ? // The scheduler is an external cron hitting /api/cron/sequences on
+                          // its own interval, not something this page can trigger — a slot
+                          // that has passed just means it hasn't ticked yet, not that
+                          // anything is wrong. Says so plainly instead of showing a "Next"
+                          // time that's already behind the clock.
+                          `${titleCase("Due")} ${formatInTimeZone(new Date(e.nextRunAt), sequence.timezone)} — ${titleCase("waiting for the next send run")}`
+                        : `${titleCase("Next")} ${formatInTimeZone(new Date(e.nextRunAt), sequence.timezone)}`
                       : e.lastSentAt
                         ? `${titleCase("Last sent")} ${formatInTimeZone(new Date(e.lastSentAt), sequence.timezone)}`
                         : titleCase("Not scheduled")}
                 </p>
+                {editingCcId !== e.id && e.cc?.trim() ? (
+                  <p className="mt-0.5 truncate text-[11.5px] text-[var(--color-text-muted)]">
+                    {titleCase("Cc")}: {e.cc}
+                  </p>
+                ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-3">
                 <span className="font-mono text-[11.5px] text-[var(--color-text-faint)]">
@@ -255,6 +300,11 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
                           onClick={() => void act(e.id, "restart")}
                         />
                         <MenuItem
+                          icon={Users}
+                          label={e.cc?.trim() ? "Edit Cc" : "Add Cc"}
+                          onClick={() => startEditCc(e)}
+                        />
+                        <MenuItem
                           icon={Trash2}
                           label="Remove"
                           danger
@@ -265,6 +315,39 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
                   ) : null}
                 </div>
               </div>
+              </div>
+              {editingCcId === e.id ? (
+                <div
+                  className="flex items-start gap-2"
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Escape") setEditingCcId(null);
+                  }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <RecipientField
+                      value={ccDraft}
+                      onChange={setCcDraft}
+                      placeholder="Cc addresses"
+                      suggestions={suggestions}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void saveCc(e.id)}
+                    disabled={savingCc}
+                    className="h-9 shrink-0 rounded-lg bg-[var(--color-copper)] px-3 text-[12.5px] font-semibold text-white disabled:opacity-60"
+                  >
+                    {titleCase("Save")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingCcId(null)}
+                    className="h-9 shrink-0 rounded-lg px-3 text-[12.5px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+                  >
+                    {titleCase("Cancel")}
+                  </button>
+                </div>
+              ) : null}
             </li>
           ))}
         </ul>

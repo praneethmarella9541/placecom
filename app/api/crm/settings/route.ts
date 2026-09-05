@@ -1,35 +1,25 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
-import { resolveMailboxOwnerId } from "@/lib/team-scope";
 import { CRM_MODELS, DEFAULT_CRM_SETTINGS, type CrmSettings } from "@/lib/crm-settings";
 
 export const runtime = "nodejs";
 
 const SELECT = "season_start_date, model, confidence_threshold";
 
-async function requireBoardOwner(request: Request) {
+async function requireAuth(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) } as const;
-  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
-  if (!mailboxOwnerId) {
-    return {
-      error: NextResponse.json(
-        { error: "No CRM board yet — your account isn't linked to a team." },
-        { status: 409 }
-      ),
-    } as const;
-  }
-  return { supabase, user, mailboxOwnerId } as const;
+  return { supabase, user } as const;
 }
 
 export async function GET(request: Request) {
-  const ctx = await requireBoardOwner(request);
+  const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 
   const { data, error } = await ctx.supabase
     .from("crm_settings")
     .select(SELECT)
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+    .eq("user_id", ctx.user.id)
     .maybeSingle();
 
   // Before migration 0054 the table doesn't exist — fall back to defaults so
@@ -50,7 +40,7 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const ctx = await requireBoardOwner(request);
+  const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -102,20 +92,20 @@ export async function PATCH(request: Request) {
   const { data: existing } = await ctx.supabase
     .from("crm_settings")
     .select(SELECT)
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+    .eq("user_id", ctx.user.id)
     .maybeSingle();
 
   const { data, error } = await ctx.supabase
     .from("crm_settings")
     .upsert(
       {
-        mailbox_owner_id: ctx.mailboxOwnerId,
+        user_id: ctx.user.id,
         ...DEFAULT_CRM_SETTINGS,
         ...(existing ?? {}),
         ...updates,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "mailbox_owner_id" }
+      { onConflict: "user_id" }
     )
     .select(SELECT)
     .single();

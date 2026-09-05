@@ -191,6 +191,12 @@ function Toggle({
         <p className="text-[13px] font-medium text-[var(--color-text)]">{titleCase(label)}</p>
         {hint ? <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{hint}</p> : null}
       </div>
+      {/* inline-flex + items-center, and the knob laid out as a normal flex
+          child moved by `transform` alone — not `position: absolute` with no
+          `left` set, which left its horizontal position resting on the
+          browser's "static position" fallback instead of an explicit value
+          and rendered the knob detached from the track. Matches the proven
+          Toggle in ConnectionStrengthSettingsModal.tsx. */}
       <button
         data-testid={testId}
         type="button"
@@ -199,12 +205,12 @@ function Toggle({
         aria-label={label}
         disabled={disabled}
         onClick={() => onChange(!checked)}
-        className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
-          checked ? "bg-[var(--color-copper)]" : "bg-[var(--color-surface-2)]"
+        className={`relative mt-0.5 inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+          checked ? "bg-[var(--color-copper)]" : "bg-[var(--color-border-strong)]"
         }`}
       >
         <span
-          className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+          className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
             checked ? "translate-x-[22px]" : "translate-x-0.5"
           }`}
         />

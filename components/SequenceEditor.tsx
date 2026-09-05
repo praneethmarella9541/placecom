@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { ChevronLeft, Loader2, Mail, Settings2, Users, X } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronLeft, Loader2, Mail, MoreVertical, Settings2, Trash2, Users, X } from "lucide-react";
 import { SequenceStatusPill } from "@/components/SequenceStatusPill";
 import { SequenceStepList } from "@/components/SequenceStepList";
 import { SequenceRecipientsTab } from "@/components/SequenceRecipientsTab";
@@ -23,6 +23,7 @@ const TABS: Tab[] = ["editor", "recipients", "settings"];
 type Preview = { subject: string; html: string; missing: string[]; previewFor: string };
 
 export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
 
   const [sequence, setSequence] = useState<Sequence | null>(null);
@@ -33,9 +34,21 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDown(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
 
   useEffect(() => {
     const requested = searchParams.get("tab");
@@ -171,6 +184,36 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     }
   }
 
+  // Mirrors the API's own rule (app/api/sequences/[sequenceId]/route.ts): a
+  // sequence still in draft can never have a real send behind it, since
+  // sending only starts once it's published — so draft is exactly the case
+  // that gets hard-deleted; anything else is archived (kept for history, no
+  // further emails go out) rather than erased.
+  const willHardDelete = sequence?.status === "draft";
+
+  async function handleDelete() {
+    if (deleting || !sequence) return;
+    const question = willHardDelete
+      ? `Delete "${sequence.name}"? This can't be undone.`
+      : `"${sequence.name}" will be archived — kept for history, but no further emails go out and it won't be deleted outright. Continue?`;
+    if (!window.confirm(question)) return;
+
+    setMenuOpen(false);
+    setDeleting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sequences/${encodeURIComponent(sequenceId)}`, {
+        method: "DELETE",
+      });
+      const data = (await res.json()) as { error?: string; deleted?: boolean; archived?: boolean };
+      if (!res.ok) throw new Error(data.error || "Could not delete sequence");
+      router.push("/sequences");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete sequence");
+      setDeleting(false);
+    }
+  }
+
   async function openPreview(index: number) {
     const step = steps[index];
     if (!step?.id) {
@@ -230,11 +273,18 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
+          {/* Plain <input> has no intrinsic width tied to its value — with no
+              `size`/CSS width set it falls back to the browser's ~20-character
+              default, so an 8-letter name like "Outreach" still rendered a
+              wide box, and the hover/focus background filled that whole box
+              rather than hugging the text. `ch` units track the actual value
+              length, +1.5 for the caret and a little breathing room. */}
           <input
             data-testid="sequence-name-input"
             value={sequence.name}
             onChange={(e) => setSequence({ ...sequence, name: e.target.value })}
             onBlur={(e) => void patchSequence({ name: e.target.value })}
+            style={{ width: `${Math.max(sequence.name.length, 4) + 1.5}ch` }}
             className="min-w-0 max-w-full truncate rounded-lg border border-transparent bg-transparent px-1 font-display text-[19px] font-bold tracking-tight text-[var(--color-text)] outline-none hover:bg-[var(--color-surface-2)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
           />
           <SequenceStatusPill status={sequence.status} />
@@ -262,6 +312,38 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
             {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             {titleCase(isActive ? "Pause sequence" : "Enable sequence")}
           </button>
+          <div ref={menuRef} className="relative">
+            <button
+              data-testid="sequence-more-btn"
+              type="button"
+              aria-label={titleCase("More options")}
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+            >
+              <MoreVertical className="h-4 w-4" strokeWidth={2} />
+            </button>
+            {menuOpen ? (
+              <div className="absolute right-0 z-20 mt-1 w-52 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
+                <button
+                  data-testid="sequence-delete-btn"
+                  type="button"
+                  disabled={deleting}
+                  onClick={() => void handleDelete()}
+                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-[13px] font-medium text-[var(--color-danger)] transition-colors hover:bg-[var(--color-surface-offset)] disabled:opacity-60"
+                >
+                  {deleting ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+                  )}
+                  {titleCase(
+                    deleting ? "Deleting…" : willHardDelete ? "Delete sequence" : "Archive sequence",
+                  )}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 

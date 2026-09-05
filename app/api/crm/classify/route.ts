@@ -21,10 +21,11 @@ type LeadRow = ClassifiableLead & { email: string | null; phone: string | null; 
  * POST /api/crm/classify — body: { leadIds?: string[], force?: boolean }
  *
  * Reads each lead's mail/WhatsApp/notes since the season cutoff and places it
- * in one of the team's own stages. This is the only thing in the app that
- * spends OpenAI tokens on the CRM, and it runs only when explicitly invoked —
- * on adding leads, or from the board's re-classify button. Nothing sweeps in
- * the background.
+ * in one of this user's own stages, against their own leads only — the board
+ * is personal per signed-in user (0055), not shared with a team. This is the
+ * only thing in the app that spends OpenAI tokens on the CRM, and it runs
+ * only when explicitly invoked — on adding leads, or from the board's
+ * re-classify button. Nothing sweeps in the background.
  *
  * Leads whose stage was set by a human are skipped unless `force` is set:
  * silently undoing a deliberate drag is worse than leaving a card stale.
@@ -33,14 +34,6 @@ export async function POST(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
-  if (!mailboxOwnerId) {
-    return NextResponse.json(
-      { error: "No CRM board yet — your account isn't linked to a team." },
-      { status: 409 }
-    );
-  }
-
   const body = (await request.json().catch(() => ({}))) as { leadIds?: unknown; force?: unknown };
   const requestedIds =
     Array.isArray(body.leadIds) && body.leadIds.every((v) => typeof v === "string")
@@ -48,7 +41,7 @@ export async function POST(request: Request) {
       : null;
   const force = body.force === true;
 
-  const { stages, error: stagesError } = await listOrSeedStages(supabase, mailboxOwnerId, user.id);
+  const { stages, error: stagesError } = await listOrSeedStages(supabase, user.id);
   if (stagesError) return NextResponse.json({ error: stagesError }, { status: 500 });
 
   const unsorted = stages.find((s) => s.is_unsorted) ?? null;
@@ -62,13 +55,18 @@ export async function POST(request: Request) {
   const { data: settingsRow } = await supabase
     .from("crm_settings")
     .select("season_start_date, model, confidence_threshold")
-    .eq("mailbox_owner_id", mailboxOwnerId)
+    .eq("user_id", user.id)
     .maybeSingle();
   const settings = (settingsRow as CrmSettings | null) ?? DEFAULT_CRM_SETTINGS;
 
+  // Explicit user_id filter, not left to RLS alone — leads' own RLS (0048)
+  // still lets an admin read their whole team's rows for other features
+  // (the Contacts directory's Status column). Without this, an admin's
+  // "classify" run could reach into a teammate's leads too.
   let query = supabase
     .from("leads")
     .select("id, company_name, contact_name, email, phone, stage_set_by")
+    .eq("user_id", user.id)
     .limit(MAX_LEADS_PER_RUN);
   if (requestedIds) query = query.in("id", requestedIds);
 
@@ -109,6 +107,11 @@ export async function POST(request: Request) {
       withEvidence
     );
 
+    // Cost tracking stays team-visible even though the board itself is now
+    // personal (0055) — an admin reasonably still wants to see the whole
+    // team's AI spend in one place, so this still resolves and records the
+    // team ledger key even though nothing else in this route uses it.
+    const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
     const costUsd = await recordAiUsage({
       userId: user.id,
       mailboxOwnerId,
@@ -140,7 +143,8 @@ export async function POST(request: Request) {
           stage_updated_at: now,
           updated_at: now,
         })
-        .eq("id", v.leadId);
+        .eq("id", v.leadId)
+        .eq("user_id", user.id);
     }
 
     return NextResponse.json({

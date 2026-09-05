@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
-import { resolveMailboxOwnerId } from "@/lib/team-scope";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { DEFAULT_CRM_SETTINGS, type CrmSettings } from "@/lib/crm-settings";
 import {
@@ -28,14 +27,15 @@ export async function GET(request: Request, { params }: { params: { id: string }
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
-
-  // RLS already scopes this select to the caller's own leads or their team's,
-  // so a missing row means "not yours" as much as "doesn't exist".
+  // Explicit user_id filter: the board is personal per user (0055), so this
+  // must not fall through to `leads`' own broader RLS (0048), which still
+  // lets an admin read a teammate's row for other features (Contacts' Status
+  // column). A missing row here means "not yours" as much as "doesn't exist".
   const { data: lead, error } = await supabase
     .from("leads")
     .select("id, email, phone")
     .eq("id", params.id)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -44,7 +44,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
   const { data: settingsRow } = await supabase
     .from("crm_settings")
     .select("season_start_date, model, confidence_threshold")
-    .eq("mailbox_owner_id", mailboxOwnerId)
+    .eq("user_id", user.id)
     .maybeSingle();
   const settings = (settingsRow as CrmSettings | null) ?? DEFAULT_CRM_SETTINGS;
 

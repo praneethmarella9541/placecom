@@ -1,27 +1,17 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
-import { resolveMailboxOwnerId } from "@/lib/team-scope";
 import { CRM_STAGE_SELECT } from "@/lib/crm-stages";
 
 export const runtime = "nodejs";
 
-async function requireBoardOwner(request: Request) {
+async function requireAuth(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) } as const;
-  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
-  if (!mailboxOwnerId) {
-    return {
-      error: NextResponse.json(
-        { error: "No CRM board yet — your account isn't linked to a team." },
-        { status: 409 }
-      ),
-    } as const;
-  }
-  return { supabase, user, mailboxOwnerId } as const;
+  return { supabase, user } as const;
 }
 
 export async function PATCH(request: Request, { params }: { params: { id: string } }) {
-  const ctx = await requireBoardOwner(request);
+  const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -45,12 +35,12 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     .from("crm_stages")
     .update(updates)
     .eq("id", params.id)
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+    .eq("user_id", ctx.user.id)
     .select(CRM_STAGE_SELECT)
     .maybeSingle();
 
   if (error) {
-    const duplicate = /duplicate key|crm_stages_owner_name_key/i.test(error.message);
+    const duplicate = /duplicate key|crm_stages_user_name_key/i.test(error.message);
     return NextResponse.json(
       { error: duplicate ? "A column with that name already exists." : error.message },
       { status: duplicate ? 409 : 500 }
@@ -67,14 +57,14 @@ export async function PATCH(request: Request, { params }: { params: { id: string
  * them somewhere visible.
  */
 export async function DELETE(request: Request, { params }: { params: { id: string } }) {
-  const ctx = await requireBoardOwner(request);
+  const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 
   const { data: stage } = await ctx.supabase
     .from("crm_stages")
     .select("id, is_unsorted")
     .eq("id", params.id)
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+    .eq("user_id", ctx.user.id)
     .maybeSingle();
 
   if (!stage) return NextResponse.json({ error: "Stage not found" }, { status: 404 });
@@ -88,7 +78,7 @@ export async function DELETE(request: Request, { params }: { params: { id: strin
   const { data: fallback } = await ctx.supabase
     .from("crm_stages")
     .select("id")
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+    .eq("user_id", ctx.user.id)
     .eq("is_unsorted", true)
     .maybeSingle();
 
@@ -99,14 +89,15 @@ export async function DELETE(request: Request, { params }: { params: { id: strin
       stage_set_by: "human",
       updated_at: new Date().toISOString(),
     })
-    .eq("stage_id", params.id);
+    .eq("stage_id", params.id)
+    .eq("user_id", ctx.user.id);
   if (moveError) return NextResponse.json({ error: moveError.message }, { status: 500 });
 
   const { error } = await ctx.supabase
     .from("crm_stages")
     .delete()
     .eq("id", params.id)
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId);
+    .eq("user_id", ctx.user.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true, movedTo: fallback?.id ?? null });

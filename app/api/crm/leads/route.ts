@@ -17,13 +17,18 @@ export async function GET() {
 
   // Fetch leads — paged (see lib/supabase-fetch-all.ts) rather than a plain
   // .select(), which silently caps at 1000 rows once this user has that many.
-  // No user_id filter here: RLS (0048 migration) already scopes this to "my
-  // own leads" for staff, or "my whole team's leads" for an admin — adding a
-  // hardcoded .eq("user_id", user.id) would defeat the admin team view.
+  //
+  // Explicit .eq("user_id", ...), not left to RLS alone: `leads`' own RLS
+  // (0048) is broader than what the CRM board wants — it still lets an admin
+  // read their whole team's rows, which other features (the Contacts
+  // directory's Status column) rely on. The CRM board itself is personal per
+  // user (0055): each team member's kanban is their own, so this route must
+  // narrow to "my own leads" even for an admin account.
   const { data: leads, error } = await fetchAllRows((from, to) =>
     supabase
       .from("leads")
       .select("*")
+      .eq("user_id", user.id)
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
       .range(from, to)

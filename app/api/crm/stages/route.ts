@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
-import { resolveMailboxOwnerId } from "@/lib/team-scope";
 import { CRM_STAGE_SELECT, listOrSeedStages } from "@/lib/crm-stages";
 
 export const runtime = "nodejs";
@@ -9,31 +8,23 @@ export const runtime = "nodejs";
 const MISSING_TABLE = /relation .*crm_stages.* does not exist|could not find the table/i;
 
 /**
- * The kanban columns are per-team config (see the 0054 migration), so every
- * route here resolves the caller's mailbox owner first. A staff user with no
- * admin linked yet has no board to write to — that's a 409 rather than a
- * silent write to a null owner, which would be invisible to everyone.
+ * The kanban columns are personal per signed-in user (0055 re-scoped this off
+ * mailbox_owner_id — a whole admin team sharing one board — onto user_id), so
+ * every route here just needs the caller's own id. No "not linked to a team"
+ * case anymore: unlike the old team-scoped board, there's no admin-linkage
+ * precondition for having a personal one.
  */
-async function requireBoardOwner(request: Request) {
+async function requireAuth(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) } as const;
-  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
-  if (!mailboxOwnerId) {
-    return {
-      error: NextResponse.json(
-        { error: "No CRM board yet — your account isn't linked to a team." },
-        { status: 409 }
-      ),
-    } as const;
-  }
-  return { supabase, user, mailboxOwnerId } as const;
+  return { supabase, user } as const;
 }
 
 export async function GET(request: Request) {
-  const ctx = await requireBoardOwner(request);
+  const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 
-  const { stages, error } = await listOrSeedStages(ctx.supabase, ctx.mailboxOwnerId, ctx.user.id);
+  const { stages, error } = await listOrSeedStages(ctx.supabase, ctx.user.id);
   if (error) {
     if (MISSING_TABLE.test(error)) {
       return NextResponse.json(
@@ -47,7 +38,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const ctx = await requireBoardOwner(request);
+  const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -62,7 +53,7 @@ export async function POST(request: Request) {
   const { data: last } = await ctx.supabase
     .from("crm_stages")
     .select("position")
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+    .eq("user_id", ctx.user.id)
     .order("position", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -70,7 +61,7 @@ export async function POST(request: Request) {
   const { data, error } = await ctx.supabase
     .from("crm_stages")
     .insert({
-      mailbox_owner_id: ctx.mailboxOwnerId,
+      user_id: ctx.user.id,
       created_by: ctx.user.id,
       name,
       description: typeof body.description === "string" ? body.description.trim() || null : null,
@@ -81,7 +72,7 @@ export async function POST(request: Request) {
     .single();
 
   if (error) {
-    const duplicate = /duplicate key|crm_stages_owner_name_key/i.test(error.message);
+    const duplicate = /duplicate key|crm_stages_user_name_key/i.test(error.message);
     return NextResponse.json(
       { error: duplicate ? `A "${name}" column already exists.` : error.message },
       { status: duplicate ? 409 : 500 }
@@ -96,7 +87,7 @@ export async function POST(request: Request) {
  * time would leave the board briefly inconsistent mid-drag.
  */
 export async function PATCH(request: Request) {
-  const ctx = await requireBoardOwner(request);
+  const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 
   const body = (await request.json().catch(() => ({}))) as { order?: unknown };
@@ -110,11 +101,11 @@ export async function PATCH(request: Request) {
       .from("crm_stages")
       .update({ position: i, updated_at: new Date().toISOString() })
       .eq("id", ids[i])
-      .eq("mailbox_owner_id", ctx.mailboxOwnerId);
+      .eq("user_id", ctx.user.id);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const { stages, error } = await listOrSeedStages(ctx.supabase, ctx.mailboxOwnerId, ctx.user.id);
+  const { stages, error } = await listOrSeedStages(ctx.supabase, ctx.user.id);
   if (error) return NextResponse.json({ error }, { status: 500 });
   return NextResponse.json({ stages });
 }

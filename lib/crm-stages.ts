@@ -65,21 +65,21 @@ const DEFAULT_STAGES: Omit<CrmStage, "id">[] = [
 ];
 
 /**
- * Every stage for a team, creating the starter set the first time a team's
- * board is opened. The insert is best-effort: two tabs racing on first load
- * both try to seed, and the loser hits the (mailbox_owner_id, lower(name))
- * unique index — in that case we just re-read rather than surfacing an error.
+ * Every stage on this user's own board, creating the starter set the first
+ * time they open it. Personal per signed-in user (0055) — not shared with
+ * their team. The insert is best-effort: two tabs racing on first load both
+ * try to seed, and the loser hits the (user_id, lower(name)) unique index —
+ * in that case we just re-read rather than surfacing an error.
  */
 export async function listOrSeedStages(
   supabase: SupabaseClient,
-  mailboxOwnerId: string,
   userId: string
 ): Promise<{ stages: CrmStage[]; error?: string }> {
   const read = async () => {
     const { data, error } = await supabase
       .from("crm_stages")
       .select(CRM_STAGE_SELECT)
-      .eq("mailbox_owner_id", mailboxOwnerId)
+      .eq("user_id", userId)
       .order("position", { ascending: true })
       .order("created_at", { ascending: true });
     return { rows: (data ?? []) as CrmStage[], error: error?.message };
@@ -92,7 +92,7 @@ export async function listOrSeedStages(
   const { error: insertError } = await supabase.from("crm_stages").insert(
     DEFAULT_STAGES.map((s) => ({
       ...s,
-      mailbox_owner_id: mailboxOwnerId,
+      user_id: userId,
       created_by: userId,
     }))
   );

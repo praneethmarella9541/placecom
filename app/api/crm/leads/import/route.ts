@@ -34,10 +34,13 @@ function companyFor(row: DirectoryRow): string {
 /**
  * POST /api/crm/leads/import — body: { contactIds: string[] }
  *
- * Turns contact-book rows into leads. This (plus the single-contact "Add to
- * CRM" action, which posts one id here) is the only way leads enter the
- * board: nothing is auto-imported from the mailbox, so the classifier's cost
- * stays bounded by what the user has deliberately added.
+ * Turns contact-book rows into leads on the caller's own board — boards are
+ * personal per signed-in user (0055), so importing a contact a teammate
+ * already added creates your own card for them too, rather than being
+ * blocked as a duplicate of someone else's lead. This (plus the
+ * single-contact "Add to CRM" action, which posts one id here) is the only
+ * way leads enter a board: nothing is auto-imported from the mailbox, so the
+ * classifier's cost stays bounded by what the user has deliberately added.
  *
  * New leads land in the board's unsorted column and are returned so the
  * caller can immediately kick off /api/crm/classify for exactly those ids.
@@ -45,14 +48,6 @@ function companyFor(row: DirectoryRow): string {
 export async function POST(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
-  if (!mailboxOwnerId) {
-    return NextResponse.json(
-      { error: "No CRM board yet — your account isn't linked to a team." },
-      { status: 409 }
-    );
-  }
 
   const body = (await request.json().catch(() => ({}))) as { contactIds?: unknown };
   if (
@@ -73,11 +68,14 @@ export async function POST(request: Request) {
   const rows = (contacts ?? []) as DirectoryRow[];
   if (rows.length === 0) return NextResponse.json({ error: "No matching contacts" }, { status: 404 });
 
-  // Skip contacts already on the board so re-importing a list is idempotent
-  // rather than producing duplicate cards.
+  // Skip contacts already on *this user's own* board so re-importing a list
+  // is idempotent — scoped to user_id, not just source_contact_id, since a
+  // teammate may have already imported the same contact onto their own,
+  // separate board.
   const { data: existing } = await supabase
     .from("leads")
     .select("source_contact_id")
+    .eq("user_id", user.id)
     .in("source_contact_id", rows.map((r) => r.id));
   const already = new Set(
     ((existing ?? []) as { source_contact_id: string | null }[])
@@ -90,8 +88,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ created: 0, skipped: rows.length, leadIds: [] });
   }
 
-  const { stages } = await listOrSeedStages(supabase, mailboxOwnerId, user.id);
+  const { stages } = await listOrSeedStages(supabase, user.id);
   const unsortedId = stages.find((s) => s.is_unsorted)?.id ?? null;
+
+  // Best-effort, not gating: mailbox_owner_id is unrelated to CRM board
+  // ownership (that's user_id, above) — it's the pre-existing (0048) column
+  // other features read for team-shared visibility, e.g. the Contacts
+  // directory's Status column showing a lead to the whole team via its admin.
+  // Null (an unlinked account) just means this lead won't surface there.
+  const mailboxOwnerId = await resolveMailboxOwnerId(supabase, user.id);
 
   const { data: inserted, error: insertError } = await supabase
     .from("leads")

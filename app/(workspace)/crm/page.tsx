@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, RefreshCw, Search, Settings2, Sparkles, UserPlus, Users2 } from "lucide-react";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
@@ -41,6 +41,29 @@ export default function CRMPage() {
   const [draggingLeadId, setDraggingLeadId] = useState<string | null>(null);
   const [dragOverStageId, setDragOverStageId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const boardScrollRef = useRef<HTMLDivElement>(null);
+
+  // Only a genuinely horizontal gesture (trackpad sideways swipe, or a mouse's
+  // horizontal wheel/tilt-scroll — deltaX dominant) drives the board's
+  // scrollLeft ourselves; a vertical swipe or plain wheel (deltaY dominant) is
+  // left untouched so it doesn't get hijacked into moving the board
+  // sideways. We still drive the horizontal case explicitly rather than
+  // trusting native scrolling, since macOS's swipe-to-navigate can hijack an
+  // unhandled horizontal gesture at the scroll edges. Attached as a real DOM
+  // listener with { passive: false }, not React's onWheel, so preventDefault
+  // actually takes effect.
+  useEffect(() => {
+    const el = boardScrollRef.current;
+    if (!el) return;
+    function onWheel(e: WheelEvent) {
+      if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      if (el!.scrollWidth <= el!.clientWidth) return;
+      e.preventDefault();
+      el!.scrollLeft += e.deltaX;
+    }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -372,7 +395,10 @@ export default function CRMPage() {
         </div>
       )}
 
-      <div className={cn("min-w-0 overflow-x-auto pb-4", (showEmptyState || showNoSearchResults) && "hidden")}>
+      <div
+        ref={boardScrollRef}
+        className={cn("min-w-0 overflow-x-auto pb-4", (showEmptyState || showNoSearchResults) && "hidden")}
+      >
         <div className="flex w-max min-w-full gap-4">
           {loading
             ? [0, 1, 2, 3].map((i) => (

@@ -5,9 +5,12 @@ import type { RecipientSuggestion } from "@/components/RecipientField";
 /**
  * Recipient suggestions for the sequence enrolment box.
  *
- * Reuses the same sources the mail composer draws on — Google contacts and
- * addresses seen in past conversations — so enrolling someone you have already
- * emailed is a matter of typing their name.
+ * Reuses the same sources the mail composer draws on — Google contacts,
+ * addresses seen in past conversations, and legacy CRM recruiters — plus the
+ * Team Directory, the one shared, org-wide contact book every other feature
+ * (WhatsApp, SMS, the CRM board) is built on. Without it, enrolling someone
+ * your team added to the directory but who Google itself has never surfaced
+ * as a personal contact required pasting their address by hand.
  */
 
 let cached: RecipientSuggestion[] | null = null;
@@ -20,6 +23,10 @@ type GmailContactsResponse = {
 
 type RecruitersResponse = {
   recruiters?: { email: string; name?: string; companyName?: string }[];
+};
+
+type DirectoryContactsResponse = {
+  contacts?: { name: string; email: string | null }[];
 };
 
 function dedupe(lists: RecipientSuggestion[][]): RecipientSuggestion[] {
@@ -45,12 +52,15 @@ export function loadRecipientSuggestions(): Promise<RecipientSuggestion[]> {
   if (inFlight) return inFlight;
 
   inFlight = (async () => {
-    const [contacts, recruiters] = await Promise.all([
+    const [contacts, recruiters, directory] = await Promise.all([
       fetch("/api/gmail/contacts")
         .then((r) => (r.ok ? (r.json() as Promise<GmailContactsResponse>) : null))
         .catch(() => null),
       fetch("/api/recruiters")
         .then((r) => (r.ok ? (r.json() as Promise<RecruitersResponse>) : null))
+        .catch(() => null),
+      fetch("/api/directory-contacts")
+        .then((r) => (r.ok ? (r.json() as Promise<DirectoryContactsResponse>) : null))
         .catch(() => null),
     ]);
 
@@ -59,8 +69,13 @@ export function loadRecipientSuggestions(): Promise<RecipientSuggestion[]> {
       email: r.email,
       displayName: r.name || r.companyName,
     }));
+    // Only entries with a real email — the directory allows phone-only cards
+    // (WhatsApp/SMS contacts), which have nothing to enroll in an email sequence.
+    const fromDirectory = (directory?.contacts ?? [])
+      .filter((c): c is { name: string; email: string } => Boolean(c.email?.trim()))
+      .map((c) => ({ email: c.email, displayName: c.name }));
 
-    cached = dedupe([fromContacts, fromRecruiters]);
+    cached = dedupe([fromContacts, fromRecruiters, fromDirectory]);
     return cached;
   })().finally(() => {
     inFlight = null;

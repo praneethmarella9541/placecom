@@ -1,744 +1,541 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { UserPlus, ChevronRight, Users2, RefreshCw } from "lucide-react";
-import { IconPhone, IconMail, IconMenu, IconX, IconUser } from "@/components/Icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { CalendarDays, RefreshCw, Search, Settings2, Sparkles, UserPlus, Users2 } from "lucide-react";
 import { titleCase } from "@/lib/title-case";
+import { cn } from "@/lib/utils";
+import { CRM_MODELS, DEFAULT_CRM_SETTINGS, type CrmSettings } from "@/lib/crm-settings";
+import type { CrmStage } from "@/lib/crm-stages-types";
+import { CrmStageManager } from "@/components/CrmStageManager";
+import { CrmImportContactsModal } from "@/components/CrmImportContactsModal";
+import { CrmLeadModal, type CrmLead } from "@/components/CrmLeadModal";
+import { GmailDatePicker } from "@/components/GmailDatePicker";
 
-type LeadScore = "Hot" | "Warm" | "Cold";
-type LeadType = "New Lead" | "Regular Recruiter";
-type LeadStage = "Awareness" | "Engagement" | "Conversion" | "Retention" | "Relationship Mgt" | "JD Expected" | "JD Received" | "Drive Scheduled";
+type LeadRow = CrmLead;
 
-type LeadRow = {
-  id: string;
-  company_name: string;
-  contact_name: string | null;
-  email: string | null;
-  phone: string | null;
-  stage: LeadStage;
-  score: LeadScore;
-  staff_name: string;
-  lead_type: LeadType;
-  jd_count: number;
-  stage_updated_at: string;
-  last_interaction_at: string;
-  created_at: string;
+type RunSummary = {
+  classified: number;
+  parked: number;
+  costUsd: number;
+  model: string;
+  mailIncluded: boolean;
 };
 
-type InteractionRow = {
-  id: string;
-  interaction_type: "Call" | "Email" | "Meeting" | "Note";
-  notes: string | null;
-  created_at: string;
-};
-
-const NEW_LEAD_STAGES: LeadStage[] = ["Awareness", "Engagement", "Conversion", "Retention"];
-const REG_RECRUITER_STAGES: LeadStage[] = ["Relationship Mgt", "JD Expected", "JD Received", "Drive Scheduled"];
-
-function errMessage(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
-
-function stageColumnBorder(stage: LeadStage, funnel: LeadType): string {
-  if (funnel === "New Lead") {
-    if (stage === "Awareness") return "border-l-[var(--color-blue)]";
-    if (stage === "Engagement") return "border-l-[var(--color-gold)]";
-    if (stage === "Conversion") return "border-l-[var(--color-success)]";
-    if (stage === "Retention") return "border-l-[var(--color-primary)]";
-  }
-  const i = REG_RECRUITER_STAGES.indexOf(stage);
-  const c = [
-    "border-l-[var(--color-blue)]",
-    "border-l-[var(--color-gold)]",
-    "border-l-[var(--color-success)]",
-    "border-l-[var(--color-primary)]",
-  ];
-  return c[Math.max(0, i) % 4] ?? "border-l-[var(--color-border)]";
-}
-
-function daysInStage(lead: LeadRow): number {
-  return Math.max(
-    0,
-    Math.floor((Date.now() - new Date(lead.stage_updated_at).getTime()) / (1000 * 60 * 60 * 24)),
-  );
-}
-
+/**
+ * The board is built from stages the user defines (crm_stages), and leads only
+ * enter it by being added explicitly from the contact book. Classification
+ * runs on add and on the re-classify button — never on a timer — so OpenAI
+ * spend is bounded by deliberate actions and reported per run.
+ */
 export default function CRMPage() {
+  const [stages, setStages] = useState<CrmStage[]>([]);
   const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [settings, setSettings] = useState<CrmSettings>(DEFAULT_CRM_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [managerOpen, setManagerOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [classifying, setClassifying] = useState(false);
+  const [lastRun, setLastRun] = useState<RunSummary | null>(null);
+  const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
+  const [draggingLeadId, setDraggingLeadId] = useState<string | null>(null);
+  const [dragOverStageId, setDragOverStageId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
-  // Funnel
-  const [activeFunnel, setActiveFunnel] = useState<LeadType>("New Lead");
-  const CURRENT_STAGES = activeFunnel === "New Lead" ? NEW_LEAD_STAGES : REG_RECRUITER_STAGES;
-
-  // Filters
-  const [staffFilter, setStaffFilter] = useState<string>("All");
-  const [stalledOnly, setStalledOnly] = useState<boolean>(false);
-
-  // Modals
-  const [isAddLeadOpen, setIsAddLeadOpen] = useState(false);
-  const [activeLead, setActiveLead] = useState<LeadRow | null>(null);
-
-  // Add Lead Form
-  const [newCompany, setNewCompany] = useState("");
-  const [newContact, setNewContact] = useState("");
-  const [newEmail, setNewEmail] = useState("");
-  const [newPhone, setNewPhone] = useState("");
-  const [newStaff, setNewStaff] = useState("");
-  const [newScore, setNewScore] = useState<LeadScore>("Warm");
-  const [newLeadType, setNewLeadType] = useState<LeadType>("New Lead");
-
-  // Interaction Form
-  const [interactions, setInteractions] = useState<InteractionRow[]>([]);
-  const [loadingInteractions, setLoadingInteractions] = useState(false);
-  const [interactionType, setInteractionType] = useState<InteractionRow["interaction_type"]>("Note");
-  const [interactionNotes, setInteractionNotes] = useState("");
-
-  const loadLeads = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/crm/leads");
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error || "Failed to load leads");
-      }
-      const json = await res.json();
-      setLeads(json.leads || []);
-    } catch (e: unknown) {
-      setError(errMessage(e));
+      const [stagesRes, settingsRes, leadsRes] = await Promise.all([
+        fetch("/api/crm/stages"),
+        fetch("/api/crm/settings"),
+        fetch("/api/crm/leads"),
+      ]);
+
+      const stagesJson = await stagesRes.json().catch(() => ({}));
+      if (!stagesRes.ok) throw new Error(stagesJson.error || "Failed to load board");
+      setStages(stagesJson.stages ?? []);
+
+      const settingsJson = await settingsRes.json().catch(() => ({}));
+      if (settingsRes.ok) setSettings(settingsJson.settings ?? DEFAULT_CRM_SETTINGS);
+
+      const leadsJson = await leadsRes.json().catch(() => ({}));
+      if (leadsRes.ok) setLeads(leadsJson.leads ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load board");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void loadLeads();
-  }, [loadLeads]);
+    void load();
+  }, [load]);
 
-  // Close open modal / slide-over on Escape.
-  useEffect(() => {
-    if (!isAddLeadOpen && !activeLead) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setIsAddLeadOpen(false);
-        setActiveLead(null);
-      }
+  // Global, not per-column — searching "Acme" should surface that lead
+  // wherever it currently sits, without having to know which column to look
+  // in first. Board layout (which columns exist) is untouched by a search;
+  // only which cards render inside them changes.
+  const searchedLeads = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return leads;
+    return leads.filter((l) =>
+      [l.company_name, l.contact_name, l.email]
+        .filter((v): v is string => Boolean(v))
+        .some((v) => v.toLowerCase().includes(q))
+    );
+  }, [leads, search]);
+
+  const byStage = useMemo(() => {
+    const map = new Map<string, LeadRow[]>();
+    const unsortedId = stages.find((s) => s.is_unsorted)?.id ?? null;
+    for (const lead of searchedLeads) {
+      // A lead with no stage at all (imported before the board had columns)
+      // still has to be reachable — show it in the unsorted column.
+      const key = lead.stage_id ?? unsortedId;
+      if (!key) continue;
+      const list = map.get(key) ?? [];
+      list.push(lead);
+      map.set(key, list);
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [isAddLeadOpen, activeLead]);
+    return map;
+  }, [searchedLeads, stages]);
 
-  const allStaffNames = useMemo(() => {
-    const names = new Set(leads.map(l => l.staff_name));
-    return Array.from(names).sort();
-  }, [leads]);
+  // Board and empty state are mutually exclusive and together always cover the
+  // non-loading case — gating them on separate conditions once left a blank
+  // page when the columns themselves failed to load. Keyed off the
+  // unfiltered list: an empty *search result* gets its own message below,
+  // not this "add your first lead" state.
+  const showEmptyState = !loading && stages.length > 0 && leads.length === 0;
+  const showNoSearchResults = !loading && !showEmptyState && search.trim() !== "" && searchedLeads.length === 0;
 
-  const filteredLeads = useMemo(() => {
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-    return leads.filter(l => {
-      if (l.lead_type !== activeFunnel) return false;
-      if (staffFilter !== "All" && l.staff_name !== staffFilter) return false;
-      if (stalledOnly && new Date(l.last_interaction_at) > threeDaysAgo) return false;
-      return true;
-    });
-  }, [leads, staffFilter, stalledOnly, activeFunnel]);
+  // Resolved from the list rather than held as its own copy, so the open modal
+  // reflects a re-classify or a stage move without needing its own refetch.
+  const activeLead = useMemo(
+    () => leads.find((l) => l.id === activeLeadId) ?? null,
+    [leads, activeLeadId]
+  );
 
-  const leadVelocity = useMemo(() => {
-    const engagementLeads = filteredLeads.filter(l => l.stage === "Engagement" || l.stage === "JD Expected");
-    if (engagementLeads.length === 0) return 0;
-    const totalDays = engagementLeads.reduce((acc, l) => {
-      const daysInStage = (Date.now() - new Date(l.stage_updated_at).getTime()) / (1000 * 60 * 60 * 24);
-      return acc + daysInStage;
-    }, 0);
-    return Math.round((totalDays / engagementLeads.length) * 10) / 10;
-  }, [filteredLeads]);
+  // What the import picker must not offer again. Matched two ways: by the
+  // originating contact row, and by email for leads created before
+  // source_contact_id existed (or added by hand on the old board).
+  const existingContactIds = useMemo(
+    () =>
+      new Set(
+        leads.map((l) => l.source_contact_id).filter((id): id is string => Boolean(id))
+      ),
+    [leads]
+  );
+  const existingLeadEmails = useMemo(
+    () =>
+      new Set(
+        leads
+          .map((l) => l.email?.trim().toLowerCase())
+          .filter((e): e is string => Boolean(e))
+      ),
+    [leads]
+  );
 
-  async function handleAddLead(e: React.FormEvent) {
-    e.preventDefault();
+  async function patchSettings(patch: Partial<CrmSettings>) {
+    setError(null);
+    setSettings((prev) => ({ ...prev, ...patch }));
     try {
-      const res = await fetch("/api/crm/leads", {
+      const res = await fetch("/api/crm/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Failed to save");
+      setSettings(json.settings);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+      void load();
+    }
+  }
+
+  async function classify(leadIds?: string[], force = false) {
+    setClassifying(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/crm/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          company_name: newCompany,
-          contact_name: newContact,
-          email: newEmail,
-          phone: newPhone,
-          score: newScore,
-          staff_name: newStaff || "Unassigned",
-          lead_type: newLeadType,
-          stage: newLeadType === "Regular Recruiter" ? "Relationship Mgt" : "Awareness"
-        })
+        body: JSON.stringify({ leadIds, force }),
       });
-      if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error || "Failed to add lead");
-      }
-      setIsAddLeadOpen(false);
-      setNewCompany("");
-      setNewContact("");
-      setNewEmail("");
-      setNewPhone("");
-      setNewScore("Warm");
-      await loadLeads();
-    } catch (err: unknown) {
-      alert(errMessage(err));
-    }
-  }
-
-  async function handleUpdateLeadStage(leadId: string, newStage: LeadStage) {
-    try {
-      // Optimistic update
-      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, stage: newStage, stage_updated_at: new Date().toISOString() } : l));
-      const res = await fetch(`/api/crm/leads/${leadId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stage: newStage })
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Classification failed");
+      setLastRun({
+        classified: json.classified ?? 0,
+        parked: json.parked ?? 0,
+        costUsd: json.costUsd ?? 0,
+        model: json.model ?? settings.model,
+        mailIncluded: json.mailIncluded !== false,
       });
-      if (!res.ok) throw new Error("Failed to update stage");
-    } catch (err: unknown) {
-      alert(errMessage(err));
-      void loadLeads(); // Revert on failure
-    }
-  }
-
-  async function handleUpdateJDCount(leadId: string, newCount: number) {
-    if (newCount < 0) return;
-    try {
-      // Optimistic update
-      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, jd_count: newCount } : l));
-      const res = await fetch(`/api/crm/leads/${leadId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jd_count: newCount })
-      });
-      if (!res.ok) throw new Error("Failed to update JD count");
-    } catch (err: unknown) {
-      alert(errMessage(err));
-      void loadLeads();
-    }
-  }
-
-  async function loadInteractions(lead: LeadRow) {
-    setLoadingInteractions(true);
-    try {
-      // 1. Fetch Interactions
-      const res = await fetch(`/api/crm/interactions?leadId=${lead.id}`);
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        throw new Error(json.error || "Failed to load interactions");
-      }
-      const json = await res.json();
-      setInteractions(json.interactions || []);
-    } catch (err: unknown) {
-      alert(errMessage(err));
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Classification failed");
     } finally {
-      setLoadingInteractions(false);
+      setClassifying(false);
     }
   }
 
-  async function handleAddInteraction(e: React.FormEvent) {
-    e.preventDefault();
-    if (!activeLead) return;
+  async function moveLead(leadId: string, stageId: string) {
+    // Optimistic, and marked human so a later re-classify leaves it alone.
+    setLeads((prev) =>
+      prev.map((l) => (l.id === leadId ? { ...l, stage_id: stageId, stage_set_by: "human" } : l))
+    );
     try {
-      const res = await fetch("/api/crm/interactions", {
-        method: "POST",
+      const res = await fetch(`/api/crm/leads/${leadId}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          lead_id: activeLead.id,
-          interaction_type: interactionType,
-          notes: interactionNotes
-        })
+        body: JSON.stringify({ stage_id: stageId, stage_set_by: "human" }),
       });
-      if (!res.ok) throw new Error("Failed to add interaction");
-      setInteractionNotes("");
-      await loadInteractions(activeLead);
-      void loadLeads(); // Refresh last_interaction_at
-    } catch (err: unknown) {
-      alert(errMessage(err));
+      if (!res.ok) throw new Error("Failed to move lead");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to move lead");
+      void load();
     }
   }
 
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <div className="min-w-0">
           <h1 className="font-display text-[17px] font-bold text-[var(--color-text)]">
-            {titleCase("Marketing Funnel CRM")}
+            {titleCase("CRM")}
           </h1>
-          <div className="flex items-center gap-0.5 rounded-[var(--radius-md)] bg-[var(--color-surface-offset)] p-0.5">
-            <button
-              data-testid="crm-funnel-new-lead"
-              type="button"
-              onClick={() => setActiveFunnel("New Lead")}
-              className={`rounded-[var(--radius-md)] px-3 py-1.5 text-[13px] font-semibold transition-colors ${
-                activeFunnel === "New Lead"
-                  ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              {titleCase("New Leads Pipeline")}
-            </button>
-            <button
-              data-testid="crm-funnel-regular-recruiter"
-              type="button"
-              onClick={() => setActiveFunnel("Regular Recruiter")}
-              className={`rounded-[var(--radius-md)] px-3 py-1.5 text-[13px] font-semibold transition-colors ${
-                activeFunnel === "Regular Recruiter"
-                  ? "bg-[var(--color-primary-light)] font-semibold text-[var(--color-primary)]"
-                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-              }`}
-            >
-              {titleCase("Regular Recruiters")}
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            data-testid="crm-staff-filter"
-            className="input-field h-[34px] min-w-[160px] text-[13px]"
-            value={staffFilter}
-            onChange={(e) => setStaffFilter(e.target.value)}
-          >
-            <option value="All">{titleCase("All staff")}</option>
-            {allStaffNames.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
-          <button
-            data-testid="crm-stalled-toggle"
-            type="button"
-            role="switch"
-            aria-checked={stalledOnly}
-            onClick={() => setStalledOnly((v) => !v)}
-            className="flex items-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] px-2 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
-          >
-            <span
-              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors ${
-                stalledOnly ? "bg-[var(--color-primary)]" : "bg-[var(--color-surface-offset)]"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                  stalledOnly ? "left-4" : "left-0.5"
-                }`}
+          {/* Season and model are configuration, not daily actions — they read
+              as context under the title rather than competing with Import for
+              space in the action bar, where they used to push the primary
+              button around and wrap badly. */}
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-[var(--color-text-muted)]">
+            <span className="inline-flex items-center gap-1.5">
+              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-faint)]" />
+              {titleCase("Season from")}
+              <GmailDatePicker
+                value={settings.season_start_date ?? ""}
+                onChange={(v) => void patchSettings({ season_start_date: v || null })}
+                // Sized to the "YYYY/MM/DD" field itself — the dropdown
+                // calendar has its own fixed width now (GmailDatePicker.tsx),
+                // independent of this trigger, so this no longer has to be
+                // stretched wide just to give the calendar room.
+                className="w-[136px]"
+                placeholder={titleCase("Pick a date")}
               />
             </span>
-            {titleCase("Stalled leads")}
-          </button>
-          <button data-testid="crm-add-lead-btn" type="button" onClick={() => setIsAddLeadOpen(true)} className="btn-primary h-[34px] gap-2 px-3 text-[13px]">
-            <UserPlus className="h-4 w-4" strokeWidth={2} />
-            {titleCase("Add Lead")}
+            <span className="text-[var(--color-text-faint)]">·</span>
+            <label className="inline-flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-faint)]" />
+              <span className="sr-only">{titleCase("Classifier model")}</span>
+              <select
+                value={settings.model}
+                onChange={(e) => void patchSettings({ model: e.target.value })}
+                className="cursor-pointer rounded bg-transparent text-[12px] font-semibold text-[var(--color-text)] outline-none hover:underline"
+              >
+                {CRM_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={titleCase("Search leads…")}
+              aria-label={titleCase("Search leads")}
+              className="input-field h-9 w-[180px] pl-8 text-[12.5px]"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="btn-primary-copper h-9 gap-1.5 px-3 text-[12.5px]"
+          >
+            <UserPlus className="h-4 w-4" />
+            {titleCase("Import from contacts")}
           </button>
           <button
-            data-testid="crm-refresh-btn"
+            type="button"
+            disabled={classifying || leads.length === 0}
+            onClick={() => void classify(undefined, true)}
+            title={titleCase("Re-run the classifier over every lead, including ones you moved by hand")}
+            className="btn-secondary h-9 gap-1.5 px-3 text-[12.5px] disabled:opacity-50"
+          >
+            <Sparkles className={`h-4 w-4 ${classifying ? "animate-pulse" : ""}`} />
+            {classifying ? titleCase("Classifying…") : titleCase("Re-classify")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setManagerOpen(true)}
+            className="btn-ghost h-9 gap-1.5 px-3 text-[12.5px]"
+          >
+            <Settings2 className="h-4 w-4" />
+            {titleCase("Columns")}
+          </button>
+          <button
             type="button"
             disabled={loading}
-            onClick={() => void loadLeads()}
-            className="btn-ghost h-8 w-8 justify-center p-0 disabled:opacity-50"
+            onClick={() => void load()}
+            className="btn-ghost h-9 w-9 justify-center p-0 disabled:opacity-50"
             title={titleCase("Refresh")}
           >
-            <RefreshCw className="h-4 w-4" strokeWidth={2} />
+            <RefreshCw className="h-4 w-4" />
           </button>
         </div>
       </div>
 
-      {error ? (
-        <div className="rounded-[var(--radius-lg)] border border-[var(--color-danger)]/30 bg-[var(--color-danger-light)] px-4 py-3 text-sm text-[var(--color-danger)]" role="alert">
-          {error}
-        </div>
-      ) : null}
-
-      <div className="surface-card inline-flex flex-wrap items-center gap-4 rounded-[var(--radius-md)] px-4 py-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-muted)]">
-            {titleCase("Avg. Time in Engagement")}
-          </p>
-          <p className="font-display mt-1 text-lg font-bold text-[var(--color-primary)]">
-            {leadVelocity} {titleCase("Days")}
-          </p>
-        </div>
-        <p className="text-[11px] text-[var(--color-text-muted)]">
-          {loading ? titleCase("Loading leads…") : titleCase("Velocity across engagement-stage leads.")}
-        </p>
-      </div>
-
-      {/* Kanban Board */}
-      <div className="min-w-0 overflow-x-auto pb-4">
-        <div className="grid w-max min-w-full grid-cols-1 gap-4 pb-1 md:[grid-template-columns:repeat(2,minmax(260px,1fr))] xl:[grid-template-columns:repeat(4,minmax(260px,1fr))]">
-          {CURRENT_STAGES.map((stage) => {
-            const stageLeads = filteredLeads.filter((l) => l.stage === stage);
-            const borderAccent = stageColumnBorder(stage, activeFunnel);
-            return (
-              <div key={stage} data-testid={`crm-stage-column-${stage.toLowerCase().replace(/\s+/g, "-")}`} className="flex min-h-[400px] min-w-[260px] flex-1 flex-col">
-                <div
-                  className={`surface-card rounded-b-none border-b-0 px-4 py-3 ${borderAccent} border-l-4`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-[13px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
-                      {titleCase(stage)}
-                    </h3>
-                    <span className="rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[12px] font-semibold text-[var(--color-text)]">
-                      {stageLeads.length}
-                    </span>
-                  </div>
-                </div>
-                <div className="surface-card flex flex-col gap-2.5 rounded-t-none border-t-0 bg-[var(--color-surface-offset)] p-3 shadow-none">
-                  {stageLeads.map((lead) => {
-                    const idx = CURRENT_STAGES.indexOf(lead.stage);
-                    const canAdvance = idx >= 0 && idx < CURRENT_STAGES.length - 1;
-                    return (
-                      <div
-                        key={lead.id}
-                        data-testid={`crm-lead-card-${lead.id}`}
-                        role="button"
-                        tabIndex={0}
-                        className="surface-card cursor-pointer p-4 transition-all duration-150 hover:-translate-y-px hover:shadow-[var(--shadow-md)]"
-                        onClick={() => {
-                          setActiveLead(lead);
-                          void loadInteractions(lead);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            setActiveLead(lead);
-                            void loadInteractions(lead);
-                          }
-                        }}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h4 className="truncate text-[14px] font-bold text-[var(--color-text)]">{lead.company_name}</h4>
-                              {lead.score === "Hot" ? (
-                                <span className="shrink-0 rounded-full bg-[var(--color-warning-light)] px-2 py-0.5 text-[11px] font-bold uppercase text-[var(--color-warning)]">
-                                  HOT
-                                </span>
-                              ) : null}
-                            </div>
-                            {lead.contact_name ? (
-                              <p className="mt-1 truncate text-[13px] text-[var(--color-text-muted)]">{lead.contact_name}</p>
-                            ) : null}
-                          </div>
-                          {stalledOnly || new Date(lead.last_interaction_at) < new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) ? (
-                            <span title={titleCase("Stalled lead")} className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-red-500" />
-                          ) : null}
-                        </div>
-
-                        {lead.lead_type === "Regular Recruiter" && (
-                          <div
-                            className="mt-3 flex items-center justify-between rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-2"
-                            onClick={(e) => e.stopPropagation()}
-                            onKeyDown={(e) => e.stopPropagation()}
-                          >
-                            <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                              {titleCase("JDs rcvd:")}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <button
-                                data-testid={`crm-jd-decrement-${lead.id}`}
-                                type="button"
-                                onClick={() => handleUpdateJDCount(lead.id, lead.jd_count - 1)}
-                                className="flex h-6 w-6 items-center justify-center rounded border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)]"
-                              >
-                                −
-                              </button>
-                              <span data-testid={`crm-jd-count-${lead.id}`} className="w-4 text-center text-xs font-bold">{lead.jd_count}</span>
-                              <button
-                                data-testid={`crm-jd-increment-${lead.id}`}
-                                type="button"
-                                onClick={() => handleUpdateJDCount(lead.id, lead.jd_count + 1)}
-                                className="flex h-6 w-6 items-center justify-center rounded border border-[var(--color-primary-light)] bg-[var(--color-primary-light)] text-[var(--color-primary)]"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="mt-3 flex items-center justify-between border-t border-[var(--color-border)] pt-3">
-                          <div className="flex items-center gap-2">
-                            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-[var(--color-primary-light)] text-[10px] font-bold text-[var(--color-primary)]">
-                              {lead.staff_name.slice(0, 1).toUpperCase()}
-                            </span>
-                            <span className="text-[12px] text-[var(--color-text-faint)]">
-                              {daysInStage(lead)}d {titleCase("in stage")}
-                            </span>
-                          </div>
-                          {canAdvance ? (
-                            <button
-                              data-testid={`crm-advance-stage-${lead.id}`}
-                              type="button"
-                              className="btn-ghost h-8 w-8 shrink-0 justify-center p-0"
-                              title={titleCase("Advance stage")}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const next = CURRENT_STAGES[idx + 1];
-                                if (next) void handleUpdateLeadStage(lead.id, next);
-                              }}
-                            >
-                              <ChevronRight className="h-4 w-4" strokeWidth={2} />
-                            </button>
-                          ) : (
-                            <select
-                              className="max-w-[100px] cursor-pointer bg-transparent text-right text-[11px] text-[var(--color-text-muted)]"
-                              value={lead.stage}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={(e) => handleUpdateLeadStage(lead.id, e.target.value as LeadStage)}
-                            >
-                              {CURRENT_STAGES.map((s) => (
-                                <option key={s} value={s}>
-                                  {titleCase(s)}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {stageLeads.length === 0 && (
-                    <div className="flex flex-col items-center justify-center rounded-[var(--radius-md)] border-2 border-dashed border-[var(--color-border)] py-8 text-center">
-                      <Users2 className="mb-2 h-6 w-6 text-[var(--color-text-faint)]" strokeWidth={1.5} />
-                      <p className="text-[13px] text-[var(--color-text-faint)]">{titleCase("No leads")}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Add Lead Modal */}
-      {isAddLeadOpen && (
-        <div
-          className="animate-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-[var(--nucleus-deep)]/50 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="add-lead-title"
-          onClick={() => setIsAddLeadOpen(false)}
-        >
-          <div
-            data-testid="crm-add-lead-modal"
-            className="card animate-scale-in w-full max-w-lg bg-[var(--color-surface)] p-6 shadow-[var(--shadow-lg)]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 id="add-lead-title" className="font-display mb-4 text-lg font-bold text-[var(--color-text)]">
-              {titleCase("Add corporate lead")}
-            </h2>
-            <form data-testid="crm-add-lead-form" onSubmit={handleAddLead} className="space-y-4">
-              <div>
-                <label htmlFor="lead-company" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
-                  {titleCase("Company name *")}
-                </label>
-                <input
-                  id="lead-company"
-                  data-testid="crm-lead-company-input"
-                  required
-                  value={newCompany}
-                  onChange={(e) => setNewCompany(e.target.value)}
-                  className="input-field"
-                  placeholder={titleCase("e.g. Acme Corp")}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="lead-type" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
-                    {titleCase("Lead type")}
-                  </label>
-                  <select
-                    id="lead-type"
-                    data-testid="crm-lead-type-select"
-                    value={newLeadType}
-                    onChange={(e) => setNewLeadType(e.target.value as LeadType)}
-                    className="input-field"
-                  >
-                    <option value="New Lead">{titleCase("New lead (pipeline)")}</option>
-                    <option value="Regular Recruiter">{titleCase("Regular recruiter")}</option>
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="lead-staff" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
-                    {titleCase("Staff member")}
-                  </label>
-                  <input
-                    id="lead-staff"
-                    value={newStaff}
-                    onChange={(e) => setNewStaff(e.target.value)}
-                    className="input-field"
-                    placeholder={titleCase("e.g. John Smith")}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="lead-contact" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
-                    {titleCase("Contact person")}
-                  </label>
-                  <input
-                    id="lead-contact"
-                    value={newContact}
-                    onChange={(e) => setNewContact(e.target.value)}
-                    className="input-field"
-                    placeholder={titleCase("e.g. Jane Doe")}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="lead-email" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">{titleCase("Email")}</label>
-                  <input
-                    id="lead-email"
-                    type="email"
-                    value={newEmail}
-                    onChange={(e) => setNewEmail(e.target.value)}
-                    className="input-field"
-                    placeholder="jane@acme.com"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="lead-phone" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">{titleCase("Phone")}</label>
-                  <input
-                    id="lead-phone"
-                    type="tel"
-                    value={newPhone}
-                    onChange={(e) => setNewPhone(e.target.value)}
-                    className="input-field"
-                    placeholder="+1 234 567 8900"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="lead-score" className="mb-1 block text-xs font-semibold text-[var(--color-text-muted)]">
-                    {titleCase("Initial lead score")}
-                  </label>
-                  <select
-                    id="lead-score"
-                    data-testid="crm-lead-score-select"
-                    value={newScore}
-                    onChange={(e) => setNewScore(e.target.value as LeadScore)}
-                    className="input-field"
-                  >
-                    <option value="Hot">{titleCase("Hot (high intent)")}</option>
-                    <option value="Warm">{titleCase("Warm (interested)")}</option>
-                    <option value="Cold">{titleCase("Cold (outreach)")}</option>
-                  </select>
-                </div>
-              </div>
-              <div className="mt-6 flex justify-end gap-3 border-t border-[var(--color-border)] pt-4">
-                <button data-testid="crm-add-lead-cancel" type="button" onClick={() => setIsAddLeadOpen(false)} className="btn-ghost">
-                  {titleCase("Cancel")}
-                </button>
-                <button data-testid="crm-add-lead-submit" type="submit" className="btn-primary">
-                  {titleCase("Save lead")}
-                </button>
-              </div>
-            </form>
-          </div>
+      {!settings.season_start_date && !loading && (
+        <div className="rounded-xl border border-[var(--color-copper)]/30 bg-[var(--color-copper-tint)] px-4 py-3 text-[12.5px] text-[var(--color-text)]">
+          {titleCase(
+            "Set a season start date — the classifier only reads mail and WhatsApp from on or after it."
+          )}
         </div>
       )}
 
-      {/* Interactions Slide-over */}
-      {activeLead && (
-        <div
-          className="animate-backdrop-in fixed inset-0 z-50 flex justify-end bg-[var(--nucleus-deep)]/45 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="lead-panel-title"
-          onClick={() => setActiveLead(null)}
-        >
-          <div
-            className="flex h-full w-full max-w-md flex-col bg-[var(--color-surface)] shadow-[var(--shadow-lg)] animate-slide-in-right"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface-2)] p-5">
-              <div className="min-w-0">
-                <h2 id="lead-panel-title" className="font-display truncate text-lg font-bold text-[var(--color-text)]">{activeLead.company_name}</h2>
-                <p className="truncate text-sm text-[var(--color-text-muted)]">
-                  {activeLead.contact_name || titleCase("No contact person")}
-                </p>
-                {activeLead.email && <p className="mt-0.5 truncate text-xs font-medium text-[var(--color-primary)]">{activeLead.email}</p>}
-              </div>
-              <button data-testid="crm-lead-panel-close" onClick={() => setActiveLead(null)} aria-label={titleCase("Close")} className="btn-ghost shrink-0 rounded-full p-2"><IconX className="h-5 w-5" /></button>
-            </div>
-
-            <div className="flex-1 space-y-6 overflow-y-auto p-5">
-              {/* Interaction Form */}
-              <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
-                <h3 className="mb-3 text-sm font-semibold text-[var(--color-text)]">{titleCase("Log interaction")}</h3>
-                <form data-testid="crm-interaction-form" onSubmit={handleAddInteraction} className="space-y-3">
-                  <select
-                    data-testid="crm-interaction-type-select"
-                    aria-label={titleCase("Interaction type")}
-                    value={interactionType}
-                    onChange={(e) =>
-                      setInteractionType(e.target.value as InteractionRow["interaction_type"])
-                    }
-                    className="input-field py-1.5 text-sm"
-                  >
-                    <option value="Note">{titleCase("Note / update")}</option>
-                    <option value="Call">{titleCase("Phone call")}</option>
-                    <option value="Email">{titleCase("Email sent")}</option>
-                    <option value="Meeting">{titleCase("Meeting (e.g. Meet/Zoom)")}</option>
-                  </select>
-                  <textarea
-                    data-testid="crm-interaction-notes"
-                    required
-                    rows={3}
-                    value={interactionNotes}
-                    onChange={e => setInteractionNotes(e.target.value)}
-                    placeholder={titleCase("Enter details...")}
-                    className="input-field h-auto resize-none py-2 text-sm"
-                  ></textarea>
-                  <button data-testid="crm-interaction-submit" type="submit" className="btn-primary w-full justify-center py-2 text-sm">
-                    {titleCase("Log activity")}
-                  </button>
-                </form>
-              </div>
-
-              {/* History */}
-              <div>
-                <div className="relative mb-4 flex flex-wrap gap-x-1 border-b border-[var(--color-border)]">
-                  <span
-                    data-testid="crm-tab-history"
-                    className="relative z-[1] -mb-px border-b-2 border-[var(--color-primary)] px-3 pb-2 text-sm font-medium text-[var(--color-text)] sm:px-4"
-                  >
-                    {titleCase(`History (${interactions.length})`)}
-                  </span>
-                </div>
-
-                {loadingInteractions ? (
-                  <p className="text-sm text-[var(--color-text-muted)]">{titleCase("Loading...")}</p>
-                ) : interactions.length === 0 ? (
-                  <p className="text-sm italic text-[var(--color-text-muted)]">{titleCase("No interactions recorded.")}</p>
-                ) : (
-                  <div className="relative space-y-4 before:absolute before:inset-0 before:ml-5 before:h-full before:w-0.5 before:-translate-x-px before:bg-gradient-to-b before:from-transparent before:via-[var(--color-border-strong)] before:to-transparent md:before:mx-auto md:before:translate-x-0">
-                    {interactions.map((i) => (
-                      <div key={i.id} className="group is-active relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--color-surface)] bg-[var(--color-surface-offset)] text-[var(--color-text-muted)] shadow-[var(--shadow-sm)] md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2">
-                          {i.interaction_type === "Call" && <IconPhone className="h-4 w-4" />}
-                          {i.interaction_type === "Email" && <IconMail className="h-4 w-4" />}
-                          {i.interaction_type === "Meeting" && <IconUser className="h-4 w-4" />}
-                          {i.interaction_type === "Note" && <IconMenu className="h-4 w-4" />}
-                        </div>
-                        <div className="w-[calc(100%-4rem)] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-[var(--shadow-sm)] md:w-[calc(50%-2.5rem)]">
-                          <div className="mb-1 flex items-center justify-between">
-                            <span className="text-sm font-bold text-[var(--color-text)]">
-                              {titleCase(i.interaction_type)}
-                            </span>
-                            <time className="text-xs font-medium text-[var(--color-primary)]">{new Date(i.created_at).toLocaleDateString()}</time>
-                          </div>
-                          <div className="whitespace-pre-wrap text-xs text-[var(--color-text-muted)]">{i.notes}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+      {lastRun && (
+        <div className="surface-card flex flex-wrap items-center gap-x-4 gap-y-1 rounded-[var(--radius-md)] px-4 py-2.5 text-[12px] text-[var(--color-text-muted)]">
+          <span>
+            {titleCase("Last run")}:{" "}
+            <strong className="text-[var(--color-text)]">{lastRun.classified}</strong>{" "}
+            {titleCase("placed")}, <strong className="text-[var(--color-text)]">{lastRun.parked}</strong>{" "}
+            {titleCase("parked for review")}
+          </span>
+          <span>
+            {titleCase("Cost")}:{" "}
+            <strong className="text-[var(--color-text)]">${lastRun.costUsd.toFixed(4)}</strong> (
+            {lastRun.model})
+          </span>
+          {!lastRun.mailIncluded && (
+            <span className="text-[var(--color-warning)]">
+              {titleCase("Mail was unavailable — classified on WhatsApp and notes only.")}
+            </span>
+          )}
         </div>
+      )}
+
+      {error && (
+        <div
+          role="alert"
+          className="rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger-light)] px-4 py-3 text-[13px] text-[var(--color-danger)]"
+        >
+          {error}
+        </div>
+      )}
+
+      {/* One board-level empty state instead of a wall of identical "No leads"
+          boxes, one per column — on a fresh board that told the user nothing
+          about what to do next. */}
+      {showEmptyState && (
+        <div className="surface-card flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
+          <Users2 className="h-7 w-7 text-[var(--color-text-faint)]" strokeWidth={1.5} />
+          <p className="text-[14px] font-semibold text-[var(--color-text)]">
+            {titleCase("No leads on the board yet")}
+          </p>
+          <p className="max-w-sm text-[13px] leading-relaxed text-[var(--color-text-muted)]">
+            {titleCase(
+              "Pick people from your contact book — the classifier reads your mail and WhatsApp with them and files each one into a column."
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={() => setImportOpen(true)}
+            className="btn-primary-copper mt-1 h-9 gap-1.5 px-4 text-[12.5px]"
+          >
+            <UserPlus className="h-4 w-4" />
+            {titleCase("Import from contacts")}
+          </button>
+        </div>
+      )}
+
+      {showNoSearchResults && (
+        <div className="surface-card flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+          <Search className="h-6 w-6 text-[var(--color-text-faint)]" strokeWidth={1.5} />
+          <p className="text-[13px] text-[var(--color-text-muted)]">
+            {titleCase(`No leads match "${search.trim()}".`)}
+          </p>
+          <button
+            type="button"
+            onClick={() => setSearch("")}
+            className="text-[12.5px] font-semibold text-[var(--color-copper)] hover:underline"
+          >
+            {titleCase("Clear search")}
+          </button>
+        </div>
+      )}
+
+      <div className={cn("min-w-0 overflow-x-auto pb-4", (showEmptyState || showNoSearchResults) && "hidden")}>
+        <div className="flex w-max min-w-full gap-4">
+          {loading
+            ? [0, 1, 2, 3].map((i) => (
+                <div key={i} className="w-[260px] shrink-0">
+                  <div className="skeleton-shimmer h-[46px] rounded-t-[var(--radius-lg)]" />
+                  <div className="skeleton-shimmer mt-1 h-[300px] rounded-b-[var(--radius-lg)]" />
+                </div>
+              ))
+            : stages.map((stage) => {
+                const stageLeads = byStage.get(stage.id) ?? [];
+                const isDropTarget = dragOverStageId === stage.id;
+                return (
+                  <div
+                    key={stage.id}
+                    data-testid={`crm-stage-column-${stage.id}`}
+                    className="flex w-[280px] shrink-0 flex-col"
+                    onDragOver={(e) => {
+                      if (!draggingLeadId) return;
+                      e.preventDefault(); // required for onDrop to fire
+                      setDragOverStageId(stage.id);
+                    }}
+                    onDragLeave={(e) => {
+                      // Ignore bubbling from children, or the highlight flickers
+                      // as the pointer crosses each card inside the column.
+                      if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                      setDragOverStageId((cur) => (cur === stage.id ? null : cur));
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const leadId = e.dataTransfer.getData("text/plain") || draggingLeadId;
+                      setDragOverStageId(null);
+                      setDraggingLeadId(null);
+                      if (leadId) void moveLead(leadId, stage.id);
+                    }}
+                  >
+                    <div
+                      className={cn(
+                        "surface-card rounded-b-none border-b-0 border-l-4 px-4 py-3 transition-colors",
+                        isDropTarget && "bg-[var(--color-copper-tint)]"
+                      )}
+                      style={{ borderLeftColor: stage.color ?? "var(--color-border)" }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="truncate text-[13px] font-bold uppercase tracking-widest text-[var(--color-text-muted)]">
+                          {stage.name}
+                        </h3>
+                        <span className="rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[12px] font-semibold text-[var(--color-text)]">
+                          {stageLeads.length}
+                        </span>
+                      </div>
+                      {stage.description && (
+                        <p className="mt-1 line-clamp-2 text-[11.5px] leading-snug text-[var(--color-text-faint)]">
+                          {stage.description}
+                        </p>
+                      )}
+                    </div>
+                    {/* Each column scrolls on its own: one oversized column
+                        (Unsorted, typically) used to stretch the whole page and
+                        push every other column's contents out of view. */}
+                    <div
+                      className={cn(
+                        // Explicit min-height (not the flex default `auto`) is
+                        // what actually stops this from growing past max-height —
+                        // a flex item's automatic minimum is content-sized unless
+                        // overridden, which is what let one full column stretch
+                        // the whole row. overscroll-contain keeps scrolling past
+                        // the end of a column's list from also scrolling the page.
+                        "surface-card flex max-h-[640px] min-h-[300px] flex-1 flex-col gap-2.5 overflow-y-auto overscroll-contain rounded-t-none border-t-0 bg-[var(--color-surface-offset)] p-3 shadow-none transition-colors",
+                        isDropTarget && "bg-[var(--color-copper-tint)] ring-1 ring-inset ring-[var(--color-copper)]/40"
+                      )}
+                    >
+                      {stageLeads.map((lead) => (
+                        <div
+                          key={lead.id}
+                          data-testid={`crm-lead-card-${lead.id}`}
+                          role="button"
+                          tabIndex={0}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("text/plain", lead.id);
+                            e.dataTransfer.effectAllowed = "move";
+                            setDraggingLeadId(lead.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggingLeadId(null);
+                            setDragOverStageId(null);
+                          }}
+                          onClick={() => setActiveLeadId(lead.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setActiveLeadId(lead.id);
+                            }
+                          }}
+                          className={cn(
+                            "surface-card cursor-grab p-3 transition-all duration-150 hover:-translate-y-px hover:shadow-[var(--shadow-md)] active:cursor-grabbing",
+                            draggingLeadId === lead.id && "opacity-40"
+                          )}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-[var(--color-text)]">
+                              {lead.company_name}
+                            </h4>
+                            {lead.stage_set_by === "ai" && lead.ai_confidence !== null && (
+                              <span className="shrink-0 rounded-full bg-[var(--color-copper-tint)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--color-copper)]">
+                                AI {Math.round(lead.ai_confidence * 100)}%
+                              </span>
+                            )}
+                          </div>
+                          {lead.contact_name && (
+                            <p className="mt-0.5 truncate text-[12px] text-[var(--color-text-muted)]">
+                              {lead.contact_name}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                      {stageLeads.length === 0 && (
+                        <div className="flex flex-1 flex-col items-center justify-center rounded-[var(--radius-md)] border-2 border-dashed border-[var(--color-border)] py-8 text-center">
+                          <p className="px-3 text-[12px] text-[var(--color-text-faint)]">
+                            {titleCase(draggingLeadId ? "Drop here" : "Nothing here")}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+        </div>
+      </div>
+
+      {managerOpen && (
+        <CrmStageManager
+          stages={stages}
+          onClose={() => setManagerOpen(false)}
+          onChanged={setStages}
+        />
+      )}
+
+      {activeLead && (
+        <CrmLeadModal
+          lead={activeLead}
+          stages={stages}
+          onClose={() => setActiveLeadId(null)}
+          onReclassify={(leadId) => {
+            setActiveLeadId(null);
+            void classify([leadId], true);
+          }}
+          onMove={(leadId, stageId) => void moveLead(leadId, stageId)}
+        />
+      )}
+
+      {importOpen && (
+        <CrmImportContactsModal
+          existingContactIds={existingContactIds}
+          existingEmails={existingLeadEmails}
+          onClose={() => setImportOpen(false)}
+          onImported={(leadIds) => {
+            void load();
+            // Classify exactly what was just added — the whole point of the
+            // import returning ids rather than re-running the whole board.
+            if (leadIds.length > 0) void classify(leadIds);
+          }}
+        />
       )}
     </div>
   );

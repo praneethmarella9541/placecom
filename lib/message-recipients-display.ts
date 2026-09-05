@@ -29,31 +29,41 @@ export function formatFromHeader(from: string): string {
   return email || from.trim();
 }
 
-/** To line: local part only (text before @). */
-function formatToAddressEntry(trimmed: string): string {
+/** Local part only (text before @) — the compact label shown inline. */
+function shortLabel(trimmed: string): string {
   const email = emailFromEntry(trimmed);
   if (email.includes("@")) return email.split("@")[0] ?? email;
   return trimmed.replace(/^"|"$/g, "").trim();
 }
 
-function formatCcBccAddressEntry(trimmed: string): string {
+/** Full address for the hover tooltip — local-part-only gave no way to see who it actually was. */
+function fullAddress(trimmed: string): string {
   const email = emailFromEntry(trimmed);
-  if (email.includes("@")) return email.split("@")[0] ?? email;
-  return trimmed.replace(/^"|"$/g, "").trim();
+  return email || trimmed.replace(/^"|"$/g, "").trim();
 }
 
-/** One compact line for message headers: "to alice · cc bob" */
+/**
+ * One compact line for message headers: "to alice · cc bob" — each name is
+ * local-part-only so the line stays short, but that means the real address
+ * was nowhere in the UI. `title` carries the full comma-joined addresses so
+ * hovering (same pattern as Gmail's own to/cc line) reveals who it actually
+ * went to, without lengthening the line by default.
+ */
 export function formatMessageRecipientsLine(msg: {
   to?: string;
   cc?: string;
   bcc?: string;
-}): { label: string; value: string }[] {
-  const parts: { label: string; value: string }[] = [];
-  const to = splitAddressEntries(msg.to ?? "").map(formatToAddressEntry);
-  const cc = splitAddressEntries(msg.cc ?? "").map(formatCcBccAddressEntry);
-  const bcc = splitAddressEntries(msg.bcc ?? "").map(formatCcBccAddressEntry);
-  if (to.length) parts.push({ label: "to", value: to.join(", ") });
-  if (cc.length) parts.push({ label: "cc", value: cc.join(", ") });
-  if (bcc.length) parts.push({ label: "bcc", value: bcc.join(", ") });
+}): { label: string; value: string; title: string }[] {
+  const parts: { label: string; value: string; title: string }[] = [];
+  const build = (raw: string | undefined) => {
+    const entries = splitAddressEntries(raw ?? "");
+    return { value: entries.map(shortLabel).join(", "), title: entries.map(fullAddress).join(", ") };
+  };
+  const to = build(msg.to);
+  const cc = build(msg.cc);
+  const bcc = build(msg.bcc);
+  if (to.value) parts.push({ label: "to", ...to });
+  if (cc.value) parts.push({ label: "cc", ...cc });
+  if (bcc.value) parts.push({ label: "bcc", ...bcc });
   return parts;
 }

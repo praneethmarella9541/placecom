@@ -13,6 +13,7 @@ import {
   FileText,
   Folder,
   Frame,
+  KanbanSquare,
   LogOut,
   Mail,
   MessageCircle,
@@ -43,7 +44,9 @@ const commsNav = [
   { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;
 
-const pipelineNav: readonly { href: string; label: string; Icon: React.ElementType }[] = [];
+const pipelineNav: readonly { href: string; label: string; Icon: React.ElementType }[] = [
+  { href: "/crm", label: "CRM", Icon: KanbanSquare },
+];
 
 const opsNav = [
   { href: "/drive", label: "Drive", Icon: Folder },

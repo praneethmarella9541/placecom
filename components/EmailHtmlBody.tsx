@@ -7,6 +7,7 @@ import {
   type InlineImageAttachment,
 } from "@/lib/email-html-inline-images";
 import { linkifyBareUrlsInHtml, linkifyPlainTextToHtml } from "@/lib/linkify-plain-text";
+import { collapseQuotedHtml, splitPlainTextQuote } from "@/lib/email-quote-collapse";
 
 function sanitizeEmailHtml(html: string): string {
   return html
@@ -130,13 +131,26 @@ export function EmailHtmlBody({
     const prepared = prepareEmailFragment(fragment);
     return {
       styles: prepared.styles,
-      body: linkifyBareUrlsInHtml(prepared.body),
+      // Collapsed behind a "···" toggle after linkifying, not before — the
+      // linkifier only rewrites bare URL text nodes, so running it first vs.
+      // after the split makes no difference to matching, and doing it once
+      // over the whole fragment is simpler than tracking two pieces through it.
+      body: collapseQuotedHtml(linkifyBareUrlsInHtml(prepared.body)),
     };
   }, [html, messageId, attachments]);
 
+  // Plain-text bodies don't go through the HTML quote-marker path above (no
+  // gmail_quote div to find) — quoted history there is just lines starting
+  // with ">" or an "On … wrote:" attribution. Split first, then linkify each
+  // half, so the toggle wraps real HTML rather than a raw-text seam.
+  const plainSplit = useMemo(() => splitPlainTextQuote(plain ?? ""), [plain]);
   const linkifiedPlain = useMemo(
-    () => (plain ? linkifyPlainTextToHtml(plain) : ""),
-    [plain]
+    () => (plainSplit.main ? linkifyPlainTextToHtml(plainSplit.main) : ""),
+    [plainSplit.main]
+  );
+  const linkifiedPlainQuoted = useMemo(
+    () => (plainSplit.quoted ? linkifyPlainTextToHtml(plainSplit.quoted) : ""),
+    [plainSplit.quoted]
   );
 
   useEffect(() => {
@@ -157,6 +171,25 @@ export function EmailHtmlBody({
     html, body { margin: 0; padding: 0; }
     body { overflow-wrap: break-word; word-wrap: break-word; }
     img { max-width: 100%; height: auto; }
+    /* Gmail-style "···" quoted-history toggle — see lib/email-quote-collapse.ts. */
+    details.__quote-toggle { margin: 4px 0; }
+    details.__quote-toggle > summary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 26px;
+      height: 18px;
+      border-radius: 3px;
+      background: #f1f3f4;
+      color: #444;
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      list-style: none;
+    }
+    details.__quote-toggle > summary::-webkit-details-marker { display: none; }
+    details.__quote-toggle > summary:hover { background: #e8eaed; }
+    details.__quote-toggle[open] > summary { margin-bottom: 6px; }
     ${prepared.styles}
   </style>
   <style>
@@ -191,14 +224,22 @@ export function EmailHtmlBody({
     let rafId = 0;
     let cancelled = false;
 
-    const applyHeight = () => {
+    const applyHeight = (opts?: { force?: boolean }) => {
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        if (cancelled || updatePasses >= MAX_UPDATES) return;
+        // The pass cap exists to stop a runaway reflow loop during initial
+        // async settling (images, webfonts) — not to gatekeep a discrete user
+        // click. A quote toggle opening after that budget is already spent
+        // (a long thread with several images loading) must still resize.
+        if (cancelled || (updatePasses >= MAX_UPDATES && !opts?.force)) return;
         updatePasses += 1;
 
         const h = measureVisibleEmailHeight(doc);
-        if (Math.abs(h - lastMeasured) <= 2) {
+        if (Math.abs(h - lastMeasured) <= 2 && !opts?.force) {
+          // Same-height re-measures are skipped to avoid a pointless
+          // re-render — but a forced (toggle-triggered) call always commits:
+          // a click must never silently no-op just because this heuristic
+          // guessed the delta was negligible.
           stablePasses += 1;
           if (stablePasses >= 2) return;
         } else {
@@ -211,19 +252,31 @@ export function EmailHtmlBody({
 
     applyHeight();
 
+    // Opening/closing a collapsed quote block (see lib/email-quote-collapse.ts)
+    // changes the document's content height well after the initial measuring
+    // passes above have settled — without this, the fixed-height,
+    // scrolling="no" iframe would clip the newly revealed content.
+    const onToggle = () => applyHeight({ force: true });
+    doc.addEventListener("toggle", onToggle, true);
+
+    // Explicit no-arg wrapper: addEventListener/setTimeout call their handler
+    // with an Event or nothing, and TS (rightly) won't let that flow into
+    // applyHeight's `{ force?: boolean }` parameter.
+    const remeasure = () => applyHeight();
+
     const imgs = Array.from(doc.querySelectorAll<HTMLImageElement>("img"));
     for (const img of imgs) {
       if (!img.complete) {
-        img.addEventListener("load", applyHeight, { once: true });
-        img.addEventListener("error", applyHeight, { once: true });
+        img.addEventListener("load", remeasure, { once: true });
+        img.addEventListener("error", remeasure, { once: true });
       }
     }
 
-    void hydrateAttachmentImages(doc, applyHeight);
+    void hydrateAttachmentImages(doc, remeasure);
 
-    const t1 = window.setTimeout(applyHeight, 150);
-    const t2 = window.setTimeout(applyHeight, 600);
-    const t3 = window.setTimeout(applyHeight, 1500);
+    const t1 = window.setTimeout(remeasure, 150);
+    const t2 = window.setTimeout(remeasure, 600);
+    const t3 = window.setTimeout(remeasure, 1500);
 
     return () => {
       cancelled = true;
@@ -232,17 +285,32 @@ export function EmailHtmlBody({
       clearTimeout(t3);
       cancelAnimationFrame(rafId);
       doc.removeEventListener("click", onLinkClick, true);
+      doc.removeEventListener("toggle", onToggle, true);
     };
   }, [prepared]);
 
   if (!html || !prepared) {
     return (
-      <div
-        className="mt-3 max-w-[680px] whitespace-pre-wrap break-words text-[14px] leading-relaxed text-[#202124] [&_a]:text-[#1a73e8] [&_a]:underline"
-        dangerouslySetInnerHTML={{
-          __html: linkifiedPlain || "(empty body)",
-        }}
-      />
+      <div className="mt-3 max-w-[680px] text-[14px] leading-relaxed text-[#202124]">
+        <div
+          className="whitespace-pre-wrap break-words [&_a]:text-[#1a73e8] [&_a]:underline"
+          dangerouslySetInnerHTML={{ __html: linkifiedPlain || "(empty body)" }}
+        />
+        {linkifiedPlainQuoted && (
+          <details className="mt-1 [&_summary]:list-none [&_summary::-webkit-details-marker]:hidden">
+            <summary
+              aria-label={titleCase("Show quoted text")}
+              className="inline-flex h-[18px] w-[26px] cursor-pointer items-center justify-center rounded text-[13px] text-[#444] hover:bg-[#e8eaed] [background:#f1f3f4]"
+            >
+              ⋯
+            </summary>
+            <div
+              className="mt-2 whitespace-pre-wrap break-words [&_a]:text-[#1a73e8] [&_a]:underline"
+              dangerouslySetInnerHTML={{ __html: linkifiedPlainQuoted }}
+            />
+          </details>
+        )}
+      </div>
     );
   }
 

@@ -410,6 +410,31 @@ export async function listThreadsPage(
     })
   );
 
+  // Gmail's own order (from data.threads above) ranks a thread by when it last
+  // touched the requested label — for the Inbox tab, that's "last INBOX
+  // arrival". The date shown on each row, though, is the last message in the
+  // *whole* thread regardless of label (fetched above, unfiltered) — so a
+  // thread you replied to (landing in Sent, not Inbox) can display a newer
+  // date than a thread ranked above it, and the list visibly isn't sorted by
+  // what it shows. Re-sorting by that same displayed date makes the list
+  // internally consistent; it can't fix Gmail's own ranking upstream (real
+  // Gmail has the identical quirk), only stop this view from contradicting
+  // itself. Threads whose date lookup failed (empty string) sort last rather
+  // than to the top, which an empty-string compare would otherwise do.
+  const dateMs = (d: string) => {
+    // Usually ISO (internalDate was present, above) but falls back to the raw
+    // RFC 2822 `Date` header when it wasn't — Date.parse handles both, a plain
+    // string compare wouldn't for the latter.
+    const ms = Date.parse(d);
+    return Number.isNaN(ms) ? 0 : ms;
+  };
+  threads.sort((a, b) => {
+    if (!a.date && !b.date) return 0;
+    if (!a.date) return 1;
+    if (!b.date) return -1;
+    return dateMs(b.date) - dateMs(a.date);
+  });
+
   return { threads, nextPageToken: nextPageTokenFromApi };
 }
 
@@ -507,7 +532,25 @@ export type ThreadMessageView = {
   bodyHtml: string;
   messageIdHeader?: string;
   attachments: AttachmentInfo[];
+  /** Only present when it differs from From — Gmail's own "Show details" omits a redundant reply-to too. */
+  replyTo?: string;
+  /** Return-Path domain — Gmail's "mailed-by" (e.g. a relay like amazonses.com sending on the real sender's behalf). */
+  mailedBy?: string;
+  /** DKIM-Signature `d=` domain — Gmail's "signed-by". */
+  signedBy?: string;
 };
+
+/** Return-Path is `<bounce+xyz@domain.com>` — Gmail's "mailed-by" is just the domain. */
+function domainFromReturnPath(value: string): string | undefined {
+  const m = value.match(/@([^>\s]+)>?\s*$/);
+  return m?.[1]?.toLowerCase();
+}
+
+/** DKIM-Signature is `v=1; a=rsa-sha256; ...; d=domain.com; s=selector; ...` — Gmail's "signed-by" is the `d=` domain. */
+function domainFromDkimSignature(value: string): string | undefined {
+  const m = value.match(/(?:^|;)\s*d=([^;\s]+)/i);
+  return m?.[1]?.toLowerCase();
+}
 
 function collectAttachments(payload: Record<string, unknown>, messageId: string): AttachmentInfo[] {
   const attachments: AttachmentInfo[] = [];
@@ -635,6 +678,19 @@ export async function getThreadMessages(
     const body = collectParts(payload, "text/plain").join("\n\n").trim();
     const bodyHtml = collectParts(payload, "text/html").join("").trim();
     const attachments = collectAttachments(payload, m.id);
+
+    // "Show details" fields — format=full (already fetched above) returns every
+    // header, these three just weren't extracted before.
+    const replyToHeader = getHeader(headers, "Reply-To");
+    const returnPath = getHeader(headers, "Return-Path");
+    const dkimSignature = getHeader(headers, "DKIM-Signature");
+    const replyTo =
+      replyToHeader && replyToHeader.trim().toLowerCase() !== from.trim().toLowerCase()
+        ? replyToHeader
+        : undefined;
+    const mailedBy = returnPath ? domainFromReturnPath(returnPath) : undefined;
+    const signedBy = dkimSignature ? domainFromDkimSignature(dkimSignature) : undefined;
+
     messages.push({
       id: m.id,
       threadId: m.threadId || data.id,
@@ -648,6 +704,9 @@ export async function getThreadMessages(
       bodyHtml,
       messageIdHeader: messageIdHeader || undefined,
       attachments,
+      replyTo,
+      mailedBy,
+      signedBy,
     });
   }
 

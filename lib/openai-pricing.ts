@@ -12,7 +12,10 @@ export function openaiCostUsd(
   let inPerM = 2.5;
   let outPerM = 10.0;
 
-  if (m.includes("gpt-5-mini")) {
+  if (m.includes("gpt-5-nano")) {
+    inPerM = parseFloat(process.env.OPENAI_GPT5_NANO_INPUT_USD_PER_MTOK || "0.05");
+    outPerM = parseFloat(process.env.OPENAI_GPT5_NANO_OUTPUT_USD_PER_MTOK || "0.4");
+  } else if (m.includes("gpt-5-mini")) {
     inPerM = parseFloat(process.env.OPENAI_GPT5_MINI_INPUT_USD_PER_MTOK || "0.25");
     outPerM = parseFloat(process.env.OPENAI_GPT5_MINI_OUTPUT_USD_PER_MTOK || "2");
   } else if (m.includes("gpt-4o") && !m.includes("mini")) {

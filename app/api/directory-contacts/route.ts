@@ -25,6 +25,13 @@ type ValidationResult =
   | { ok: false; error: string }
   | { ok: true; clean: Partial<DirectoryContact> };
 
+/** What synced_contacts knows about an email, keyed lowercase — see loadSyncedByEmail. */
+type SyncedFacts = {
+  lastInteractionAt: string | null;
+  displayName: string | null;
+  companyName: string | null;
+};
+
 /** Shared fields validation, used by both create and update. */
 function validateFields(body: ContactInput): ValidationResult {
   const clean: Partial<DirectoryContact> = {};
@@ -97,28 +104,70 @@ export async function GET(request: Request) {
 
   const contacts = data;
 
-  // "Last Contacted" = the more recent of the mailbox-sync's last real interaction
-  // (matched by email) or when this card was last edited — a lightweight stand-in,
-  // not a stored column, so it stays correct as synced_contacts keeps updating.
-  const emails = contacts.map((c) => c.email).filter((e): e is string => !!e);
-  const lastInteractionByEmail = new Map<string, string>();
-  if (emails.length > 0) {
-    const { data: synced } = await supabase
-      .from("synced_contacts")
-      .select("email, last_interaction_at")
-      .in("email", emails);
-    for (const row of synced ?? []) {
-      if (row.last_interaction_at) lastInteractionByEmail.set(row.email, row.last_interaction_at);
+  /**
+   * "Last Contacted" = the more recent of the mailbox-sync's last real
+   * interaction (matched by email) or when this card was last edited — a
+   * lightweight stand-in, not a stored column, so it stays correct as
+   * synced_contacts keeps updating.
+   *
+   * Targeted lookup keyed to *this directory's* emails, chunked rather than
+   * one `.in("email", everyEmail)` — email is unique per mailbox_owner_id
+   * (0047), so a chunk of N emails returns at most N rows regardless of table
+   * size, which keeps every request well under PostgREST's 1000-row default
+   * without the URL blowing up either. Chunks run in parallel.
+   *
+   * This replaced a full unfiltered scan of the whole synced_contacts table
+   * (fetchAllRows, no filter) — correct, but it downloaded and paged through
+   * every auto-synced contact (thousands, growing without bound) on every
+   * single directory load to enrich what's typically a much smaller curated
+   * list. That was the dominant cost of this endpoint.
+   */
+  async function loadSyncedByEmail(emails: string[]): Promise<Map<string, SyncedFacts>> {
+    const map = new Map<string, SyncedFacts>();
+    const uniqueEmails = Array.from(new Set(emails.map((e) => e.trim()).filter(Boolean)));
+    if (uniqueEmails.length === 0) return map;
+
+    const CHUNK_SIZE = 200;
+    const chunks: string[][] = [];
+    for (let i = 0; i < uniqueEmails.length; i += CHUNK_SIZE) {
+      chunks.push(uniqueEmails.slice(i, i + CHUNK_SIZE));
     }
+
+    const results = await Promise.all(
+      chunks.map((chunk) =>
+        supabase
+          .from("synced_contacts")
+          .select("email, last_interaction_at, display_name, company_name")
+          .in("email", chunk)
+      )
+    );
+
+    for (const { data: synced } of results) {
+      for (const row of synced ?? []) {
+        map.set(row.email.trim().toLowerCase(), {
+          lastInteractionAt: row.last_interaction_at,
+          displayName: row.display_name,
+          companyName: row.company_name,
+        });
+      }
+    }
+    return map;
   }
 
   // Status column = derived from a matching CRM lead (by email, then phone) — one
   // batched query instead of a per-row lookup. See lib/lead-contact-match.ts.
-  const { byEmail, byPhone } = await buildLeadMatchMaps(supabase);
+  // Both enrichments are independent of each other, so they overlap rather
+  // than adding their latencies together.
+  const [syncedByEmail, { byEmail, byPhone }] = await Promise.all([
+    loadSyncedByEmail(contacts.map((c) => c.email).filter((e): e is string => Boolean(e))),
+    buildLeadMatchMaps(supabase),
+  ]);
 
   const enriched = contacts.map((c) => {
-    const synced = c.email ? lastInteractionByEmail.get(c.email) : undefined;
-    const last_contacted_at = synced && synced > c.updated_at ? synced : c.updated_at;
+    const synced = c.email ? syncedByEmail.get(c.email.trim().toLowerCase()) : undefined;
+    const lastInteraction = synced?.lastInteractionAt;
+    const last_contacted_at =
+      lastInteraction && lastInteraction > c.updated_at ? lastInteraction : c.updated_at;
 
     let lead = c.email ? byEmail.get(c.email.trim().toLowerCase()) : undefined;
     if (!lead && c.phone) {
@@ -128,7 +177,15 @@ export async function GET(request: Request) {
       }
     }
 
-    return { ...c, last_contacted_at, lead_stage: lead?.stage ?? null, lead_score: lead?.score ?? null };
+    return {
+      ...c,
+      last_contacted_at,
+      lead_stage: lead?.stage ?? null,
+      lead_score: lead?.score ?? null,
+      lead_stage_color: lead?.stageColor ?? null,
+      source_name: synced?.displayName ?? null,
+      source_company: synced?.companyName ?? null,
+    };
   });
 
   return NextResponse.json({ contacts: enriched });

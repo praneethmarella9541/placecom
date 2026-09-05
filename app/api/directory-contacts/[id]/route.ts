@@ -32,7 +32,23 @@ export async function GET(request: Request, { params }: { params: { id: string }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
-  return NextResponse.json({ contact: data as DirectoryContact });
+
+  // Same source_name/source_company enrichment the list route does, so the
+  // detail page's LinkedIn link searches Gmail's name rather than whatever the
+  // card was renamed to. One row by email here, not the whole table.
+  const contact = data as DirectoryContact;
+  if (contact.email) {
+    const { data: synced } = await supabase
+      .from("synced_contacts")
+      .select("display_name, company_name")
+      .ilike("email", contact.email.trim())
+      .limit(1)
+      .maybeSingle();
+    contact.source_name = (synced?.display_name as string | null) ?? null;
+    contact.source_company = (synced?.company_name as string | null) ?? null;
+  }
+
+  return NextResponse.json({ contact });
 }
 
 /** PATCH /api/directory-contacts/[id] — edit a shared contact card (any signed-in user) */

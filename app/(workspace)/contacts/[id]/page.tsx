@@ -10,7 +10,7 @@ import { ContactFormModal, contactToFormInput } from "@/components/ContactFormMo
 import { ContactDetailQuickLogger } from "@/components/ContactDetailQuickLogger";
 import { ContactActivityTimeline } from "@/components/ContactActivityTimeline";
 import { useDirectoryContact } from "@/hooks/useDirectoryContacts";
-import { linkedInSearchUrl } from "@/lib/contact-directory";
+import { contactLinkedInSearchUrl } from "@/lib/contact-directory";
 import { formatPhone } from "@/lib/wa-contacts-display";
 import { titleCase } from "@/lib/title-case";
 
@@ -34,6 +34,7 @@ export default function ContactDetailPage() {
   const [lead, setLead] = useState<MatchedLead | null>(null);
   const [leadLoading, setLeadLoading] = useState(true);
   const [timelineKey, setTimelineKey] = useState(0);
+  const [addingToCrm, setAddingToCrm] = useState(false);
 
   useEffect(() => {
     if (!contact) return;
@@ -47,6 +48,40 @@ export default function ContactDetailPage() {
       .catch(() => setLead(null))
       .finally(() => setLeadLoading(false));
   }, [contact?.email, contact?.phone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * One of the two ways a lead enters the CRM (the other being the board's
+   * bulk import). Classification is kicked off for just this lead and
+   * deliberately not awaited — the card is on the board either way, and the
+   * user shouldn't sit through an OpenAI round-trip to see it appear.
+   */
+  async function handleAddToCrm() {
+    if (!contact) return;
+    setAddingToCrm(true);
+    try {
+      const res = await fetch("/api/crm/leads/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactIds: [contact.id] }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || "Failed to add to CRM");
+
+      const leadIds: string[] = json.leadIds ?? [];
+      if (leadIds.length > 0) {
+        void fetch("/api/crm/classify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ leadIds }),
+        });
+      }
+      router.push("/crm");
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to add to CRM");
+    } finally {
+      setAddingToCrm(false);
+    }
+  }
 
   async function handleDelete() {
     if (!contact) return;
@@ -161,7 +196,7 @@ export default function ContactDetailPage() {
                 </p>
               )}
               <a
-                href={contact.linkedin_url || linkedInSearchUrl(contact.name, contact.company)}
+                href={contact.linkedin_url || contactLinkedInSearchUrl(contact)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline"
@@ -184,6 +219,25 @@ export default function ContactDetailPage() {
               </div>
             )}
           </div>
+
+          {!lead && !leadLoading && (
+            <div className="surface-card space-y-2 p-5">
+              <h3 className="text-[13px] font-bold text-[var(--color-text)]">{titleCase("CRM")}</h3>
+              <p className="text-[12px] leading-relaxed text-[var(--color-text-muted)]">
+                {titleCase(
+                  "Not on the board yet. Adding them runs the classifier over your mail and WhatsApp with them."
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => void handleAddToCrm()}
+                disabled={addingToCrm}
+                className="btn-secondary h-8 w-full justify-center px-3 text-[12.5px]"
+              >
+                {addingToCrm ? titleCase("Adding…") : titleCase("Add to CRM")}
+              </button>
+            </div>
+          )}
 
           {lead && (
             <div className="surface-card space-y-2 p-5">

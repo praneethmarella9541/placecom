@@ -24,6 +24,53 @@ export type SyncedContactRow = {
 };
 
 /**
+ * Only what the client renders. `select("*")` used to be handed straight back,
+ * which shipped recent_message_dates — up to 300 epoch-ms integers per row
+ * (migration 0053) — to a browser that never reads it. At the row counts this
+ * table reaches (2,484 when fetchAllRows was added) that is several MB of JSON
+ * per request, and it dominated the Contacts page's load time.
+ *
+ * The three excluded columns are inputs to bucketEmailConnection, not output:
+ * they're still selected below and still drive connection_strength, they just
+ * stop at the server.
+ */
+const CLIENT_COLUMNS = [
+  "id",
+  "email",
+  "display_name",
+  "domain",
+  "company_name",
+  "last_interaction_at",
+  "connection_strength",
+  "message_count_90d",
+  "message_count_total",
+  "synced_at",
+] as const;
+
+/**
+ * Columns fetched from Postgres — the client set plus the bucketing inputs.
+ * Spelled out as a literal rather than built from CLIENT_COLUMNS: supabase-js
+ * infers the row type from the select string, and a computed one degrades the
+ * result to an untyped error shape.
+ */
+const SELECT_COLUMNS =
+  "id, email, display_name, domain, company_name, last_interaction_at, connection_strength, message_count_90d, message_count_total, synced_at, has_outbound_contact, has_direct_contact, recent_message_dates";
+
+/** Same, minus has_outbound_contact — for pre-0042 tables (see the retry below). */
+const SELECT_COLUMNS_LEGACY =
+  "id, email, display_name, domain, company_name, last_interaction_at, connection_strength, message_count_90d, message_count_total, synced_at, recent_message_dates";
+
+type ClientContact = Pick<SyncedContactRow, (typeof CLIENT_COLUMNS)[number]>;
+
+function toClientRows(rows: SyncedContactRow[]): ClientContact[] {
+  return rows.map((row) => {
+    const out = {} as Record<string, unknown>;
+    for (const key of CLIENT_COLUMNS) out[key] = row[key];
+    return out as ClientContact;
+  });
+}
+
+/**
  * Recomputes connection_strength per row against the caller's own thresholds
  * instead of trusting the stored column, which lib/people-mailbox-sync.ts
  * only (re)writes using the default thresholds when a sync happens to touch
@@ -59,7 +106,7 @@ export async function GET(request: Request) {
   const { data, error } = await fetchAllRows<SyncedContactRow>((from, to) =>
     supabase
       .from("synced_contacts")
-      .select("*")
+      .select(SELECT_COLUMNS)
       // Real (two-way) contacts first, then most recently active — pushes
       // inbound-only automated senders that slipped past the noise filter
       // below (e.g. a platform minting a unique address per notification)
@@ -82,18 +129,18 @@ export async function GET(request: Request) {
       const fallback = await fetchAllRows<SyncedContactRow>((from, to) =>
         supabase
           .from("synced_contacts")
-          .select("*")
+          .select(SELECT_COLUMNS_LEGACY)
           .order("last_interaction_at", { ascending: false, nullsFirst: false })
           .order("id", { ascending: true })
           .range(from, to)
       );
       if (fallback.error) return NextResponse.json({ error: fallback.error }, { status: 500 });
       const contacts = withLiveStrength(fallback.data.filter((c) => !isLikelyAutomatedAddress(c.email)), settings);
-      return NextResponse.json({ contacts });
+      return NextResponse.json({ contacts: toClientRows(contacts) });
     }
     return NextResponse.json({ error }, { status: 500 });
   }
 
   const contacts = withLiveStrength(data.filter((c) => !isLikelyAutomatedAddress(c.email)), settings);
-  return NextResponse.json({ contacts });
+  return NextResponse.json({ contacts: toClientRows(contacts) });
 }

@@ -19,9 +19,23 @@ export type DirectoryContact = {
   updated_at: string;
   /** Computed by the list API: latest of matching synced_contacts.last_interaction_at or updated_at. */
   last_contacted_at?: string;
-  /** Computed by the list API: matching CRM lead's stage/score (by email/phone), or null if none. */
+  /**
+   * Computed by the list API: the matching CRM lead's board column (by
+   * email/phone), or null if that contact isn't on the board. `lead_stage` is
+   * the crm_stages name — the same classification the kanban shows — falling
+   * back to the legacy `leads.stage` enum for leads that predate the board.
+   */
   lead_stage?: string | null;
   lead_score?: string | null;
+  /** The board column's colour, so this chip matches its kanban card. */
+  lead_stage_color?: string | null;
+  /**
+   * Computed by the API: the name/company Gmail itself has for this email
+   * (synced_contacts), independent of whatever `name`/`company` were edited to
+   * when the card was saved. Null for a contact with no synced row.
+   */
+  source_name?: string | null;
+  source_company?: string | null;
 };
 
 /** Any http(s) URL is accepted, but we nudge users toward an actual LinkedIn link. */
@@ -92,4 +106,33 @@ export function personNameForSearch(displayName: string | null | undefined, emai
 export function linkedInSearchUrl(name: string, company?: string | null): string {
   const keywords = [name, company].filter(Boolean).join(" ").trim();
   return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(keywords)}`;
+}
+
+/**
+ * LinkedIn search for a saved directory card, preferring what Gmail knows over
+ * what the card was edited to.
+ *
+ * Saving a contact from the synced list prefills the form, and people routinely
+ * shorten or annotate the name for their own list ("Ravi — SASTRA", "HR"). That
+ * edited label is the right thing to *show*, but searching LinkedIn for it
+ * returns nothing; the Gmail display name is the one that matches a real
+ * profile. So the search uses source_name/source_company where they exist and
+ * falls back to the card's own fields otherwise — which is all a manually
+ * created contact ever has.
+ *
+ * A saved linkedin_url always wins over any of this; callers check that first.
+ */
+export function contactLinkedInSearchUrl(contact: {
+  name: string;
+  company: string | null;
+  email: string | null;
+  source_name?: string | null;
+  source_company?: string | null;
+}): string {
+  const source = contact.source_name?.trim();
+  const name =
+    source && !EMAIL_LIKE_RE.test(source)
+      ? source
+      : personNameForSearch(contact.name, contact.email ?? "");
+  return linkedInSearchUrl(name, contact.source_company?.trim() || contact.company);
 }

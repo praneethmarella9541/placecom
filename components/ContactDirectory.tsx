@@ -1,15 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Trash2, UserRound } from "lucide-react";
+import { ChevronDown, Plus, Search, Trash2, UserRound } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconLinkedin, IconWhatsAppLogo } from "@/components/Icons";
 import { SyncedContactsSection } from "@/components/SyncedContactsSection";
 import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
-import { linkedInSearchUrl, type DirectoryContact } from "@/lib/contact-directory";
+import { armSyncedContactsInvalidation, warmSyncedContacts } from "@/lib/synced-contacts-prefetch";
+import { contactLinkedInSearchUrl, type DirectoryContact } from "@/lib/contact-directory";
 import { formatPhone } from "@/lib/wa-contacts-display";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,12 @@ import { cn } from "@/lib/utils";
 type SortKey = "last_contacted" | "name" | "company";
 type Toast = { kind: "success" | "error"; text: string };
 const ALL = "All";
+
+/** Rows rendered per "load more" step — see the `visible` memo. */
+const PAGE_SIZE = 100;
+
+/** Remembers whether the auto-synced section was left open, per browser. */
+const SYNCED_OPEN_KEY = "contacts:synced-open";
 
 function statusLabel(c: DirectoryContact): string {
   return c.lead_stage ? titleCase(c.lead_stage) : titleCase("Not in pipeline");
@@ -27,6 +34,16 @@ function statusClasses(c: DirectoryContact): string {
   if (c.lead_score === "Hot") return "bg-[var(--color-danger)]/10 text-[var(--color-danger)]";
   if (c.lead_score === "Cold") return "bg-[var(--color-text-faint)]/15 text-[var(--color-text-muted)]";
   return "bg-[var(--color-warning-light)] text-[var(--color-warning)]";
+}
+
+/**
+ * The board column defines its own colour, so tint the chip with it — the same
+ * classification should look the same in both places. Falls back to the
+ * score-based palette for leads with no board column (pre-0054 rows).
+ */
+function statusStyle(c: DirectoryContact): React.CSSProperties | undefined {
+  if (!c.lead_stage || !c.lead_stage_color) return undefined;
+  return { backgroundColor: `${c.lead_stage_color}1A`, color: c.lead_stage_color };
 }
 
 /** Org-wide contact directory — filterable/sortable table, shared across every signed-in user/admin. */
@@ -43,6 +60,43 @@ export function ContactDirectory() {
   const [formPrefill, setFormPrefill] = useState<DirectoryContactInput>(emptyContactForm);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  // Starts closed so opening Contacts doesn't pay for the synced list's own
+  // fetches and rows. Read from storage in an effect, not a useState
+  // initializer, so the server and first client render agree.
+  const [syncedOpen, setSyncedOpen] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(SYNCED_OPEN_KEY) === "1") setSyncedOpen(true);
+    } catch {
+      // Private mode / blocked storage — defaults to closed, which is fine.
+    }
+  }, []);
+
+  // Starts the auto-synced-from-mail fetch in the background as soon as the
+  // Contacts page mounts, whether or not that section is expanded — so
+  // opening it usually finds the data already there instead of showing its
+  // own "Loading…". This doesn't block anything on this page: the directory
+  // table above renders from its own (already-warmed) cache regardless.
+  // armSyncedContactsInvalidation is separate and keeps that cache fresh
+  // after a mailbox sync finishes even while the section stays collapsed.
+  useEffect(() => {
+    warmSyncedContacts();
+    armSyncedContactsInvalidation();
+  }, []);
+
+  function toggleSynced() {
+    setSyncedOpen((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SYNCED_OPEN_KEY, next ? "1" : "0");
+      } catch {
+        // Preference just won't persist; the toggle still works this session.
+      }
+      return next;
+    });
+  }
 
   function showToast(t: Toast) {
     setToast(t);
@@ -98,6 +152,21 @@ export function ContactDirectory() {
     }
     return rows;
   }, [filtered, sortKey]);
+
+  /**
+   * The table used to render every row. A directory in the thousands meant
+   * thousands of <tr>s — each with an avatar component and its own effect —
+   * built on first paint before anything was interactive. Render a page at a
+   * time instead; filtering and sorting still run over the whole set, so
+   * search results aren't limited to what happens to be on screen.
+   */
+  const visible = useMemo(() => sorted.slice(0, visibleCount), [sorted, visibleCount]);
+
+  // Narrowing the result set should show the top of it, not wherever "load
+  // more" had been clicked to for the previous query.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [search, companyFilter, designationFilter, tagFilter, sortKey]);
 
   function openAdd() {
     setEditingContact(null);
@@ -250,7 +319,7 @@ export function ContactDirectory() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((c) => (
+                {visible.map((c) => (
                   <tr
                     key={c.id}
                     data-testid={`directory-row-${c.id}`}
@@ -276,8 +345,18 @@ export function ContactDirectory() {
                     <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.company || "—"}</td>
                     <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.title || "—"}</td>
                     <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.email || "—"}</td>
-                    <td className="px-4 py-3">
-                      <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", statusClasses(c))}>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      {/* inline-block + nowrap: as an inline element the chip
+                          wrapped across two lines in a narrow column, which
+                          fragments the rounded background into two offset
+                          boxes and overlaps the neighbouring row. */}
+                      <span
+                        className={cn(
+                          "inline-block whitespace-nowrap rounded-full px-2.5 py-1 text-[11px] font-semibold",
+                          !statusStyle(c) && statusClasses(c)
+                        )}
+                        style={statusStyle(c)}
+                      >
                         {statusLabel(c)}
                       </span>
                     </td>
@@ -287,7 +366,7 @@ export function ContactDirectory() {
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <a
-                          href={c.linkedin_url || linkedInSearchUrl(c.name, c.company)}
+                          href={c.linkedin_url || contactLinkedInSearchUrl(c)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--color-text-faint)] transition-colors hover:bg-[#0A66C2]/10 hover:text-[var(--color-text)]"
@@ -322,11 +401,57 @@ export function ContactDirectory() {
                 ))}
               </tbody>
             </table>
+
+            {visible.length < sorted.length && (
+              <div className="flex items-center justify-center gap-3 border-t border-[var(--color-border)] px-4 py-3">
+                <span className="text-[12px] text-[var(--color-text-muted)]">
+                  {titleCase(`Showing ${visible.length} of ${sorted.length}`)}
+                </span>
+                <button
+                  type="button"
+                  data-testid="directory-load-more"
+                  onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                  className="btn-secondary h-8 px-3 text-[12.5px]"
+                >
+                  {titleCase("Load more")}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      <SyncedContactsSection onAddToDirectory={openAddFrom} />
+      <div className="surface-card overflow-hidden">
+        <button
+          type="button"
+          data-testid="directory-synced-toggle"
+          onClick={toggleSynced}
+          aria-expanded={syncedOpen}
+          className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left transition-colors hover:bg-[var(--color-surface-offset)]/50"
+        >
+          <div className="min-w-0">
+            <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">
+              {titleCase("Auto-synced from mail")}
+            </h2>
+            <p className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">
+              {titleCase("People and companies derived from your mailbox.")}
+            </p>
+          </div>
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 shrink-0 text-[var(--color-text-muted)] transition-transform",
+              syncedOpen && "rotate-180"
+            )}
+          />
+        </button>
+        {/* Mounted only when open — this is what keeps its two API calls and
+            its own several-thousand-row list off the Contacts page load. */}
+        {syncedOpen && (
+          <div className="border-t border-[var(--color-border)] px-5 pb-5">
+            <SyncedContactsSection onAddToDirectory={openAddFrom} />
+          </div>
+        )}
+      </div>
 
       {formOpen && (
         <ContactFormModal

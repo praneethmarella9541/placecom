@@ -41,6 +41,7 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "calendar",
   "whatsapp",
   "calls",
+  "crm",
 ];
 
 const SET = new Set<string>(FEATURE_KEYS);

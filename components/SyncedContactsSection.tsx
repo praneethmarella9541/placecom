@@ -6,7 +6,7 @@ import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconBuilding, IconLinkedin } from "@/components/Icons";
 import { CompanyLogo } from "@/components/CompanyLogo";
 import { CONNECTION_STRENGTH_DOT } from "@/lib/connection-strength-ui";
-import type { ConnectionStrengthSettings, EmailConnectionStrength } from "@/lib/email-connection-strength";
+import type { EmailConnectionStrength } from "@/lib/email-connection-strength";
 import type { DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { requestContactSyncRun, requestContactSyncStop, useContactSyncSnapshot } from "@/lib/contact-sync-store";
 import { linkedInSearchUrl, personNameForSearch } from "@/lib/contact-directory";
@@ -17,21 +17,22 @@ import { SyncedPersonModal } from "@/components/SyncedPersonModal";
 import { SyncedCompanyModal } from "@/components/SyncedCompanyModal";
 import { ConnectionStrengthSettingsModal } from "@/components/ConnectionStrengthSettingsModal";
 import { SimpleDropdown, type DropdownOption } from "@/components/SimpleDropdown";
-
-type SyncedContactRow = {
-  id: string;
-  email: string;
-  display_name: string | null;
-  domain: string | null;
-  company_name: string | null;
-  last_interaction_at: string | null;
-  connection_strength: EmailConnectionStrength | null;
-  message_count_90d: number;
-  message_count_total: number;
-  synced_at: string | null;
-};
+import { ShowMoreRow, useBucketLimit } from "@/components/BucketRowLimit";
+import {
+  getSyncedContactsCache,
+  setStrengthSettingsCache,
+  setSyncedContactsCache,
+  useSyncedContactsCache,
+  useStrengthSettingsCache,
+  warmSyncedContacts,
+  type SyncedContactRow,
+} from "@/lib/synced-contacts-prefetch";
 
 const BUCKET_ORDER: EmailConnectionStrength[] = ["Good", "Weak", "Very weak", "No communication"];
+
+/** Stable reference for the pre-warm state — `cachedContacts ?? []` inline would
+ *  allocate a new array every render and defeat the useMemo below it depends on. */
+const EMPTY_CONTACTS: SyncedContactRow[] = [];
 
 type StrengthFilter = "all" | EmailConnectionStrength;
 
@@ -47,21 +48,17 @@ function errMessage(e: unknown): string {
 }
 
 /**
- * Both lists here are deliberately *not* part of the eager login-time prefetch
- * chain (unlike Team Directory) — this data only needs to be fresh right after
- * an explicit "Sync from Mailbox" run, so a simple fetch-once-then-cache
- * (invalidated by the sync-finished effect below) is enough; no benefit to
- * always-revalidating on every mount.
+ * The People list + its connection-strength settings live in
+ * lib/synced-contacts-prefetch.ts, not as module state here — ContactDirectory
+ * calls warmSyncedContacts() as soon as the Contacts page mounts (regardless
+ * of whether this section is expanded), so the fetch is usually already done
+ * by the time this component exists at all. This file just reads/writes that
+ * shared cache.
+ *
+ * Companies stays local: it's a secondary view *within* this already-secondary
+ * section, fetched lazily on first switch — no benefit to warming it early.
  */
-let contactsCache: SyncedContactRow[] | null = null;
 let companiesCache: SyncedCompanyRow[] | null = null;
-
-/**
- * Prefetched alongside the contacts list (not on-demand when the settings
- * modal opens) so opening it is instant instead of showing its own "Loading…"
- * every time — the previous version fetched fresh on every open.
- */
-export let strengthSettingsCache: { settings: ConnectionStrengthSettings; isDefault: boolean } | null = null;
 
 /**
  * People + Companies auto-derived from the shared mailbox, read-only, re-syncable.
@@ -77,9 +74,16 @@ export function SyncedContactsSection({
   onAddToDirectory: (input: DirectoryContactInput) => void;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("people");
-  const [contacts, setContacts] = useState<SyncedContactRow[]>(contactsCache ?? []);
-  const [loading, setLoading] = useState(contactsCache === null);
+  // Reactive read of the shared cache (lib/synced-contacts-prefetch.ts) —
+  // warmed by ContactDirectory on mount, so this is usually already populated
+  // by the time a user opens this section; re-renders automatically if a
+  // warm/reload lands after mount.
+  const cachedContacts = useSyncedContactsCache();
+  const contacts = cachedContacts ?? EMPTY_CONTACTS;
+  const [refreshing, setRefreshing] = useState(false);
+  const loading = cachedContacts === null || refreshing;
   const [error, setError] = useState<string | null>(null);
+  const strengthSettings = useStrengthSettingsCache();
   const [companies, setCompanies] = useState<SyncedCompanyRow[]>(companiesCache ?? []);
   const [companiesLoaded, setCompaniesLoaded] = useState(companiesCache !== null);
   const [companiesLoading, setCompaniesLoading] = useState(false);
@@ -89,29 +93,43 @@ export function SyncedContactsSection({
   const [strengthSettingsOpen, setStrengthSettingsOpen] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState<SyncedContactRow | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<SyncedCompanyRow | null>(null);
+  const { limitFor, showMore } = useBucketLimit();
   const sync = useContactSyncSnapshot();
   const wasRunningRef = useRef(false);
 
   const loadContacts = useCallback(async () => {
-    setLoading(true);
+    setRefreshing(true);
     setError(null);
     try {
       const res = await fetch("/api/synced-contacts");
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Failed to load synced contacts");
-      const rows = json.contacts || [];
-      contactsCache = rows;
-      setContacts(rows);
+      // Writes to the shared cache; useSyncedContactsCache() picks it up via
+      // the module's pub-sub, so `contacts` above updates without local state.
+      setSyncedContactsCache(json.contacts || []);
     } catch (e) {
       setError(errMessage(e));
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
-  const loadCompanies = useCallback(async () => {
-    setCompaniesLoading(true);
-    setCompaniesError(null);
+  /**
+   * `silent` skips the loading/error state entirely — for the automatic
+   * refresh after a mailbox sync finishes (below), which must not blank an
+   * already-rendered grid back to a skeleton just because a background
+   * refetch started. Same fix as the People list's move to
+   * fetchSyncedContacts in lib/synced-contacts-prefetch.ts; kept local here
+   * since Companies is a lazy, section-local view rather than a warmed cache.
+   * A manual "Retry" click or the first switch to this tab still wants the
+   * ordinary loading/error UI, so those keep calling this without the flag.
+   */
+  const loadCompanies = useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent ?? false;
+    if (!silent) {
+      setCompaniesLoading(true);
+      setCompaniesError(null);
+    }
     try {
       const res = await fetch("/api/synced-contacts/companies");
       const json = await res.json().catch(() => ({}));
@@ -121,30 +139,28 @@ export function SyncedContactsSection({
       setCompanies(rows);
       setCompaniesLoaded(true);
     } catch (e) {
-      setCompaniesError(errMessage(e));
+      if (!silent) setCompaniesError(errMessage(e));
     } finally {
-      setCompaniesLoading(false);
+      if (!silent) setCompaniesLoading(false);
     }
   }, []);
 
+  // warmSyncedContacts() is idempotent — a no-op if ContactDirectory's
+  // mount-time call already warmed or is warming the cache, and it fails
+  // silently by design (best-effort background prefetch). If it's still
+  // empty a few seconds after this section actually became visible, fall
+  // back to this component's own request so a failed/slow warm shows a real
+  // error instead of an indefinite skeleton.
   useEffect(() => {
-    if (contactsCache !== null) return;
-    void loadContacts();
-  }, [loadContacts]);
-
-  // Prefetched once so opening the settings modal is instant rather than
-  // showing its own "Loading…" every time.
-  useEffect(() => {
-    if (strengthSettingsCache !== null) return;
-    (async () => {
-      try {
-        const res = await fetch("/api/user-settings/connection-strength");
-        const json = await res.json().catch(() => ({}));
-        if (res.ok) strengthSettingsCache = { settings: json.settings, isDefault: json.isDefault };
-      } catch {
-        /* the modal falls back to fetching on open if this didn't land */
-      }
-    })();
+    warmSyncedContacts();
+    const timeout = window.setTimeout(() => {
+      // Imperative getter, not the reactive `cachedContacts` above — this
+      // runs once, 5s after mount, and must see the *current* cache rather
+      // than whatever was captured in this effect's closure at mount time.
+      if (getSyncedContactsCache() === null) void loadContacts();
+    }, 5000);
+    return () => window.clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Companies is a secondary view — fetch lazily on first switch rather than always.
@@ -154,16 +170,21 @@ export function SyncedContactsSection({
     }
   }, [viewMode, companiesLoaded, companiesLoading, loadCompanies]);
 
-  // Reload both lists whenever a sync run — started here or from another tab — just finished.
+  // Companies-only: the People list's own invalidation-on-sync-finish is now
+  // armed globally (armSyncedContactsInvalidation, called from
+  // ContactDirectory) so it keeps working while this section is collapsed —
+  // doing it here too would double-fetch People every time a sync finishes
+  // while this section happens to be open. Companies has no such global
+  // watcher (it's lazy-loaded and only relevant while this view is showing),
+  // so it still reloads itself here.
   useEffect(() => {
     if (sync.status === "running") {
       wasRunningRef.current = true;
     } else if (wasRunningRef.current && sync.status !== "loading") {
       wasRunningRef.current = false;
-      void loadContacts();
-      if (companiesLoaded) void loadCompanies();
+      if (companiesLoaded) void loadCompanies({ silent: true });
     }
-  }, [sync.status, loadContacts, loadCompanies, companiesLoaded]);
+  }, [sync.status, loadCompanies, companiesLoaded]);
 
   const filteredContacts = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -197,11 +218,27 @@ export function SyncedContactsSection({
 
   const filteredCompanies = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return companies;
-    return companies.filter(
+    let rows = companies;
+    if (strengthFilter !== "all") {
+      rows = rows.filter((c) => c.bestConnectionStrength === strengthFilter);
+    }
+    if (!q) return rows;
+    return rows.filter(
       (c) => c.companyName.toLowerCase().includes(q) || c.domain.toLowerCase().includes(q)
     );
-  }, [companies, search]);
+  }, [companies, search, strengthFilter]);
+
+  const companyBuckets = useMemo(() => {
+    const groups = new Map<EmailConnectionStrength, SyncedCompanyRow[]>();
+    for (const c of filteredCompanies) {
+      const list = groups.get(c.bestConnectionStrength) ?? [];
+      list.push(c);
+      groups.set(c.bestConnectionStrength, list);
+    }
+    return BUCKET_ORDER.map((tier) => ({ tier, rows: groups.get(tier) ?? [] })).filter(
+      (b) => b.rows.length > 0
+    );
+  }, [filteredCompanies]);
 
   const syncing = sync.status === "running";
   // A paused sync keeps its cursor server-side and stays paused until this
@@ -234,18 +271,17 @@ export function SyncedContactsSection({
         titleCase(
           viewMode === "people"
             ? "Bucketed by how recently and often you've emailed each person."
-            : "Grouped by email domain — no separate enrichment step."
+            : "Grouped by email domain, bucketed by your strongest contact there."
         );
 
   return (
-    <div className="space-y-4 border-t border-[var(--color-border)] pt-6">
+    // No heading or top border of its own: the caller (ContactDirectory) now
+    // renders this inside a collapsible card that supplies both.
+    <div className="space-y-4 pt-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">
-            {titleCase("Auto-synced from mail")}
-          </h2>
           <p
-            className={`mt-0.5 text-[12px] ${
+            className={`text-[12px] ${
               !syncing && sync.error ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"
             }`}
           >
@@ -330,34 +366,31 @@ export function SyncedContactsSection({
               className="input-field w-full pl-9 text-[13px]"
             />
           </div>
-          {viewMode === "people" && (
-            <>
-              <SimpleDropdown
-                label="Strength"
-                value={strengthFilter}
-                options={STRENGTH_OPTIONS}
-                onChange={setStrengthFilter}
-              />
-              <button
-                type="button"
-                title={titleCase("Connection strength settings")}
-                onClick={() => setStrengthSettingsOpen(true)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-copper)] hover:text-[var(--color-copper)]"
-              >
-                <Settings className="h-4 w-4" />
-              </button>
-            </>
-          )}
+          <SimpleDropdown
+            label="Strength"
+            value={strengthFilter}
+            options={STRENGTH_OPTIONS}
+            onChange={setStrengthFilter}
+          />
+          <button
+            type="button"
+            title={titleCase("Connection strength settings")}
+            onClick={() => setStrengthSettingsOpen(true)}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-copper)] hover:text-[var(--color-copper)]"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
         </div>
       )}
 
       {strengthSettingsOpen && (
         <ConnectionStrengthSettingsModal
-          initial={strengthSettingsCache}
+          initial={strengthSettings}
           onClose={() => setStrengthSettingsOpen(false)}
           onSaved={(next) => {
-            strengthSettingsCache = next;
+            setStrengthSettingsCache(next);
             void loadContacts();
+            if (companiesLoaded) void loadCompanies();
           }}
         />
       )}
@@ -387,40 +420,51 @@ export function SyncedContactsSection({
             <p className="text-[13px] text-[var(--color-text-muted)]">{titleCase("No matches.")}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {filteredCompanies.map((c) => (
-              <div
-                key={c.domain}
-                data-testid={`synced-company-${c.domain}`}
-                role="button"
-                tabIndex={0}
-                onClick={() => setSelectedCompany(c)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setSelectedCompany(c);
-                  }
-                }}
-                className="surface-card flex cursor-pointer items-start gap-3 p-3.5"
-              >
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-offset)]">
-                  <CompanyLogo logoUrl={c.logoUrl} size={20} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[13px] font-semibold text-[var(--color-text)]">
-                    {truncateChars(c.companyName, 24)}
-                  </p>
-                  <p className="truncate text-[12px] text-[var(--color-text-muted)]">
-                    {c.contactCount} {titleCase(c.contactCount === 1 ? "contact" : "contacts")}
-                  </p>
-                  <p className="mt-0.5 flex items-center gap-1.5 text-[12px] text-[var(--color-text-faint)]">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${CONNECTION_STRENGTH_DOT[c.bestConnectionStrength]}`} />
-                    {titleCase(c.bestConnectionStrength)}
-                  </p>
+          <div className="space-y-5">
+            {companyBuckets.map(({ tier, rows }) => (
+              <div key={tier} className="space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${CONNECTION_STRENGTH_DOT[tier]}`} />
+                  <h3 className="text-[12px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {titleCase(tier)} · {rows.length}
+                  </h3>
                 </div>
-                <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">
-                  {c.lastInteractionAt ? timeAgo(c.lastInteractionAt) : titleCase("No contact")}
-                </span>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {rows.slice(0, limitFor(`co:${tier}`)).map((c) => (
+                    <div
+                      key={c.domain}
+                      data-testid={`synced-company-${c.domain}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedCompany(c)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setSelectedCompany(c);
+                        }
+                      }}
+                      className="surface-card flex cursor-pointer items-start gap-3 p-3.5"
+                    >
+                      <CompanyLogo logoUrl={c.logoUrl} size={40} fill />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-semibold text-[var(--color-text)]">
+                          {truncateChars(c.companyName, 24)}
+                        </p>
+                        <p className="truncate text-[12px] text-[var(--color-text-muted)]">
+                          {c.contactCount} {titleCase(c.contactCount === 1 ? "contact" : "contacts")}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-[11px] text-[var(--color-text-faint)]">
+                        {c.lastInteractionAt ? timeAgo(c.lastInteractionAt) : titleCase("No contact")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <ShowMoreRow
+                  shown={Math.min(limitFor(`co:${tier}`), rows.length)}
+                  total={rows.length}
+                  onShowMore={() => showMore(`co:${tier}`)}
+                />
               </div>
             ))}
           </div>
@@ -452,7 +496,7 @@ export function SyncedContactsSection({
                 </h3>
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {rows.map((c) => (
+                {rows.slice(0, limitFor(`p:${tier}`)).map((c) => (
                   <div
                     key={c.id}
                     data-testid={`synced-card-${c.id}`}
@@ -516,6 +560,11 @@ export function SyncedContactsSection({
                   </div>
                 ))}
               </div>
+              <ShowMoreRow
+                shown={Math.min(limitFor(`p:${tier}`), rows.length)}
+                total={rows.length}
+                onShowMore={() => showMore(`p:${tier}`)}
+              />
             </div>
           ))}
         </div>

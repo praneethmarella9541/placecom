@@ -102,9 +102,7 @@ export function SyncedCompanyModal({
       >
         <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-offset)]">
-              <CompanyLogo logoUrl={company.logoUrl} size={22} />
-            </span>
+            <CompanyLogo logoUrl={company.logoUrl} size={44} fill />
             <div className="min-w-0">
               <h3 className="truncate text-base font-semibold text-[var(--color-text)]">{company.companyName}</h3>
               <p className="truncate text-[13px] text-[var(--color-text-muted)]">{company.domain}</p>

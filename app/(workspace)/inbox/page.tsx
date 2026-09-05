@@ -71,7 +71,7 @@ import { useWorkspaceTopbarActionsNode } from "@/lib/workspace-topbar-context";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
-import { cn, formatDate, timeAgo } from "@/lib/utils";
+import { cn, formatDate, previewLineFromBody, timeAgo } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import {
@@ -311,6 +311,10 @@ type MsgView = {
   body: string;
   bodyHtml?: string;
   attachments?: AttachmentView[];
+  /** "Show details" popover fields — see lib/gmail-inbox.ts's getThreadMessages. */
+  replyTo?: string;
+  mailedBy?: string;
+  signedBy?: string;
 };
 
 type TrackingRow = {
@@ -320,9 +324,164 @@ type TrackingRow = {
   open_count: number;
 };
 
+/**
+ * Gmail-style "N skipped messages" row — a thread with more than a handful
+ * of messages doesn't render every one collapsed in a row (which is what
+ * this view used to do); it shows the first message, hides the middle run
+ * behind this divider, and shows the last two. Clicking expands that run in
+ * place, each still collapsed like any older message. Purely a count of how
+ * many rows are hidden, not a preview — Gmail's own divider carries no
+ * content either, since anything meaningful there would defeat hiding it.
+ */
+function ThreadMiddleDivider({ count, onExpand }: { count: number; onExpand: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onExpand}
+      className="group flex w-full items-center gap-3 px-4 py-1.5 md:px-6"
+      aria-label={`Show ${count} earlier ${count === 1 ? "message" : "messages"}`}
+    >
+      <span className="h-px flex-1 bg-[var(--color-border)]" />
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[var(--color-border)] text-[11px] font-medium text-[var(--color-text-faint)] transition-colors group-hover:border-[var(--color-copper)] group-hover:text-[var(--color-copper)]">
+        {count}
+      </span>
+      <span className="h-px flex-1 bg-[var(--color-border)]" />
+    </button>
+  );
+}
+
+/**
+ * Gmail's "Show details" popover — the row of from/reply-to/to/cc/date/
+ * subject/mailed-by/signed-by you get from the caret next to "to me". Mailed-
+ * by/signed-by are the Return-Path and DKIM-Signature domains respectively
+ * (see lib/gmail-inbox.ts's getThreadMessages) — Gmail computes them the same
+ * way, which is why they can differ from the From address (e.g. a marketing
+ * platform sending "on behalf of" a brand, or a relay like amazonses.com).
+ */
+/**
+ * Rendered via a portal to document.body, positioned with `position: fixed`
+ * from the trigger button's own measured rect — not CSS `position: absolute`
+ * nested under the trigger. The message body directly below it can be an
+ * `<iframe>` (see EmailHtmlBody) for HTML mail, and iframes get their own
+ * compositing layer in every major browser: they can paint over a
+ * same-stacking-context absolutely-positioned sibling regardless of z-index,
+ * a well-known cross-browser quirk rather than anything specific to this
+ * layout. A portal sidesteps it categorically by not being a descendant of
+ * anything that could stack under the iframe in the first place — the same
+ * reasoning as this file's other portal-based overlays (the fullscreen
+ * reader below, EmailThreadPreviewModal).
+ *
+ * Closes on scroll rather than re-tracking position while scrolling — this
+ * is meant for a quick glance at headers, not something kept open while
+ * scrolling past it.
+ */
+function MessageDetailsPopover({
+  m,
+  anchorRect,
+  triggerEl,
+  onDismiss,
+  onClose,
+}: {
+  m: MsgView;
+  anchorRect: { top: number; left: number; bottom: number };
+  /** Excluded from "outside" — the trigger button's own onClick handles its own toggle. */
+  triggerEl: HTMLElement | null;
+  /** A deliberate click away from the whole trigger+popover — also collapses the message. */
+  onDismiss: () => void;
+  /** Anchor invalidated by scroll/resize — just close, no collapse; the user didn't ask to be done with the message. */
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDocDown(e: MouseEvent) {
+      const target = e.target as Node;
+      if (ref.current?.contains(target)) return;
+      if (triggerEl?.contains(target)) return;
+      onDismiss();
+    }
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [onDismiss, triggerEl]);
+
+  useEffect(() => {
+    // capture:true so this catches scroll on the thread pane's own
+    // overflow-y-auto container, not just window-level scroll — "scroll"
+    // doesn't bubble, but a capturing listener on an ancestor still sees it.
+    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  if (typeof document === "undefined") return null;
+
+  const recipientParts = formatMessageRecipientsLine(m);
+  const toFull = recipientParts.find((p) => p.label === "to")?.title;
+  const ccFull = recipientParts.find((p) => p.label === "cc")?.title;
+
+  const rows: { label: string; value: string; bold?: boolean }[] = [
+    { label: "from", value: formatFromHeader(m.from || ""), bold: true },
+    ...(m.replyTo ? [{ label: "reply-to", value: formatFromHeader(m.replyTo) }] : []),
+    { label: "to", value: toFull || "—" },
+    ...(ccFull ? [{ label: "cc", value: ccFull }] : []),
+    { label: "date", value: formatDate(m.date) },
+    { label: "subject", value: m.subject || "(no subject)" },
+    ...(m.mailedBy ? [{ label: "mailed-by", value: m.mailedBy }] : []),
+    ...(m.signedBy ? [{ label: "signed-by", value: m.signedBy }] : []),
+  ];
+
+  const POPOVER_WIDTH = 360;
+  const left = Math.min(anchorRect.left, Math.max(8, window.innerWidth - POPOVER_WIDTH - 8));
+
+  return createPortal(
+    <div
+      ref={ref}
+      role="dialog"
+      aria-label={titleCase("Message details")}
+      onClick={(e) => e.stopPropagation()}
+      // cursor-text overrides the cursor-pointer the trigger button sits
+      // under in the collapsible header — this panel is read-only, selectable
+      // metadata, not another click target, so it shouldn't show a hand
+      // cursor over the whole thing.
+      style={{ position: "fixed", top: anchorRect.bottom + 4, left }}
+      className="z-[200] w-[360px] max-w-[92vw] cursor-text rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] p-3.5 text-[13px] shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+    >
+      <dl className="space-y-1.5">
+        {rows.map((r) => (
+          <div key={r.label} className="flex gap-2.5">
+            {/* w-[68px] was too narrow for "signed-by:"/"reply-to:" (10 chars) —
+                it wrapped to two lines, and the right-aligned second line
+                ("by:") rendered outside the card's own bottom edge instead of
+                pushing the box taller. whitespace-nowrap makes wrapping
+                impossible rather than just less likely at a wider guess. */}
+            <dt className="w-[80px] shrink-0 whitespace-nowrap text-right text-[var(--color-text-faint)]">
+              {r.label}:
+            </dt>
+            <dd
+              className={cn(
+                "min-w-0 flex-1 break-words text-[var(--color-text)]",
+                r.bold && "font-semibold"
+              )}
+            >
+              {r.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>,
+    document.body
+  );
+}
+
 /* ── Collapsible message bubble ──────────────────────────────
  * Defined outside the page so useState is a valid hook call.
  * All older messages (not last) start collapsed; the last is open.
+ * Clicking the header row toggles collapse either direction — clicking
+ * inside the body (links, attachments, the details caret) must not, so
+ * those all stop propagation before it reaches the header's handler.
  * ────────────────────────────────────────────────────────── */
 function MessageBubble({
   m,
@@ -343,6 +502,12 @@ function MessageBubble({
 }) {
   const [expanded, setExpanded] = useState(isLast);
   const [fullscreen, setFullscreen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // Measured from the trigger button when it's clicked open — the popover is
+  // portal-rendered and `position: fixed`, so it needs real viewport
+  // coordinates rather than a CSS-relative ancestor. See MessageDetailsPopover.
+  const [detailsAnchor, setDetailsAnchor] = useState<{ top: number; left: number; bottom: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const hasThreadActions = Boolean(onReply && onReplyAll && onForward);
 
   const runThreadAction = (fn?: () => void) => {
@@ -388,33 +553,51 @@ function MessageBubble({
     </>
   );
 
+  // A <span>, not a <p> — this now also renders inside the "show details"
+  // <button> below, whose content model (phrasing content) a <p> doesn't fit;
+  // `block` keeps its own-line layout wherever it's used standalone.
   const recipientLine = (
-    <p className="mt-0.5 text-[12px] leading-snug text-[var(--color-text-faint)]">
+    <span className="mt-0.5 block text-[12px] leading-snug text-[var(--color-text-faint)]">
       {(() => {
         const parts = formatMessageRecipientsLine(m);
         if (parts.length === 0) return <>{titleCase("to")} —</>;
         return parts.map((part, i) => (
-          <span key={part.label} className={i > 0 ? "ml-1" : undefined}>
+          <span key={part.label} className={i > 0 ? "ml-1" : undefined} title={part.title || undefined}>
             {i > 0 ? "· " : null}
             <span className="text-[var(--color-text-faint)]">{part.label}</span>{" "}
             <span>{part.value}</span>
           </span>
         ));
       })()}
-    </p>
+    </span>
   );
 
   return (
     <>
-      <article
-        className={cn(
-          "border-b border-[var(--color-border)]",
-          isCollapsed && "cursor-pointer hover:bg-[var(--color-surface-offset)]"
-        )}
-        onClick={isCollapsed ? () => setExpanded(true) : undefined}
-      >
-        {/* Always-visible header */}
-        <div className="flex items-start gap-3 px-4 py-3 md:px-6">
+      <article className="border-b border-[var(--color-border)]">
+        {/* Always-visible header — clicking it toggles collapse either way
+            (Gmail lets you re-collapse an open message the same way you
+            opened it); interactive children below stop propagation so
+            clicking them doesn't also toggle it.
+            While the details popover is open, this must collapse rather than
+            toggle: a click on the header (outside the trigger+popover, but
+            still inside this div) is exactly the natural "click away to
+            dismiss the popover" gesture, and it fires alongside — not instead
+            of — the popover's own outside-click handler. A toggle here would read the
+            still-true detailsOpen from this render's closure and flip
+            `expanded` straight back to true right after that handler set it
+            false, silently undoing the collapse. */}
+        <div
+          className="flex cursor-pointer items-start gap-3 px-4 py-3 hover:bg-[var(--color-surface-offset)] md:px-6"
+          onClick={() => {
+            if (detailsOpen) {
+              setDetailsOpen(false);
+              setExpanded(false);
+            } else {
+              setExpanded((v) => !v);
+            }
+          }}
+        >
           <GmailAvatar seed={fromEmail || fromName} name={fromName} email={fromEmail || undefined} size={36} className="mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
@@ -455,12 +638,49 @@ function MessageBubble({
                 )}
               </div>
             </div>
-            {/* Collapsed: snippet; Expanded: to/cc */}
+            {/* Collapsed: snippet; Expanded: to/cc, with a "show details" caret */}
             {isCollapsed ? (
               <p className="mt-0.5 truncate text-[13px] text-[var(--color-text-faint)]">
-                {m.body?.split("\n").find((l) => l.trim()) ?? "(no preview)"}
+                {previewLineFromBody(m.body) || "(no preview)"}
               </p>
-            ) : recipientLine}
+            ) : (
+              <div>
+                <button
+                  ref={triggerRef}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (detailsOpen) {
+                      setDetailsOpen(false);
+                      return;
+                    }
+                    const rect = triggerRef.current?.getBoundingClientRect();
+                    if (rect) {
+                      setDetailsAnchor({ top: rect.top, left: rect.left, bottom: rect.bottom });
+                    }
+                    setDetailsOpen(true);
+                  }}
+                  aria-label={titleCase("Show details")}
+                  aria-expanded={detailsOpen}
+                  className="-ml-1 inline-flex items-center gap-0.5 rounded px-1 hover:bg-[var(--color-border)]/60"
+                >
+                  {recipientLine}
+                  <ChevronDown className="h-3 w-3 shrink-0 text-[var(--color-text-faint)]" />
+                </button>
+                {detailsOpen && detailsAnchor && (
+                  <MessageDetailsPopover
+                    m={m}
+                    anchorRect={detailsAnchor}
+                    triggerEl={triggerRef.current}
+                    onDismiss={() => {
+                      setDetailsOpen(false);
+                      setExpanded(false);
+                    }}
+                    onClose={() => setDetailsOpen(false)}
+                  />
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -936,6 +1156,14 @@ export default function InboxPage() {
   // bulkBusy removed — actions are fire-and-forget with instant optimistic UI
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Whether the "N skipped messages" divider (see ThreadMiddleDivider) has
+  // been clicked open for the currently-open thread. Reset per-thread below —
+  // otherwise opening a long thread, expanding its middle run, then opening a
+  // different long thread would show that one already expanded too.
+  const [middleExpanded, setMiddleExpanded] = useState(false);
+  useEffect(() => {
+    setMiddleExpanded(false);
+  }, [selectedId]);
   const [messages, setMessages] = useState<MsgView[] | null>(null);
   const [threadLabelIds, setThreadLabelIds] = useState<string[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
@@ -2947,6 +3175,35 @@ export default function InboxPage() {
     }
     return ids;
   }, [threadLabelIds, selectedId, threads]);
+
+  /**
+   * What actually renders in the open thread pane — Gmail's rule, not "every
+   * message gets a row": show the first message, hide any run of messages
+   * strictly between it and the last two behind a single count divider
+   * (ThreadMiddleDivider), and always show the last two (the very last one
+   * expanded, via MessageBubble's own isLast prop). With 3 or fewer messages
+   * there's no "middle" to hide, so nothing collapses into a divider.
+   */
+  const threadRows = useMemo(() => {
+    type Row =
+      | { kind: "message"; message: MsgView; isLast: boolean }
+      | { kind: "divider"; count: number };
+    if (!messages) return [] as Row[];
+    const n = messages.length;
+    if (n <= 3 || middleExpanded) {
+      return messages.map((message, i) => ({
+        kind: "message" as const,
+        message,
+        isLast: i === n - 1,
+      }));
+    }
+    return [
+      { kind: "message" as const, message: messages[0]!, isLast: false },
+      { kind: "divider" as const, count: n - 3 },
+      { kind: "message" as const, message: messages[n - 2]!, isLast: false },
+      { kind: "message" as const, message: messages[n - 1]!, isLast: true },
+    ];
+  }, [messages, middleExpanded]);
 
   // Prefetch a draft on pointer-down so openDraft can reuse the in-flight response.
   const prefetchDraft = useCallback((draftId: string) => {
@@ -5015,9 +5272,14 @@ export default function InboxPage() {
                 </p>
               </div>
             ) : (
+              // Flat Gmail-style colors (no border/shadow), but rounded,
+              // spaced-out rows rather than Gmail's own flush hairline-divided
+              // list — gap-1.5 back instead of divide-y, since rounded corners
+              // on edge-to-edge rows would cut a straight divider line across
+              // a curved corner.
               <ul
                 ref={listScrollRef}
-                className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain p-3"
+                className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overscroll-y-contain p-3"
               >
                 {threads.map((t) => {
                   const name = senderName(t.from);
@@ -5046,12 +5308,10 @@ export default function InboxPage() {
                         else void openThread(t.id);
                       }}
                       className={cn(
-                        "group relative cursor-pointer rounded-xl border text-[13px] transition-all",
-                        isActiveThread
-                          ? "border-transparent bg-[var(--color-copper-tint)] shadow-[0_0_0_1.5px_var(--color-copper)]"
-                          : isSelected
-                            ? "border-transparent bg-[var(--color-copper-tint)]"
-                            : "border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-border-strong)] hover:shadow-md",
+                        "group relative cursor-pointer rounded-xl text-[13px] transition-colors",
+                        isActiveThread || isSelected
+                          ? "bg-[var(--color-copper-tint)]"
+                          : "bg-[var(--color-surface)] hover:bg-[var(--color-surface-offset)]",
                         isUnread && !isActiveThread && !isSelected && "font-semibold",
                       )}
                     >
@@ -5459,18 +5719,26 @@ export default function InboxPage() {
 
                 {/* Messages + reply actions (scroll together like Gmail) */}
                 <div className="scrollbar-thin flex-1 overflow-y-auto">
-                  {messages.map((m, msgIdx) => (
-                    <MessageBubble
-                      key={m.id}
-                      m={m}
-                      isLast={msgIdx === messages.length - 1}
-                      trackingRow={trackingMap[m.id]}
-                      myEmail={myEmail}
-                      onReply={() => openReply("reply")}
-                      onReplyAll={() => openReply("replyAll")}
-                      onForward={() => openForward()}
-                    />
-                  ))}
+                  {threadRows.map((row) =>
+                    row.kind === "divider" ? (
+                      <ThreadMiddleDivider
+                        key="middle-divider"
+                        count={row.count}
+                        onExpand={() => setMiddleExpanded(true)}
+                      />
+                    ) : (
+                      <MessageBubble
+                        key={row.message.id}
+                        m={row.message}
+                        isLast={row.isLast}
+                        trackingRow={trackingMap[row.message.id]}
+                        myEmail={myEmail}
+                        onReply={() => openReply("reply")}
+                        onReplyAll={() => openReply("replyAll")}
+                        onForward={() => openForward()}
+                      />
+                    )
+                  )}
 
                   <GmailInlineReply
                     onStartReply={() => openReply("reply")}

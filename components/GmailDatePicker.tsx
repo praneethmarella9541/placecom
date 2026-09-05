@@ -131,7 +131,13 @@ export function GmailDatePicker({ value, onChange, className, placeholder = "YYY
         <div
           role="dialog"
           aria-label="Choose date"
-          className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-lg border border-[#dadce0] bg-white p-3 shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+          // Fixed width, not `right-0` matching the trigger: the 7-column day
+          // grid below needs ~260px regardless of how narrow the trigger
+          // button is (a compact "YYYY/MM/DD" field is nowhere near that) —
+          // tying the two together previously forced callers to either widen
+          // the trigger into a mostly-empty box just to fit the calendar, or
+          // leave the calendar rendering squashed.
+          className="absolute left-0 top-[calc(100%+4px)] z-50 w-[272px] rounded-lg border border-[#dadce0] bg-white p-3 shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
         >
           <div className="mb-2 flex items-center justify-between gap-2">
             <button

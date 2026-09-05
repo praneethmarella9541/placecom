@@ -5,6 +5,7 @@ import { getAllCachedLogos } from "@/lib/company-enrichment";
 import { bucketEmailConnection, type EmailConnectionStrength } from "@/lib/email-connection-strength";
 import { getConnectionStrengthSettings } from "@/lib/connection-strength-settings";
 import { isLikelyAutomatedAddress } from "@/lib/mail-noise-filter";
+import { isPersonalEmailDomain, personalEmailCompanyLabel } from "@/lib/personal-email-domains";
 
 export const runtime = "nodejs";
 
@@ -86,7 +87,10 @@ function groupByDomain(rows: Row[]): SyncedCompanyRow[] {
     if (!existing) {
       groups.set(domain, {
         domain,
-        companyName: row.company_name || domain,
+        // gmail.com / outlook.com / … are piles of unrelated individuals, not
+        // orgs — label them "<Provider> (personal)" so they don't read as the
+        // company that runs the mail service. Still grouped per-domain.
+        companyName: personalEmailCompanyLabel(domain) || row.company_name || domain,
         contactCount: 1,
         lastInteractionAt: lastAt,
         bestConnectionStrength: strength,
@@ -114,6 +118,11 @@ function groupByDomain(rows: Row[]): SyncedCompanyRow[] {
   // slipped past the noise filter (see lib/mail-noise-filter.ts) sit above
   // companies you actually deal with.
   return Array.from(groups.values()).sort((a, b) => {
+    // Personal-webmail "companies" (Gmail/Outlook/…) sink below real orgs —
+    // they're big by headcount but aren't a relationship with one entity.
+    const aPersonal = isPersonalEmailDomain(a.domain);
+    const bPersonal = isPersonalEmailDomain(b.domain);
+    if (aPersonal !== bPersonal) return aPersonal ? 1 : -1;
     if (a.hasOutboundContact !== b.hasOutboundContact) return a.hasOutboundContact ? -1 : 1;
     if (a.contactCount !== b.contactCount) return b.contactCount - a.contactCount;
     return (b.lastInteractionAt ?? "").localeCompare(a.lastInteractionAt ?? "");

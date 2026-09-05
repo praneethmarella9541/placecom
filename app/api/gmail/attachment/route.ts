@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
 import {
   gmailInsufficientScopePayload,
   isGmailInsufficientScopeResponse,
@@ -27,9 +28,11 @@ export async function GET(request: Request) {
 
   const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`;
 
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${auth.accessToken}` },
-  });
+  const res = await fetchGmail(
+    url,
+    { headers: { Authorization: `Bearer ${auth.accessToken}` } },
+    { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.attachmentsGet }
+  );
 
   if (!res.ok) {
     const text = await res.text();

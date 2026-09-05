@@ -54,6 +54,7 @@ export async function GET(request: Request, { params }: { params: { id: string }
     { id: lead.id as string, email: lead.email as string | null, phone: lead.phone as string | null },
     {
       accessToken: auth.ok ? auth.accessToken : undefined,
+      mailboxKey: auth.ok ? auth.mailboxOwnerId : undefined,
       ownAddress: auth.ok ? auth.gmailAddress : undefined,
       seasonStart: settings.season_start_date,
       limits: DISPLAY_EVIDENCE_LIMITS,

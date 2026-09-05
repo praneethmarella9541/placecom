@@ -29,8 +29,16 @@ export const MAIL_THREAD_PREFETCH_DISABLED =
 
 const BODY_PREFETCH_CONCURRENCY = 2;
 const MAIL_LIST_PAGE_SIZE = 25;
-const VISIBLE_BODY_PREFETCH_CONCURRENCY = 12;
-const VISIBLE_BODY_PREFETCH_LEAD = 15;
+/**
+ * A full-body prefetch is `threads.get?format=full` — 10 quota units each.
+ * At 12 the lead batch alone spent 120 units the instant a folder changed, and
+ * it ran *alongside* the rest batch, so a single tab click could put 18 calls
+ * (180 units) in flight. Four is enough to keep the rows under the cursor warm
+ * without the burst; the server-side quota bucket now paces anything beyond it
+ * rather than letting it through and eating the minute's budget.
+ */
+const VISIBLE_BODY_PREFETCH_CONCURRENCY = 4;
+const VISIBLE_BODY_PREFETCH_LEAD = 10;
 const SESSION_THREAD_TTL_MS = 30 * 60 * 1000;
 
 export type { MailThreadCachePayload } from "@/lib/mail-thread-session-cache";
@@ -173,17 +181,24 @@ export async function prefetchMailThreadBodies(
 
   const lead = ids.slice(0, VISIBLE_BODY_PREFETCH_LEAD);
   const rest = ids.slice(VISIBLE_BODY_PREFETCH_LEAD);
-  const leadConcurrency = opts?.concurrency ?? VISIBLE_BODY_PREFETCH_CONCURRENCY;
+  const leadConcurrency = Math.min(
+    opts?.concurrency ?? VISIBLE_BODY_PREFETCH_CONCURRENCY,
+    VISIBLE_BODY_PREFETCH_CONCURRENCY
+  );
 
-  await Promise.all([
-    prefetchMailThreadBodiesBatch(lead, { signal: opts?.signal, concurrency: leadConcurrency }),
-    rest.length
-      ? prefetchMailThreadBodiesBatch(rest, {
-          signal: opts?.signal,
-          concurrency: Math.max(4, Math.floor(leadConcurrency / 2)),
-        })
-      : Promise.resolve(),
-  ]);
+  // The rest batch now runs AFTER the lead rather than beside it. Racing them
+  // doubled the real concurrency, so the "lead" rows — the ones actually under
+  // the cursor — competed with rows far below the fold for the same quota.
+  await prefetchMailThreadBodiesBatch(lead, {
+    signal: opts?.signal,
+    concurrency: leadConcurrency,
+  });
+  if (rest.length && !opts?.signal?.aborted) {
+    await prefetchMailThreadBodiesBatch(rest, {
+      signal: opts?.signal,
+      concurrency: Math.max(1, Math.floor(leadConcurrency / 2)),
+    });
+  }
 }
 
 async function prefetchMailThreadBodiesBatch(

@@ -138,7 +138,8 @@ async function mailEvidence(
   email: string | null,
   since: Date | null,
   ownAddress: string | undefined,
-  limits: EvidenceLimits
+  limits: EvidenceLimits,
+  mailboxKey: string | undefined
 ): Promise<EvidenceItem[]> {
   const clip = clipper(limits.maxTextChars);
   if (!email) return [];
@@ -159,6 +160,7 @@ async function mailEvidence(
     folder: "allmail",
     maxResults: limits.maxMail,
     searchQuery: dated,
+    mailboxKey,
   });
 
   const me = ownAddress?.trim().toLowerCase();
@@ -193,7 +195,7 @@ async function mailEvidence(
     const results = await Promise.all(
       chunk.map(async (thread) => {
         try {
-          const { messages } = await getThreadMessages(accessToken, thread.id);
+          const { messages } = await getThreadMessages(accessToken, thread.id, { mailboxKey });
           return { thread, messages };
         } catch {
           // One unreadable thread shouldn't cost us the rest of the evidence —
@@ -305,6 +307,8 @@ export async function gatherLeadEvidence(
   lead: { id: string; email: string | null; phone: string | null },
   opts: {
     accessToken?: string;
+    /** Mailbox the Gmail reads are billed to — scopes the shared quota bucket. */
+    mailboxKey?: string;
     ownAddress?: string;
     seasonStart: string | null;
     limits?: EvidenceLimits;
@@ -315,7 +319,14 @@ export async function gatherLeadEvidence(
 
   const [mail, whatsapp, notes] = await Promise.all([
     opts.accessToken
-      ? mailEvidence(opts.accessToken, lead.email, since, opts.ownAddress, limits).catch(() => [])
+      ? mailEvidence(
+          opts.accessToken,
+          lead.email,
+          since,
+          opts.ownAddress,
+          limits,
+          opts.mailboxKey
+        ).catch(() => [])
       : Promise.resolve([]),
     whatsappEvidence(supabase, lead.phone, since, limits).catch(() => []),
     noteEvidence(supabase, lead.id, since, limits).catch(() => []),

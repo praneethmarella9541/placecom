@@ -7,6 +7,12 @@ import {
 } from "@/lib/gmail-search-query";
 import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
+import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
+import {
+  getCachedThreadMeta,
+  setCachedThreadMeta,
+  type ThreadMeta,
+} from "@/lib/gmail-thread-meta-cache";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -33,6 +39,8 @@ export type ThreadListItem = {
   hasAttachments?: boolean;
   /** Calendar invitation thread (shows calendar icon instead of paperclip in list). */
   hasCalendarInvite?: boolean;
+  /** Any message carries IMPORTANT — rendered as its own icon, like STARRED. */
+  important?: boolean;
   /** Unique label ids across all messages in the thread. The UI maps these
    *  through the labels list to render chips. Excludes folder-state labels
    *  (INBOX/SENT/DRAFT/etc.) AND STARRED (which has its own icon). */
@@ -65,7 +73,7 @@ const QUERY: Record<ThreadListFolder, string> = {
 async function fetchMessageMeta(
   accessToken: string,
   messageId: string,
-  opts?: { includeTo?: boolean }
+  opts?: { includeTo?: boolean; mailboxKey?: string }
 ): Promise<{
   subject: string;
   from: string;
@@ -82,9 +90,11 @@ async function fetchMessageMeta(
   if (opts?.includeTo) params.append("metadataHeaders", "To");
   const url = `${GMAIL_API}/messages/${encodeURIComponent(messageId)}?${params.toString()}`;
   try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const res = await fetchGmail(
+      url,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.messagesGet }
+    );
     if (!res.ok) return { subject: "", from: "", date: "", to: "", labelIds: [] };
     const data = (await res.json()) as {
       internalDate?: string;
@@ -125,6 +135,8 @@ export async function listDraftsPage(
     maxResults: number;
     pageToken?: string;
     searchQuery?: string;
+    /** Mailbox this page is billed to — scopes the shared quota bucket. */
+    mailboxKey?: string;
   }
 ): Promise<ThreadListPage> {
   const params = new URLSearchParams({
@@ -137,9 +149,11 @@ export async function listDraftsPage(
   const url = `${GMAIL_API}/drafts?${params.toString()}`;
   let res: Response;
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    res = await fetchGmail(
+      url,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: options.mailboxKey, cost: GMAIL_COST.draftsList }
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (drafts list)"));
   }
@@ -179,7 +193,10 @@ export async function listDraftsPage(
           draftId: d.id,
         };
       }
-      const meta = await fetchMessageMeta(accessToken, messageId, { includeTo: true });
+      const meta = await fetchMessageMeta(accessToken, messageId, {
+        includeTo: true,
+        mailboxKey: options.mailboxKey,
+      });
       const toLine = (meta.to || "").trim();
       const displayLine = toLine || meta.from.trim() || "Draft";
       return {
@@ -211,6 +228,160 @@ const CATEGORY_LABEL_TO_QUERY: Record<string, string> = {
   CATEGORY_FORUMS:     "category:forums",
 };
 
+const FOLDER_LABELS_FOR_CHIPS = new Set([
+  "INBOX",
+  "SENT",
+  "DRAFT",
+  "TRASH",
+  "SPAM",
+  "UNREAD",
+  "CHAT",
+  // STARRED and IMPORTANT get their own icons in the row, so they are state,
+  // not chips — same as Gmail.
+  "STARRED",
+  "IMPORTANT",
+]);
+
+type RawThreadMessages = {
+  messages?: {
+    id: string;
+    internalDate?: string;
+    labelIds?: string[];
+    payload?: { headers?: GmailHeader[] };
+  }[];
+};
+
+/** Turn a threads.get(format=metadata) body into the cacheable half of a list row. */
+function deriveThreadMeta(td: RawThreadMessages): ThreadMeta {
+  const msgs = td.messages || [];
+  // Subject comes from the first message; From/Date from the last.
+  const first = msgs[0];
+  const last = msgs[msgs.length - 1] ?? first;
+  const getH = (msg: typeof first, key: string) => {
+    const h = (msg?.payload?.headers || []).find(
+      (x) => (x.name || "").toLowerCase() === key.toLowerCase()
+    );
+    return (h?.value || "").trim();
+  };
+  let date = getH(last, "Date");
+  if (last?.internalDate) {
+    const ms = parseInt(last.internalDate, 10);
+    if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
+  }
+  const allLabelIds = Array.from(new Set(msgs.flatMap((m) => m.labelIds ?? [])));
+  // hasAttachments — any message whose top-level Content-Type starts with
+  // multipart/mixed (Gmail's signal for "has attachments").
+  const hasAttachments = msgs.some((m) => {
+    const ct =
+      (m.payload?.headers || []).find((h) => (h.name || "").toLowerCase() === "content-type")
+        ?.value || "";
+    return /^multipart\/mixed/i.test(ct);
+  });
+  return {
+    subject: getH(first, "Subject"),
+    from: getH(last, "From"),
+    date,
+    // Strip folder-state labels — the row's folder tab already conveys this.
+    labelIds: allLabelIds.filter((id) => !FOLDER_LABELS_FOR_CHIPS.has(id)),
+    unread: allLabelIds.includes("UNREAD"),
+    starred: allLabelIds.includes("STARRED"),
+    important: allLabelIds.includes("IMPORTANT"),
+    hasAttachments,
+  };
+}
+
+/**
+ * Coalesces concurrent `threads.get` calls for the same thread+historyId.
+ *
+ * The warmed list views overlap heavily (a Primary thread is also in INBOX,
+ * IMPORTANT and All Mail) and they warm in parallel, so without this the cache
+ * would only help *sequential* requests — every concurrent view would still pay
+ * its own 10 units for the identical thread.
+ */
+const metaInflight = new Map<string, Promise<ThreadMeta | null>>();
+
+async function fetchThreadMeta(
+  accessToken: string,
+  threadId: string,
+  historyId: string | undefined,
+  mailboxKey: string | undefined
+): Promise<ThreadMeta | null> {
+  const cached = getCachedThreadMeta(mailboxKey, threadId, historyId);
+  if (cached) return cached;
+
+  const key = `${mailboxKey ?? "-"}:${threadId}:${historyId ?? "-"}`;
+  if (historyId) {
+    const existing = metaInflight.get(key);
+    if (existing) return existing;
+  }
+
+  const params = new URLSearchParams({ format: "metadata" });
+  params.append("metadataHeaders", "Subject");
+  params.append("metadataHeaders", "From");
+  params.append("metadataHeaders", "Date");
+  // Used to derive hasAttachments cheaply (multipart/mixed → has files).
+  params.append("metadataHeaders", "Content-Type");
+
+  const promise = (async () => {
+    try {
+      const res = await fetchGmail(
+        `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?${params.toString()}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        { mailboxKey, cost: GMAIL_COST.threadsGet }
+      );
+      if (!res.ok) return null;
+      const meta = deriveThreadMeta((await res.json()) as RawThreadMessages);
+      setCachedThreadMeta(mailboxKey, threadId, historyId, meta);
+      return meta;
+    } catch {
+      return null;
+    }
+  })();
+
+  if (historyId) {
+    metaInflight.set(key, promise);
+    void promise.finally(() => metaInflight.delete(key));
+  }
+  return promise;
+}
+
+/**
+ * Fill in each listed thread's header row.
+ *
+ * Was an unbounded `Promise.all` of raw `threads.get` calls — a 100-row page
+ * fired 100 at once (1,000 quota units in a single burst), which is what tripped
+ * the per-minute ceiling. Every call is now cache-checked, deduped against
+ * concurrent twins, and metered by the shared quota bucket, so the bucket paces
+ * the fan-out rather than a fixed constant that knew nothing about what the rest
+ * of the app was spending at the same moment.
+ */
+async function mapThreadsWithMeta(
+  accessToken: string,
+  rawThreads: { id: string; snippet?: string; historyId?: string }[],
+  mailboxKey: string | undefined
+): Promise<ThreadListItem[]> {
+  return Promise.all(
+    rawThreads.map(async (t): Promise<ThreadListItem> => {
+      const snippet = cleanMailSnippet(t.snippet || "");
+      const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey);
+      if (!meta) {
+        return { id: t.id, snippet, subject: "", from: "", date: "", historyId: t.historyId };
+      }
+      return {
+        id: t.id,
+        snippet,
+        historyId: t.historyId,
+        ...meta,
+        hasCalendarInvite: isCalendarInviteThread({
+          subject: meta.subject,
+          from: meta.from,
+          snippet,
+        }),
+      };
+    })
+  );
+}
+
 export async function listThreadsPage(
   accessToken: string,
   options: {
@@ -223,6 +394,10 @@ export async function listThreadsPage(
      *  CATEGORY_* labels are translated to `category:xxx` query terms so threads
      *  that Gmail hasn't explicitly tagged still appear (matches Gmail's own tabs). */
     labelId?: string;
+    /** Mailbox this page is billed to — scopes the quota bucket and the thread
+     *  metadata cache. Omit only where no mailbox identity is available; the
+     *  call then runs unmetered and uncached. */
+    mailboxKey?: string;
   }
 ): Promise<ThreadListPage> {
   const rawUserQ = normalizeGmailSearchQuery(options.searchQuery || "");
@@ -264,9 +439,11 @@ export async function listThreadsPage(
         maxResults: String(requestedMax),
         q: `"${fromEmail}"`,
       }).toString()}`;
+      const listInit = { headers: { Authorization: `Bearer ${accessToken}` } };
+      const listOpts = { mailboxKey: options.mailboxKey, cost: GMAIL_COST.threadsList };
       const [primaryRes, mentionRes] = await Promise.all([
-        fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } }),
-        fetch(mentionUrl, { headers: { Authorization: `Bearer ${accessToken}` } }),
+        fetchGmail(url, listInit, listOpts),
+        fetchGmail(mentionUrl, listInit, listOpts),
       ]);
       res = primaryRes;
       if (mentionRes.ok) {
@@ -274,7 +451,11 @@ export async function listThreadsPage(
         supplementalIds = (mentionData.threads ?? []).map((t) => t.id).filter(Boolean);
       }
     } else {
-      res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      res = await fetchGmail(
+        url,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        { mailboxKey: options.mailboxKey, cost: GMAIL_COST.threadsList }
+      );
     }
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (threads list)"));
@@ -312,102 +493,10 @@ export async function listThreadsPage(
     rawThreads = merged.slice(0, requestedMax);
   }
 
-  const threads: ThreadListItem[] = await Promise.all(
-    rawThreads.map(async (t) => {
-      // Fetch the thread (metadata format) to get the last message's headers.
-      // We cannot use /messages/{t.id} because t.id is a thread id, not a message id.
-      try {
-        const params = new URLSearchParams({ format: "metadata" });
-        params.append("metadataHeaders", "Subject");
-        params.append("metadataHeaders", "From");
-        params.append("metadataHeaders", "Date");
-        // Used to derive hasAttachments cheaply (multipart/mixed → has files).
-        params.append("metadataHeaders", "Content-Type");
-        const res = await fetch(
-          `${GMAIL_API}/threads/${encodeURIComponent(t.id)}?${params.toString()}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-        if (!res.ok) throw new Error("thread meta fetch failed");
-        const td = (await res.json()) as {
-          messages?: {
-            id: string;
-            internalDate?: string;
-            labelIds?: string[];
-            payload?: { headers?: GmailHeader[] };
-          }[];
-        };
-        const msgs = td.messages || [];
-        // Subject comes from first message; From/Date from last message
-        const first = msgs[0];
-        const last = msgs[msgs.length - 1] ?? first;
-        const getH = (msg: typeof first, key: string) => {
-          const h = (msg?.payload?.headers || []).find(
-            (x) => (x.name || "").toLowerCase() === key.toLowerCase()
-          );
-          return (h?.value || "").trim();
-        };
-        const subject = getH(first, "Subject");
-        const from = getH(last, "From");
-        let date = getH(last, "Date");
-        if (last?.internalDate) {
-          const ms = parseInt(last.internalDate, 10);
-          if (!Number.isNaN(ms)) date = new Date(ms).toISOString();
-        }
-        const allLabelIds = Array.from(new Set(msgs.flatMap((m) => m.labelIds ?? [])));
-        // Strip folder-state labels — the row's folder tab already conveys this.
-        // STARRED and IMPORTANT are also stripped from chips because they have
-        // their own dedicated icons in the row UI (same as Gmail).
-        const FOLDER_LABELS = new Set([
-          "INBOX",
-          "SENT",
-          "DRAFT",
-          "TRASH",
-          "SPAM",
-          "UNREAD",
-          "CHAT",
-          "STARRED",
-          "IMPORTANT",
-        ]);
-        const userVisibleLabelIds = allLabelIds.filter((id) => !FOLDER_LABELS.has(id));
-        // hasAttachments — any message whose top-level Content-Type starts
-        // with multipart/mixed (Gmail's signal for "has attachments").
-        const hasAttachments = msgs.some((m) => {
-          const ct = (m.payload?.headers || []).find(
-            (h) => (h.name || "").toLowerCase() === "content-type"
-          )?.value || "";
-          return /^multipart\/mixed/i.test(ct);
-        });
-        const listSnippet = cleanMailSnippet(t.snippet || "");
-        const hasCalendarInvite = isCalendarInviteThread({
-          subject,
-          from,
-          snippet: listSnippet,
-        });
-        return {
-          id: t.id,
-          snippet: listSnippet,
-          subject,
-          from,
-          date,
-          labelIds: userVisibleLabelIds,
-          historyId: t.historyId,
-          unread: allLabelIds.includes("UNREAD"),
-          starred: allLabelIds.includes("STARRED"),
-          important: allLabelIds.includes("IMPORTANT"),
-          hasAttachments,
-          hasCalendarInvite,
-        };
-      } catch {
-        return {
-          id: t.id,
-          snippet: cleanMailSnippet(t.snippet || ""),
-          subject: "",
-          from: "",
-          date: "",
-          historyId: t.historyId,
-        };
-      }
-    })
+  const threads: ThreadListItem[] = await mapThreadsWithMeta(
+    accessToken,
+    rawThreads,
+    options.mailboxKey
   );
 
   // Gmail's own order (from data.threads above) ranks a thread by when it last
@@ -442,18 +531,26 @@ export async function listThreadsPage(
  * Remove the UNREAD label from every message in a thread.
  * Requires the gmail.modify scope.
  */
-export async function markThreadRead(accessToken: string, threadId: string): Promise<void> {
+export async function markThreadRead(
+  accessToken: string,
+  threadId: string,
+  opts?: { mailboxKey?: string }
+): Promise<void> {
   const url = `${GMAIL_API}/threads/${encodeURIComponent(threadId)}/modify`;
   let res: Response;
   try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
+    res = await fetchGmail(
+      url,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
       },
-      body: JSON.stringify({ removeLabelIds: ["UNREAD"] }),
-    });
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.threadsModify }
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (mark thread read)"));
   }
@@ -609,14 +706,17 @@ export type GetThreadResult = {
 
 export async function getThreadMessages(
   accessToken: string,
-  threadId: string
+  threadId: string,
+  opts?: { mailboxKey?: string }
 ): Promise<GetThreadResult> {
   const url = `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?format=full`;
   let res: Response;
   try {
-    res = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    res = await fetchGmail(
+      url,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.threadsGet }
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (thread get)"));
   }
@@ -852,6 +952,8 @@ export async function sendMailViaGmail(
     references?: string;
     trackingPixelUrl?: string;
     attachments?: SendAttachment[];
+    /** Mailbox this send is billed to — scopes the shared quota bucket. */
+    mailboxKey?: string;
   }
 ): Promise<{ id: string; threadId: string }> {
   let inReplyTo = "";
@@ -860,9 +962,11 @@ export async function sendMailViaGmail(
 
   if (options.inReplyToMessageId) {
     const msgUrl = `${GMAIL_API}/messages/${encodeURIComponent(options.inReplyToMessageId)}?format=metadata&metadataHeaders=Message-ID&metadataHeaders=Subject&metadataHeaders=References`;
-    const gm = await fetch(msgUrl, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const gm = await fetchGmail(
+      msgUrl,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: options.mailboxKey, cost: GMAIL_COST.messagesGet }
+    );
     if (gm.ok) {
       const meta = (await gm.json()) as {
         payload?: { headers?: GmailHeader[] };
@@ -911,14 +1015,18 @@ export async function sendMailViaGmail(
   const sendUrl = `${GMAIL_API}/messages/send`;
   let res: Response;
   try {
-    res = await fetch(sendUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
+    res = await fetchGmail(
+      sendUrl,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
       },
-      body: JSON.stringify(body),
-    });
+      { mailboxKey: options.mailboxKey, cost: GMAIL_COST.messagesSend }
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (send)"));
   }

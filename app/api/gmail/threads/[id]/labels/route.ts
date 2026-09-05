@@ -36,7 +36,7 @@ export async function POST(
   }
 
   try {
-    const result = await modifyThreadLabels(auth.accessToken, id, { add, remove });
+    const result = await modifyThreadLabels(auth.accessToken, id, { add, remove }, { mailboxKey: auth.mailboxOwnerId });
     return NextResponse.json({ threadId: id, labelIds: result.labelIds });
   } catch (e) {
     const err = e as Error & { code?: string };

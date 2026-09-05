@@ -18,9 +18,27 @@ export type MailListPrefetchSpec = {
   labelId?: string | null;
 };
 
-/** Views to warm after sign-in (empty search — matches inbox default). */
-export const MAIL_LIST_PREFETCH_SPECS: readonly MailListPrefetchSpec[] = [
+/**
+ * Views to warm after sign-in (empty search — matches inbox default).
+ *
+ * Kept deliberately short. Each spec is a `threads.list` PLUS one
+ * `threads.get` per row it returns, so a spec costs ~260 quota units at the
+ * default page size — warming all twelve folder/category views spent the whole
+ * per-minute budget before the user had clicked anything, and eleven of the
+ * twelve were views they would probably never open. Primary and All Mail cover
+ * the overwhelming majority of first interactions; every other tab warms on
+ * demand the moment it is selected, which is fast enough because the thread
+ * metadata cache makes the overlapping rows free by then.
+ *
+ * Set NEXT_PUBLIC_MAIL_PREFETCH_ALL_VIEWS=1 to restore the old wide warm.
+ */
+const CORE_PREFETCH_SPECS: readonly MailListPrefetchSpec[] = [
   /** Default Primary tab on first paint after login. */
+  { apiFolder: "inbox", labelId: "CATEGORY_PERSONAL" },
+  { apiFolder: "allmail" },
+];
+
+const WIDE_PREFETCH_SPECS: readonly MailListPrefetchSpec[] = [
   { apiFolder: "inbox", labelId: "CATEGORY_PERSONAL" },
   { apiFolder: "inbox", labelId: "CATEGORY_PROMOTIONS" },
   { apiFolder: "inbox", labelId: "CATEGORY_SOCIAL" },
@@ -33,7 +51,12 @@ export const MAIL_LIST_PREFETCH_SPECS: readonly MailListPrefetchSpec[] = [
   { apiFolder: "spam" },
   { apiFolder: "trash" },
   { apiFolder: "allmail" },
-] as const;
+];
+
+export const MAIL_LIST_PREFETCH_SPECS: readonly MailListPrefetchSpec[] =
+  process.env.NEXT_PUBLIC_MAIL_PREFETCH_ALL_VIEWS === "1"
+    ? WIDE_PREFETCH_SPECS
+    : CORE_PREFETCH_SPECS;
 
 const SESSION_CACHE = new Map<string, MailListCacheSnapshot>();
 const PREFETCH_IN_FLIGHT = new Set<string>();

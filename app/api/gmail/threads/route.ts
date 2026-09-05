@@ -44,6 +44,7 @@ export async function GET(request: Request) {
             maxResults,
             pageToken,
             searchQuery,
+            mailboxKey: auth.mailboxOwnerId,
           })
         : await listThreadsPage(auth.accessToken, {
             folder,
@@ -51,6 +52,7 @@ export async function GET(request: Request) {
             pageToken,
             searchQuery,
             labelId,
+            mailboxKey: auth.mailboxOwnerId,
           });
     return NextResponse.json(
       { folder, threads: page.threads, nextPageToken: page.nextPageToken },

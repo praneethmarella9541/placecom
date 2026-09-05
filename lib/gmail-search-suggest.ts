@@ -3,6 +3,7 @@ import "server-only";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { normalizeGmailSearchQuery } from "@/lib/gmail-search-query";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
+import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -99,6 +100,7 @@ export function pickEmailCompletion(
 async function threadMeta(
   accessToken: string,
   threadId: string,
+  mailboxKey: string | undefined,
 ): Promise<ThreadSearchSuggestion | null> {
   const params = new URLSearchParams({ format: "metadata" });
   params.append("metadataHeaders", "Subject");
@@ -107,9 +109,11 @@ async function threadMeta(
   params.append("metadataHeaders", "Content-Type");
 
   try {
-    const res = await fetch(`${GMAIL_API}/threads/${encodeURIComponent(threadId)}?${params}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    const res = await fetchGmail(
+      `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?${params}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey, cost: GMAIL_COST.threadsGet },
+    );
     if (!res.ok) return null;
     const td = (await res.json()) as {
       messages?: {
@@ -158,6 +162,7 @@ export async function listThreadSearchSuggestions(
   accessToken: string,
   searchQuery: string,
   maxResults = 5,
+  opts?: { mailboxKey?: string },
 ): Promise<ThreadSearchSuggestion[]> {
   const q = normalizeGmailSearchQuery(searchQuery);
   if (!q) return [];
@@ -169,9 +174,11 @@ export async function listThreadSearchSuggestions(
 
   let res: Response;
   try {
-    res = await fetch(`${GMAIL_API}/threads?${params}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
+    res = await fetchGmail(
+      `${GMAIL_API}/threads?${params}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.threadsList },
+    );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (search suggest)"));
   }
@@ -189,7 +196,7 @@ export async function listThreadSearchSuggestions(
   const raw = (data.threads ?? []).slice(0, maxResults);
   const metas = await Promise.all(
     raw.map(async (t) => {
-      return threadMeta(accessToken, t.id);
+      return threadMeta(accessToken, t.id, opts?.mailboxKey);
     }),
   );
 

@@ -41,6 +41,7 @@ export async function GET(request: Request) {
       folder: "allmail",
       maxResults: 50,
       searchQuery: gmailDomainQuery(domain),
+      mailboxKey: auth.mailboxOwnerId,
     });
     const items: CompanyEmailItem[] = page.threads.map((t) => ({
       id: t.id,

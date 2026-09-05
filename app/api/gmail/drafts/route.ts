@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
 import {
   getStagedAttachment,
   releaseStagedAttachments,
@@ -143,9 +144,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "draftId required" }, { status: 400 });
   }
 
-  const res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=full`, {
-    headers: { Authorization: `Bearer ${auth.accessToken}` },
-  });
+  const res = await fetchGmail(
+    `${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=full`,
+    { headers: { Authorization: `Bearer ${auth.accessToken}` } },
+    { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.draftsGet }
+  );
 
   if (!res.ok) {
     const text = await res.text();
@@ -288,11 +291,14 @@ function attachmentIdToStandardBase64(data: string): string {
 
 async function fetchDraftRawBase64Url(
   accessToken: string,
-  draftId: string
+  draftId: string,
+  mailboxKey: string
 ): Promise<string | null> {
-  const res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=raw`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const res = await fetchGmail(
+    `${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=raw`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { mailboxKey, cost: GMAIL_COST.draftsGet }
+  );
   if (!res.ok) return null;
   const data = (await res.json()) as { message?: { raw?: string } };
   return data.message?.raw ?? null;
@@ -300,11 +306,14 @@ async function fetchDraftRawBase64Url(
 
 async function fetchDraftFull(
   accessToken: string,
-  draftId: string
+  draftId: string,
+  mailboxKey: string
 ): Promise<{ messageId: string; payload: MimePart } | null> {
-  const res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=full`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  const res = await fetchGmail(
+    `${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=full`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { mailboxKey, cost: GMAIL_COST.draftsGet }
+  );
   if (!res.ok) return null;
   const data = (await res.json()) as {
     message?: { id: string; payload?: MimePart };
@@ -316,11 +325,13 @@ async function fetchDraftFull(
 async function fetchGmailAttachmentBase64(
   accessToken: string,
   messageId: string,
-  attachmentId: string
+  attachmentId: string,
+  mailboxKey: string
 ): Promise<string> {
-  const res = await fetch(
+  const res = await fetchGmail(
     `${GMAIL_API}/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } }
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    { mailboxKey, cost: GMAIL_COST.attachmentsGet }
   );
   if (!res.ok) {
     throw new Error(`Gmail attachment ${res.status}`);
@@ -356,7 +367,8 @@ function collectAttachmentMeta(
 async function buildDraftRaw(
   accessToken: string,
   userId: string,
-  body: Body
+  body: Body,
+  mailboxKey: string
 ): Promise<string> {
   const base = {
     to: body.to ?? "",
@@ -368,7 +380,7 @@ async function buildDraftRaw(
   };
 
   if (body.draftId && body.preserveAttachments) {
-    const existingRaw = await fetchDraftRawBase64Url(accessToken, body.draftId);
+    const existingRaw = await fetchDraftRawBase64Url(accessToken, body.draftId, mailboxKey);
     if (existingRaw) {
       try {
         return rebuildDraftRawPreservingAttachments(existingRaw, base);
@@ -394,7 +406,7 @@ async function buildDraftRaw(
   }
 
   if (body.draftId && body.mergeExistingAttachments) {
-    const draft = await fetchDraftFull(accessToken, body.draftId);
+    const draft = await fetchDraftFull(accessToken, body.draftId, mailboxKey);
     if (draft) {
       const existing = collectAttachmentMeta(draft.payload);
       const existingData = await Promise.all(
@@ -404,7 +416,8 @@ async function buildDraftRaw(
           base64Data: await fetchGmailAttachmentBase64(
             accessToken,
             draft.messageId,
-            a.attachmentId
+            a.attachmentId,
+            mailboxKey
           ),
         }))
       );
@@ -446,7 +459,7 @@ export async function POST(request: Request) {
 
   let raw: string;
   try {
-    raw = await buildDraftRaw(auth.accessToken, auth.userId, body);
+    raw = await buildDraftRaw(auth.accessToken, auth.userId, body, auth.mailboxOwnerId);
   } catch (e) {
     const err = e as Error;
     console.error("[drafts] build raw", err);
@@ -463,24 +476,32 @@ export async function POST(request: Request) {
     let res: Response;
     if (body.draftId) {
       // Update existing draft
-      res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(body.draftId)}`, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${auth.accessToken}`,
-          "Content-Type": "application/json",
+      res = await fetchGmail(
+        `${GMAIL_API}/drafts/${encodeURIComponent(body.draftId)}`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${auth.accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ message }),
         },
-        body: JSON.stringify({ message }),
-      });
+        { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.draftsUpdate }
+      );
     } else {
       // Create new draft
-      res = await fetch(`${GMAIL_API}/drafts`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${auth.accessToken}`,
-          "Content-Type": "application/json",
+      res = await fetchGmail(
+        `${GMAIL_API}/drafts`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${auth.accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ message }),
         },
-        body: JSON.stringify({ message }),
-      });
+        { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.draftsCreate }
+      );
     }
 
     if (!res.ok) {
@@ -512,10 +533,11 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "draftId required" }, { status: 400 });
   }
 
-  const res = await fetch(`${GMAIL_API}/drafts/${encodeURIComponent(draftId)}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${auth.accessToken}` },
-  });
+  const res = await fetchGmail(
+    `${GMAIL_API}/drafts/${encodeURIComponent(draftId)}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${auth.accessToken}` } },
+    { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.draftsUpdate }
+  );
 
   // 204 No Content = success; 404 = already gone — both are fine
   if (!res.ok && res.status !== 404) {

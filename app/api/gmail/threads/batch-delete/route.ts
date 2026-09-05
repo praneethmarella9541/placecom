@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 
 export const runtime = "nodejs";
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
   }
 
   const accessToken = auth.accessToken;
+  const mailboxKey = auth.mailboxOwnerId;
   const succeeded: string[] = [];
   const failed: { threadId: string; error: string }[] = [];
 
@@ -48,10 +50,11 @@ export async function POST(request: Request) {
       const i = cursor++;
       const id = threadIds[i];
       try {
-        const res = await fetch(`${GMAIL_API}/threads/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        const res = await fetchGmail(
+          `${GMAIL_API}/threads/${encodeURIComponent(id)}`,
+          { method: "DELETE", headers: { Authorization: `Bearer ${accessToken}` } },
+          { mailboxKey, cost: GMAIL_COST.threadsModify }
+        );
         if (res.status === 401) {
           failed.push({ threadId: id, error: "UNAUTHORIZED" });
           cursor = threadIds.length;

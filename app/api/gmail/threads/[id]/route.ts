@@ -25,11 +25,15 @@ export async function GET(
   try {
     // Single Gmail round-trip: format=full already contains labelIds on each
     // message, so getThreadMessages extracts them — no second API call needed.
-    const { messages, labelIds } = await getThreadMessages(auth.accessToken, threadId);
+    const { messages, labelIds } = await getThreadMessages(auth.accessToken, threadId, {
+      mailboxKey: auth.mailboxOwnerId,
+    });
 
     // Hover prefetch must not mark unread mail as read — only explicit opens do.
     if (!prefetchOnly) {
-      markThreadRead(auth.accessToken, threadId).catch((e) => {
+      markThreadRead(auth.accessToken, threadId, {
+        mailboxKey: auth.mailboxOwnerId,
+      }).catch((e) => {
         console.warn("[gmail] mark-read failed:", e?.message ?? e);
       });
     }

@@ -201,18 +201,15 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     }
   }
 
-  // Mirrors the API's own rule (app/api/sequences/[sequenceId]/route.ts): a
-  // sequence still in draft can never have a real send behind it, since
-  // sending only starts once it's published — so draft is exactly the case
-  // that gets hard-deleted; anything else is archived (kept for history, no
-  // further emails go out) rather than erased.
-  const willHardDelete = sequence?.status === "draft";
-
   async function handleDelete() {
     if (deleting || !sequence) return;
-    const question = willHardDelete
-      ? `Delete "${sequence.name}"? This can't be undone.`
-      : `"${sequence.name}" will be archived — kept for history, but no further emails go out and it won't be deleted outright. Continue?`;
+    // DELETE always hard-deletes now (app/api/sequences/[sequenceId]/route.ts) —
+    // for anything past draft that also drops the recipient list and send log,
+    // so spell that out.
+    const question =
+      sequence.status === "draft"
+        ? `Delete "${sequence.name}"? This can't be undone.`
+        : `Delete "${sequence.name}"? This permanently removes the sequence, its recipients, and its send history. Mail already sent is not recalled. This can't be undone.`;
     if (!window.confirm(question)) return;
 
     setMenuOpen(false);
@@ -222,7 +219,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
       const res = await fetch(`/api/sequences/${encodeURIComponent(sequenceId)}`, {
         method: "DELETE",
       });
-      const data = (await res.json()) as { error?: string; deleted?: boolean; archived?: boolean };
+      const data = (await res.json()) as { error?: string; deleted?: boolean };
       if (!res.ok) throw new Error(data.error || "Could not delete sequence");
       router.push("/sequences");
     } catch (e) {
@@ -402,9 +399,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
                   ) : (
                     <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                   )}
-                  {titleCase(
-                    deleting ? "Deleting…" : willHardDelete ? "Delete sequence" : "Archive sequence",
-                  )}
+                  {titleCase(deleting ? "Deleting…" : "Delete sequence")}
                 </button>
               </div>
             ) : null}

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Search, Users, Workflow } from "lucide-react";
+import { Loader2, Plus, Search, Trash2, Users, Workflow } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
@@ -23,6 +23,7 @@ export default function SequencesPage() {
   const [creating, setCreating] = useState(false);
   const [showCreatePopup, setShowCreatePopup] = useState(false);
   const [search, setSearch] = useState("");
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const cached = getSequencesPrefetchCache();
@@ -76,6 +77,36 @@ export default function SequencesPage() {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleDelete(id: string, name: string) {
+    if (deletingId) return;
+    if (
+      !window.confirm(
+        `Delete "${name}"? This permanently removes the sequence, its recipients, and its send history. Mail already sent is not recalled. This can't be undone.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingId(id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/sequences/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const data = (await res.json()) as { error?: string; deleted?: boolean };
+      if (!res.ok) throw new Error(data.error || "Could not delete sequence");
+      setSequences((prev) => prev.filter((s) => s.id !== id));
+      const cached = getSequencesPrefetchCache();
+      if (cached) {
+        setSequencesPrefetchCache({
+          ...cached,
+          sequences: cached.sequences.filter((s) => (s as SequenceListItem).id !== id),
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete sequence");
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -169,11 +200,11 @@ export default function SequencesPage() {
               <li
                 key={s.id}
                 data-testid={`sequences-list-item-${s.id}`}
-                className="transition-colors hover:bg-[var(--color-surface-offset)]"
+                className="flex items-center gap-1 pr-2 transition-colors hover:bg-[var(--color-surface-offset)]"
               >
                 <Link
                   href={`/sequences/${encodeURIComponent(s.id)}`}
-                  className="flex items-center justify-between gap-4 px-5 py-4"
+                  className="flex min-w-0 flex-1 items-center justify-between gap-4 py-4 pl-5 pr-3"
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-3.5">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
@@ -203,6 +234,20 @@ export default function SequencesPage() {
                     <SequenceStatusPill status={s.status} />
                   </div>
                 </Link>
+                <button
+                  type="button"
+                  data-testid={`sequences-delete-btn-${s.id}`}
+                  aria-label={`Delete ${s.name?.trim() || "sequence"}`}
+                  disabled={deletingId === s.id}
+                  onClick={() => void handleDelete(s.id, s.name?.trim() || "Untitled")}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-danger)]/10 hover:text-[var(--color-danger)] disabled:opacity-60"
+                >
+                  {deletingId === s.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" strokeWidth={2} />
+                  )}
+                </button>
               </li>
             ))}
           </ul>

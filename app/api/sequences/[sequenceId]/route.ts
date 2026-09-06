@@ -125,7 +125,13 @@ export async function PATCH(request: Request, { params }: Params) {
   return NextResponse.json({ sequence: toSequenceDto(data) });
 }
 
-/** Archives the sequence; only an unsent draft is deleted outright. */
+/**
+ * Permanently deletes the sequence and everything under it. sequence_steps,
+ * sequence_enrollments and sequence_sends all declare ON DELETE CASCADE against
+ * sequences.id (0036_sequences.sql), so one delete clears the whole tree and the
+ * scheduler's claim query stops matching it immediately. Not reversible — any
+ * mail already sent has of course already gone out.
+ */
 export async function DELETE(request: Request, { params }: Params) {
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
@@ -133,26 +139,10 @@ export async function DELETE(request: Request, { params }: Params) {
   const sequence = await loadOwnedSequence(ctx, params.sequenceId);
   if (!sequence) return notFound();
 
-  const { count } = await ctx.svc
-    .from("sequence_sends")
-    .select("id", { count: "exact", head: true })
-    .eq("sequence_id", sequence.id);
-
-  if (sequence.status === "draft" && (count ?? 0) === 0) {
-    await ctx.svc.from("sequences").delete().eq("id", sequence.id);
-    return NextResponse.json({ deleted: true });
+  const { error } = await ctx.svc.from("sequences").delete().eq("id", sequence.id);
+  if (error) {
+    return NextResponse.json({ error: error.message || "Could not delete" }, { status: 500 });
   }
 
-  await ctx.svc
-    .from("sequences")
-    .update({ status: "archived", updated_at: new Date().toISOString() })
-    .eq("id", sequence.id);
-  // Stop the scheduler touching this sequence's recipients again.
-  await ctx.svc
-    .from("sequence_enrollments")
-    .update({ next_run_at: null, updated_at: new Date().toISOString() })
-    .eq("sequence_id", sequence.id)
-    .eq("status", "active");
-
-  return NextResponse.json({ archived: true });
+  return NextResponse.json({ deleted: true });
 }

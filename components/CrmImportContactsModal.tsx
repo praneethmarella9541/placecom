@@ -12,6 +12,10 @@ import { cn } from "@/lib/utils";
 /** Rows drawn before "load more" — the directory runs to thousands. */
 const PAGE_SIZE = 60;
 
+/** Mirrors MAX_IMPORT in app/api/crm/leads/import/route.ts — the server takes
+ *  only the first this-many ids, so "select all" stops here and says so. */
+const IMPORT_CAP = 100;
+
 /**
  * Bulk "import from contacts" — the second of the two ways a lead enters the
  * board (the other being the single "Add to CRM" action on a contact card).
@@ -65,11 +69,34 @@ export function CrmImportContactsModal({
   const visible = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
   const alreadyCount = useMemo(() => contacts.filter(isOnBoard).length, [contacts, isOnBoard]);
 
+  // Everything the current search / "hide existing" filter leaves that could
+  // actually be imported (rows already on the board can't be) — "select all"
+  // acts on this whole set, not just the visible page.
+  const selectable = useMemo(() => filtered.filter((c) => !isOnBoard(c)), [filtered, isOnBoard]);
+  const allSelected = selectable.length > 0 && selectable.every((c) => selected.has(c.id));
+  const someSelected = !allSelected && selectable.some((c) => selected.has(c.id));
+  const overCap = selectable.length > IMPORT_CAP || selected.size >= IMPORT_CAP;
+
   function toggle(id: string) {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        for (const c of selectable) next.delete(c.id);
+      } else {
+        for (const c of selectable) {
+          if (next.size >= IMPORT_CAP) break;
+          next.add(c.id);
+        }
+      }
       return next;
     });
   }
@@ -156,6 +183,33 @@ export function CrmImportContactsModal({
               />
               {titleCase(`Hide the ${alreadyCount} already on the board`)}
             </label>
+          )}
+          {selectable.length > 0 && (
+            <label className="flex cursor-pointer items-center gap-2 text-[12px] font-medium text-[var(--color-text)]">
+              <input
+                type="checkbox"
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                checked={allSelected}
+                onChange={toggleSelectAll}
+                className="h-3.5 w-3.5 accent-[var(--color-copper)]"
+              />
+              {allSelected
+                ? titleCase("Clear selection")
+                : titleCase(
+                    search.trim() || !hideExisting
+                      ? `Select all ${Math.min(selectable.length, IMPORT_CAP)} matching`
+                      : `Select all ${Math.min(selectable.length, IMPORT_CAP)}`,
+                  )}
+            </label>
+          )}
+          {overCap && (
+            <p className="text-[11px] text-[var(--color-text-faint)]">
+              {titleCase(
+                `Up to ${IMPORT_CAP} import at once — bring these in, then search for the rest.`,
+              )}
+            </p>
           )}
         </div>
 

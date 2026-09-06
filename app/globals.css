@@ -2,6 +2,98 @@
 @tailwind components;
 @tailwind utilities;
 
+.privacy-policy {
+  font-family: var(--font-body);
+  color: var(--color-text);
+}
+
+.privacy-policy h1,
+.privacy-policy h2,
+.privacy-policy h3 {
+  font-family: var(--font-display);
+  color: var(--color-text);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.privacy-policy h1 {
+  margin: 0 0 1.25rem;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  line-height: 1.08;
+}
+
+.privacy-policy h2 {
+  margin-top: 2.5rem;
+  margin-bottom: 0.9rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: 1.5rem;
+  font-size: clamp(1.3rem, 2vw, 1.8rem);
+  line-height: 1.2;
+}
+
+.privacy-policy h3 {
+  margin-top: 1.75rem;
+  margin-bottom: 0.55rem;
+  font-size: 1.08rem;
+  line-height: 1.35;
+}
+
+.privacy-policy p,
+.privacy-policy li {
+  color: var(--color-text-muted);
+  font-size: 0.98rem;
+  line-height: 1.75;
+}
+
+.privacy-policy p {
+  margin: 0.7rem 0;
+}
+
+.privacy-policy ul {
+  margin: 0.8rem 0 1.2rem;
+  padding-left: 1.3rem;
+}
+
+.privacy-policy li {
+  margin: 0.3rem 0;
+  padding-left: 0.15rem;
+}
+
+.privacy-policy a {
+  color: var(--color-copper);
+  text-decoration: underline;
+  text-decoration-color: rgba(196, 92, 26, 0.35);
+  text-underline-offset: 3px;
+}
+
+.privacy-policy a:hover {
+  color: var(--color-copper-hover);
+}
+
+.privacy-policy strong {
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.privacy-policy blockquote {
+  margin: 1.3rem 0;
+  border-left: 3px solid var(--color-copper);
+  background: var(--color-copper-tint);
+  padding: 0.75rem 1rem;
+}
+
+.privacy-policy blockquote p {
+  margin: 0.25rem 0;
+}
+
+.privacy-policy code {
+  border-radius: 6px;
+  background: var(--color-surface-2);
+  padding: 0.12rem 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
 /* ───────────────────────────────────────────────────────────────
  * Design tokens (light theme only)
  * ─────────────────────────────────────────────────────────────── */

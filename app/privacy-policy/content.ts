@@ -159,10 +159,6 @@ Vercel may host the Service, run serverless functions and scheduled jobs, and pr
 
 We may disclose information to employees, administrators, contractors, and service providers who need it to operate the Service and are subject to confidentiality or data-protection obligations. We may disclose information when required by law, legal process, or a valid governmental request, or when necessary to protect rights, safety, security, or the integrity of the Service. If the organization undergoes a merger, acquisition, financing, reorganization, or sale of assets, information may be transferred as part of that transaction subject to applicable law.
 
-**No payment processor identified.** The repository contains no Stripe, Razorpay, PayPal, checkout, subscription, invoice, or payment-gateway integration. Internal usage and cost calculations are not payment processing.
-
-> **Owner confirmation required before publication:** If any meeting-transcription or meeting-summary provider other than OpenAI is used in production (for example, a dedicated meetings/transcription vendor), it must be added here with its own subsection describing what it processes. Every third party that receives personal information needs a corresponding disclosure in this section.
-
 ## 4. Data Storage, Security, and Retention
 
 ### 4.1 Storage
@@ -193,8 +189,6 @@ While an account or organization workspace is active, we retain information for 
 This 90-day figure applies to data held in our production systems. It does not by itself guarantee immediate deletion from routine backups (which are retained and cycled out separately, see below) or from third-party providers who independently control data you connected or sent through them — Google, OpenAI, Exotel, Expo, or Vercel. Where those providers retain copies (for example, a Gmail message synced before disconnection, or a call recording stored by Exotel), deletion from their systems is governed by their own retention practices and any deletion request you make directly to them.
 
 The current codebase does not yet implement automated enforcement of the 90-day deletion window; this is an operational commitment that the operator must implement and audit. Some records can already be deleted through feature-specific controls, including extraction records and meeting records. Gmail, Drive, labels, drafts, files, and permissions may be deleted or revoked through connected Google APIs. WhatsApp deletion currently includes soft-deletion behavior, so deleted records or media may remain for a period of time within the 90-day window described above.
-
-> **Owner confirmation required before publication:** Confirm the retention period for routine backups (e.g., 30/60/90-day rolling backups) separately from the 90-day production-data window above, since backups typically persist on their own cycle even after production data is deleted. Also confirm whether any data must be retained longer than 90 days for legal, tax, or regulatory reasons (e.g., financial records, records relevant to an active dispute).
 
 ## 5. User Rights and Data Deletion
 

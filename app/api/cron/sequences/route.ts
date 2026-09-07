@@ -39,11 +39,22 @@ export async function GET(request: Request) {
   const budget = Number(params.get("budgetMs"));
   const deadlineMs = Number.isFinite(budget) && budget > 0 ? budget : undefined;
 
+  // Self-reported build identity. Vercel bakes these into every deployment's
+  // env at build time — surfacing them here answers "which commit actually
+  // produced this response" directly from the response itself, rather than
+  // from a dashboard label or a "Redeploy" entry that can silently diverge
+  // from what's really running behind a given domain.
+  const build = {
+    commit: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? null,
+    branch: process.env.VERCEL_GIT_COMMIT_REF ?? null,
+    vercelEnv: process.env.VERCEL_ENV ?? null,
+  };
+
   try {
     const summary = await runSequencesCron({ dryRun, deadlineMs });
-    return NextResponse.json(summary);
+    return NextResponse.json({ ...summary, build });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Sequence run failed";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return NextResponse.json({ ok: false, error: message, build }, { status: 500 });
   }
 }

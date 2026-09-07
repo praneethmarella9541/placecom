@@ -64,6 +64,22 @@ export type CronSummary = {
   failed: number;
   mailboxes: number;
   durationMs: number;
+  /**
+   * Dry-run only. Surfaces the RPC's raw outcome plus an independent plain
+   * SELECT against the same table/client, so a "claimed: 0" that seems wrong
+   * can be told apart from a genuinely correct result without depending on
+   * Supabase's own log search (which is exactly what this was added to
+   * verify against, during a case where the RPC reported zero rows that a
+   * direct SQL call against the same project found immediately).
+   */
+  debug?: {
+    rpcError: string | null;
+    rpcReturnedCount: number;
+    /** Plain select, same filters as the RPC, no RPC/claim involved. */
+    plainSelectCount: number;
+    plainSelectSample: { id: string; email: string; next_run_at: string | null }[];
+    plainSelectError: string | null;
+  };
 };
 
 type EnrollmentRow = {
@@ -576,6 +592,35 @@ export async function runSequencesCron(
 
     if (claimError) throw new Error(`Claim failed: ${claimError.message}`);
     const claimedRows = (claimed ?? []) as EnrollmentRow[];
+
+    // Populate once, on the very first (and, once anything is claimed, only)
+    // trip through the loop — a diagnostic snapshot of what the RPC actually
+    // returned versus what a plain SELECT through this exact same client
+    // sees for the same criteria, independent of the RPC path entirely.
+    if (ctx.dryRun && !summary.debug) {
+      const nowIso = new Date().toISOString();
+      const { data: plainRows, error: plainError } = await svc
+        .from("sequence_enrollments")
+        .select("id, email, next_run_at, status, sequences!inner(status)")
+        .eq("status", "active")
+        .eq("sequences.status", "active")
+        .not("next_run_at", "is", null)
+        .lte("next_run_at", nowIso)
+        .limit(10);
+
+      summary.debug = {
+        rpcError: claimError ? String((claimError as { message?: string }).message ?? claimError) : null,
+        rpcReturnedCount: claimedRows.length,
+        plainSelectCount: plainRows?.length ?? 0,
+        plainSelectSample: (plainRows ?? []).map((r) => ({
+          id: r.id as string,
+          email: r.email as string,
+          next_run_at: r.next_run_at as string | null,
+        })),
+        plainSelectError: plainError ? plainError.message : null,
+      };
+    }
+
     if (claimedRows.length === 0) break;
 
     const rows = claimedRows.filter((row) => !handled.has(row.id));

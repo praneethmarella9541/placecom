@@ -4,12 +4,12 @@ import type { Metadata } from "next";
 import { renderLegalMarkdown } from "@/lib/legal-markdown";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy | The Nucleus",
-  description: "Privacy Policy for XLRI-CRM / The Nucleus.",
+  title: "Delete Your Account | The Nucleus",
+  description: "How to request deletion of your The Nucleus account and associated data.",
 };
 
-export default function PrivacyPolicyPage() {
-  const policy = fs.readFileSync(path.join(process.cwd(), "PRIVACY_POLICY.md"), "utf8");
+export default function AccountDeletionPage() {
+  const content = fs.readFileSync(path.join(process.cwd(), "ACCOUNT_DELETION.md"), "utf8");
 
   return (
     <main className="min-h-screen bg-[var(--color-bg)] px-4 py-8 text-[var(--color-text)] sm:px-6 lg:px-8">
@@ -23,7 +23,7 @@ export default function PrivacyPolicyPage() {
 
         <article
           className="privacy-policy surface-card overflow-hidden rounded-[var(--radius-xl)] p-5 sm:p-8 lg:p-10"
-          dangerouslySetInnerHTML={{ __html: renderLegalMarkdown(policy) }}
+          dangerouslySetInnerHTML={{ __html: renderLegalMarkdown(content) }}
         />
       </div>
     </main>

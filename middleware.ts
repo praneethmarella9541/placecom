@@ -13,8 +13,11 @@ import {
   writeMiddlewareAccessCache,
 } from "@/lib/middleware-access-cache";
 
+/** Public legal pages — no session refresh, no feature-access checks. */
+const PUBLIC_PATHS = new Set(["/privacy", "/account-deletion"]);
+
 export async function middleware(request: NextRequest) {
-  if (request.nextUrl.pathname === "/privacy") {
+  if (PUBLIC_PATHS.has(request.nextUrl.pathname)) {
     return NextResponse.next();
   }
 

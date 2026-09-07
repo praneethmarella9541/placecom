@@ -36,6 +36,8 @@ export type RichTextEditorHandle = {
   insertLink: () => void;
   /** Insert `{` at the caret and open the variable picker. */
   insertVariableTrigger: () => void;
+  /** Insert a complete `{key}` token at the caret, picker not involved. */
+  insertVariableToken: (key: string) => void;
   isFocused: () => boolean;
 };
 
@@ -605,6 +607,24 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
       document.execCommand("insertText", false, "{");
       emit();
       syncVariableMenu();
+    },
+    // Used by the sequence editor's variable chips, where the key is already
+    // chosen and going through the `{`-picker would just be an extra step.
+    // Same markup insertVariable() produces, so a chip-inserted token is
+    // tinted and deletes as one unit exactly like a picked one.
+    insertVariableToken: (key: string) => {
+      const el = editorRef.current;
+      if (!el) return;
+      el.focus();
+      restoreSelection();
+      document.execCommand(
+        "insertHTML",
+        false,
+        `<span class="${VARIABLE_SPAN_CLASS}">{${key}}</span>&nbsp;`
+      );
+      closeVariableMenu();
+      emit();
+      saveSelection();
     },
     isFocused: () => !!editorRef.current && document.activeElement === editorRef.current,
   }));

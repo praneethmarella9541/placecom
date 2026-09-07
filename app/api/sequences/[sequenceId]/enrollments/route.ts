@@ -1,18 +1,20 @@
 import { NextResponse } from "next/server";
 
 import { extractAllEmailsFromText, parseRecipientValue } from "@/lib/email-recipients";
-import { normalizeMergeFieldKey } from "@/lib/mail-merge";
 import { jitteredStart, planNextEmailStep } from "@/lib/sequence-schedule";
 import {
   getSequenceContext,
   isErrorResponse,
+  loadContactSources,
   loadOwnedSequence,
   notFound,
+  resolveEnrollmentMergeFields,
   toEnrollmentDto,
   toStepDto,
   toStepLite,
   windowFromSequenceRow,
 } from "@/lib/sequence-server";
+import { buildEnrollmentMergeFields } from "@/lib/sequence-variables";
 import type { EnrollmentStatus } from "@/lib/sequence-types";
 
 export const runtime = "nodejs";
@@ -20,6 +22,8 @@ export const runtime = "nodejs";
 const MAX_PER_REQUEST = 200;
 
 type Params = { params: { sequenceId: string } };
+
+type EnrollmentRowForFields = Parameters<typeof toEnrollmentDto>[0];
 
 const ENROLLMENT_COLUMNS =
   "id, email, display_name, status, current_step_order, next_run_at, first_sent_at, last_sent_at, replied_at, last_error, merge_fields, cc";
@@ -50,7 +54,18 @@ export async function GET(request: Request, { params }: Params) {
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ enrollments: (data ?? []).map(toEnrollmentDto) });
+  // Read through to the contacts rather than serving the bag stored at
+  // enrollment time: the editor's variable coverage and the preview have to
+  // show what would actually be merged if the step went out now.
+  const rows = (data ?? []) as EnrollmentRowForFields[];
+  const resolved = await resolveEnrollmentMergeFields(ctx.svc, ctx.mailboxOwnerId, rows);
+
+  return NextResponse.json({
+    enrollments: rows.map((row) => ({
+      ...toEnrollmentDto(row),
+      mergeFields: resolved.get(row.email.trim().toLowerCase()) ?? row.merge_fields ?? {},
+    })),
+  });
 }
 
 type PostBody = {
@@ -101,28 +116,34 @@ export async function POST(request: Request, { params }: Params) {
     );
   }
 
+  // A removed recipient is still a row (DELETE soft-removes by setting
+  // status='removed'), and the list deliberately hides those. Counting them as
+  // duplicates made re-adding someone impossible: the enroll call reported
+  // "already enrolled" about a person no screen could show. Only a row that is
+  // still live is a duplicate; a removed one is revived below.
   const { data: existingRows } = await ctx.svc
     .from("sequence_enrollments")
-    .select("email")
+    .select("id, email, status")
     .eq("sequence_id", sequence.id)
     .in("email", unique);
-  const already = new Set(((existingRows ?? []) as { email: string }[]).map((r) => r.email));
 
-  // {{first_name}}/{{last_name}}/{{company}} in a step template only ever
-  // resolve from merge_fields, and nothing in the UI sends body.mergeFields —
-  // so without this every recipient came in with none of those set, and
-  // buildStepEmail's "missing placeholder" check silently skipped every send.
-  // Fill them in here from whatever contact card matches the email, the same
-  // way the recipient picker itself is sourced.
-  const { data: directoryMatches } = await ctx.svc
-    .from("directory_contacts")
-    .select("email, name, company")
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
-    .in("email", unique);
-  const directoryByEmail = new Map<string, { name: string | null; company: string | null }>();
-  for (const row of (directoryMatches ?? []) as { email: string | null; name: string | null; company: string | null }[]) {
-    if (row.email) directoryByEmail.set(row.email.trim().toLowerCase(), { name: row.name, company: row.company });
+  const already = new Set<string>();
+  const revivable = new Map<string, string>();
+  for (const row of (existingRows ?? []) as { id: string; email: string; status: string }[]) {
+    if (row.status === "removed") revivable.set(row.email, row.id);
+    else already.add(row.email);
   }
+
+  // Fields are resolved from contacts at send and preview time, so this stored
+  // bag is a starting point rather than the source of truth: it captures the
+  // chip's display name for someone with no card, and any custom key an API
+  // caller passes. Both contact sources are still read here so a recipient is
+  // never enrolled with nothing at all behind their variables.
+  const { directoryByEmail, syncedByEmail } = await loadContactSources(
+    ctx.svc,
+    ctx.mailboxOwnerId,
+    unique,
+  );
 
   // Being in two sequences from the same mailbox means two unrelated threads —
   // worth surfacing, but not worth blocking.
@@ -144,7 +165,7 @@ export async function POST(request: Request, { params }: Params) {
 
   const { data: stepRows } = await ctx.svc
     .from("sequence_steps")
-    .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours")
+    .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours, delay_minutes")
     .eq("sequence_id", sequence.id)
     .order("step_order");
   const lite = (stepRows ?? []).map(toStepDto).map(toStepLite);
@@ -156,26 +177,50 @@ export async function POST(request: Request, { params }: Params) {
 
   const skipped: { email: string; reason: string }[] = [];
   const rows: Record<string, unknown>[] = [];
+  const revive: { id: string; fields: Record<string, unknown> }[] = [];
 
   for (const email of unique) {
     if (already.has(email)) {
       skipped.push({ email, reason: "duplicate" });
       continue;
     }
-    const contact = directoryByEmail.get(email);
-    const fullName = (nameByEmail.get(email) ?? contact?.name ?? "").trim();
-    const [firstName, ...rest] = fullName.split(/\s+/).filter(Boolean);
-    const mergeFields: Record<string, string> = {};
-    if (fullName) mergeFields.name = fullName;
-    if (firstName) mergeFields.first_name = firstName;
-    if (rest.length) mergeFields.last_name = rest.join(" ");
-    if (contact?.company?.trim()) mergeFields.company = contact.company.trim();
+    const mergeFields = buildEnrollmentMergeFields(email, {
+      directory: directoryByEmail.get(email),
+      synced: syncedByEmail.get(email),
+      displayName: nameByEmail.get(email),
+      // Explicit mergeFields from the request (unused by today's UI, but kept
+      // for API callers) win over the contact-derived defaults.
+      custom: body.mergeFields?.[email],
+    });
 
-    // Explicit mergeFields from the request (unused by today's UI, but kept
-    // for API callers) win over the directory-derived defaults above.
-    const custom = body.mergeFields?.[email] ?? {};
-    for (const [key, value] of Object.entries(custom)) {
-      if (typeof value === "string") mergeFields[normalizeMergeFieldKey(key)] = value;
+    const revivableId = revivable.get(email);
+    if (revivableId) {
+      // Same reset the "restart" action performs: adding someone back is a
+      // fresh conversation, so the old thread pointers and terminal timestamps
+      // must not survive — otherwise the first email would thread onto the
+      // attempt they were removed from.
+      revive.push({
+        id: revivableId,
+        fields: {
+          status: "active",
+          display_name: nameByEmail.get(email) ?? null,
+          merge_fields: mergeFields,
+          current_step_order: 0,
+          next_step_id: plan?.stepId ?? null,
+          next_run_at: plan ? jitteredStart(plan.runAt).toISOString() : null,
+          gmail_thread_id: null,
+          last_gmail_message_id: null,
+          first_sent_at: null,
+          replied_at: null,
+          completed_at: null,
+          last_error: null,
+          attempt_count: 0,
+          claimed_at: null,
+          claim_token: null,
+          updated_at: now.toISOString(),
+        },
+      });
+      continue;
     }
 
     rows.push({
@@ -193,14 +238,26 @@ export async function POST(request: Request, { params }: Params) {
     });
   }
 
-  if (rows.length === 0) {
-    return NextResponse.json({ added: 0, skipped, warnings });
+  for (const row of revive) {
+    const { error } = await ctx.svc
+      .from("sequence_enrollments")
+      .update(row.fields)
+      .eq("id", row.id)
+      .eq("sequence_id", sequence.id);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const { error } = await ctx.svc.from("sequence_enrollments").insert(rows);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (rows.length > 0) {
+    const { error } = await ctx.svc.from("sequence_enrollments").insert(rows);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 
-  return NextResponse.json({ added: rows.length, skipped, warnings });
+  return NextResponse.json({
+    added: rows.length,
+    revived: revive.length,
+    skipped,
+    warnings,
+  });
 }
 
 export type EnrollmentActionBody = {

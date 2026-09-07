@@ -30,7 +30,33 @@ export function SequenceStatusPill({ status }: { status: SequenceStatus }) {
   return <span className={cn(BASE, SEQUENCE_TONES[status])}>{SEQUENCE_STATUS_LABELS[status]}</span>;
 }
 
-export function EnrollmentStatusPill({ status }: { status: EnrollmentStatus }) {
+/**
+ * `sequenceActive` guards against the one combination the raw status lies
+ * about: an enrollment sits at "active" while the sequence itself is disabled.
+ * The scheduler's claim query requires `s.status = 'active'` (see
+ * 0036_sequences.sql), so nothing is going out for that person — calling them
+ * "Active" would promise sending that can't happen. They're still stored as
+ * active, and that matters: re-enabling the sequence resumes exactly these
+ * people, while anyone paused on their own row stays put. So it's only the
+ * label that changes, never the status.
+ */
+export function EnrollmentStatusPill({
+  status,
+  sequenceActive = true,
+}: {
+  status: EnrollmentStatus;
+  sequenceActive?: boolean;
+}) {
+  if (status === "active" && !sequenceActive) {
+    return (
+      <span
+        className={cn(BASE, "bg-amber-500/10 text-amber-600 dark:text-amber-400")}
+        title="The sequence is disabled — this recipient resumes here once you enable it."
+      >
+        On hold
+      </span>
+    );
+  }
   return (
     <span className={cn(BASE, ENROLLMENT_TONES[status])}>{ENROLLMENT_STATUS_LABELS[status]}</span>
   );

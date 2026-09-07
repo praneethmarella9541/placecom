@@ -7,12 +7,20 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /**
- * Sequence scheduler tick. Called by an external pinger (GitHub Actions /
- * cron-job.org) roughly every 10 minutes:
+ * Sequence scheduler tick. Called by an external pinger (cron-job.org) every
+ * minute:
  *
  *   curl -H "Authorization: Bearer $CRON_SECRET" https://<app>/api/cron/sequences
  *
- * Pass ?dry=1 to claim and evaluate due enrollments without sending anything.
+ * cron-job.org closes the connection after 30s, so the run is budgeted to
+ * answer inside that (see DEFAULT_DEADLINE_MS in lib/sequence-runner.ts) and
+ * leans on a 1-minute cadence for throughput rather than one long run. Anything
+ * left over stays due and the next tick claims it.
+ *
+ * Query params:
+ *   ?dry=1        claim and evaluate due enrollments without sending anything.
+ *   ?budgetMs=N   override the work budget (clamped to 5s..240s) for a pinger
+ *                 that tolerates a longer response than cron-job.org does.
  */
 export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET?.trim();
@@ -25,10 +33,14 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const dryRun = new URL(request.url).searchParams.get("dry") === "1";
+  const params = new URL(request.url).searchParams;
+  const dryRun = params.get("dry") === "1";
+  // Ignore a non-numeric override rather than passing NaN through as a budget.
+  const budget = Number(params.get("budgetMs"));
+  const deadlineMs = Number.isFinite(budget) && budget > 0 ? budget : undefined;
 
   try {
-    const summary = await runSequencesCron({ dryRun });
+    const summary = await runSequencesCron({ dryRun, deadlineMs });
     return NextResponse.json(summary);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Sequence run failed";

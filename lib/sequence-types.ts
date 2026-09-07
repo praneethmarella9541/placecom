@@ -20,6 +20,15 @@ export type SendStatus = (typeof SEND_STATUSES)[number];
 
 export type SequenceStepKind = "email" | "wait";
 
+export type SequenceStepAttachment = {
+  id: string;
+  stepId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  createdAt: string;
+};
+
 export type SequenceStep = {
   id: string;
   stepOrder: number;
@@ -28,6 +37,10 @@ export type SequenceStep = {
   bodyHtml: string | null;
   delayDays: number;
   delayHours: number;
+  /** Testing aid — see the 0060 migration header. */
+  delayMinutes: number;
+  /** Files sent with this step. Absent on responses that don't join them. */
+  attachments?: SequenceStepAttachment[];
 };
 
 /** A step as submitted by the editor — `id` is absent for newly added steps. */
@@ -38,6 +51,7 @@ export type SequenceStepInput = {
   bodyHtml?: string | null;
   delayDays?: number;
   delayHours?: number;
+  delayMinutes?: number;
 };
 
 export type Sequence = {
@@ -56,6 +70,8 @@ export type Sequence = {
   signatureHtml: string | null;
   trackOpens: boolean;
   exitOnReply: boolean;
+  /** Merge key → value used for recipients who have none of their own. */
+  variableFallbacks: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 };
@@ -131,9 +147,13 @@ export const ENROLLMENT_STATUS_LABELS: Record<EnrollmentStatus, string> = {
   removed: "Removed",
 };
 
+// A sequence reads as a single on/off switch to the user, so the stored
+// "paused" status is labelled "Disabled" — the mirror of "Enabled". (Per
+// recipient, ENROLLMENT_STATUS_LABELS keeps "Paused": one person can be held
+// back while the sequence itself is still running.)
 export const SEQUENCE_STATUS_LABELS: Record<SequenceStatus, string> = {
   draft: "Draft",
   active: "Enabled",
-  paused: "Paused",
+  paused: "Disabled",
   archived: "Archived",
 };

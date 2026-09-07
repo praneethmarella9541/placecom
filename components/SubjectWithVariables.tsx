@@ -20,7 +20,50 @@ type Props = {
   placeholder?: string;
   /** When non-empty, `{` opens the picker and known variables are tinted. */
   variables?: ComposeVariable[];
+  /**
+   * Palette. "gmail" is the compose dialog's own borderless header field;
+   * "app" is a bordered workspace input that themes with the rest of the page
+   * (the sequence step editor). Behaviour is identical either way.
+   */
+  theme?: "gmail" | "app";
+  /** Read-only rendering — a threaded follow-up's subject isn't editable. */
+  disabled?: boolean;
+  testId?: string;
 };
+
+const THEMES = {
+  gmail: {
+    wrap: "relative w-full",
+    field:
+      "w-full whitespace-pre-wrap break-words text-[15px] font-normal text-[#202124] outline-none [&_.cv-var]:rounded [&_.cv-var]:bg-[#e8f0fe] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[#1967d2]",
+    placeholder: "pointer-events-none absolute left-0 top-0 select-none text-[15px] text-[#70757a]",
+    plain:
+      "w-full border-0 bg-transparent text-[15px] font-normal text-[#202124] outline-none placeholder:text-[#70757a]",
+    menu: "border-[#dadce0] bg-white shadow-[0_4px_16px_rgba(60,64,67,0.28)]",
+    menuLabel: "text-[#70757a]",
+    menuItemActive: "bg-[#e8f0fe]",
+    menuItemIdle: "hover:bg-[#f1f3f4]",
+    menuTitle: "text-[#202124]",
+    menuHint: "text-[#5f6368]",
+  },
+  app: {
+    // Same box the plain <input> used to draw, so swapping the field in
+    // doesn't change the step card's layout.
+    wrap: "relative w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] px-4 py-[13px] focus-within:border-[var(--color-copper)] focus-within:bg-[var(--color-surface)]",
+    field:
+      "w-full whitespace-pre-wrap break-words text-[14px] leading-[18px] text-[var(--color-text)] outline-none [&_.cv-var]:rounded [&_.cv-var]:bg-[var(--color-copper-tint)] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[var(--color-copper)]",
+    placeholder:
+      "pointer-events-none absolute left-4 top-[13px] select-none text-[14px] leading-[18px] text-[var(--color-text-faint)]",
+    plain:
+      "h-11 w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] px-4 text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]",
+    menu: "border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]",
+    menuLabel: "text-[var(--color-text-faint)]",
+    menuItemActive: "bg-[var(--color-copper-tint)]",
+    menuItemIdle: "hover:bg-[var(--color-surface-offset)]",
+    menuTitle: "text-[var(--color-text)]",
+    menuHint: "text-[var(--color-text-muted)]",
+  },
+} as const;
 
 /** Same trigger rule as the body editor: an unterminated `{query` before the caret. */
 function findTrigger(text: string, caret: number): { braceIndex: number; query: string } | null {
@@ -107,9 +150,13 @@ function setCaretOffset(root: HTMLElement, offset: number): void {
  * text, so the subject header, draft autosave and window title are unaffected.
  */
 export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
-  function SubjectWithVariables({ value, onChange, placeholder, variables }, ref) {
+  function SubjectWithVariables(
+    { value, onChange, placeholder, variables, theme = "gmail", disabled, testId },
+    ref,
+  ) {
     const vars = useMemo(() => variables ?? [], [variables]);
-    const enabled = vars.length > 0;
+    const enabled = vars.length > 0 && !disabled;
+    const t = THEMES[theme];
     const elRef = useRef<HTMLDivElement>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
@@ -291,24 +338,27 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
     if (!enabled) {
       return (
         <input
+          data-testid={testId}
           type="text"
           value={value}
+          disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full border-0 bg-transparent text-[15px] font-normal text-[#202124] outline-none placeholder:text-[#70757a]"
+          className={`${t.plain}${disabled ? " opacity-60" : ""}`}
         />
       );
     }
 
     return (
-      <div ref={wrapRef} className="relative w-full">
+      <div ref={wrapRef} className={t.wrap}>
         {empty && placeholder && (
-          <span className="pointer-events-none absolute left-0 top-0 select-none text-[15px] text-[#70757a]">
+          <span className={t.placeholder}>
             {placeholder}
           </span>
         )}
         <div
           ref={elRef}
+          data-testid={testId}
           contentEditable
           suppressContentEditableWarning
           role="textbox"
@@ -331,16 +381,16 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
             const text = e.clipboardData.getData("text/plain").replace(/[\r\n]+/g, " ");
             document.execCommand("insertText", false, text);
           }}
-          className="w-full whitespace-pre-wrap break-words text-[15px] font-normal text-[#202124] outline-none [&_.cv-var]:rounded [&_.cv-var]:bg-[#e8f0fe] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[#1967d2]"
+          className={t.field}
         />
 
         {menu && (
           <div
-            className="absolute left-0 top-full z-[1000] mt-1 max-h-[260px] w-[264px] overflow-y-auto rounded-lg border border-[#dadce0] bg-white py-1 shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+            className={`absolute left-0 top-full z-[1000] mt-1 max-h-[260px] w-[264px] overflow-y-auto rounded-lg border py-1 ${t.menu}`}
             role="listbox"
             aria-label="Insert variable"
           >
-            <p className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#70757a]">
+            <p className={`px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide ${t.menuLabel}`}>
               Insert variable
             </p>
             {menu.matches.map((v, i) => (
@@ -352,11 +402,11 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
                 onMouseDown={(e) => { e.preventDefault(); insert(v); }}
                 onMouseEnter={() => setMenu((m) => (m ? { ...m, index: i } : m))}
                 className={`flex w-full flex-col items-start gap-0.5 px-3 py-1.5 text-left ${
-                  i === menu.index ? "bg-[#e8f0fe]" : "hover:bg-[#f1f3f4]"
+                  i === menu.index ? t.menuItemActive : t.menuItemIdle
                 }`}
               >
-                <span className="text-[13px] font-medium text-[#202124]">{v.label}</span>
-                <span className="text-[11px] text-[#5f6368]">
+                <span className={`text-[13px] font-medium ${t.menuTitle}`}>{v.label}</span>
+                <span className={`text-[11px] ${t.menuHint}`}>
                   {`{${v.key}}`} · {v.hint}
                 </span>
               </button>

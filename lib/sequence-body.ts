@@ -12,6 +12,12 @@ export type StepEmailInput = {
   bodyHtml: string;
   includeSignature: boolean;
   signatureHtml?: string | null;
+  /**
+   * Sequence-level values for recipients whose own fields have nothing for a
+   * key. Weakest source, so a recipient's real job title always wins over the
+   * fallback — it only ever fills a hole that would otherwise skip the send.
+   */
+  variableFallbacks?: Record<string, string> | null;
 };
 
 export type RecipientContext = {
@@ -32,7 +38,10 @@ export type BuiltStepEmail = {
  * Merge keys available for every recipient, before their own custom fields.
  * `name` feeds mail-merge's derived first_name/last_name handling.
  */
-export function buildMergeFields(recipient: RecipientContext): Record<string, string> {
+export function buildMergeFields(
+  recipient: RecipientContext,
+  fallbacks?: Record<string, string> | null,
+): Record<string, string> {
   const fields: Record<string, string> = {};
   for (const [key, value] of Object.entries(recipient.mergeFields ?? {})) {
     if (typeof value === "string") fields[normalizeMergeFieldKey(key)] = value;
@@ -40,6 +49,13 @@ export function buildMergeFields(recipient: RecipientContext): Record<string, st
   fields.email = recipient.email;
   if (!fields.name?.trim() && recipient.displayName?.trim()) {
     fields.name = recipient.displayName.trim();
+  }
+  // Applied last and only into gaps: the fallback is what the sequence says to
+  // write when this particular recipient has nothing of their own.
+  for (const [key, value] of Object.entries(fallbacks ?? {})) {
+    if (typeof value !== "string" || !value.trim()) continue;
+    const k = normalizeMergeFieldKey(key);
+    if (!fields[k]?.trim()) fields[k] = value.trim();
   }
   return fields;
 }
@@ -63,7 +79,7 @@ function htmlToPlainText(html: string): string {
 }
 
 export function buildStepEmail(step: StepEmailInput, recipient: RecipientContext): BuiltStepEmail {
-  const fields = buildMergeFields(recipient);
+  const fields = buildMergeFields(recipient, step.variableFallbacks);
 
   const check = validateMergeTemplates(step.subjectTemplate, step.bodyHtml, fields);
   const missing = check.ok ? [] : check.missing;

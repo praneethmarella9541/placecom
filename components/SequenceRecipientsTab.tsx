@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2, MoreVertical, Play, Pause, RotateCcw, Trash2, UserPlus, Users } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { EnrollmentStatusPill } from "@/components/SequenceStatusPill";
 import { Skeleton } from "@/components/Skeleton";
+import { MERGE_FIELD_ALIAS_KEYS } from "@/lib/compose-variables";
 import { formatInTimeZone } from "@/lib/sequence-schedule";
 import {
   loadRecipientSuggestions,
@@ -15,41 +17,35 @@ import type { Sequence, SequenceEnrollment } from "@/lib/sequence-types";
 
 type Props = {
   sequence: Sequence;
-  onCountsChanged: () => void;
+  /** Owned by SequenceEditor — the step editor reads the same list. */
+  enrollments: SequenceEnrollment[];
+  loading: boolean;
+  /** Re-fetches the list and the tallies after this tab changes something. */
+  onChanged: () => Promise<void>;
 };
 
-export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
-  const [enrollments, setEnrollments] = useState<SequenceEnrollment[]>([]);
-  const [loading, setLoading] = useState(true);
+export function SequenceRecipientsTab({ sequence, enrollments, loading, onChanged }: Props) {
   const [recipients, setRecipients] = useState("");
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  /**
+   * The row menu is positioned in viewport coordinates and portalled to
+   * <body>, because the workspace <main> is overflow-hidden
+   * (WorkspaceChrome.tsx) — an absolutely-positioned menu on the last rows was
+   * being clipped at the bottom of the page rather than overflowing it. Same
+   * reason RichTextEditor portals its variable picker.
+   */
+  const [menu, setMenu] = useState<{
+    id: string;
+    top: number;
+    left: number;
+    flipUp: boolean;
+  } | null>(null);
   const [editingCcId, setEditingCcId] = useState<string | null>(null);
   const [ccDraft, setCcDraft] = useState("");
   const [savingCc, setSavingCc] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch(
-        `/api/sequences/${encodeURIComponent(sequence.id)}/enrollments`,
-        { cache: "no-store" },
-      );
-      const data = (await res.json()) as { error?: string; enrollments?: SequenceEnrollment[] };
-      if (!res.ok) throw new Error(data.error || "Failed to load recipients");
-      setEnrollments(data.enrollments ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load recipients");
-    } finally {
-      setLoading(false);
-    }
-  }, [sequence.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   useEffect(() => {
     void loadRecipientSuggestions().then(setSuggestions);
@@ -90,6 +86,7 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
       const data = (await res.json()) as {
         error?: string;
         added?: number;
+        revived?: number;
         skipped?: { email: string; reason: string }[];
         warnings?: { email: string; otherSequenceName?: string }[];
       };
@@ -97,6 +94,11 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
 
       const bits: string[] = [];
       if (data.added) bits.push(`Added ${data.added}.`);
+      // Worth naming separately: these start from step 1 again rather than
+      // picking up where they were when they were removed.
+      if (data.revived) {
+        bits.push(`Re-added ${data.revived} previously removed, starting from the first email.`);
+      }
       const dupes = (data.skipped ?? []).filter((s) => s.reason === "duplicate").length;
       if (dupes) bits.push(`${dupes} already enrolled.`);
       for (const warning of data.warnings ?? []) {
@@ -106,8 +108,7 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
       }
       setNotice(bits.join(" ") || "Nothing to add.");
       setRecipients("");
-      await load();
-      onCountsChanged();
+      await onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not add recipients");
     } finally {
@@ -116,7 +117,7 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
   }
 
   function startEditCc(enrollment: SequenceEnrollment) {
-    setOpenMenu(null);
+    setMenu(null);
     setEditingCcId(enrollment.id);
     setCcDraft(enrollment.cc ?? "");
   }
@@ -133,14 +134,14 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
         },
       );
       setEditingCcId(null);
-      await load();
+      await onChanged();
     } finally {
       setSavingCc(false);
     }
   }
 
   async function act(enrollmentId: string, action: "pause" | "resume" | "restart") {
-    setOpenMenu(null);
+    setMenu(null);
     await fetch(
       `/api/sequences/${encodeURIComponent(sequence.id)}/enrollments/${encodeURIComponent(enrollmentId)}`,
       {
@@ -149,21 +150,59 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
         body: JSON.stringify({ action }),
       },
     );
-    await load();
-    onCountsChanged();
+    await onChanged();
   }
 
   async function remove(enrollmentId: string) {
-    setOpenMenu(null);
+    setMenu(null);
     await fetch(
       `/api/sequences/${encodeURIComponent(sequence.id)}/enrollments/${encodeURIComponent(enrollmentId)}`,
       { method: "DELETE" },
     );
-    await load();
-    onCountsChanged();
+    await onChanged();
   }
 
+  /** Roughly the rendered menu: four 42px rows inside a 1px border. */
+  const MENU_WIDTH = 176;
+  const MENU_HEIGHT = 172;
+
+  function toggleMenu(id: string, anchor: HTMLElement) {
+    if (menu?.id === id) {
+      setMenu(null);
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    // Open upward when the menu would run off the bottom of the window — the
+    // last row of a long list is exactly where this menu is most used.
+    const flipUp = rect.bottom + MENU_HEIGHT > window.innerHeight - 8;
+    setMenu({
+      id,
+      top: flipUp ? rect.top - 4 : rect.bottom + 4,
+      // Right-aligned to the button, but never off the left edge.
+      left: Math.max(8, rect.right - MENU_WIDTH),
+      flipUp,
+    });
+  }
+
+  // Fixed coordinates are a snapshot: once anything scrolls or the window
+  // resizes they point somewhere the button no longer is.
+  useEffect(() => {
+    if (!menu) return;
+    function close() {
+      setMenu(null);
+    }
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [menu]);
+
+  const menuTarget = menu ? (enrollments.find((e) => e.id === menu.id) ?? null) : null;
+
   const canAdd = useMemo(() => recipients.trim().length > 0 && !adding, [recipients, adding]);
+  const sequenceActive = sequence.status === "active";
 
   return (
     <div className="space-y-5">
@@ -204,10 +243,12 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
             'Add Cc addresses for a specific recipient afterward, from the "⋮" menu on their row below.',
           )}
         </p>
-        {sequence.status !== "active" ? (
+        {!sequenceActive ? (
           <p className="mt-3 text-[12.5px] text-[var(--color-text-faint)]">
             {titleCase(
-              "This sequence is not enabled yet — recipients will start receiving email once you publish it.",
+              sequence.status === "draft"
+                ? "This sequence is not enabled yet — recipients start receiving email once you enable it."
+                : "This sequence is disabled — no email goes out. Everyone below keeps their place and resumes from there when you enable it.",
             )}
           </p>
         ) : null}
@@ -218,6 +259,14 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
           <p className="mt-3 text-[12.5px] text-[var(--color-danger)]">{error}</p>
         ) : null}
       </div>
+
+      {!loading && enrollments.length > 0 ? (
+        <p className="text-[12.5px] text-[var(--color-text-muted)]">
+          {titleCase(
+            "Merge variables are read from each recipient's Team Directory card and mailbox history every time a step is previewed or sent — editing a contact updates them here.",
+          )}
+        </p>
+      ) : null}
 
       {loading ? (
         <div className="space-y-2">
@@ -246,18 +295,23 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
                   {e.displayName?.trim() ? `${e.email} · ` : ""}
                   {e.lastError
                     ? e.lastError
-                    : e.nextRunAt
-                      ? new Date(e.nextRunAt).getTime() <= Date.now()
-                        ? // The scheduler is an external cron hitting /api/cron/sequences on
-                          // its own interval, not something this page can trigger — a slot
-                          // that has passed just means it hasn't ticked yet, not that
-                          // anything is wrong. Says so plainly instead of showing a "Next"
-                          // time that's already behind the clock.
-                          `${titleCase("Due")} ${formatInTimeZone(new Date(e.nextRunAt), sequence.timezone)} — ${titleCase("waiting for the next send run")}`
-                        : `${titleCase("Next")} ${formatInTimeZone(new Date(e.nextRunAt), sequence.timezone)}`
-                      : e.lastSentAt
-                        ? `${titleCase("Last sent")} ${formatInTimeZone(new Date(e.lastSentAt), sequence.timezone)}`
-                        : titleCase("Not scheduled")}
+                    : e.status === "active" && !sequenceActive
+                      ? // Same reason the pill says "On hold": with the sequence
+                        // disabled the scheduler never claims this row, so a
+                        // "Next"/"Due" time would name a moment nothing happens at.
+                        titleCase("Waiting — the sequence is disabled")
+                      : e.nextRunAt
+                        ? new Date(e.nextRunAt).getTime() <= Date.now()
+                          ? // The scheduler is an external cron hitting /api/cron/sequences on
+                            // its own interval, not something this page can trigger — a slot
+                            // that has passed just means it hasn't ticked yet, not that
+                            // anything is wrong. Says so plainly instead of showing a "Next"
+                            // time that's already behind the clock.
+                            `${titleCase("Due")} ${formatInTimeZone(new Date(e.nextRunAt), sequence.timezone)} — ${titleCase("waiting for the next send run")}`
+                          : `${titleCase("Next")} ${formatInTimeZone(new Date(e.nextRunAt), sequence.timezone)}`
+                        : e.lastSentAt
+                          ? `${titleCase("Last sent")} ${formatInTimeZone(new Date(e.lastSentAt), sequence.timezone)}`
+                          : titleCase("Not scheduled")}
                 </p>
                 {editingCcId !== e.id && e.cc?.trim() ? (
                   <p className="mt-0.5 truncate text-[11.5px] text-[var(--color-text-muted)]">
@@ -266,54 +320,20 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-3">
+                <RecipientFieldCount mergeFields={e.mergeFields} />
                 <span className="font-mono text-[11.5px] text-[var(--color-text-faint)]">
                   {titleCase("Step")} {e.currentStepOrder}
                 </span>
-                <EnrollmentStatusPill status={e.status} />
-                <div className="relative">
-                  <button
-                    type="button"
-                    aria-label="Recipient actions"
-                    onClick={() => setOpenMenu(openMenu === e.id ? null : e.id)}
-                    className="rounded-lg p-1.5 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
-                  >
-                    <MoreVertical className="h-4 w-4" strokeWidth={2} />
-                  </button>
-                  {openMenu === e.id ? (
-                    <>
-                      <button
-                        type="button"
-                        aria-hidden
-                        tabIndex={-1}
-                        className="fixed inset-0 z-10 cursor-default"
-                        onClick={() => setOpenMenu(null)}
-                      />
-                      <div className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]">
-                        {e.status === "active" ? (
-                          <MenuItem icon={Pause} label="Pause" onClick={() => void act(e.id, "pause")} />
-                        ) : (
-                          <MenuItem icon={Play} label="Resume" onClick={() => void act(e.id, "resume")} />
-                        )}
-                        <MenuItem
-                          icon={RotateCcw}
-                          label="Restart"
-                          onClick={() => void act(e.id, "restart")}
-                        />
-                        <MenuItem
-                          icon={Users}
-                          label={e.cc?.trim() ? "Edit Cc" : "Add Cc"}
-                          onClick={() => startEditCc(e)}
-                        />
-                        <MenuItem
-                          icon={Trash2}
-                          label="Remove"
-                          danger
-                          onClick={() => void remove(e.id)}
-                        />
-                      </div>
-                    </>
-                  ) : null}
-                </div>
+                <EnrollmentStatusPill status={e.status} sequenceActive={sequenceActive} />
+                <button
+                  type="button"
+                  aria-label="Recipient actions"
+                  aria-expanded={menu?.id === e.id}
+                  onClick={(ev) => toggleMenu(e.id, ev.currentTarget)}
+                  className="rounded-lg p-1.5 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+                >
+                  <MoreVertical className="h-4 w-4" strokeWidth={2} />
+                </button>
               </div>
               </div>
               {editingCcId === e.id ? (
@@ -352,7 +372,86 @@ export function SequenceRecipientsTab({ sequence, onCountsChanged }: Props) {
           ))}
         </ul>
       )}
+      {menu && menuTarget && typeof document !== "undefined"
+        ? createPortal(
+            <>
+              <button
+                type="button"
+                aria-hidden
+                tabIndex={-1}
+                className="fixed inset-0 z-[1000] cursor-default"
+                onClick={() => setMenu(null)}
+              />
+              <div
+                role="menu"
+                style={{ top: menu.top, left: menu.left }}
+                className={`fixed z-[1001] w-44 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)] ${
+                  menu.flipUp ? "-translate-y-full" : ""
+                }`}
+              >
+                {menuTarget.status === "active" ? (
+                  <MenuItem
+                    icon={Pause}
+                    label="Pause"
+                    onClick={() => void act(menuTarget.id, "pause")}
+                  />
+                ) : (
+                  <MenuItem
+                    icon={Play}
+                    label="Resume"
+                    onClick={() => void act(menuTarget.id, "resume")}
+                  />
+                )}
+                <MenuItem
+                  icon={RotateCcw}
+                  label="Restart"
+                  onClick={() => void act(menuTarget.id, "restart")}
+                />
+                <MenuItem
+                  icon={Users}
+                  label={menuTarget.cc?.trim() ? "Edit Cc" : "Add Cc"}
+                  onClick={() => startEditCc(menuTarget)}
+                />
+                <MenuItem
+                  icon={Trash2}
+                  label="Remove"
+                  danger
+                  onClick={() => void remove(menuTarget.id)}
+                />
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
     </div>
+  );
+}
+
+/**
+ * How many merge variables this recipient can fill, listed on hover.
+ *
+ * The aliases contactToMergeFields writes ({company} for {company_name} and
+ * friends) are left out — counting one value twice would overstate what is
+ * actually known about the person.
+ */
+function RecipientFieldCount({ mergeFields }: { mergeFields: Record<string, string> }) {
+  const keys = Object.keys(mergeFields)
+    .filter(
+      (k) =>
+        !(MERGE_FIELD_ALIAS_KEYS as readonly string[]).includes(k) && mergeFields[k]?.trim(),
+    )
+    .sort();
+  if (keys.length === 0) return null;
+
+  return (
+    <span
+      className="font-mono text-[11.5px] text-[var(--color-text-faint)]"
+      title={`${titleCase("Variables that can fill for this recipient")}: ${keys
+        .map((k) => `{${k}}`)
+        .join(", ")}`}
+    >
+      {keys.length} {titleCase(keys.length === 1 ? "field" : "fields")}
+    </span>
   );
 }
 

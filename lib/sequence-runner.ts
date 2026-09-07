@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { extractEmailAddress } from "@/lib/email-parse";
@@ -23,7 +25,9 @@ import { createServiceSupabase } from "@/lib/supabase-service";
  * GET /api/cron/sequences; see lib/sequence-schedule.ts for the timing rules.
  *
  * Safety model — both layers are required:
- *  - claim_due_sequence_enrollments() leases rows with FOR UPDATE SKIP LOCKED,
+ *  - claimDueSequenceEnrollments() leases rows via a conditional UPDATE (see
+ *    its own comment for why — not the `claim_due_sequence_enrollments()`
+ *    Postgres function of the same name that still exists in migration 0036),
  *    so two overlapping runs never pick the same enrollment;
  *  - a partial unique index on sequence_sends (enrollment_id, step_id) where
  *    status in ('sending','sent') makes a duplicate send impossible even if a
@@ -64,22 +68,6 @@ export type CronSummary = {
   failed: number;
   mailboxes: number;
   durationMs: number;
-  /**
-   * Dry-run only. Surfaces the RPC's raw outcome plus an independent plain
-   * SELECT against the same table/client, so a "claimed: 0" that seems wrong
-   * can be told apart from a genuinely correct result without depending on
-   * Supabase's own log search (which is exactly what this was added to
-   * verify against, during a case where the RPC reported zero rows that a
-   * direct SQL call against the same project found immediately).
-   */
-  debug?: {
-    rpcError: string | null;
-    rpcReturnedCount: number;
-    /** Plain select, same filters as the RPC, no RPC/claim involved. */
-    plainSelectCount: number;
-    plainSelectSample: { id: string; email: string; next_run_at: string | null }[];
-    plainSelectError: string | null;
-  };
 };
 
 type EnrollmentRow = {
@@ -540,6 +528,76 @@ async function processEnrollment(
   }
 }
 
+/**
+ * Leases up to `limit` due enrollments.
+ *
+ * This used to be one round trip to a `claim_due_sequence_enrollments()`
+ * Postgres function (`SELECT ... FOR UPDATE SKIP LOCKED`, still present in
+ * migration 0036 but no longer called from here). On this project that RPC
+ * reproducibly returned zero rows through this exact service-role connection
+ * while an identical plain SELECT through the same connection — and the same
+ * SQL run directly against the database — found the rows immediately every
+ * time. The function's owner has BYPASSRLS, so it isn't a RLS-inside-
+ * SECURITY-DEFINER issue either; the divergence sits specifically in calling
+ * a function via PostgREST's RPC path versus a plain table request, which
+ * is a platform-level anomaly, not an application bug — see the commit that
+ * added this replacement for the full diagnostic trail.
+ *
+ * This does the same job as two plain requests instead: a SELECT for
+ * candidates, ordered and limited exactly like the RPC was, followed by a
+ * conditional UPDATE per row. The UPDATE's WHERE clause re-checks the same
+ * claimability conditions at write time rather than trusting the read — that
+ * substitutes for `FOR UPDATE SKIP LOCKED`: two concurrent callers targeting
+ * the same row serialize on Postgres's own row lock, and whichever loses
+ * finds `claimed_at` no longer null when its blocked UPDATE finally runs, so
+ * it affects zero rows and is correctly treated as "someone else has it."
+ * The only difference from SKIP LOCKED is a brief block instead of an
+ * instant skip, which is immaterial at this workload's scale (single-digit
+ * enrollments per minute).
+ */
+async function claimDueSequenceEnrollments(
+  svc: SupabaseClient,
+  limit: number,
+  leaseSeconds: number,
+): Promise<EnrollmentRow[]> {
+  const nowIso = new Date().toISOString();
+  const staleCutoffIso = new Date(Date.now() - leaseSeconds * 1000).toISOString();
+  // Re-used on both the select and every per-row update below — must be
+  // identical each time, or a row claimable at select time could look
+  // already-fresh (and get skipped) by the time its update runs.
+  const claimableFilter = `claimed_at.is.null,claimed_at.lt.${staleCutoffIso}`;
+
+  const { data: candidates, error: selectError } = await svc
+    .from("sequence_enrollments")
+    .select("id, sequences!inner(status)")
+    .eq("status", "active")
+    .eq("sequences.status", "active")
+    .not("next_run_at", "is", null)
+    .lte("next_run_at", nowIso)
+    .or(claimableFilter)
+    .order("next_run_at", { ascending: true })
+    .limit(limit);
+
+  if (selectError) throw new Error(`Claim select failed: ${selectError.message}`);
+
+  const claimed: EnrollmentRow[] = [];
+  for (const candidate of (candidates ?? []) as { id: string }[]) {
+    const { data: updated, error: updateError } = await svc
+      .from("sequence_enrollments")
+      .update({ claimed_at: nowIso, claim_token: randomUUID(), updated_at: nowIso })
+      .eq("id", candidate.id)
+      .eq("status", "active")
+      .or(claimableFilter)
+      .select("*")
+      .maybeSingle();
+
+    if (updateError) throw new Error(`Claim update failed: ${updateError.message}`);
+    if (updated) claimed.push(updated as EnrollmentRow);
+  }
+
+  return claimed;
+}
+
 export async function runSequencesCron(
   options: { dryRun?: boolean; deadlineMs?: number } = {},
 ): Promise<CronSummary> {
@@ -585,42 +643,7 @@ export async function runSequencesCron(
   const handled = new Set<string>();
 
   while (Date.now() - startedAt < deadlineMs && summary.sent < MAX_SENDS_PER_RUN) {
-    const { data: claimed, error: claimError } = await svc.rpc("claim_due_sequence_enrollments", {
-      p_limit: BATCH_SIZE,
-      p_lease_seconds: LEASE_SECONDS,
-    });
-
-    if (claimError) throw new Error(`Claim failed: ${claimError.message}`);
-    const claimedRows = (claimed ?? []) as EnrollmentRow[];
-
-    // Populate once, on the very first (and, once anything is claimed, only)
-    // trip through the loop — a diagnostic snapshot of what the RPC actually
-    // returned versus what a plain SELECT through this exact same client
-    // sees for the same criteria, independent of the RPC path entirely.
-    if (ctx.dryRun && !summary.debug) {
-      const nowIso = new Date().toISOString();
-      const { data: plainRows, error: plainError } = await svc
-        .from("sequence_enrollments")
-        .select("id, email, next_run_at, status, sequences!inner(status)")
-        .eq("status", "active")
-        .eq("sequences.status", "active")
-        .not("next_run_at", "is", null)
-        .lte("next_run_at", nowIso)
-        .limit(10);
-
-      summary.debug = {
-        rpcError: claimError ? String((claimError as { message?: string }).message ?? claimError) : null,
-        rpcReturnedCount: claimedRows.length,
-        plainSelectCount: plainRows?.length ?? 0,
-        plainSelectSample: (plainRows ?? []).map((r) => ({
-          id: r.id as string,
-          email: r.email as string,
-          next_run_at: r.next_run_at as string | null,
-        })),
-        plainSelectError: plainError ? plainError.message : null,
-      };
-    }
-
+    const claimedRows = await claimDueSequenceEnrollments(svc, BATCH_SIZE, LEASE_SECONDS);
     if (claimedRows.length === 0) break;
 
     const rows = claimedRows.filter((row) => !handled.has(row.id));

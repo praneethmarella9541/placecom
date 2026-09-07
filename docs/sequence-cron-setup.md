@@ -122,6 +122,12 @@ limit 20;
 | `last_error` mentions tokens/scope | Mailbox refresh token is stale — reconnect that Gmail account |
 
 Duplicate sends are not a risk if a tick overlaps the next one:
-`claim_due_sequence_enrollments()` leases rows with `FOR UPDATE SKIP LOCKED`, and
-a partial unique index on `sequence_sends (enrollment_id, step_id)` makes a
-double send impossible even if a lease is bypassed.
+`claimDueSequenceEnrollments()` (`lib/sequence-runner.ts`) leases rows via a
+conditional per-row `UPDATE` re-checked at write time — see its doc comment
+for why this replaced the `claim_due_sequence_enrollments()` Postgres RPC
+that migration 0036 originally shipped with (that RPC returned zero rows
+through this project's service-role connection for reasons that turned out
+to be a PostgREST/platform-level anomaly, not an app bug; a plain SELECT
+and a plain UPDATE through the identical connection both worked correctly).
+A partial unique index on `sequence_sends (enrollment_id, step_id)` makes a
+double send impossible either way, even if a lease is somehow bypassed.

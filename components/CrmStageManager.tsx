@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { createPortal } from "react-dom";
 import { ArrowDown, ArrowUp, Plus, Trash2 } from "lucide-react";
 import { IconX } from "@/components/Icons";
@@ -23,6 +24,8 @@ export function CrmStageManager({
 }) {
   const [rows, setRows] = useState<CrmStage[]>(stages);
   const [busy, setBusy] = useState(false);
+  /** Stage awaiting delete confirmation. */
+  const [pendingDelete, setPendingDelete] = useState<CrmStage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [newDescription, setNewDescription] = useState("");
@@ -76,14 +79,8 @@ export function CrmStageManager({
   }
 
   async function remove(stage: CrmStage) {
-    if (
-      !window.confirm(
-        `Delete "${stage.name}"? Any leads in it move to the unsorted column — they aren't deleted.`
-      )
-    ) {
-      return;
-    }
     const json = await call(`/api/crm/stages/${stage.id}`, { method: "DELETE" });
+    setPendingDelete(null);
     if (json) await refresh();
   }
 
@@ -107,6 +104,7 @@ export function CrmStageManager({
   if (typeof document === "undefined") return null;
 
   return createPortal(
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]"
       onMouseDown={(e) => {
@@ -181,7 +179,7 @@ export function CrmStageManager({
                   <button
                     type="button"
                     disabled={busy || stage.is_unsorted}
-                    onClick={() => void remove(stage)}
+                    onClick={() => setPendingDelete(stage)}
                     title={
                       stage.is_unsorted
                         ? "The unsorted column can't be deleted"
@@ -248,7 +246,23 @@ export function CrmStageManager({
           </button>
         </div>
       </div>
-    </div>,
+    </div>
+    {/* Outside the backdrop above: a portal bubbles events through the React
+        tree, so nesting it there would route its clicks into this modal's own
+        dismiss handler. */}
+    {pendingDelete ? (
+      <ConfirmDialog
+        tone="danger"
+        busy={busy}
+        title="Delete this column?"
+        body={`Any leads in "${pendingDelete.name}" move to the unsorted column — they aren't deleted.`}
+        confirmLabel={busy ? "Deleting…" : "Delete column"}
+        cancelLabel="Keep it"
+        onConfirm={() => void remove(pendingDelete)}
+        onCancel={() => setPendingDelete(null)}
+      />
+    ) : null}
+    </>,
     document.body
   );
 }

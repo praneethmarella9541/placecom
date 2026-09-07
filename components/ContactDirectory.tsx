@@ -7,6 +7,7 @@ import { ChevronDown, Plus, Search, Trash2, UserRound } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconLinkedin, IconWhatsAppLogo } from "@/components/Icons";
 import { SyncedContactsSection } from "@/components/SyncedContactsSection";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { armSyncedContactsInvalidation, warmSyncedContacts } from "@/lib/synced-contacts-prefetch";
@@ -59,6 +60,8 @@ export function ContactDirectory() {
   const [editingContact, setEditingContact] = useState<DirectoryContact | null>(null);
   const [formPrefill, setFormPrefill] = useState<DirectoryContactInput>(emptyContactForm);
   const [busy, setBusy] = useState(false);
+  /** Contact awaiting delete confirmation. */
+  const [pendingDelete, setPendingDelete] = useState<DirectoryContact | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   // Starts closed so opening Contacts doesn't pay for the synced list's own
@@ -191,14 +194,15 @@ export function ContactDirectory() {
     void reload();
   }
 
-  async function handleDelete(c: DirectoryContact, e: React.MouseEvent) {
-    e.stopPropagation();
-    if (!window.confirm(`Remove ${c.name} from the team directory?`)) return;
+  async function handleDelete(c: DirectoryContact) {
     setBusy(true);
     try {
       await deleteContact(c.id);
+      setPendingDelete(null);
     } catch (err) {
       showToast({ kind: "error", text: err instanceof Error ? err.message : "Could not delete contact" });
+      // Close so the toast isn't stranded behind the dialog.
+      setPendingDelete(null);
     } finally {
       setBusy(false);
     }
@@ -392,7 +396,10 @@ export function ContactDirectory() {
                         disabled={busy}
                         className="btn-ghost inline-flex h-8 w-8 items-center justify-center rounded-lg p-0 text-[var(--color-danger)]"
                         title={titleCase("Delete")}
-                        onClick={(e) => void handleDelete(c, e)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPendingDelete(c);
+                        }}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -475,6 +482,19 @@ export function ContactDirectory() {
           {toast.text}
         </div>
       )}
+
+      {pendingDelete ? (
+        <ConfirmDialog
+          tone="danger"
+          busy={busy}
+          title="Remove this contact?"
+          body={`${pendingDelete.name} will be removed from the team directory.`}
+          confirmLabel={busy ? "Removing…" : "Remove contact"}
+          cancelLabel="Keep it"
+          onConfirm={() => void handleDelete(pendingDelete)}
+          onCancel={() => setPendingDelete(null)}
+        />
+      ) : null}
     </div>
   );
 }

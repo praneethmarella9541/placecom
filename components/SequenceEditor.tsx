@@ -7,6 +7,7 @@ import { Check, ChevronLeft, Loader2, Mail, Save, Settings2, Trash2, Users } fro
 import { SequenceStatusPill } from "@/components/SequenceStatusPill";
 import { SequenceStepList } from "@/components/SequenceStepList";
 import { SequenceRecipientsTab } from "@/components/SequenceRecipientsTab";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
 import { SequenceSettingsTab } from "@/components/SequenceSettingsTab";
 import { buildMergeFields, buildStepEmail } from "@/lib/sequence-body";
@@ -89,6 +90,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
    * serves any exit, not just the back link.
    */
   const [pendingLeaveTo, setPendingLeaveTo] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
     const requested = searchParams.get("tab");
@@ -162,6 +164,66 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
   }, [loadRecipients]);
 
   const stepsDirty = useMemo(() => JSON.stringify(steps) !== savedSteps, [steps, savedSteps]);
+  /**
+   * Guards every in-app exit, not just the back link — the sidebar, the header
+   * logo, anything rendering an <a>.
+   *
+   * Done as a capture-phase listener on the document rather than by threading
+   * a callback through the layout: the App Router has no navigation-blocking
+   * API (no router.events), and the sidebar calls router.push() from its own
+   * onClick, so the only place to stop it is before the event reaches it.
+   * Scoped to a dirty editor, so nothing is intercepted the rest of the time.
+   */
+  useEffect(() => {
+    if (!stepsDirty) return;
+
+    /** The in-app path this event would navigate to, or null to let it through. */
+    function destinationFor(e: Event): string | null {
+      const anchor = (e.target as HTMLElement | null)?.closest?.("a[href]") as
+        | HTMLAnchorElement
+        | null;
+      if (!anchor) return null;
+      if (anchor.hasAttribute("download")) return null;
+      if (anchor.target && anchor.target !== "_self") return null;
+      let url: URL;
+      try {
+        url = new URL(anchor.href, window.location.href);
+      } catch {
+        return null;
+      }
+      // Leaves mailto:, tel: and outbound links in previewed email bodies alone.
+      if (url.origin !== window.location.origin) return null;
+      // Same page or a bare hash — no work is at risk.
+      if (url.pathname === window.location.pathname) return null;
+      return `${url.pathname}${url.search}`;
+    }
+
+    // The sidebar starts its loading indicator on pointerdown, before the click
+    // it is anticipating. Stop it there or it spins for a navigation that the
+    // click handler below is about to block.
+    function onPointerDownCapture(e: PointerEvent) {
+      if (e.button !== 0) return;
+      if (destinationFor(e)) e.stopPropagation();
+    }
+
+    function onClickCapture(e: MouseEvent) {
+      // Ctrl/cmd/shift-click opens a new tab and leaves this one alone.
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const destination = destinationFor(e);
+      if (!destination) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPendingLeaveTo(destination);
+    }
+
+    document.addEventListener("pointerdown", onPointerDownCapture, true);
+    document.addEventListener("click", onClickCapture, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDownCapture, true);
+      document.removeEventListener("click", onClickCapture, true);
+    };
+  }, [stepsDirty]);
+
   // Covers the exits React cannot intercept — tab close, reload, typing a new
   // URL. The browser shows its own generic wording here; the in-app dialog is
   // what handles the case we can actually phrase ourselves.
@@ -261,16 +323,6 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     }
   }
 
-  /**
-   * Front door for any navigation out of the editor. Clean steps leave
-   * immediately — the guard only exists for work that would be lost.
-   */
-  function requestLeave(href: string): boolean {
-    if (!stepsDirty || saving) return true;
-    setPendingLeaveTo(href);
-    return false;
-  }
-
   async function saveAndLeave() {
     const destination = pendingLeaveTo;
     if (!destination) return;
@@ -362,11 +414,6 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
 
   async function handleDelete() {
     if (deleting || !sequence) return;
-    const question = willHardDelete
-      ? `Delete "${sequence.name}"? This can't be undone.`
-      : `"${sequence.name}" will be archived — kept for history, but no further emails go out and it won't be deleted outright. Continue?`;
-    if (!window.confirm(question)) return;
-
     setDeleting(true);
     setError(null);
     try {
@@ -379,6 +426,8 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not delete sequence");
       setDeleting(false);
+      // Close the dialog so the error banner behind it is readable.
+      setConfirmingDelete(false);
     }
   }
 
@@ -550,9 +599,6 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     <div className="mx-auto max-w-5xl space-y-5">
       <Link
         href="/sequences"
-        onClick={(e) => {
-          if (!requestLeave("/sequences")) e.preventDefault();
-        }}
         className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-copper)]"
       >
         <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2} />
@@ -652,7 +698,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
             data-testid="sequence-delete-btn"
             type="button"
             disabled={deleting}
-            onClick={() => void handleDelete()}
+            onClick={() => setConfirmingDelete(true)}
             title={deleteLabel}
             aria-label={deleteLabel}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-danger)]/40 hover:bg-[var(--color-danger)]/5 hover:text-[var(--color-danger)] disabled:opacity-60"
@@ -749,6 +795,25 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
           sequence={sequence}
           saving={saving}
           onChange={(patch) => void patchSequence(patch)}
+        />
+      ) : null}
+
+      {confirmingDelete ? (
+        <ConfirmDialog
+          tone="danger"
+          busy={deleting}
+          title={willHardDelete ? "Delete this sequence?" : "Archive this sequence?"}
+          body={
+            willHardDelete
+              ? `"${sequence.name}" and its steps will be removed. This can't be undone.`
+              : `"${sequence.name}" will be kept for history, but no further emails go out. It won't be deleted outright.`
+          }
+          confirmLabel={
+            deleting ? "Working…" : willHardDelete ? "Delete sequence" : "Archive sequence"
+          }
+          cancelLabel="Keep it"
+          onConfirm={() => void handleDelete()}
+          onCancel={() => setConfirmingDelete(false)}
         />
       ) : null}
 

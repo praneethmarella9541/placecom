@@ -100,9 +100,16 @@ export async function POST(request: Request, { params }: Params) {
 
   const window = windowFromSequenceRow(sequence);
   const lite = steps.map(toStepLite);
+  const pendingRows = (pending ?? []) as { id: string; current_step_order: number }[];
+  // Only spread sends across time when there's an actual batch to protect
+  // Gmail from — one pending recipient (e.g. testing with a single enrollee
+  // before publishing) has no burst to avoid, so it should go out right away
+  // rather than sit for up to 30 unexplained minutes.
+  const scheduledRunAt = (runAt: Date): Date =>
+    pendingRows.length > 1 ? jitteredStart(runAt) : runAt;
   let scheduled = 0;
 
-  for (const row of (pending ?? []) as { id: string; current_step_order: number }[]) {
+  for (const row of pendingRows) {
     const plan = planNextEmailStep(lite, row.current_step_order, now, window);
     if (!plan) {
       await ctx.svc
@@ -116,7 +123,7 @@ export async function POST(request: Request, { params }: Params) {
       .update({
         next_step_id: plan.stepId,
         // Spread the batch so they don't all hit Gmail at the same second.
-        next_run_at: jitteredStart(plan.runAt).toISOString(),
+        next_run_at: scheduledRunAt(plan.runAt).toISOString(),
         updated_at: now.toISOString(),
       })
       .eq("id", row.id);

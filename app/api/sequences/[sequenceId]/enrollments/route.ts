@@ -134,6 +134,12 @@ export async function POST(request: Request, { params }: Params) {
     else already.add(row.email);
   }
 
+  // How many of these will actually get a schedule written below — every
+  // unique email except the ones already actively enrolled (a genuine
+  // duplicate, skipped outright; a "removed" row is revived, not skipped, so
+  // it still counts here).
+  const schedulingCount = unique.length - already.size;
+
   // Fields are resolved from contacts at send and preview time, so this stored
   // bag is a starting point rather than the source of truth: it captures the
   // chip's display name for someone with no card, and any custom key an API
@@ -175,6 +181,14 @@ export async function POST(request: Request, { params }: Params) {
   // Only an enabled sequence gets a schedule; drafts are backfilled on publish.
   const plan = sequence.status === "active" ? planNextEmailStep(lite, 0, now, window) : null;
 
+  // jitteredStart spreads a batch's day-0 sends over up to 30 minutes so they
+  // don't all hit Gmail in the same second — real protection when enrolling
+  // many people at once, but pure unwanted delay for a single recipient with
+  // no burst to spread out. Only spread when there's actually more than one
+  // landing on the same run.
+  const scheduledRunAt = (runAt: Date): Date =>
+    schedulingCount > 1 ? jitteredStart(runAt) : runAt;
+
   const skipped: { email: string; reason: string }[] = [];
   const rows: Record<string, unknown>[] = [];
   const revive: { id: string; fields: Record<string, unknown> }[] = [];
@@ -207,7 +221,7 @@ export async function POST(request: Request, { params }: Params) {
           merge_fields: mergeFields,
           current_step_order: 0,
           next_step_id: plan?.stepId ?? null,
-          next_run_at: plan ? jitteredStart(plan.runAt).toISOString() : null,
+          next_run_at: plan ? scheduledRunAt(plan.runAt).toISOString() : null,
           gmail_thread_id: null,
           last_gmail_message_id: null,
           first_sent_at: null,
@@ -234,7 +248,7 @@ export async function POST(request: Request, { params }: Params) {
       // menu, never applied in bulk when adding a batch of recipients.
       cc: null,
       next_step_id: plan?.stepId ?? null,
-      next_run_at: plan ? jitteredStart(plan.runAt).toISOString() : null,
+      next_run_at: plan ? scheduledRunAt(plan.runAt).toISOString() : null,
     });
   }
 

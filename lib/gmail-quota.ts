@@ -35,6 +35,25 @@ export const GMAIL_COST = {
 } as const;
 
 /**
+ * Gmail's real per-user ceiling is 250 quota units per SECOND (a moving
+ * average), which is the limit the 403s are hitting — not the per-minute figure
+ * this module is configured in. We hold ourselves to 200/sec so there is room
+ * for the user's own inbox traffic, which bills to this same bucket, and for a
+ * sibling instance holding a bucket of its own.
+ */
+const PEAK_UNITS_PER_SEC = 200;
+
+/** Gmail's documented per-user ceiling, and the number the 403s are measured against. */
+const GMAIL_UNITS_PER_SEC = 250;
+
+/**
+ * Highest sustained rate that can still absorb one banked messages.send without
+ * the one-second window crossing Gmail's ceiling. Above this, a higher setting
+ * buys nothing except throttling, so the env var is clamped to it.
+ */
+const MAX_UNITS_PER_MIN = (GMAIL_UNITS_PER_SEC - GMAIL_COST.messagesSend) * 60;
+
+/**
  * Units per minute we allow ourselves. Deliberately below Gmail's own ceiling:
  * this bucket lives in one server instance's memory, so N warm instances serving
  * the same mailbox each hold their own. The headroom is what keeps their sum
@@ -43,10 +62,46 @@ export const GMAIL_COST = {
 function budgetPerMinute(): number {
   const n = parseInt(process.env.GMAIL_QUOTA_UNITS_PER_MIN || "4000", 10);
   if (!Number.isFinite(n) || n < 100) return 4000;
-  return n;
+  return Math.min(n, MAX_UNITS_PER_MIN);
 }
 
 const REFILL_WINDOW_MS = 60_000;
+
+/**
+ * How many seconds' worth of units the bucket may bank.
+ *
+ * This is the difference between the rate we intend and the rate Gmail actually
+ * sees. Gmail's per-user limit is 250 quota units per SECOND (a moving average),
+ * not a per-minute total, so a bucket whose ceiling is a whole minute's budget
+ * hands out that entire minute as fast as the callers can spend it. At a
+ * concurrency of 12 that is roughly 300 units/sec — over the line, and a 403,
+ * even though the per-minute figure looks conservative.
+ *
+ * Two things kept refilling that burst. A cold instance starts with a full
+ * bucket, and every idle gap tops it back up — including the database and
+ * enrichment work the contact sync does between pages, during which no Gmail
+ * call is in flight. So each page began by dumping a banked burst at Gmail,
+ * getting throttled, draining to zero and backing off.
+ *
+ * Two seconds is enough to absorb ordinary jitter without ever approaching the
+ * per-second ceiling.
+ */
+const BURST_SECONDS = 2;
+
+/**
+ * Ceiling on banked tokens. Floored at the priciest single call so an oversized
+ * one (messages.send, 100 units) can still be granted rather than waiting on a
+ * ceiling it can never reach.
+ */
+function burstCapacity(): number {
+  const perSecond = budgetPerMinute() / 60;
+  // Draw across any one-second window is roughly the banked burst plus a second
+  // of refill, so the burst gets whatever the sustained rate leaves under the
+  // peak allowance. The higher the configured rate, the less banking it can
+  // afford — at the clamp above, none at all.
+  const headroom = PEAK_UNITS_PER_SEC - perSecond;
+  return Math.max(GMAIL_COST.messagesSend, Math.ceil(Math.min(perSecond * BURST_SECONDS, headroom)));
+}
 
 type Bucket = {
   tokens: number;
@@ -57,10 +112,43 @@ type Bucket = {
 
 const buckets = new Map<string, Bucket>();
 
+/**
+ * Per-key counters covering one batch's worth of calls, read and reset by the
+ * contact sync's page loop (takeGmailQuotaStats). Until now a slow page was
+ * unattributable: waiting on our OWN bucket (a budget that is set too low) and
+ * waiting out Gmail's throttle (a real upstream limit) both just looked like
+ * "the sync is slow", and the backoff below logged nothing at all.
+ */
+export type GmailQuotaStats = {
+  calls: number;
+  /** Total ms spent queued behind the bucket, summed across calls (so it exceeds wall-clock when calls overlap). */
+  waitMs: number;
+  rateLimitRetries: number;
+  backoffMs: number;
+};
+
+const stats = new Map<string, GmailQuotaStats>();
+
+function statsFor(key: string): GmailQuotaStats {
+  let s = stats.get(key);
+  if (!s) {
+    s = { calls: 0, waitMs: 0, rateLimitRetries: 0, backoffMs: 0 };
+    stats.set(key, s);
+  }
+  return s;
+}
+
+/** Reads the counters for `key` and clears them, so each caller sees only its own window. */
+export function takeGmailQuotaStats(key: string): GmailQuotaStats {
+  const s = stats.get(key) ?? { calls: 0, waitMs: 0, rateLimitRetries: 0, backoffMs: 0 };
+  stats.delete(key);
+  return s;
+}
+
 function bucketFor(key: string): Bucket {
   let b = buckets.get(key);
   if (!b) {
-    b = { tokens: budgetPerMinute(), lastRefillAt: Date.now(), tail: Promise.resolve() };
+    b = { tokens: burstCapacity(), lastRefillAt: Date.now(), tail: Promise.resolve() };
     buckets.set(key, b);
   }
   return b;
@@ -70,8 +158,13 @@ function refill(b: Bucket): void {
   const now = Date.now();
   const elapsed = now - b.lastRefillAt;
   if (elapsed <= 0) return;
-  const capacity = budgetPerMinute();
-  b.tokens = Math.min(capacity, b.tokens + (elapsed * capacity) / REFILL_WINDOW_MS);
+  // Refills at the per-minute RATE but caps at the much smaller burst ceiling —
+  // the two used to be the same number, which is what let a whole minute's
+  // budget accumulate and then leave at once.
+  b.tokens = Math.min(
+    burstCapacity(),
+    b.tokens + (elapsed * budgetPerMinute()) / REFILL_WINDOW_MS
+  );
   b.lastRefillAt = now;
 }
 
@@ -83,13 +176,19 @@ function refill(b: Bucket): void {
  */
 export async function spendGmailQuota(key: string, cost: number): Promise<void> {
   const b = bucketFor(key);
-  const want = Math.min(Math.max(cost, 0), budgetPerMinute());
+  const want = Math.min(Math.max(cost, 0), burstCapacity());
+  const queuedAt = Date.now();
 
   const wait = b.tail.then(async () => {
     for (;;) {
       refill(b);
       if (b.tokens >= want) {
         b.tokens -= want;
+        const s = statsFor(key);
+        s.calls += 1;
+        // Counted from before the tail chain, so this covers both refill sleeps
+        // and time spent queued behind earlier callers.
+        s.waitMs += Date.now() - queuedAt;
         return;
       }
       const deficit = want - b.tokens;
@@ -170,6 +269,20 @@ export async function fetchGmail(
     const backoffMs = retryAfterHeader
       ? Number(retryAfterHeader) * 1000
       : Math.min(RATE_LIMIT_MAX_BACKOFF_MS, 1000 * 2 ** attempt) + Math.random() * 1000;
+
+    if (key) {
+      const s = statsFor(key);
+      s.rateLimitRetries += 1;
+      s.backoffMs += backoffMs;
+    }
+    // Being throttled by Gmail while the local bucket still thinks it has room
+    // is the single most useful thing to know about a slow sync, and it used to
+    // happen entirely silently.
+    console.warn(
+      `[gmail-quota] throttled by Gmail (${res.status}) on attempt ${attempt + 1}; ` +
+        `backing off ${Math.round(backoffMs)}ms`
+    );
+
     await new Promise((resolve) => setTimeout(resolve, backoffMs));
   }
 }

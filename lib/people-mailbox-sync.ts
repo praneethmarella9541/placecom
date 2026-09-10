@@ -11,7 +11,8 @@ import {
   type GmailMessageHeaders,
 } from "@/lib/gmail";
 import { bucketEmailConnection } from "@/lib/email-connection-strength";
-import { resolveCompanyNames } from "@/lib/company-enrichment";
+import { takeGmailQuotaStats } from "@/lib/gmail-quota";
+import { resolveCompanyNames, takeCompanyEnrichmentStats } from "@/lib/company-enrichment";
 import { isLikelyAutomatedAddress } from "@/lib/mail-noise-filter";
 
 type ParsedAddress = { name: string | null; email: string };
@@ -593,6 +594,14 @@ async function runBackfillPhase(
   let totalEstimate = state.last_progress?.total ?? null;
 
   while (Date.now() - startedAt < BATCH_TIME_BUDGET_MS) {
+    // Per-page stage timings. A page's cost is predictable from quota alone
+    // (500 messages.get at 5 units each), so when wall-clock runs well past that
+    // prediction the only way to tell WHY is to attribute the time: our own
+    // bucket, Gmail throttling us, or the database/enrichment work between pages.
+    const pageStartedAt = Date.now();
+    let fetchMs = 0;
+    let processMs = 0;
+
     const { messageIds, nextPageToken, resultSizeEstimate } = await listMessageIdsPage(
       accessToken,
       {
@@ -602,6 +611,7 @@ async function runBackfillPhase(
         mailboxKey: mailboxOwnerId,
       }
     );
+    const listMs = Date.now() - pageStartedAt;
     pagesThisRun += 1;
 
     if (totalEstimate === null && typeof resultSizeEstimate === "number" && resultSizeEstimate > 0) {
@@ -634,9 +644,11 @@ async function runBackfillPhase(
     }
 
     if (messageIds.length > 0) {
+      const fetchStartedAt = Date.now();
       const headers = await fetchGmailMessageHeadersByIds(accessToken, messageIds, {
         mailboxKey: mailboxOwnerId,
       });
+      fetchMs = Date.now() - fetchStartedAt;
 
       // messages_scanned_total counts headers actually retrieved, so a page that
       // yields fewer than it listed leaves the running total short of a round
@@ -657,6 +669,7 @@ async function runBackfillPhase(
         newestSeen = Math.max(newestSeen, msg.internalDate);
         oldestSeen = Math.min(oldestSeen, msg.internalDate);
       }
+      const processStartedAt = Date.now();
       const upserted = await processHeadersPage(
         supabase,
         syncedByUserId,
@@ -664,6 +677,7 @@ async function runBackfillPhase(
         ownEmail,
         headers
       );
+      processMs = Date.now() - processStartedAt;
       for (const email of upserted) seenEmailsThisRun.add(email);
       messagesScannedThisRun += headers.length;
       messagesScannedTotal += headers.length;
@@ -696,6 +710,18 @@ async function runBackfillPhase(
       .eq("mailbox_owner_id", mailboxOwnerId)
       .select("status")
       .maybeSingle();
+
+    const quota = takeGmailQuotaStats(mailboxOwnerId);
+    const enrich = takeCompanyEnrichmentStats();
+    const secs = (ms: number) => (ms / 1000).toFixed(1);
+    console.log(
+      `[contact-sync] page ${pagesThisRun}: ${messageIds.length} msgs in ${secs(Date.now() - pageStartedAt)}s — ` +
+        `list ${secs(listMs)}s, gmail ${secs(fetchMs)}s, db+enrich ${secs(processMs)}s | ` +
+        `quota: ${quota.calls} calls, ${secs(quota.waitMs)}s summed wait, ` +
+        `${quota.rateLimitRetries} throttled (${secs(quota.backoffMs)}s backoff) | ` +
+        `enrich: ${enrich.domains} domains, ${secs(enrich.ms)}s, ` +
+        `${enrich.apiCalls} logo.dev calls, ${enrich.apiTimeouts} timeouts`
+    );
 
     if (persisted && persisted.status !== "running") break; // stopped by the user
 

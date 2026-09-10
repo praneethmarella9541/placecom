@@ -28,24 +28,21 @@ export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Resolved from `profiles` directly (not requireGmailAccessToken) to keep this
-  // a cheap poll target — no Google token refresh round-trip on every call.
-  const { data: profile, error: profileErr } = await supabase
-    .from("profiles")
-    .select("role, mailbox_owner_id")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (profileErr) return NextResponse.json({ error: profileErr.message }, { status: 500 });
-
-  const mailboxOwnerId = profile?.role === "admin" ? user.id : profile?.mailbox_owner_id;
-  if (!mailboxOwnerId) return NextResponse.json({ state: null });
-
+  // No profiles lookup to resolve the mailbox owner first. This table holds one
+  // row per owner and its RLS policy already scopes it to exactly the caller's
+  // mailbox (migration 0047, via current_mailbox_owner_id()), so an unfiltered
+  // read returns their row or nothing at all. Every open tab polls this every
+  // 20s while idle, so halving it to one round trip is worth more here than the
+  // explicitness of naming the owner. A caller with no mailbox owner sees no
+  // rows, which lands on the same `{ state: null }` as before.
+  //
+  // Resolved this way rather than through requireGmailAccessToken to keep it a
+  // cheap poll target — no Google token refresh round-trip on every call.
   const { data, error } = await supabase
     .from("contact_sync_state")
     .select(
       "status, phase, page_token, messages_scanned_total, contacts_found_total, last_progress, last_summary, completed_backfill_at, error_message, updated_at"
     )
-    .eq("mailbox_owner_id", mailboxOwnerId)
     .maybeSingle();
 
   if (error) {

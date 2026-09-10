@@ -57,6 +57,16 @@ function markTabSession(): void {
 /** Maps a `contact_sync_state` row onto the shared client snapshot shape. */
 function applyStateRow(row: ContactSyncStateRow | null) {
   if (!row) {
+    // No row at all is the normal state for the first seconds of a sync that has
+    // never run on this mailbox: the server only creates it once the batch
+    // request claims the lock, which is after its Gmail token refresh. A poll
+    // landing in that gap used to reset the snapshot to idle, which hid the pill
+    // for the entire ~250s batch — liveProgressTick only polls while "running"
+    // and slowTick skips while this tab is driving, so nothing ever polled again
+    // to correct it, and the sync looked like it had never started until the page
+    // was reloaded. A just-clicked intent outranks an absent row for the same
+    // reason it outranks a stale one below.
+    if (getContactSyncIntent()) return;
     setContactSyncSnapshot({ status: "idle", phase: null, error: null });
     return;
   }

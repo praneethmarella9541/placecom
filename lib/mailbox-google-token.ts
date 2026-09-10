@@ -1,6 +1,6 @@
 import "server-only";
 
-import { refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
+import { ACCESS_SKEW_MS, refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
 import { createServiceSupabase } from "@/lib/supabase-service";
 
 /**
@@ -14,7 +14,6 @@ import { createServiceSupabase } from "@/lib/supabase-service";
  * lib/google-meet-organizer.ts.
  */
 
-const ACCESS_SKEW_MS = 120_000;
 
 type CachedToken = { token: string; expiresAt: number; gmailAddress?: string };
 

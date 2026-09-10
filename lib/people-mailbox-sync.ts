@@ -70,6 +70,9 @@ const RECENT_DATES_CAP = 300;
 // Leaves margin under the route's `maxDuration = 300` — a batch call stops paging
 // and persists its resume cursor once this budget is spent, rather than risking a
 // mid-page timeout that would lose the in-flight page's work.
+// ACCESS_SKEW_MS (lib/google-oauth-refresh.ts) must stay above this: the Gmail
+// token is resolved once, before the loop below starts, so a batch allowed to
+// begin has to be handed a token that outlives it.
 const BATCH_TIME_BUDGET_MS = 250_000;
 
 /**

@@ -1,9 +1,8 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
+import { ACCESS_SKEW_MS, refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
 
-const ACCESS_SKEW_MS = 120_000;
 
 export type CronMailboxTokenResult =
   | { ok: true; accessToken: string; gmailAddress?: string }

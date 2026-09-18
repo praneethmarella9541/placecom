@@ -202,7 +202,21 @@ export function EmailHtmlBody({
     html, body { margin: 0; padding: 0; }
     body { overflow-wrap: break-word; word-wrap: break-word; }
     img { max-width: 100%; height: auto; }
-    /* Gmail-style "···" quoted-history toggle — see lib/email-quote-collapse.ts. */
+    /* Gmail-style "···" quoted-history toggle — see lib/email-quote-collapse.ts.
+       The browser's native <details> behavior already hides non-summary
+       children when closed, with no [open] attribute needed — but that's a
+       low-priority user-agent default, and this stylesheet also carries
+       whatever CSS the email itself brings (appended right below, via
+       prepared.styles). Bulk cold-outreach/marketing templates routinely ship
+       a broad reset for Outlook/old-client compatibility — e.g.
+       "div, blockquote { display: block !important; }" — which trivially
+       overrides that native default the instant it targets the same tags our
+       collapsed quote uses, rendering it wide open instead of hidden. This
+       explicit, !important, higher-specificity rule is what actually keeps
+       the quote closed regardless of what the email's own stylesheet does. */
+    details.__quote-toggle:not([open]) > *:not(summary) {
+      display: none !important;
+    }
     details.__quote-toggle { margin: 4px 0; }
     details.__quote-toggle > summary {
       display: inline-flex;

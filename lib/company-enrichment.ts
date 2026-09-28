@@ -84,20 +84,41 @@ async function searchLogoDev(domain: string): Promise<LogoDevMatch | null> {
 }
 
 /**
+ * A "guess" outcome doesn't distinguish "logo.dev genuinely has nothing for
+ * this domain" from "the call timed out / hit a rate limit / logo.dev had a
+ * blip" — both used to cache identically and permanently, so a domain that
+ * failed only because of a transient issue (confirmed in prod: a cluster of
+ * real companies — pwc.com, kpmg.com, airtel.in — all fell back to 'guess'
+ * within the same few seconds on 2026-09-05, while their sibling domains
+ * (pwc.in, airtel.com) resolved fine via logo.dev on other days) stayed stuck
+ * with no logo forever. Retrying a stale guess after this cooldown lets it
+ * self-heal the next time the domain is touched, without hammering logo.dev
+ * for domains that make repeated guess attempts pointless (a personal Gmail
+ * domain, a dead sub-domain, etc.) more than once per window.
+ */
+const GUESS_RETRY_AFTER_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
  * Resolves a real company name for one domain, checking company_enrichment_cache
- * first so a given domain is only ever looked up once. Always returns a usable
- * name — falls back to guessCompanyNameFromDomain if the API has nothing (and
- * caches that outcome too, as source='guess', so a failing domain isn't retried
- * on every sync). Also caches the logo URL when available — see getAllCachedLogos
- * for reading it back.
+ * first so a given domain is only looked up again when it needs to be. A
+ * confirmed logo.dev hit is cached permanently; a 'guess' fallback is retried
+ * after GUESS_RETRY_AFTER_MS in case the original failure was transient (see
+ * that constant's doc comment). Always returns a usable name — falls back to
+ * guessCompanyNameFromDomain if the API still has nothing. Also caches the
+ * logo URL when available — see getAllCachedLogos for reading it back.
  */
 export async function resolveCompanyName(svc: SupabaseClient, domain: string): Promise<string> {
   const { data: cached } = await svc
     .from("company_enrichment_cache")
-    .select("company_name")
+    .select("company_name, source, resolved_at")
     .eq("domain", domain)
     .maybeSingle();
-  if (cached?.company_name) return cached.company_name as string;
+  if (cached?.company_name) {
+    const staleGuess =
+      cached.source === "guess" &&
+      Date.now() - new Date(cached.resolved_at as string).getTime() > GUESS_RETRY_AFTER_MS;
+    if (!staleGuess) return cached.company_name as string;
+  }
 
   const enriched = await searchLogoDev(domain);
   const name = enriched?.name || guessCompanyNameFromDomain(domain);

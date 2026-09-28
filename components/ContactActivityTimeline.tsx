@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { IconCalendar, IconMail, IconMenu } from "@/components/Icons";
+import { EmailThreadPreviewModal } from "@/components/EmailThreadPreviewModal";
 import { titleCase } from "@/lib/title-case";
 import type { ContactNoteRow } from "@/app/api/directory-contacts/[id]/notes/route";
 import type { TimelineItem } from "@/app/api/directory-contacts/[id]/timeline/route";
@@ -27,6 +28,7 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
   const [notes, setNotes] = useState<ContactNoteRow[] | "loading" | "error" | null>(null);
   const [noteText, setNoteText] = useState("");
   const [submittingNote, setSubmittingNote] = useState(false);
+  const [previewThreadId, setPreviewThreadId] = useState<string | null>(null);
 
   const loadSource = useCallback(
     async (type: TimelineItem["type"]) => {
@@ -181,17 +183,30 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
           ) : allItems.length === 0 ? (
             <p className="text-[13px] italic text-[var(--color-text-muted)]">{titleCase("No activity yet.")}</p>
           ) : (
-            <TimelineList items={allItems} />
+            <TimelineList items={allItems} onOpenThread={setPreviewThreadId} />
           )
         ) : (
-          <SourceTab items={singleSource ? sources[singleSource] : undefined} />
+          <SourceTab items={singleSource ? sources[singleSource] : undefined} onOpenThread={setPreviewThreadId} />
         )}
       </div>
+
+      {previewThreadId && (
+        <EmailThreadPreviewModal
+          threadId={previewThreadId}
+          onClose={() => setPreviewThreadId(null)}
+        />
+      )}
     </div>
   );
 }
 
-function SourceTab({ items }: { items: TimelineItem[] | "loading" | "error" | undefined }) {
+function SourceTab({
+  items,
+  onOpenThread,
+}: {
+  items: TimelineItem[] | "loading" | "error" | undefined;
+  onOpenThread: (threadId: string) => void;
+}) {
   if (items === undefined || items === "loading") {
     return <p className="text-[13px] text-[var(--color-text-muted)]">{titleCase("Loading…")}</p>;
   }
@@ -206,22 +221,29 @@ function SourceTab({ items }: { items: TimelineItem[] | "loading" | "error" | un
   // order, which isn't guaranteed to be newest-first (calendar events come
   // back oldest-first), so this can't just trust the fetch order.
   const sorted = [...items].sort((a, b) => (b.at || "").localeCompare(a.at || ""));
-  return <TimelineList items={sorted} />;
+  return <TimelineList items={sorted} onOpenThread={onOpenThread} />;
 }
 
 function TimelineList({
   items,
+  onOpenThread,
 }: {
   items: (TimelineItem | { id: string; type: "note"; summary: string; at: string })[];
+  onOpenThread: (threadId: string) => void;
 }) {
   return (
     <ul className="space-y-2.5">
       {items.map((item) => {
         const Icon = ICON_BY_TYPE[item.type];
+        const threadId = "threadId" in item ? item.threadId : undefined;
+        const clickable = Boolean(threadId);
         return (
           <li
             key={`${item.type}-${item.id}`}
-            className="flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3"
+            onClick={clickable ? () => onOpenThread(threadId!) : undefined}
+            className={`flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-3 ${
+              clickable ? "cursor-pointer transition-colors hover:bg-[var(--color-surface-offset)]" : ""
+            }`}
           >
             <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-offset)]">
               <Icon className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />

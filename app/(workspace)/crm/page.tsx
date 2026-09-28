@@ -319,7 +319,7 @@ export default function CRMPage() {
       {!settings.season_start_date && !loading && (
         <div className="rounded-xl border border-[var(--color-copper)]/30 bg-[var(--color-copper-tint)] px-4 py-3 text-[12.5px] text-[var(--color-text)]">
           {titleCase(
-            "Set a season start date — the classifier only reads mail and WhatsApp from on or after it."
+            "Set a season start date — the classifier only reads mail from on or after it."
           )}
         </div>
       )}
@@ -339,7 +339,7 @@ export default function CRMPage() {
           </span>
           {!lastRun.mailIncluded && (
             <span className="text-[var(--color-warning)]">
-              {titleCase("Mail was unavailable — classified on WhatsApp and notes only.")}
+              {titleCase("Mail was unavailable — classified on notes only.")}
             </span>
           )}
         </div>
@@ -365,7 +365,7 @@ export default function CRMPage() {
           </p>
           <p className="max-w-sm text-[13px] leading-relaxed text-[var(--color-text-muted)]">
             {titleCase(
-              "Pick people from your contact book — the classifier reads your mail and WhatsApp with them and files each one into a column."
+              "Pick people from your contact book — the classifier reads your mail with them and files each one into a column."
             )}
           </p>
           <button

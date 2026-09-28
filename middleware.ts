@@ -112,10 +112,7 @@ export async function middleware(request: NextRequest) {
     });
   }
 
-  const feature = requestPathToFeature(
-    request.nextUrl.pathname,
-    request.nextUrl.searchParams
-  );
+  const feature = requestPathToFeature(request.nextUrl.pathname);
 
   // Domain-level cap: block any feature not in NEXT_PUBLIC_ALLOWED_FEATURES (applies to all roles)
   if (allowed && feature && !allowed.has(feature)) {

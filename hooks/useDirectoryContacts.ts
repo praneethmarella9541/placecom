@@ -29,7 +29,7 @@ export type DirectoryContactInput = {
  * it's usually already warm and this fetch is skipped entirely. Falls back
  * to fetching itself (e.g. first login before the chain finishes, or a
  * restricted-feature session) with an in-flight guard so simultaneous
- * mounts (Contacts + WhatsApp + SMS, say) share one request.
+ * mounts (Contacts + SMS, say) share one request.
  */
 let inflight: Promise<DirectoryContact[]> | null = null;
 

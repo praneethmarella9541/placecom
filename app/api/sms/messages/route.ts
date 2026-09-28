@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getUserSmsLine } from "@/lib/sms-telephony";
-import { normalizePeerE164 } from "@/lib/whatsapp-address";
+import { normalizePeerE164 } from "@/lib/e164-peer";
 
 export const runtime = "nodejs";
 

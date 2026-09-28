@@ -4,16 +4,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { normalizePhone, phoneMatches } from "@/lib/phone";
 
-export type UserWhatsAppLine = {
+export type UserExotelLine = {
   line: string;
   profileId: string;
 };
 
-/** Assigned Exotel virtual number used as this user's WhatsApp business line. */
-export async function getUserWhatsAppLine(
+/** Assigned Exotel virtual number used as this user's telephony line for SMS. */
+export async function getUserExotelLine(
   supabase: SupabaseClient,
   userId: string
-): Promise<{ ok: true; data: UserWhatsAppLine } | { ok: false; error: string; status: number }> {
+): Promise<{ ok: true; data: UserExotelLine } | { ok: false; error: string; status: number }> {
   const { data, error } = await supabase
     .from("profiles")
     .select("exotel_virtual_number")
@@ -35,7 +35,7 @@ export async function getUserWhatsAppLine(
   if (!line) {
     return {
       ok: false,
-      error: "No Exotel/WhatsApp number assigned. Ask your admin to set it under Team.",
+      error: "No Exotel number assigned. Ask your admin to set it under Team.",
       status: 403,
     };
   }
@@ -43,7 +43,7 @@ export async function getUserWhatsAppLine(
   return { ok: true, data: { line, profileId: userId } };
 }
 
-/** Resolve team member who owns this business WhatsApp line (for inbound webhooks). */
+/** Resolve team member who owns this business SMS line (for inbound webhooks). */
 export async function findUserIdForBusinessLine(businessE164: string): Promise<string | null> {
   const line = normalizePhone(businessE164);
   if (!line) return null;

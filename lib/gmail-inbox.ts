@@ -7,7 +7,7 @@ import {
 } from "@/lib/gmail-search-query";
 import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
-import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
+import { fetchGmail, GMAIL_COST, type GmailPriority } from "@/lib/gmail-quota";
 import {
   getCachedThreadMeta,
   setCachedThreadMeta,
@@ -398,6 +398,8 @@ export async function listThreadsPage(
      *  metadata cache. Omit only where no mailbox identity is available; the
      *  call then runs unmetered and uncached. */
     mailboxKey?: string;
+    /** Defaults to "interactive" — a background/bulk caller should opt into "batch". */
+    priority?: GmailPriority;
   }
 ): Promise<ThreadListPage> {
   const rawUserQ = normalizeGmailSearchQuery(options.searchQuery || "");
@@ -440,7 +442,7 @@ export async function listThreadsPage(
         q: `"${fromEmail}"`,
       }).toString()}`;
       const listInit = { headers: { Authorization: `Bearer ${accessToken}` } };
-      const listOpts = { mailboxKey: options.mailboxKey, cost: GMAIL_COST.threadsList };
+      const listOpts = { mailboxKey: options.mailboxKey, cost: GMAIL_COST.threadsList, priority: options.priority };
       const [primaryRes, mentionRes] = await Promise.all([
         fetchGmail(url, listInit, listOpts),
         fetchGmail(mentionUrl, listInit, listOpts),
@@ -454,7 +456,7 @@ export async function listThreadsPage(
       res = await fetchGmail(
         url,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        { mailboxKey: options.mailboxKey, cost: GMAIL_COST.threadsList }
+        { mailboxKey: options.mailboxKey, cost: GMAIL_COST.threadsList, priority: options.priority }
       );
     }
   } catch (e) {
@@ -707,7 +709,7 @@ export type GetThreadResult = {
 export async function getThreadMessages(
   accessToken: string,
   threadId: string,
-  opts?: { mailboxKey?: string }
+  opts?: { mailboxKey?: string; priority?: GmailPriority }
 ): Promise<GetThreadResult> {
   const url = `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?format=full`;
   let res: Response;
@@ -715,7 +717,7 @@ export async function getThreadMessages(
     res = await fetchGmail(
       url,
       { headers: { Authorization: `Bearer ${accessToken}` } },
-      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.threadsGet }
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.threadsGet, priority: opts?.priority }
     );
   } catch (e) {
     throw new Error(describeUpstreamFetchError(e, "Gmail API (thread get)"));

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pause, RefreshCw } from "lucide-react";
+import { IconX } from "@/components/Icons";
 import {
   clearContactSyncIntent,
   consumeContactSyncRunRequest,
@@ -152,6 +153,23 @@ export function ContactSyncStatus() {
   const loopActiveRef = useRef(false);
   /** Epoch ms before which driveLoop won't re-POST after a 409 — see driveLoop. */
   const cooldownUntilRef = useRef(0);
+  /**
+   * Purely local UI preference — closing the pill doesn't touch the sync
+   * itself, which keeps running (or stays paused) exactly as it would
+   * otherwise; it just stops the always-on card from sitting in the corner of
+   * every page. Re-surfaces on the next real status change (paused → running,
+   * a new error, etc.) so the user still finds out if something needs them —
+   * it only stays hidden for the state they already dismissed.
+   */
+  const [dismissed, setDismissed] = useState(false);
+  const lastStatusRef = useRef(snapshot.status);
+
+  useEffect(() => {
+    if (snapshot.status !== lastStatusRef.current) {
+      lastStatusRef.current = snapshot.status;
+      setDismissed(false);
+    }
+  }, [snapshot.status]);
 
   useEffect(() => {
     void refreshStatus();
@@ -321,7 +339,7 @@ export function ContactSyncStatus() {
   // the user needs to know persists across sessions, and this is where they get
   // to act on it. It stays until they resume or the run completes.
   const paused = snapshot.status === "paused";
-  if (snapshot.status !== "running" && !paused) return null;
+  if ((snapshot.status !== "running" && !paused) || dismissed) return null;
 
   return (
     <div
@@ -350,6 +368,16 @@ export function ContactSyncStatus() {
         className="ml-1 shrink-0 rounded-full px-2 py-1 text-[12px] font-semibold text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
       >
         {titleCase(paused ? "Resume" : "Pause")}
+      </button>
+      <button
+        type="button"
+        data-testid="contact-sync-dismiss-btn"
+        aria-label="Dismiss"
+        title={titleCase("Hide — sync keeps going in the background")}
+        onClick={() => setDismissed(true)}
+        className="shrink-0 rounded-full p-1 text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+      >
+        <IconX className="h-3.5 w-3.5" />
       </button>
     </div>
   );

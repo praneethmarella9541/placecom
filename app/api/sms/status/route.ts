@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
-import { getWebhookBaseUrl } from "@/lib/call-recording-url";
+import { getWebhookBaseUrl } from "@/lib/exotel-webhook-url";
 import { getExotelApiHost, isExotelSmsConfigured } from "@/lib/exotel-sms";
 import { getUserSmsLine } from "@/lib/sms-telephony";
 

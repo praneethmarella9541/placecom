@@ -27,7 +27,7 @@ export async function resolveMailboxOwnerId(
 
 /**
  * Display names for a set of user ids — used to attribute a team-scoped row
- * (a call, a WhatsApp message) to the specific staff member who owns it when
+ * (an SMS message) to the specific staff member who owns it when
  * an admin is viewing combined team activity. Needs the service role: the
  * caller's own session client can only read its own `profiles` row
  * (profiles_select_own RLS), never a teammate's.

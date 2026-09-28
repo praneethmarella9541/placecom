@@ -1,11 +1,11 @@
 import { normalizePhone, phoneLookupVariants } from "@/lib/phone";
 
-export type WaContactRow = {
+export type PhoneContactRow = {
   peer_e164: string;
   name: string;
 };
 
-/** Legacy +91 mis-dial aliases (matches server-side whatsapp-peer.ts). */
+/** Legacy +91 mis-dial aliases. */
 function legacyMisdialedPeerAliases(canonical: string): string[] {
   const n = normalizePhone(canonical.trim());
   if (!n.startsWith("+91") || n.length !== 13) return [];
@@ -32,7 +32,7 @@ export function canonicalPeer(raw: string): string {
 }
 
 /** Map every phone variant to its saved display name. */
-export function buildContactNameMap(contacts: WaContactRow[]): Record<string, string> {
+export function buildContactNameMap(contacts: PhoneContactRow[]): Record<string, string> {
   const map: Record<string, string> = {};
   for (const c of contacts) {
     if (!c.peer_e164?.trim() || !c.name?.trim()) continue;
@@ -70,7 +70,7 @@ export function peerInitials(peer: string, name?: string): string {
 
 /**
  * Fold a legacy mis-dialed alias (`+8489431508`, missing the `91` country
- * code — see legacyMisdialedPeerAliases in whatsapp-peer.ts) back to its real
+ * code — see legacyMisdialedPeerAliases above) back to its real
  * canonical form, so it dedupes against the properly-normalized entry instead
  * of surviving as a second, differently-formatted row.
  */
@@ -84,10 +84,10 @@ function dedupeKey(raw: string): string {
 export function filterSavedContacts(
   contacts: Record<string, string>,
   query: string
-): WaContactRow[] {
+): PhoneContactRow[] {
   const q = query.trim().toLowerCase();
   const seen = new Set<string>();
-  const rows: WaContactRow[] = [];
+  const rows: PhoneContactRow[] = [];
 
   for (const [peer, name] of Object.entries(contacts)) {
     const trimmed = name.trim();

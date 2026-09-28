@@ -48,7 +48,7 @@ export function clearWorkspacePrefetchSession(): void {
   }
 }
 
-/** Full login warm (mail lists + bodies, drive, WhatsApp, calendar, forms). */
+/** Full login warm (mail lists + bodies, drive, calendar, forms). */
 export function beginWorkspacePrefetchWarm(opts?: { force?: boolean }): boolean {
   if (opts?.force) {
     clearWorkspacePrefetchSession();

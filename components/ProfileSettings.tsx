@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { MeProfileResponse } from "@/app/api/me/profile/route";
 import { PasswordInput } from "@/components/PasswordInput";
 import { titleCase } from "@/lib/title-case";
-import { formatPhone } from "@/lib/wa-contacts-display";
+import { formatPhone } from "@/lib/phone-contacts-display";
 import { patchMeMailboxCache, refreshMeMailbox } from "@/lib/use-me-mailbox";
 import { gmailAvatarInitials } from "@/lib/gmail-avatar";
 

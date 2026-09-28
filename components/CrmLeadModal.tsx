@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Mail, MessageCircle, Sparkles, StickyNote } from "lucide-react";
+import { Mail, Sparkles, StickyNote } from "lucide-react";
 import { IconX } from "@/components/Icons";
 import { EmailThreadPreviewModal } from "@/components/EmailThreadPreviewModal";
 import type { CrmStage } from "@/lib/crm-stages-types";
@@ -26,7 +26,7 @@ export type CrmLead = {
 };
 
 type EvidenceItem = {
-  channel: "mail" | "whatsapp" | "note";
+  channel: "mail" | "note";
   direction: "in" | "out" | "unknown";
   date: string;
   text: string;
@@ -40,11 +40,10 @@ type EvidenceResponse = {
   mailIncluded: boolean;
   mailError: string | null;
   mail: EvidenceItem[];
-  whatsapp: EvidenceItem[];
   notes: EvidenceItem[];
 };
 
-type Tab = "judgement" | "mail" | "whatsapp";
+type Tab = "judgement" | "mail";
 
 /**
  * Lead detail. The AI's verdict and the evidence behind it live side by side
@@ -104,7 +103,6 @@ export function CrmLeadModal({
   const TABS: { key: Tab; label: string; Icon: React.ElementType; count?: number }[] = [
     { key: "judgement", label: "AI judgement", Icon: Sparkles },
     { key: "mail", label: "Mail", Icon: Mail, count: data?.mail.length },
-    { key: "whatsapp", label: "WhatsApp", Icon: MessageCircle, count: data?.whatsapp.length },
   ];
 
   if (typeof document === "undefined") return null;
@@ -181,15 +179,13 @@ export function CrmLeadModal({
             </div>
           ) : error ? (
             <p className="text-[13px] text-[var(--color-danger)]">{error}</p>
-          ) : tab === "mail" ? (
+          ) : (
             <MailTab
               items={data?.mail ?? []}
               seasonStart={data?.seasonStart ?? null}
               mailError={data?.mailIncluded === false ? data.mailError : null}
               onOpenThread={setPreviewThreadId}
             />
-          ) : (
-            <WhatsAppTab items={data?.whatsapp ?? []} seasonStart={data?.seasonStart ?? null} />
           )}
         </div>
 
@@ -401,39 +397,3 @@ function MailTab({
   );
 }
 
-function WhatsAppTab({ items, seasonStart }: { items: EvidenceItem[]; seasonStart: string | null }) {
-  if (items.length === 0) return <EmptyWindow seasonStart={seasonStart} what="WhatsApp messages" />;
-
-  // Oldest first — a chat reads top-down, unlike the mail list.
-  const ordered = [...items].reverse();
-
-  return (
-    <div className="space-y-2">
-      {ordered.map((m, i) => {
-        const outbound = m.direction === "out";
-        return (
-          <div
-            key={`${m.date}-${i}`}
-            className={cn("flex", outbound ? "justify-end" : "justify-start")}
-          >
-            <div
-              className={cn(
-                "max-w-[80%] rounded-2xl px-3 py-2",
-                outbound
-                  ? "rounded-br-sm bg-[var(--color-whatsapp-bubble-out)] text-[var(--color-text)]"
-                  : "rounded-bl-sm border border-[var(--color-border)] bg-[var(--color-surface)]"
-              )}
-            >
-              <p className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-[var(--color-text)]">
-                {m.text}
-              </p>
-              <p className="mt-1 text-right text-[10.5px] text-[var(--color-text-faint)]">
-                {m.date ? timeAgo(m.date) : ""}
-              </p>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}

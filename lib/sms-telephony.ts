@@ -1,10 +1,10 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getUserWhatsAppLine, findUserIdForBusinessLine } from "@/lib/whatsapp-telephony";
+import { getUserExotelLine, findUserIdForBusinessLine } from "@/lib/exotel-line";
 
 /**
- * SMS uses the same admin-assigned Exotel virtual number as WhatsApp/voice
+ * SMS uses the admin-assigned Exotel virtual number
  * (profiles.exotel_virtual_number). Each staff member sends from — and sees
  * threads on — the single line the admin assigned them under Admin → Team.
  */
@@ -12,7 +12,7 @@ export async function getUserSmsLine(
   supabase: SupabaseClient,
   userId: string
 ): Promise<{ ok: true; line: string } | { ok: false; error: string; status: number }> {
-  const result = await getUserWhatsAppLine(supabase, userId);
+  const result = await getUserExotelLine(supabase, userId);
   if (!result.ok) {
     return { ok: false, error: result.error, status: result.status };
   }

@@ -5,6 +5,7 @@ import {
   GMAIL_COST,
   GmailRateLimitError,
   isRateLimitedResponse,
+  type GmailPriority,
 } from "@/lib/gmail-quota";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -18,7 +19,11 @@ const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
  */
 export { GmailRateLimitError } from "@/lib/gmail-quota";
 
-type GmailCallOpts = { mailboxKey?: string };
+type GmailCallOpts = {
+  mailboxKey?: string;
+  /** Defaults to "interactive" — pass "batch" for background scans (see lib/people-mailbox-sync.ts). */
+  priority?: GmailPriority;
+};
 
 export type GmailLabelFilter = "inbox" | "sent" | "all";
 
@@ -300,7 +305,7 @@ export async function fetchGmailMessageHeaders(
     res = await fetchGmail(
       url,
       { headers: { Authorization: `Bearer ${accessToken}` } },
-      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.messagesGet }
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.messagesGet, priority: opts?.priority }
     );
   } catch (e) {
     throw new Error(
@@ -355,6 +360,7 @@ export async function fetchGmailMessageHeadersByIds(
     onProgress?: (fetched: number, target: number) => void;
     concurrency?: number;
     mailboxKey?: string;
+    priority?: GmailPriority;
   }
 ): Promise<GmailMessageHeaders[]> {
   if (ids.length === 0) return [];
@@ -368,6 +374,7 @@ export async function fetchGmailMessageHeadersByIds(
       try {
         return await fetchGmailMessageHeaders(accessToken, id, {
           mailboxKey: opts?.mailboxKey,
+          priority: opts?.priority,
         });
       } catch (e) {
         // Quota exhaustion is NOT a per-message defect — every remaining id in
@@ -417,6 +424,7 @@ export async function listMessageIdsPage(
     pageToken?: string;
     q?: string;
     mailboxKey?: string;
+    priority?: GmailPriority;
   }
 ): Promise<ListMessagesResult> {
   const params = new URLSearchParams({
@@ -431,7 +439,7 @@ export async function listMessageIdsPage(
     res = await fetchGmail(
       url,
       { headers: { Authorization: `Bearer ${accessToken}` } },
-      { mailboxKey: options.mailboxKey, cost: GMAIL_COST.messagesList }
+      { mailboxKey: options.mailboxKey, cost: GMAIL_COST.messagesList, priority: options.priority }
     );
   } catch (e) {
     throw new Error(
@@ -481,7 +489,7 @@ export async function fetchGmailHistoryId(
   const res = await fetchGmail(
     `${GMAIL_API}/profile`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
-    { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.getProfile }
+    { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.getProfile, priority: opts?.priority }
   );
   if (!res.ok) return null;
   const data = (await res.json()) as { historyId?: string };
@@ -523,7 +531,7 @@ export async function fetchGmailHistoryPage(
   const res = await fetchGmail(
     `${GMAIL_API}/history?${params.toString()}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
-    { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.historyList }
+    { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.historyList, priority: opts?.priority }
   );
 
   if (res.status === 404) throw new GmailHistoryExpiredError();

@@ -12,7 +12,7 @@ import type { SequenceStepAttachment } from "@/lib/sequence-types";
  *
  * Private bucket, reached only through the API routes and the cron — nothing
  * here is ever handed to a browser as a URL, so the files can't leak by being
- * guessable. Mirrors lib/whatsapp-media-storage.ts for bucket handling.
+ * guessable.
  */
 export const SEQUENCE_ATTACHMENT_BUCKET = "sequence-attachments";
 

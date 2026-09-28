@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getWebhookBaseUrl } from "@/lib/call-recording-url";
+import { getWebhookBaseUrl } from "@/lib/exotel-webhook-url";
 import {
   getExotelApiHost,
   getExotelApiHostCandidates,

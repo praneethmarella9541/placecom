@@ -4,11 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getThreadMessages, listThreadsPage } from "@/lib/gmail-inbox";
 import { gmailAddressQuery, gmailDomainQuery } from "@/lib/gmail-address-query";
-import { normalizePhone, phoneLookupVariants } from "@/lib/phone";
 import { isPersonalEmailDomain } from "@/lib/personal-email-domains";
+import type { GmailPriority } from "@/lib/gmail-quota";
 
 export type EvidenceItem = {
-  channel: "mail" | "whatsapp" | "note";
+  channel: "mail" | "note";
   direction: "in" | "out" | "unknown";
   date: string;
   /** What the classifier sees. For mail this is "subject — snippet". */
@@ -33,7 +33,6 @@ export type LeadEvidence = {
  */
 export type EvidenceLimits = {
   maxMail: number;
-  maxWhatsapp: number;
   maxNotes: number;
   maxTextChars: number;
   /**
@@ -53,7 +52,6 @@ const THREAD_FETCH_CONCURRENCY = 4;
 
 export const PROMPT_EVIDENCE_LIMITS: EvidenceLimits = {
   maxMail: 25,
-  maxWhatsapp: 25,
   maxNotes: 10,
   maxTextChars: 280,
   expandThreads: 8,
@@ -62,7 +60,6 @@ export const PROMPT_EVIDENCE_LIMITS: EvidenceLimits = {
 
 export const DISPLAY_EVIDENCE_LIMITS: EvidenceLimits = {
   maxMail: 60,
-  maxWhatsapp: 100,
   maxNotes: 50,
   maxTextChars: 1000,
   // The detail view links out to the real thread, so there's nothing to gain
@@ -139,7 +136,8 @@ async function mailEvidence(
   since: Date | null,
   ownAddress: string | undefined,
   limits: EvidenceLimits,
-  mailboxKey: string | undefined
+  mailboxKey: string | undefined,
+  priority: GmailPriority
 ): Promise<EvidenceItem[]> {
   const clip = clipper(limits.maxTextChars);
   if (!email) return [];
@@ -161,6 +159,7 @@ async function mailEvidence(
     maxResults: limits.maxMail,
     searchQuery: dated,
     mailboxKey,
+    priority,
   });
 
   const me = ownAddress?.trim().toLowerCase();
@@ -195,7 +194,7 @@ async function mailEvidence(
     const results = await Promise.all(
       chunk.map(async (thread) => {
         try {
-          const { messages } = await getThreadMessages(accessToken, thread.id, { mailboxKey });
+          const { messages } = await getThreadMessages(accessToken, thread.id, { mailboxKey, priority });
           return { thread, messages };
         } catch {
           // One unreadable thread shouldn't cost us the rest of the evidence —
@@ -237,36 +236,6 @@ async function mailEvidence(
   return [...expanded, ...summaries.filter((s) => !s.threadId || !expandedIds.has(s.threadId))];
 }
 
-async function whatsappEvidence(
-  supabase: SupabaseClient,
-  phone: string | null,
-  since: Date | null,
-  limits: EvidenceLimits
-): Promise<EvidenceItem[]> {
-  const clip = clipper(limits.maxTextChars);
-  if (!phone) return [];
-  const variants = phoneLookupVariants(normalizePhone(phone));
-  if (variants.length === 0) return [];
-
-  let q = supabase
-    .from("whatsapp_messages")
-    .select("direction, body, created_at")
-    .in("peer_e164", variants)
-    .order("created_at", { ascending: false })
-    .limit(limits.maxWhatsapp);
-  if (since) q = q.gte("created_at", since.toISOString());
-
-  const { data } = await q;
-  return (data ?? [])
-    .filter((m) => clip(m.body as string | null).length > 0)
-    .map((m) => ({
-      channel: "whatsapp" as const,
-      direction: (m.direction === "outbound" ? "out" : "in") as EvidenceItem["direction"],
-      date: m.created_at as string,
-      text: clip(m.body as string | null),
-    }));
-}
-
 async function noteEvidence(
   supabase: SupabaseClient,
   leadId: string,
@@ -299,7 +268,7 @@ async function noteEvidence(
  * Mail is fetched live from Gmail rather than read from a table — message
  * bodies are not stored anywhere in this app (synced_contacts keeps only
  * dates and counts), so there is no local corpus to read instead. A Gmail
- * failure is swallowed: WhatsApp-only evidence still beats refusing to
+ * failure is swallowed: note-only evidence still beats refusing to
  * classify at all.
  */
 export async function gatherLeadEvidence(
@@ -312,12 +281,15 @@ export async function gatherLeadEvidence(
     ownAddress?: string;
     seasonStart: string | null;
     limits?: EvidenceLimits;
+    /** Defaults to "interactive" — a bulk/background classify run should opt into "batch". */
+    priority?: GmailPriority;
   }
 ): Promise<LeadEvidence> {
   const since = opts.seasonStart ? new Date(`${opts.seasonStart}T00:00:00Z`) : null;
   const limits = opts.limits ?? PROMPT_EVIDENCE_LIMITS;
+  const priority = opts.priority ?? "interactive";
 
-  const [mail, whatsapp, notes] = await Promise.all([
+  const [mail, notes] = await Promise.all([
     opts.accessToken
       ? mailEvidence(
           opts.accessToken,
@@ -325,14 +297,14 @@ export async function gatherLeadEvidence(
           since,
           opts.ownAddress,
           limits,
-          opts.mailboxKey
+          opts.mailboxKey,
+          priority
         ).catch(() => [])
       : Promise.resolve([]),
-    whatsappEvidence(supabase, lead.phone, since, limits).catch(() => []),
     noteEvidence(supabase, lead.id, since, limits).catch(() => []),
   ]);
 
-  const items = [...mail, ...whatsapp, ...notes].sort((a, b) =>
+  const items = [...mail, ...notes].sort((a, b) =>
     (b.date ?? "").localeCompare(a.date ?? "")
   );
 
@@ -341,7 +313,7 @@ export async function gatherLeadEvidence(
 
 /** Compact, token-cheap rendering of the evidence for the prompt. */
 export function renderEvidence(evidence: LeadEvidence): string {
-  if (evidence.empty) return "(no mail, WhatsApp or notes found in this window)";
+  if (evidence.empty) return "(no mail or notes found in this window)";
   return evidence.items
     .map((e) => {
       const when = (e.date ?? "").slice(0, 10);

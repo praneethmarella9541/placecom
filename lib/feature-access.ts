@@ -4,14 +4,12 @@ export const FEATURE_KEYS = [
   "forms",
   "sheets",
   "docs",
-  "broadcasting",
   "sequences",
   "dashboard",
   "crm",
   "calendar",
   "sms",
-  "whatsapp",
-  "calls",
+  "contacts",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -22,14 +20,12 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   forms: "Forms",
   sheets: "Sheets",
   docs: "Docs",
-  broadcasting: "Broadcasting",
   sequences: "Sequences",
   dashboard: "Extraction",
   crm: "CRM",
   calendar: "Calendar",
   sms: "SMS",
-  whatsapp: "WhatsApp",
-  calls: "Calls",
+  contacts: "Contacts",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -39,12 +35,11 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "forms",
   "sheets",
   "docs",
-  "broadcasting",
   "sequences",
   "calendar",
-  "whatsapp",
-  "calls",
   "crm",
+  "sms",
+  "contacts",
 ];
 
 const SET = new Set<string>(FEATURE_KEYS);
@@ -74,7 +69,7 @@ export function normalizeRestrictedFeatures(value: unknown): FeatureKey[] {
   return Array.from(uniq);
 }
 
-export function pathToFeature(pathname: string, search: URLSearchParams): FeatureKey | null {
+export function pathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/inbox")) return "inbox";
   if (pathname.startsWith("/drive")) return "drive";
   if (pathname.startsWith("/forms")) return "forms";
@@ -83,17 +78,9 @@ export function pathToFeature(pathname: string, search: URLSearchParams): Featur
   if (pathname.startsWith("/dashboard")) return "dashboard";
   if (pathname.startsWith("/crm")) return "crm";
   if (pathname.startsWith("/calendar")) return "calendar";
-  if (pathname.startsWith("/broadcasting")) {
-    const channel = search.get("channel");
-    if (channel === "sms") return "sms";
-    if (channel === "whatsapp") return "whatsapp";
-    return "broadcasting";
-  }
   if (pathname.startsWith("/sequences")) return "sequences";
   if (pathname.startsWith("/sms")) return "sms";
-  if (pathname.startsWith("/whatsapp")) return "whatsapp";
-  if (pathname.startsWith("/contacts")) return "whatsapp";
-  if (pathname.startsWith("/calls")) return "calls";
+  if (pathname.startsWith("/contacts")) return "contacts";
   return null;
 }
 
@@ -142,50 +129,43 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";
-  if (pathname.startsWith("/api/calls")) return "calls";
 
-  if (pathname.startsWith("/api/sms") || pathname.startsWith("/api/twilio/sms")) return "sms";
-  if (pathname.startsWith("/api/whatsapp") || pathname.startsWith("/api/twilio/whatsapp")) return "whatsapp";
+  if (pathname.startsWith("/api/sms")) return "sms";
 
   if (pathname.startsWith("/api/broadcast")) {
     if (pathname.includes("/sms")) return "sms";
-    if (pathname.includes("/whatsapp") || pathname.endsWith("/parse-wa-merge")) return "whatsapp";
-    // Shared by SMS + WhatsApp session import — gated by sign-in only.
+    // Shared by SMS session import — gated by sign-in only.
     if (pathname.endsWith("/parse-phones")) return null;
     // The spreadsheet parser now serves the inbox's mass sending, not the
     // retired mail channel — gate it with the composer that uses it.
     if (pathname.endsWith("/parse-mail-merge")) return "inbox";
-    return "broadcasting";
+    return null;
   }
 
   return null;
 }
 
-export function requestPathToFeature(pathname: string, search: URLSearchParams): FeatureKey | null {
-  return pathToFeature(pathname, search) ?? apiPathToFeature(pathname);
+export function requestPathToFeature(pathname: string): FeatureKey | null {
+  return pathToFeature(pathname) ?? apiPathToFeature(pathname);
 }
 
 /** First workspace URL that is not in the restricted set (same order as main nav). Used when redirecting blocked committee users. */
 export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
   const blocked = new Set(restricted);
-  const candidates: { path: string; search?: string }[] = [
-    { path: "/inbox" },
-    { path: "/drive" },
-    { path: "/forms" },
-    { path: "/sheets" },
-    { path: "/docs" },
-    { path: "/broadcasting" },
-    { path: "/sequences" },
-    { path: "/dashboard" },
-    { path: "/calendar" },
-    { path: "/whatsapp" },
-    { path: "/calls" },
-    { path: "/contacts" },
+  const candidates = [
+    "/inbox",
+    "/drive",
+    "/forms",
+    "/sheets",
+    "/docs",
+    "/sequences",
+    "/dashboard",
+    "/calendar",
+    "/contacts",
   ];
-  for (const { path, search = "" } of candidates) {
-    const sp = new URLSearchParams(search);
-    const f = pathToFeature(path, sp);
-    if (!f || !blocked.has(f)) return search ? `${path}?${search}` : path;
+  for (const path of candidates) {
+    const f = pathToFeature(path);
+    if (!f || !blocked.has(f)) return path;
   }
   return "/";
 }

@@ -1,18 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronDown, Plus, Search, Trash2, UserRound } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
-import { IconLinkedin, IconWhatsAppLogo } from "@/components/Icons";
+import { IconLinkedin } from "@/components/Icons";
 import { SyncedContactsSection } from "@/components/SyncedContactsSection";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { armSyncedContactsInvalidation, warmSyncedContacts } from "@/lib/synced-contacts-prefetch";
 import { contactLinkedInSearchUrl, type DirectoryContact } from "@/lib/contact-directory";
-import { formatPhone } from "@/lib/wa-contacts-display";
+import { formatPhone } from "@/lib/phone-contacts-display";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 
@@ -378,15 +377,6 @@ export function ContactDirectory() {
                         >
                           <IconLinkedin className="h-4 w-4" />
                         </a>
-                        {c.phone && (
-                          <Link
-                            href={`/whatsapp?peer=${encodeURIComponent(c.phone)}`}
-                            className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[#25D366]/10"
-                            title={titleCase("WhatsApp")}
-                          >
-                            <IconWhatsAppLogo className="h-4 w-4" />
-                          </Link>
-                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3">

@@ -46,8 +46,8 @@ function excelCellToPhoneString(value: unknown): string {
 /** E.164-like segments in free text (incl. spaced / dashed). */
 const PHONE_PLUS_RE = /\+[\d\s().-]{7,22}/g;
 
-/** WhatsApp-style channel addresses in pasted text. */
-const WHATSAPP_ADDR_RE = /whatsapp:\s*\+?[\d\s().-]{7,22}/gi;
+/** "whatsapp:+91..." style channel-prefixed numbers, as pasted from exported contact lists. */
+const CHANNEL_PREFIXED_ADDR_RE = /whatsapp:\s*\+?[\d\s().-]{7,22}/gi;
 
 export function normalizeToE164(input: string): string | null {
   let t = input.trim();
@@ -78,11 +78,11 @@ export function normalizePhoneList(raw: string): string[] {
 
 export function extractPhonesFromText(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.match(WHATSAPP_ADDR_RE) || []) {
+  for (const m of text.match(CHANNEL_PREFIXED_ADDR_RE) || []) {
     const n = normalizeToE164(m);
     if (n) out.push(n);
   }
-  const stripped = text.replace(WHATSAPP_ADDR_RE, " ");
+  const stripped = text.replace(CHANNEL_PREFIXED_ADDR_RE, " ");
   PHONE_PLUS_RE.lastIndex = 0;
   for (const m of stripped.match(PHONE_PLUS_RE) || []) {
     const n = normalizeToE164(m);

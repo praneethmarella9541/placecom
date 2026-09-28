@@ -4,53 +4,24 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { titleCase } from "@/lib/title-case";
 import { DateRangePicker, rangeEndingToday, type DateRange } from "@/components/DateRangePicker";
-import { Phone, MessageSquare, PhoneIncoming, PhoneOutgoing, IndianRupee } from "lucide-react";
-
-type UsageCosts = {
-  callsInr: number;
-  whatsappInr: number;
-  totalInr: number;
-  callBillableMinutes: number;
-  whatsappUtilityMsgs: number;
-  whatsappPromotionalMsgs: number;
-  whatsappSessionMsgs: number;
-};
-
-function formatInr(amount: number): string {
-  return `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
+import { Mail, Cpu, IndianRupee } from "lucide-react";
 
 type DayPoint = {
   date: string;
-  callsIn: number;
-  callsOut: number;
   messages: number;
   tokens: number;
 };
 
 type Totals = {
-  callsIn: number;
-  callsOut: number;
-  callsFailed: number;
-  talkMinutes: number;
-  whatsappSent: number;
-  whatsappReceived: number;
   emailsSent: number;
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
-  costs: UsageCosts;
 };
 
 type AccountTotals = {
-  callsIn: number;
-  callsOut: number;
-  talkMinutes: number;
-  whatsappSent: number;
-  whatsappReceived: number;
   emailsSent: number;
   costUsd: number;
-  costs: UsageCosts;
 };
 
 type UserAnalytics = {
@@ -59,7 +30,6 @@ type UserAnalytics = {
   displayUsername: string | null;
   role: string;
   totals: Totals;
-  callStatusBreakdown: Record<string, number>;
   series: DayPoint[];
 };
 
@@ -142,7 +112,7 @@ export default function AdminAnalyticsPage() {
   const [windowDays, setWindowDays] = useState(14);
   const [range, setRange] = useState<DateRange>(() => rangeEndingToday(14));
 
-  // Fetch Exotel balance once on mount
+  // Fetch Exotel balance once on mount — shared wallet, still drawn on by SMS.
   useEffect(() => {
     void (async () => {
       try {
@@ -183,7 +153,7 @@ export default function AdminAnalyticsPage() {
   useEffect(() => { void load(range); }, [load, range]);
 
   const sorted = useMemo(
-    () => [...users].sort((a, b) => b.totals.costs.totalInr - a.totals.costs.totalInr),
+    () => [...users].sort((a, b) => b.totals.costUsd - a.totals.costUsd),
     [users]
   );
 
@@ -199,7 +169,7 @@ export default function AdminAnalyticsPage() {
             {titleCase("Team Analytics")}
           </h1>
           <p className="mt-1 text-[13px] text-[var(--color-text-faint)]">
-            {range.allTime ? "All time" : `${windowDays} day${windowDays === 1 ? "" : "s"}`} · telephony, messaging, and API spend.
+            {range.allTime ? "All time" : `${windowDays} day${windowDays === 1 ? "" : "s"}`} · email and API spend.
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
@@ -212,39 +182,6 @@ export default function AdminAnalyticsPage() {
           </Link>
         </div>
       </header>
-
-      {/* Hero — telephony spend */}
-      {accountTotals && !loading && (
-        <div className="analytics-hero-cost animate-fade-up relative px-6 py-6" style={{ animationDelay: "60ms", animationFillMode: "both" }}>
-          <div className="relative z-[1] flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9a4510]">
-                Telephony spend · {range.allTime ? "all time" : `last ${windowDays} days`}
-              </p>
-              <p className="font-display mt-2 text-[42px] font-extrabold leading-none tracking-tight text-[#c45c1a]">
-                {formatInr(accountTotals.costs.totalInr)}
-              </p>
-              <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
-                Calls {formatInr(accountTotals.costs.callsInr)} · WhatsApp {formatInr(accountTotals.costs.whatsappInr)}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              <div className="rounded-xl bg-white/80 px-4 py-3 ring-1 ring-[#e8e4de]">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Calls</p>
-                <p className="font-display mt-0.5 text-xl font-bold text-[#1a73e8]">
-                  {accountTotals.callsIn + accountTotals.callsOut}
-                </p>
-              </div>
-              <div className="rounded-xl bg-white/80 px-4 py-3 ring-1 ring-[#e8e4de]">
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">WA msgs</p>
-                <p className="font-display mt-0.5 text-xl font-bold text-[#25d366]">
-                  {accountTotals.whatsappSent + accountTotals.whatsappReceived}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── Account balances ─────────────────────────────────── */}
       <div className="surface-card animate-fade-up rounded-2xl p-5" style={{ animationDelay: "100ms", animationFillMode: "both" }}>
@@ -286,15 +223,9 @@ export default function AdminAnalyticsPage() {
             Usage breakdown
           </h2>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-4">
-            <KpiCard icon={PhoneIncoming}  label="Calls In"        value={accountTotals.callsIn}           accent="#1a73e8" />
-            <KpiCard icon={PhoneOutgoing}  label="Calls Out"       value={accountTotals.callsOut}          accent="#4285f4" sub={`${accountTotals.talkMinutes} min talk`} />
-            <KpiCard icon={MessageSquare}  label="WA Sent"         value={accountTotals.whatsappSent}      accent="#25d366" />
-            <KpiCard icon={Phone}          label="WA Received"     value={accountTotals.whatsappReceived}  accent="#128c7e" sub={`${accountTotals.costs.whatsappSessionMsgs + accountTotals.costs.whatsappUtilityMsgs + accountTotals.costs.whatsappPromotionalMsgs} billed msgs`} />
-            <KpiCard icon={IndianRupee}    label="Telephony Cost"  value={formatInr(accountTotals.costs.totalInr)} accent="#e37400" sub={`Calls ${formatInr(accountTotals.costs.callsInr)} · WA ${formatInr(accountTotals.costs.whatsappInr)}`} />
+            <KpiCard icon={Mail} label="Emails Sent" value={accountTotals.emailsSent} accent="#1a73e8" />
+            <KpiCard icon={Cpu}  label="API Spend"   value={`$${accountTotals.costUsd.toFixed(4)}`} accent="#e37400" />
           </div>
-          <p className="mt-2 text-[11px] text-[var(--color-text-faint)]">
-            Call ₹0.60/min (rounded up per call) · WA utility ₹0.11 · promotional ₹0.86 · session ₹0.06 per message (in + out).
-          </p>
         </div>
       )}
 
@@ -317,15 +248,9 @@ export default function AdminAnalyticsPage() {
               <thead>
                 <tr className="bg-[var(--color-surface-offset)]/50">
                   <th className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">User</th>
-                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Calls In</th>
-                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Calls Out</th>
-                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Talk min</th>
-                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">WA Sent</th>
-                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">WA Recv</th>
-                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Call cost</th>
-                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">WA cost</th>
-                  <th className="whitespace-nowrap px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Total</th>
+                  <th className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Emails</th>
                   <th className="whitespace-nowrap px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Tokens</th>
+                  <th className="whitespace-nowrap px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">API cost</th>
                   <th className="whitespace-nowrap px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]">Trend</th>
                   <th className="whitespace-nowrap px-3 py-3 text-right text-[11px] font-semibold uppercase tracking-widest text-[var(--color-text-faint)]"> </th>
                 </tr>
@@ -333,7 +258,7 @@ export default function AdminAnalyticsPage() {
               <tbody className="divide-y divide-[var(--color-border)]">
                 {sorted.map((u, idx) => {
                   const tokens = u.totals.tokensIn + u.totals.tokensOut;
-                  const callTrend = u.series.map((d) => d.callsIn + d.callsOut);
+                  const emailTrend = u.series.map((d) => d.messages);
                   const displayName = u.displayUsername || u.email || u.userId.slice(0, 8);
                   return (
                     <tr key={u.userId} className="transition-colors hover:bg-[var(--color-surface-offset)]/80">
@@ -362,21 +287,13 @@ export default function AdminAnalyticsPage() {
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{u.totals.callsIn}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{u.totals.callsOut}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{u.totals.talkMinutes}</td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        <span className="font-medium text-[#25d366]">{u.totals.whatsappSent}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{u.totals.whatsappReceived}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{formatInr(u.totals.costs.callsInr)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{formatInr(u.totals.costs.whatsappInr)}</td>
-                      <td className="px-4 py-3 text-right tabular-nums font-semibold text-[#c45c1a]">
-                        {formatInr(u.totals.costs.totalInr)}
-                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{u.totals.emailsSent}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">{formatNumber(tokens)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums font-semibold text-[#c45c1a]">
+                        ${u.totals.costUsd.toFixed(4)}
+                      </td>
                       <td className="px-4 py-3">
-                        <MiniBars values={callTrend} color="var(--color-primary)" />
+                        <MiniBars values={emailTrend} color="var(--color-primary)" />
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-right">
                         <Link

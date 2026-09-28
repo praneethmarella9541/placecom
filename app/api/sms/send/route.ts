@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { isExotelSmsConfigured, sendExotelSms } from "@/lib/exotel-sms";
 import { getUserSmsLine } from "@/lib/sms-telephony";
-import { peerForOutbound } from "@/lib/whatsapp-address";
+import { peerForOutbound } from "@/lib/e164-peer";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isValidE164, normalizePhone } from "@/lib/phone";
 
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
     };
 
     // Service role for the insert so the outbound row is written even if the
-    // user's RLS context is unusual (mirrors whatsapp/send).
+    // user's RLS context is unusual.
     let logErr: { message: string; code?: string } | null = null;
     try {
       const svc = createServiceSupabase();

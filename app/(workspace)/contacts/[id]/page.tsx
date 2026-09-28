@@ -6,13 +6,13 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { GmailAvatar } from "@/components/GmailAvatar";
-import { IconBuilding, IconLinkedin, IconMail, IconMapPin, IconPhone, IconWhatsAppLogo } from "@/components/Icons";
+import { IconBuilding, IconLinkedin, IconMail, IconMapPin, IconPhone } from "@/components/Icons";
 import { ContactFormModal, contactToFormInput } from "@/components/ContactFormModal";
 import { ContactDetailQuickLogger } from "@/components/ContactDetailQuickLogger";
 import { ContactActivityTimeline } from "@/components/ContactActivityTimeline";
 import { useDirectoryContact } from "@/hooks/useDirectoryContacts";
 import { contactLinkedInSearchUrl } from "@/lib/contact-directory";
-import { formatPhone } from "@/lib/wa-contacts-display";
+import { formatPhone } from "@/lib/phone-contacts-display";
 import { titleCase } from "@/lib/title-case";
 
 type MatchedLead = {
@@ -182,15 +182,6 @@ export default function ContactDetailPage() {
                   <span className="truncate">{formatPhone(contact.phone)}</span>
                 </a>
               )}
-              {contact.phone && (
-                <Link
-                  href={`/whatsapp?peer=${encodeURIComponent(contact.phone)}`}
-                  className="flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline"
-                >
-                  <IconWhatsAppLogo className="h-3.5 w-3.5 shrink-0" />
-                  <span>{titleCase("WhatsApp")}</span>
-                </Link>
-              )}
               {contact.location && (
                 <p className="flex items-center gap-2 text-[var(--color-text-muted)]">
                   <IconMapPin className="h-3.5 w-3.5 shrink-0" />
@@ -227,7 +218,7 @@ export default function ContactDetailPage() {
               <h3 className="text-[13px] font-bold text-[var(--color-text)]">{titleCase("CRM")}</h3>
               <p className="text-[12px] leading-relaxed text-[var(--color-text-muted)]">
                 {titleCase(
-                  "Not on the board yet. Adding them runs the classifier over your mail and WhatsApp with them."
+                  "Not on the board yet. Adding them runs the classifier over your mail with them."
                 )}
               </p>
               <button
@@ -263,7 +254,6 @@ export default function ContactDetailPage() {
           <ContactDetailQuickLogger
             contactId={contact.id}
             email={contact.email}
-            phone={contact.phone}
             name={contact.name}
             company={contact.company}
             onLogged={() => setTimelineKey((k) => k + 1)}

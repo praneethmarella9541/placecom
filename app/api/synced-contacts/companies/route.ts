@@ -142,18 +142,20 @@ export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const settings = await getConnectionStrengthSettings(supabase, user.id);
-
   // `email` is unique on this table (migration 0037) — a stable, total sort
   // key on its own, needed so fetchAllRows' page boundaries don't skip or
-  // duplicate rows.
-  const { data, error } = await fetchAllRows<Row>((from, to) =>
-    supabase
-      .from("synced_contacts")
-      .select(SELECT_COLUMNS)
-      .order("email", { ascending: true })
-      .range(from, to)
-  );
+  // duplicate rows. The thresholds don't depend on those rows, so that lookup
+  // runs alongside the first page rather than ahead of it.
+  const [settings, { data, error }] = await Promise.all([
+    getConnectionStrengthSettings(supabase, user.id),
+    fetchAllRows<Row>((from, to) =>
+      supabase
+        .from("synced_contacts")
+        .select(SELECT_COLUMNS)
+        .order("email", { ascending: true })
+        .range(from, to)
+    ),
+  ]);
 
   // Best-effort — logos are a nice-to-have; a missing/not-yet-migrated cache
   // table shouldn't break the whole company list.

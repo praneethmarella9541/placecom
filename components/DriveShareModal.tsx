@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconX } from "@/components/Icons";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
@@ -76,6 +77,8 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
 
   // Action busy state per-permission for inline operations
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** Permission awaiting removal confirmation. */
+  const [pendingRemove, setPendingRemove] = useState<Permission | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
   const load = useCallback(async () => {
@@ -225,7 +228,6 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
   }
 
   async function handleRemove(perm: Permission) {
-    if (!window.confirm(`Remove ${perm.displayName || perm.emailAddress || "this person"}'s access?`)) return;
     setBusyId(perm.id);
     try {
       const res = await fetch(
@@ -241,6 +243,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
       setError(e instanceof Error ? e.message : "Failed to remove");
     } finally {
       setBusyId(null);
+      setPendingRemove(null);
     }
   }
 
@@ -307,6 +310,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
   }
 
   return (
+    <>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in"
       onClick={onClose}
@@ -428,7 +432,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
                             </select>
                             <button
                               type="button"
-                              onClick={() => void handleRemove(p)}
+                              onClick={() => setPendingRemove(p)}
                               disabled={busyId === p.id}
                               className="btn-ghost p-1.5 text-[var(--color-text-muted)] hover:text-[var(--color-danger)]"
                               title="Remove access"
@@ -518,5 +522,21 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
         </div>
       </div>
     </div>
+    {/* Outside the backdrop above, whose onClick closes this modal without
+        checking the target — a portal bubbles through the React tree, so a
+        click on this dialog would otherwise dismiss the share sheet too. */}
+    {pendingRemove ? (
+      <ConfirmDialog
+        tone="danger"
+        busy={busyId === pendingRemove.id}
+        title="Remove access?"
+        body={`${pendingRemove.displayName || pendingRemove.emailAddress || "This person"} will lose access to this file.`}
+        confirmLabel={busyId === pendingRemove.id ? "Removing…" : "Remove access"}
+        cancelLabel="Keep access"
+        onConfirm={() => void handleRemove(pendingRemove)}
+        onCancel={() => setPendingRemove(null)}
+      />
+    ) : null}
+    </>
   );
 }

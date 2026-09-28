@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 /**
  * GET /api/crm/leads/:id/evidence
  *
- * The same mail/WhatsApp/notes the classifier was given, for the lead detail
+ * The same mail/notes the classifier was given, for the lead detail
  * view — so a user can check the AI's reasoning against what it actually saw
  * rather than taking the rationale on faith.
  *
@@ -69,7 +69,6 @@ export async function GET(request: Request, { params }: { params: { id: string }
     mailIncluded: auth.ok,
     mailError: auth.ok ? null : auth.message,
     mail: byChannel("mail"),
-    whatsapp: byChannel("whatsapp"),
     notes: byChannel("note"),
   });
 }

@@ -9,7 +9,7 @@ type Tab = "directory" | "google";
 
 /**
  * Team Directory (directory_contacts) is the one shared, universal address
- * book — WhatsApp, SMS, and the CRM all read/write it. The old per-user
+ * book — SMS and the CRM all read/write it. The old per-user
  * "My Contacts" tab (wa_contacts) was retired in favor of it; see the
  * 0049 migration for the one-time data fold-in.
  */

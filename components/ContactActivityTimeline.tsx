@@ -1,30 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { IconCalendar, IconMail, IconMenu, IconPhone, IconWhatsApp } from "@/components/Icons";
+import { IconCalendar, IconMail, IconMenu } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
 import type { ContactNoteRow } from "@/app/api/directory-contacts/[id]/notes/route";
 import type { TimelineItem } from "@/app/api/directory-contacts/[id]/timeline/route";
 
-type Tab = "All Interaction" | "Emails" | "Calls" | "Meetings" | "WhatsApp" | "Notes";
-const TABS: Tab[] = ["All Interaction", "Emails", "Calls", "Meetings", "WhatsApp", "Notes"];
+type Tab = "All Interaction" | "Emails" | "Meetings" | "Notes";
+const TABS: Tab[] = ["All Interaction", "Emails", "Meetings", "Notes"];
 
 const SOURCE_BY_TAB: Partial<Record<Tab, TimelineItem["type"]>> = {
   Emails: "email",
-  Calls: "call",
   Meetings: "meeting",
-  WhatsApp: "whatsapp",
 };
 
 const ICON_BY_TYPE: Record<TimelineItem["type"] | "note", React.ComponentType<{ className?: string }>> = {
   email: IconMail,
-  call: IconPhone,
   meeting: IconCalendar,
-  whatsapp: IconWhatsApp,
   note: IconMenu,
 };
 
-/** Tabbed unified activity feed for a contact — pulls Gmail, calls, calendar, WhatsApp, and notes. */
+/** Tabbed unified activity feed for a contact — pulls Gmail, calendar, and notes. */
 export function ContactActivityTimeline({ contactId }: { contactId: string }) {
   const [activeTab, setActiveTab] = useState<Tab>("All Interaction");
   const [sources, setSources] = useState<Partial<Record<TimelineItem["type"], TimelineItem[] | "loading" | "error">>>({});
@@ -71,7 +67,7 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
     const single = SOURCE_BY_TAB[activeTab];
     if (single && sources[single] === undefined) void loadSource(single);
     if (activeTab === "All Interaction") {
-      (["email", "call", "meeting", "whatsapp"] as const).forEach((t) => {
+      (["email", "meeting"] as const).forEach((t) => {
         if (sources[t] === undefined) void loadSource(t);
       });
       if (notes === null) void loadNotes();
@@ -105,7 +101,7 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
 
   const allItems: (TimelineItem | { id: string; type: "note"; summary: string; at: string })[] = isAll
     ? [
-        ...(["email", "call", "meeting", "whatsapp"] as const).flatMap((t) => {
+        ...(["email", "meeting"] as const).flatMap((t) => {
           const v = sources[t];
           return Array.isArray(v) ? v : [];
         }),
@@ -115,7 +111,7 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
 
   const loadingAll =
     isAll &&
-    (["email", "call", "meeting", "whatsapp"] as const).some((t) => sources[t] === "loading" || sources[t] === undefined) ;
+    (["email", "meeting"] as const).some((t) => sources[t] === "loading" || sources[t] === undefined);
 
   return (
     <div>
@@ -206,7 +202,7 @@ function SourceTab({ items }: { items: TimelineItem[] | "loading" | "error" | un
     return <p className="text-[13px] italic text-[var(--color-text-muted)]">{titleCase("No activity yet.")}</p>;
   }
   // Same newest-first ordering as the merged "All Interaction" tab — the API
-  // returns each source (Gmail, calls, calendar, WhatsApp) in its own native
+  // returns each source (Gmail, calendar) in its own native
   // order, which isn't guaranteed to be newest-first (calendar events come
   // back oldest-first), so this can't just trust the fetch order.
   const sorted = [...items].sort((a, b) => (b.at || "").localeCompare(a.at || ""));
@@ -231,14 +227,7 @@ function TimelineList({
               <Icon className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <p className="truncate text-[13px] font-medium text-[var(--color-text)]">{item.summary}</p>
-                {"by" in item && item.by && (
-                  <span className="shrink-0 rounded-full bg-[var(--color-surface-offset)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-text-muted)]">
-                    {item.by}
-                  </span>
-                )}
-              </div>
+              <p className="truncate text-[13px] font-medium text-[var(--color-text)]">{item.summary}</p>
               {"detail" in item && item.detail && (
                 <p className="mt-0.5 truncate text-[12px] text-[var(--color-text-muted)]">{item.detail}</p>
               )}

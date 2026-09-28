@@ -5,6 +5,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getAuthedRequest } from "@/lib/api-auth";
 import { parseTimeToMinutes, type SendWindow } from "@/lib/sequence-schedule";
+import {
+  buildEnrollmentMergeFields,
+  type DirectoryCardFields,
+  type SyncedContactFields,
+} from "@/lib/sequence-variables";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import type {
   EnrollmentCounts,
@@ -12,6 +17,7 @@ import type {
   Sequence,
   SequenceEnrollment,
   SequenceStep,
+  SequenceStepAttachment,
 } from "@/lib/sequence-types";
 import { emptyEnrollmentCounts } from "@/lib/sequence-types";
 
@@ -78,6 +84,7 @@ export type SequenceRecord = {
   signature_html: string | null;
   track_opens: boolean;
   exit_on_reply: boolean;
+  variable_fallbacks: Record<string, string> | null;
   created_at: string;
   updated_at: string;
 };
@@ -99,6 +106,7 @@ export function toSequenceDto(row: SequenceRecord): Sequence {
     signatureHtml: row.signature_html,
     trackOpens: row.track_opens,
     exitOnReply: row.exit_on_reply,
+    variableFallbacks: row.variable_fallbacks ?? {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -112,6 +120,7 @@ type StepRecord = {
   body_html: string | null;
   delay_days: number;
   delay_hours: number;
+  delay_minutes: number;
 };
 
 export function toStepDto(row: StepRecord): SequenceStep {
@@ -123,8 +132,54 @@ export function toStepDto(row: StepRecord): SequenceStep {
     bodyHtml: row.body_html,
     delayDays: row.delay_days,
     delayHours: row.delay_hours,
+    delayMinutes: row.delay_minutes ?? 0,
   };
 }
+
+/**
+ * Attach each step's files to the DTOs a route is about to return.
+ *
+ * Kept out of toStepDto because the attachments are a second query — steps are
+ * mapped in several places, and only the ones the editor reads need them.
+ */
+export async function withStepAttachments(
+  ctx: SequenceContext,
+  steps: SequenceStep[],
+): Promise<SequenceStep[]> {
+  const stepIds = steps.map((s) => s.id);
+  if (stepIds.length === 0) return steps;
+
+  const { data } = await ctx.svc
+    .from("sequence_step_attachments")
+    .select("id, step_id, filename, mime_type, size_bytes, created_at")
+    .in("step_id", stepIds)
+    .order("created_at");
+
+  const byStep = new Map<string, SequenceStepAttachment[]>();
+  for (const row of (data ?? []) as AttachmentRecord[]) {
+    const list = byStep.get(row.step_id) ?? [];
+    list.push({
+      id: row.id,
+      stepId: row.step_id,
+      filename: row.filename,
+      mimeType: row.mime_type,
+      sizeBytes: row.size_bytes,
+      createdAt: row.created_at,
+    });
+    byStep.set(row.step_id, list);
+  }
+
+  return steps.map((s) => ({ ...s, attachments: byStep.get(s.id) ?? [] }));
+}
+
+type AttachmentRecord = {
+  id: string;
+  step_id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+};
 
 type EnrollmentRecord = {
   id: string;
@@ -156,6 +211,127 @@ export function toEnrollmentDto(row: EnrollmentRecord): SequenceEnrollment {
     mergeFields: row.merge_fields ?? {},
     cc: row.cc,
   };
+}
+
+/**
+ * Case-insensitive `email in (…)` as a PostgREST filter.
+ *
+ * A directory card stores the address exactly as it was typed (the create
+ * route only trims it), so matching lowercased recipient addresses with `.in()`
+ * would miss a card saved as "Sai@Example.com". Addresses carrying a character
+ * that would break out of the or() syntax are dropped rather than escaped —
+ * none of them are valid in an unquoted address. `_` stays a LIKE wildcard, so
+ * the query can over-match; callers key results by lowercased email and look up
+ * exact addresses, which discards anything extra.
+ */
+function emailInFilter(emails: string[]): string | null {
+  const safe = emails.filter((e) => e && !/[,()"*\s\\]/.test(e));
+  return safe.length ? safe.map((e) => `email.ilike.${e}`).join(",") : null;
+}
+
+/** Chunked so a large enrollment batch can't build an over-long query string. */
+const EMAIL_FILTER_CHUNK = 50;
+
+/**
+ * The two contact sources a recipient's merge fields are built from, keyed by
+ * lowercased email.
+ *
+ * Same pair mass-send compose reads (directory card, then mailbox sync) and
+ * scoped to the caller's mailbox on both, so a sequence can never merge in a
+ * contact belonging to another admin's team.
+ */
+export async function loadContactSources(
+  svc: SupabaseClient,
+  mailboxOwnerId: string,
+  emails: string[],
+): Promise<{
+  directoryByEmail: Map<string, DirectoryCardFields>;
+  syncedByEmail: Map<string, SyncedContactFields>;
+}> {
+  const directoryByEmail = new Map<string, DirectoryCardFields>();
+  const syncedByEmail = new Map<string, SyncedContactFields>();
+  const wanted = new Set(emails.map((e) => e.trim().toLowerCase()).filter(Boolean));
+  if (wanted.size === 0) return { directoryByEmail, syncedByEmail };
+
+  const chunks: string[][] = [];
+  const list = Array.from(wanted);
+  for (let i = 0; i < list.length; i += EMAIL_FILTER_CHUNK) {
+    chunks.push(list.slice(i, i + EMAIL_FILTER_CHUNK));
+  }
+
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      const filter = emailInFilter(chunk);
+      if (!filter) return;
+
+      const [{ data: cards }, { data: synced }] = await Promise.all([
+        svc
+          .from("directory_contacts")
+          .select("email, name, company, title, phone")
+          .eq("mailbox_owner_id", mailboxOwnerId)
+          .or(filter),
+        svc
+          .from("synced_contacts")
+          .select("email, display_name, company_name, last_interaction_at")
+          .eq("mailbox_owner_id", mailboxOwnerId)
+          .or(filter),
+      ]);
+
+      for (const row of (cards ?? []) as (DirectoryCardFields & { email: string | null })[]) {
+        const key = row.email?.trim().toLowerCase();
+        // First card wins: duplicates under one address have no tiebreaker
+        // better than order, and choosing arbitrarily each load would be worse.
+        if (key && wanted.has(key) && !directoryByEmail.has(key)) directoryByEmail.set(key, row);
+      }
+      for (const row of (synced ?? []) as SyncedContactFields[]) {
+        const key = row.email?.trim().toLowerCase();
+        if (key && wanted.has(key) && !syncedByEmail.has(key)) syncedByEmail.set(key, row);
+      }
+    }),
+  );
+
+  return { directoryByEmail, syncedByEmail };
+}
+
+/**
+ * A recipient's merge fields, read through to the contacts they come from.
+ *
+ * This is mass sending's model: compose never stores a recipient's fields, it
+ * resolves them from the Team Directory card and the mailbox sync every time it
+ * renders or sends. Sequences do the same here, so a card filled in or
+ * corrected after enrollment is simply true the next time a step goes out —
+ * there is nothing to keep in sync by hand.
+ *
+ * The enrollment's own stored bag is still consulted, but only as the weakest
+ * layer: it carries the chip's display name for people with no card at all, and
+ * any custom key set through the enrollments API, neither of which a contact
+ * source can produce.
+ */
+export async function resolveEnrollmentMergeFields(
+  svc: SupabaseClient,
+  mailboxOwnerId: string,
+  rows: Array<{ email: string; display_name: string | null; merge_fields: Record<string, string> | null }>,
+): Promise<Map<string, Record<string, string>>> {
+  const out = new Map<string, Record<string, string>>();
+  if (rows.length === 0) return out;
+
+  const emails = rows.map((r) => r.email.trim().toLowerCase());
+  const { directoryByEmail, syncedByEmail } = await loadContactSources(svc, mailboxOwnerId, emails);
+
+  for (const row of rows) {
+    const email = row.email.trim().toLowerCase();
+    out.set(
+      email,
+      buildEnrollmentMergeFields(email, {
+        directory: directoryByEmail.get(email),
+        synced: syncedByEmail.get(email),
+        displayName: row.display_name,
+        existing: row.merge_fields,
+      }),
+    );
+  }
+
+  return out;
 }
 
 /** Per-status recipient tallies for one or more sequences. */
@@ -218,5 +394,6 @@ export function toStepLite(step: SequenceStep) {
     kind: step.kind,
     delayDays: step.delayDays,
     delayHours: step.delayHours,
+    delayMinutes: step.delayMinutes ?? 0,
   };
 }

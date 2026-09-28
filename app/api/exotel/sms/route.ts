@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { resolveBusinessE164FromWebhook } from "@/lib/exotel-webhook-parse";
 import { findUserIdForSmsLine } from "@/lib/sms-telephony";
-import { normalizePeerE164 } from "@/lib/whatsapp-address";
+import { normalizePeerE164 } from "@/lib/e164-peer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

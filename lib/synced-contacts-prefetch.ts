@@ -35,7 +35,7 @@ type StrengthSettingsCache = { settings: ConnectionStrengthSettings; isDefault: 
  * Deliberately NOT part of the eager login-time prefetch chain
  * (lib/workspace-feature-prefetch.ts) — that chain runs before the user has
  * even reached a page, and warming ~2,500 rows nobody may look at this
- * session isn't worth delaying Mail/Drive/WhatsApp for. This instead fires
+ * session isn't worth delaying Mail/Drive for. This instead fires
  * once the Contacts page itself is the thing being looked at.
  */
 let contactsCache: SyncedContactRow[] | null = null;

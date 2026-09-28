@@ -1,0 +1,110 @@
+import { normalizePhone, phoneLookupVariants } from "@/lib/phone";
+
+export type PhoneContactRow = {
+  peer_e164: string;
+  name: string;
+};
+
+/** Legacy +91 mis-dial aliases. */
+function legacyMisdialedPeerAliases(canonical: string): string[] {
+  const n = normalizePhone(canonical.trim());
+  if (!n.startsWith("+91") || n.length !== 13) return [];
+  const local = n.slice(3);
+  if (!/^[6-9]\d{9}$/.test(local)) return [];
+  const mistaken = `+${local}`;
+  return mistaken === n ? [] : [mistaken];
+}
+
+/** All phone variants that may appear as peer_e164 in messages or contacts. */
+export function allPeerLookupKeys(raw: string): string[] {
+  const canonical = normalizePhone(raw.trim());
+  if (!canonical) return [];
+  const keys = [
+    ...phoneLookupVariants(canonical),
+    ...legacyMisdialedPeerAliases(canonical),
+    canonical,
+  ];
+  return keys.filter((v, i, arr) => v && arr.indexOf(v) === i);
+}
+
+export function canonicalPeer(raw: string): string {
+  return normalizePhone(raw.trim());
+}
+
+/** Map every phone variant to its saved display name. */
+export function buildContactNameMap(contacts: PhoneContactRow[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const c of contacts) {
+    if (!c.peer_e164?.trim() || !c.name?.trim()) continue;
+    for (const key of allPeerLookupKeys(c.peer_e164)) {
+      map[key] = c.name.trim();
+    }
+  }
+  return map;
+}
+
+export function resolveContactName(map: Record<string, string>, peer: string): string | undefined {
+  for (const key of allPeerLookupKeys(peer)) {
+    const name = map[key];
+    if (name) return name;
+  }
+  return undefined;
+}
+
+/** Format E.164 for display: +91 98494 31508 */
+export function formatPhone(e164: string): string {
+  const digits = e164.replace(/\D/g, "");
+  if (e164.startsWith("+91") && digits.length === 12) {
+    return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  }
+  if (digits.length === 10) return `${digits.slice(0, 5)} ${digits.slice(5)}`;
+  return e164;
+}
+
+export function peerInitials(peer: string, name?: string): string {
+  if (name?.trim()) return name.trim()[0].toUpperCase();
+  const digits = peer.replace(/\D/g, "");
+  if (digits.length >= 2) return digits.slice(-2);
+  return peer.slice(0, 2).toUpperCase() || "?";
+}
+
+/**
+ * Fold a legacy mis-dialed alias (`+8489431508`, missing the `91` country
+ * code — see legacyMisdialedPeerAliases above) back to its real
+ * canonical form, so it dedupes against the properly-normalized entry instead
+ * of surviving as a second, differently-formatted row.
+ */
+function dedupeKey(raw: string): string {
+  const canonical = canonicalPeer(raw);
+  const misdialed = /^\+([6-9]\d{9})$/.exec(canonical);
+  return misdialed ? `+91${misdialed[1]}` : canonical;
+}
+
+/** Saved contacts filtered by name or phone query (for forward / new chat pickers). */
+export function filterSavedContacts(
+  contacts: Record<string, string>,
+  query: string
+): PhoneContactRow[] {
+  const q = query.trim().toLowerCase();
+  const seen = new Set<string>();
+  const rows: PhoneContactRow[] = [];
+
+  for (const [peer, name] of Object.entries(contacts)) {
+    const trimmed = name.trim();
+    if (!peer.trim() || !trimmed) continue;
+    const canonical = dedupeKey(peer);
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    rows.push({ peer_e164: canonical, name: trimmed });
+  }
+
+  rows.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  if (!q) return rows;
+
+  return rows.filter(
+    (c) =>
+      c.name.toLowerCase().includes(q) ||
+      c.peer_e164.includes(q) ||
+      formatPhone(c.peer_e164).toLowerCase().includes(q)
+  );
+}

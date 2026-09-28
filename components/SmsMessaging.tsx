@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { formatDate } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
-import { formatPhone, peerInitials, buildContactNameMap, resolveContactName, canonicalPeer, allPeerLookupKeys } from "@/lib/wa-contacts-display";
+import { formatPhone, peerInitials, buildContactNameMap, resolveContactName, canonicalPeer, allPeerLookupKeys } from "@/lib/phone-contacts-display";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
 import { IconRefresh, IconSend, IconSettings, IconSms, IconX } from "@/components/Icons";
@@ -65,7 +65,7 @@ export function SmsMessaging({ embedded = false, initialPeer = null }: SmsMessag
   const scrollThreadRef = useRef<HTMLDivElement>(null);
   // Contact names now come from the shared team directory (directory_contacts)
   // instead of the old per-user wa_contacts table — same universal address
-  // book as WhatsApp/Contacts.
+  // book as Contacts.
   const { contacts: directoryContacts } = useDirectoryContacts();
   const contactList = useMemo(
     () =>

@@ -101,23 +101,27 @@ export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const settings = await getConnectionStrengthSettings(supabase, user.id);
-
-  const { data, error } = await fetchAllRows<SyncedContactRow>((from, to) =>
-    supabase
-      .from("synced_contacts")
-      .select(SELECT_COLUMNS)
-      // Real (two-way) contacts first, then most recently active — pushes
-      // inbound-only automated senders that slipped past the noise filter
-      // below (e.g. a platform minting a unique address per notification)
-      // toward the bottom instead of the top. `id` is just a tiebreaker for
-      // stable pagination (fetchAllRows) — has_outbound_contact/last_interaction_at
-      // alone can tie across many rows.
-      .order("has_outbound_contact", { ascending: false, nullsFirst: false })
-      .order("last_interaction_at", { ascending: false, nullsFirst: false })
-      .order("id", { ascending: true })
-      .range(from, to)
-  );
+  // The caller's thresholds don't depend on the rows, so the settings lookup
+  // rides alongside the first page of contacts instead of delaying it by a
+  // round trip of its own.
+  const [settings, { data, error }] = await Promise.all([
+    getConnectionStrengthSettings(supabase, user.id),
+    fetchAllRows<SyncedContactRow>((from, to) =>
+      supabase
+        .from("synced_contacts")
+        .select(SELECT_COLUMNS)
+        // Real (two-way) contacts first, then most recently active — pushes
+        // inbound-only automated senders that slipped past the noise filter
+        // below (e.g. a platform minting a unique address per notification)
+        // toward the bottom instead of the top. `id` is just a tiebreaker for
+        // stable pagination (fetchAllRows) — has_outbound_contact/last_interaction_at
+        // alone can tie across many rows.
+        .order("has_outbound_contact", { ascending: false, nullsFirst: false })
+        .order("last_interaction_at", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+    ),
+  ]);
 
   if (error) {
     if (/relation.*synced_contacts.*does not exist/i.test(error)) {

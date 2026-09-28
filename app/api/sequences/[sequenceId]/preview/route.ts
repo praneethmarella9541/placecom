@@ -6,6 +6,7 @@ import {
   isErrorResponse,
   loadOwnedSequence,
   notFound,
+  resolveEnrollmentMergeFields,
 } from "@/lib/sequence-server";
 
 export const runtime = "nodejs";
@@ -75,10 +76,20 @@ export async function POST(request: Request, { params }: Params) {
     : enrollment;
 
   if (chosen) {
+    // Resolved from the contact, not from the enrollment's stored copy, so the
+    // preview matches what the cron will build when it reads the same sources.
+    const resolved = await resolveEnrollmentMergeFields(ctx.svc, ctx.mailboxOwnerId, [
+      {
+        email: chosen.email as string,
+        display_name: chosen.display_name as string | null,
+        merge_fields: chosen.merge_fields as Record<string, string> | null,
+      },
+    ]);
+    const email = chosen.email as string;
     recipient = {
-      email: chosen.email as string,
+      email,
       displayName: chosen.display_name as string | null,
-      mergeFields: chosen.merge_fields as Record<string, string> | null,
+      mergeFields: resolved.get(email.trim().toLowerCase()) ?? null,
     };
   }
 
@@ -88,6 +99,7 @@ export async function POST(request: Request, { params }: Params) {
       bodyHtml: (step.body_html as string) ?? "",
       includeSignature: sequence.include_signature,
       signatureHtml: sequence.signature_html,
+      variableFallbacks: sequence.variable_fallbacks,
     },
     recipient,
   );

@@ -35,7 +35,7 @@ const SOURCE_BY_TAB: Record<Tab, "email" | "meeting"> = { Emails: "email", Meeti
  * ContactActivityTimeline (for manually-added directory contacts), but backed
  * by /api/synced-contacts/timeline (address-based, not a directory_contacts
  * id) and scoped to Emails/Meetings only — synced contacts don't carry a
- * phone number, so there's nothing to look up for Calls/WhatsApp.
+ * phone number, so there's nothing else to look up.
  */
 export function SyncedPersonModal({
   contact,

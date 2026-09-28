@@ -16,9 +16,6 @@ import {
   KanbanSquare,
   LogOut,
   Mail,
-  MessageCircle,
-  Phone,
-  Radio,
   UserRound,
   Users,
   Workflow,
@@ -33,15 +30,12 @@ import { PlacecomLogo, PlacecomMark } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { clearMeMailboxCache, useMeMailbox } from "@/lib/use-me-mailbox";
 import { GmailAvatar } from "@/components/GmailAvatar";
-import { formatPhone } from "@/lib/wa-contacts-display";
+import { formatPhone } from "@/lib/phone-contacts-display";
 
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 
 const commsNav = [
   { href: "/inbox", label: "Mail", Icon: Mail },
-  { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
-  { href: "/calls", label: "Calls", Icon: Phone },
-  { href: "/broadcasting", label: "Broadcasting", Icon: Radio },
   { href: "/sequences", label: "Sequences", Icon: Workflow },
   { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;
@@ -66,7 +60,6 @@ export const workspaceNavGroups = [
 ] as const;
 
 function isNavActive(href: string, pathname: string): boolean {
-  if (href === "/broadcasting") return pathname === "/broadcasting";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -416,10 +409,9 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     const allowed = allowedEnv?.trim()
       ? new Set(allowedEnv.split(",").map((s) => s.trim()))
       : null;
-    const emptySearch = new URLSearchParams();
     const filter = (arr: readonly { href: string; label: string; Icon: React.ElementType }[]) =>
       arr.filter((l) => {
-        const feature = pathToFeature(l.href, emptySearch);
+        const feature = pathToFeature(l.href);
         if (!feature) return true;
         if (allowed && !allowed.has(feature)) return false;
         return !restricted.has(feature);

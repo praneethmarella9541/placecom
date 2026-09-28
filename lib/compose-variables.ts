@@ -82,13 +82,26 @@ export function formatInteractionDate(iso: string | null | undefined): string {
 }
 
 /**
+ * Keys written only as habit-typing aliases of a real variable — never offered
+ * in a picker, since {company_name} and {company} would read as two different
+ * things when they are one.
+ */
+export const MERGE_FIELD_ALIAS_KEYS = ["company", "title", "phone"] as const;
+
+/**
  * Contact card → the field bag mergeTemplate() reads.
  *
  * Aliases are included deliberately: someone who types {company} or {title}
  * out of habit rather than picking from the menu should still get a filled
  * value instead of a literal brace in a sent email.
+ *
+ * Takes the four card fields it actually reads rather than a whole
+ * DirectoryContact, so callers holding a narrow DB row (the sequence
+ * enrollment writer) can use it without inventing the rest of the card.
  */
-export function contactToMergeFields(contact: DirectoryContact): Record<string, string> {
+export function contactToMergeFields(
+  contact: Pick<DirectoryContact, "name" | "company" | "title" | "phone" | "email">
+): Record<string, string> {
   const name = contact.name?.trim() || "";
   const company = contact.company?.trim() || "";
   const title = contact.title?.trim() || "";

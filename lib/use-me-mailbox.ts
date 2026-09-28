@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 
 /**
@@ -104,12 +104,32 @@ export function refreshMeMailbox(): Promise<MeMailboxResponse | null> {
 }
 
 /**
- * Returns the cached profile immediately (if any) and revalidates in the
+ * useLayoutEffect reads the cache before the browser paints the frame after
+ * hydration, so the cached profile still lands without a visible flash — but
+ * runs only in the browser. Guarded because React warns when a layout effect
+ * runs during SSR.
+ */
+const useCacheEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/**
+ * Returns the cached profile as soon as it can and revalidates in the
  * background. `loaded` is true once a fresh response has arrived this session.
+ *
+ * The cache must NOT seed the initial state: the server has no localStorage,
+ * so it renders as if signed out, and a returning user's first client render
+ * would then produce different markup (the sidebar swaps its skeleton for the
+ * real nav, and drops or adds links per role and feature restrictions). React
+ * treats that as a failed hydration, throws, and re-renders the whole root on
+ * the client. Applying it one render later keeps the two in agreement.
  */
 export function useMeMailbox(): { me: MeMailboxResponse | null; loaded: boolean } {
-  const [me, setMe] = useState<MeMailboxResponse | null>(() => readCachedMe());
+  const [me, setMe] = useState<MeMailboxResponse | null>(null);
   const [loaded, setLoaded] = useState(false);
+
+  useCacheEffect(() => {
+    const cached = readCachedMe();
+    if (cached) setMe(cached);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

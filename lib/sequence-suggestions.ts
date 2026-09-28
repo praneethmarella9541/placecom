@@ -8,7 +8,7 @@ import type { RecipientSuggestion } from "@/components/RecipientField";
  * Reuses the same sources the mail composer draws on — Google contacts,
  * addresses seen in past conversations, and legacy CRM recruiters — plus the
  * Team Directory, the one shared, org-wide contact book every other feature
- * (WhatsApp, SMS, the CRM board) is built on. Without it, enrolling someone
+ * (SMS, the CRM board) is built on. Without it, enrolling someone
  * your team added to the directory but who Google itself has never surfaced
  * as a personal contact required pasting their address by hand.
  */
@@ -70,7 +70,7 @@ export function loadRecipientSuggestions(): Promise<RecipientSuggestion[]> {
       displayName: r.name || r.companyName,
     }));
     // Only entries with a real email — the directory allows phone-only cards
-    // (WhatsApp/SMS contacts), which have nothing to enroll in an email sequence.
+    // (SMS contacts), which have nothing to enroll in an email sequence.
     const fromDirectory = (directory?.contacts ?? [])
       .filter((c): c is { name: string; email: string } => Boolean(c.email?.trim()))
       .map((c) => ({ email: c.email, displayName: c.name }));

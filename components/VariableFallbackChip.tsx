@@ -8,7 +8,37 @@ type Props = {
   /** Current fallback, or "" if none set. */
   value: string;
   onChange: (next: string) => void;
+  /**
+   * Palette. "gmail" matches the compose dialog's own hard-coded colours;
+   * "app" uses the workspace tokens so the chip reads correctly in dark mode
+   * (the sequence editor). Behaviour is identical either way.
+   */
+  theme?: "gmail" | "app";
+  /** Replaces the default "used for every recipient…" line under the input. */
+  hint?: string;
 };
+
+const THEMES = {
+  gmail: {
+    chipSet: "bg-[#e6f4ea] text-[#137333] hover:bg-[#ceead6]",
+    chipUnset: "bg-[#fce8b2] text-[#976900] hover:bg-[#f9d878]",
+    popover: "border-[#dadce0] bg-white shadow-[0_4px_16px_rgba(60,64,67,0.28)]",
+    label: "text-[#5f6368]",
+    input: "border-[#dadce0] text-[#202124] focus:border-[#0b57d0]",
+    note: "text-[#5f6368]",
+  },
+  app: {
+    chipSet:
+      "bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400",
+    chipUnset: "bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-400",
+    popover:
+      "border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-lg)]",
+    label: "text-[var(--color-text-muted)]",
+    input:
+      "border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-text)] focus:border-[var(--color-copper)]",
+    note: "text-[var(--color-text-faint)]",
+  },
+} as const;
 
 const CLOSE_DELAY_MS = 180;
 
@@ -20,7 +50,8 @@ const CLOSE_DELAY_MS = 180;
  * pointer crosses the gap into it; clicking pins it open so typing can't be
  * interrupted by the pointer drifting away.
  */
-export function VariableFallbackChip({ variableKey, value, onChange }: Props) {
+export function VariableFallbackChip({ variableKey, value, onChange, theme = "gmail", hint }: Props) {
+  const t = THEMES[theme];
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -73,9 +104,7 @@ export function VariableFallbackChip({ variableKey, value, onChange }: Props) {
         type="button"
         onClick={() => { setPinned(true); setOpen(true); }}
         className={`rounded px-1 py-px font-mono text-[11px] underline decoration-dotted underline-offset-2 ${
-          hasFallback
-            ? "bg-[#e6f4ea] text-[#137333] hover:bg-[#ceead6]"
-            : "bg-[#fce8b2] text-[#976900] hover:bg-[#f9d878]"
+          hasFallback ? t.chipSet : t.chipUnset
         }`}
       >
         {`{${variableKey}}`}
@@ -84,11 +113,11 @@ export function VariableFallbackChip({ variableKey, value, onChange }: Props) {
 
       {open && (
         <span
-          className="absolute left-0 top-full z-[1001] mt-1 block w-[240px] rounded-lg border border-[#dadce0] bg-white p-2 shadow-[0_4px_16px_rgba(60,64,67,0.28)]"
+          className={`absolute left-0 top-full z-[1001] mt-1 block w-[240px] rounded-lg border p-2 ${t.popover}`}
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
         >
-          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-[#5f6368]">
+          <label className={`mb-1 block text-[10px] font-semibold uppercase tracking-wide ${t.label}`}>
             Fallback for {`{${variableKey}}`}
           </label>
           <input
@@ -111,10 +140,10 @@ export function VariableFallbackChip({ variableKey, value, onChange }: Props) {
             }}
             onBlur={commit}
             placeholder="e.g. there"
-            className="w-full rounded border border-[#dadce0] px-2 py-1 text-[12px] text-[#202124] outline-none focus:border-[#0b57d0]"
+            className={`w-full rounded border px-2 py-1 text-[12px] outline-none ${t.input}`}
           />
-          <span className="mt-1 block text-[10px] leading-snug text-[#5f6368]">
-            Used for every recipient with no value for this field.
+          <span className={`mt-1 block text-[10px] leading-snug ${t.note}`}>
+            {hint ?? "Used for every recipient with no value for this field."}
           </span>
         </span>
       )}

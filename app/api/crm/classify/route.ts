@@ -20,7 +20,7 @@ type LeadRow = ClassifiableLead & { email: string | null; phone: string | null; 
 /**
  * POST /api/crm/classify — body: { leadIds?: string[], force?: boolean }
  *
- * Reads each lead's mail/WhatsApp/notes since the season cutoff and places it
+ * Reads each lead's mail/notes since the season cutoff and places it
  * in one of this user's own stages, against their own leads only — the board
  * is personal per signed-in user (0055), not shared with a team. This is the
  * only thing in the app that spends OpenAI tokens on the CRM, and it runs
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
   }
 
   // Mail is fetched live from Gmail; without a token we still classify on
-  // WhatsApp + notes rather than failing the whole run.
+  // notes rather than failing the whole run.
   const auth = await requireGmailAccessToken(request);
   const accessToken = auth.ok ? auth.accessToken : undefined;
   const ownAddress = auth.ok ? auth.gmailAddress : undefined;
@@ -98,6 +98,11 @@ export async function POST(request: Request) {
           mailboxKey: gmailMailboxKey,
           ownAddress,
           seasonStart: settings.season_start_date,
+          // Bulk, multi-lead run with no one watching a per-call spinner — the
+          // same reasoning as the contact sync's mailbox backfill (see
+          // lib/gmail-quota.ts). Keeps it from competing with a person's own
+          // inbox traffic for the interactive lane's budget.
+          priority: "batch",
         }
       );
       withEvidence.push({

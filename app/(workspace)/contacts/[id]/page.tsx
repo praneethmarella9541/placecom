@@ -4,14 +4,15 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { GmailAvatar } from "@/components/GmailAvatar";
-import { IconBuilding, IconLinkedin, IconMail, IconMapPin, IconPhone, IconWhatsAppLogo } from "@/components/Icons";
+import { IconBuilding, IconLinkedin, IconMail, IconMapPin, IconPhone } from "@/components/Icons";
 import { ContactFormModal, contactToFormInput } from "@/components/ContactFormModal";
 import { ContactDetailQuickLogger } from "@/components/ContactDetailQuickLogger";
 import { ContactActivityTimeline } from "@/components/ContactActivityTimeline";
 import { useDirectoryContact } from "@/hooks/useDirectoryContacts";
 import { contactLinkedInSearchUrl } from "@/lib/contact-directory";
-import { formatPhone } from "@/lib/wa-contacts-display";
+import { formatPhone } from "@/lib/phone-contacts-display";
 import { titleCase } from "@/lib/title-case";
 
 type MatchedLead = {
@@ -31,6 +32,7 @@ export default function ContactDetailPage() {
   const { contact, loading, error, reload } = useDirectoryContact(id);
   const [editOpen, setEditOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [lead, setLead] = useState<MatchedLead | null>(null);
   const [leadLoading, setLeadLoading] = useState(true);
   const [timelineKey, setTimelineKey] = useState(0);
@@ -85,7 +87,6 @@ export default function ContactDetailPage() {
 
   async function handleDelete() {
     if (!contact) return;
-    if (!window.confirm(`Remove ${contact.name} from the team directory?`)) return;
     setBusy(true);
     try {
       const res = await fetch(`/api/directory-contacts/${id}`, { method: "DELETE" });
@@ -95,6 +96,7 @@ export default function ContactDetailPage() {
       window.alert(err instanceof Error ? err.message : "Failed to delete contact");
     } finally {
       setBusy(false);
+      setConfirmingDelete(false);
     }
   }
 
@@ -134,7 +136,7 @@ export default function ContactDetailPage() {
           <button
             type="button"
             disabled={busy}
-            onClick={() => void handleDelete()}
+            onClick={() => setConfirmingDelete(true)}
             className="btn-ghost inline-flex items-center gap-1.5 px-3 text-[13px] font-semibold text-[var(--color-danger)]"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -180,15 +182,6 @@ export default function ContactDetailPage() {
                   <span className="truncate">{formatPhone(contact.phone)}</span>
                 </a>
               )}
-              {contact.phone && (
-                <Link
-                  href={`/whatsapp?peer=${encodeURIComponent(contact.phone)}`}
-                  className="flex items-center gap-2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:underline"
-                >
-                  <IconWhatsAppLogo className="h-3.5 w-3.5 shrink-0" />
-                  <span>{titleCase("WhatsApp")}</span>
-                </Link>
-              )}
               {contact.location && (
                 <p className="flex items-center gap-2 text-[var(--color-text-muted)]">
                   <IconMapPin className="h-3.5 w-3.5 shrink-0" />
@@ -225,7 +218,7 @@ export default function ContactDetailPage() {
               <h3 className="text-[13px] font-bold text-[var(--color-text)]">{titleCase("CRM")}</h3>
               <p className="text-[12px] leading-relaxed text-[var(--color-text-muted)]">
                 {titleCase(
-                  "Not on the board yet. Adding them runs the classifier over your mail and WhatsApp with them."
+                  "Not on the board yet. Adding them runs the classifier over your mail with them."
                 )}
               </p>
               <button
@@ -261,7 +254,6 @@ export default function ContactDetailPage() {
           <ContactDetailQuickLogger
             contactId={contact.id}
             email={contact.email}
-            phone={contact.phone}
             name={contact.name}
             company={contact.company}
             onLogged={() => setTimelineKey((k) => k + 1)}
@@ -283,6 +275,19 @@ export default function ContactDetailPage() {
           }}
         />
       )}
+
+      {confirmingDelete ? (
+        <ConfirmDialog
+          tone="danger"
+          busy={busy}
+          title="Remove this contact?"
+          body={`${contact.name} will be removed from the team directory.`}
+          confirmLabel={busy ? "Removing…" : "Remove contact"}
+          cancelLabel="Keep it"
+          onConfirm={() => void handleDelete()}
+          onCancel={() => setConfirmingDelete(false)}
+        />
+      ) : null}
     </div>
   );
 }

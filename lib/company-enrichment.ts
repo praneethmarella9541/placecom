@@ -10,6 +10,38 @@ type LogoDevResult = { name?: string; domain?: string; logo_url?: string };
 type LogoDevMatch = { name: string; logoUrl: string | null };
 
 /**
+ * How long one logo.dev lookup may take before it is abandoned in favour of the
+ * syntactic guess. This call sits inside the contact sync's per-page loop, where
+ * a first backfill hits a hundred-odd never-seen domains per page, so an
+ * unbounded `fetch` here stalls the whole scan behind a third party's latency.
+ */
+const LOGO_DEV_TIMEOUT_MS = 4_000;
+
+/**
+ * Counters for one page's worth of enrichment, read and reset by the sync's page
+ * loop. Enrichment is the only N+1 left in that loop (one cache read per domain,
+ * plus a live API call and an upsert for every domain not yet cached), so it is
+ * the first thing to rule in or out when a page takes longer than its Gmail
+ * quota alone can explain.
+ */
+export type CompanyEnrichmentStats = {
+  /** Wall-clock ms inside resolveCompanyNames. */
+  ms: number;
+  domains: number;
+  /** Domains that missed the cache and needed a live logo.dev call. */
+  apiCalls: number;
+  apiTimeouts: number;
+};
+
+let pending: CompanyEnrichmentStats = { ms: 0, domains: 0, apiCalls: 0, apiTimeouts: 0 };
+
+export function takeCompanyEnrichmentStats(): CompanyEnrichmentStats {
+  const s = pending;
+  pending = { ms: 0, domains: 0, apiCalls: 0, apiTimeouts: 0 };
+  return s;
+}
+
+/**
  * Queries logo.dev's Search API for a domain — a real domain->company-name
  * database, not string manipulation (unlike guessCompanyNameFromDomain), so it
  * can resolve abbreviations a syntactic guess never could (e.g. "bsci.com" ->
@@ -30,9 +62,11 @@ async function searchLogoDev(domain: string): Promise<LogoDevMatch | null> {
   const key = process.env.LOGO_DEV_SECRET_KEY?.trim();
   if (!key) return null;
 
+  pending.apiCalls += 1;
   try {
     const res = await fetch(`${LOGO_DEV_SEARCH_URL}?q=${encodeURIComponent(domain)}`, {
       headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(LOGO_DEV_TIMEOUT_MS),
     });
     if (!res.ok) return null;
     const results = (await res.json()) as LogoDevResult[];
@@ -40,7 +74,11 @@ async function searchLogoDev(domain: string): Promise<LogoDevMatch | null> {
     const name = top?.name?.trim();
     if (!name) return null;
     return { name, logoUrl: top?.logo_url?.trim() || null };
-  } catch {
+  } catch (e) {
+    // A timeout is not the same failure as a bad response, and it is the one
+    // that costs the caller real time, so count it separately. Either way the
+    // caller falls back to the syntactic guess.
+    if ((e as { name?: string } | null)?.name === "TimeoutError") pending.apiTimeouts += 1;
     return null;
   }
 }
@@ -89,6 +127,7 @@ export async function resolveCompanyNames(svc: SupabaseClient, domains: string[]
   const result = new Map<string, string>();
   if (unique.length === 0) return result;
 
+  const startedAt = Date.now();
   const concurrency = Math.min(10, unique.length);
   let next = 0;
   async function worker() {
@@ -99,6 +138,8 @@ export async function resolveCompanyNames(svc: SupabaseClient, domains: string[]
     }
   }
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  pending.domains += unique.length;
+  pending.ms += Date.now() - startedAt;
   return result;
 }
 

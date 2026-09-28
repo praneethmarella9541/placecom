@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { normalizeMergeFieldKey } from "@/lib/mail-merge";
+import { purgeAttachmentsForSteps } from "@/lib/sequence-attachments";
 import { isValidTimeZone, parseTimeToMinutes } from "@/lib/sequence-schedule";
 import {
   countEnrollmentsBySequence,
@@ -9,6 +11,7 @@ import {
   notFound,
   toSequenceDto,
   toStepDto,
+  withStepAttachments,
 } from "@/lib/sequence-server";
 import { emptyEnrollmentCounts } from "@/lib/sequence-types";
 
@@ -26,7 +29,7 @@ export async function GET(request: Request, { params }: Params) {
   const [{ data: steps }, counts] = await Promise.all([
     ctx.svc
       .from("sequence_steps")
-      .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours")
+      .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours, delay_minutes")
       .eq("sequence_id", sequence.id)
       .order("step_order"),
     countEnrollmentsBySequence(ctx.svc, [sequence.id]),
@@ -34,7 +37,7 @@ export async function GET(request: Request, { params }: Params) {
 
   return NextResponse.json({
     sequence: toSequenceDto(sequence),
-    steps: (steps ?? []).map(toStepDto),
+    steps: await withStepAttachments(ctx, (steps ?? []).map(toStepDto)),
     counts: counts.get(sequence.id) ?? emptyEnrollmentCounts(),
   });
 }
@@ -52,7 +55,13 @@ type PatchBody = {
   signatureHtml?: string | null;
   trackOpens?: boolean;
   exitOnReply?: boolean;
+  /** Whole map, not a delta — the preview screen sends the set it wants kept. */
+  variableFallbacks?: Record<string, string>;
 };
+
+/** Cap per value: a fallback stands in for a name or a job title, not prose. */
+const MAX_FALLBACK_LENGTH = 200;
+const MAX_FALLBACKS = 50;
 
 export async function PATCH(request: Request, { params }: Params) {
   const ctx = await getSequenceContext(request);
@@ -110,6 +119,17 @@ export async function PATCH(request: Request, { params }: Params) {
   if (body.signatureHtml !== undefined) patch.signature_html = body.signatureHtml || null;
   if (body.trackOpens !== undefined) patch.track_opens = body.trackOpens;
   if (body.exitOnReply !== undefined) patch.exit_on_reply = body.exitOnReply;
+  if (body.variableFallbacks !== undefined) {
+    const fallbacks: Record<string, string> = {};
+    for (const [key, value] of Object.entries(body.variableFallbacks)) {
+      if (typeof value !== "string" || !value.trim()) continue;
+      const k = normalizeMergeFieldKey(key);
+      // A key mergeTemplate could never match would be a value nothing reads.
+      if (!k || Object.keys(fallbacks).length >= MAX_FALLBACKS) continue;
+      fallbacks[k] = value.trim().slice(0, MAX_FALLBACK_LENGTH);
+    }
+    patch.variable_fallbacks = fallbacks;
+  }
 
   const { data, error } = await ctx.svc
     .from("sequences")
@@ -125,13 +145,7 @@ export async function PATCH(request: Request, { params }: Params) {
   return NextResponse.json({ sequence: toSequenceDto(data) });
 }
 
-/**
- * Permanently deletes the sequence and everything under it. sequence_steps,
- * sequence_enrollments and sequence_sends all declare ON DELETE CASCADE against
- * sequences.id (0036_sequences.sql), so one delete clears the whole tree and the
- * scheduler's claim query stops matching it immediately. Not reversible — any
- * mail already sent has of course already gone out.
- */
+/** Archives the sequence; only an unsent draft is deleted outright. */
 export async function DELETE(request: Request, { params }: Params) {
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
@@ -139,10 +153,35 @@ export async function DELETE(request: Request, { params }: Params) {
   const sequence = await loadOwnedSequence(ctx, params.sequenceId);
   if (!sequence) return notFound();
 
-  const { error } = await ctx.svc.from("sequences").delete().eq("id", sequence.id);
-  if (error) {
-    return NextResponse.json({ error: error.message || "Could not delete" }, { status: 500 });
+  const { count } = await ctx.svc
+    .from("sequence_sends")
+    .select("id", { count: "exact", head: true })
+    .eq("sequence_id", sequence.id);
+
+  if (sequence.status === "draft" && (count ?? 0) === 0) {
+    const { data: stepRows } = await ctx.svc
+      .from("sequence_steps")
+      .select("id")
+      .eq("sequence_id", sequence.id);
+    // Erasing the sequence outright must not leave its attachments in storage.
+    await purgeAttachmentsForSteps(
+      ctx.svc,
+      ((stepRows ?? []) as { id: string }[]).map((r) => r.id),
+    );
+    await ctx.svc.from("sequences").delete().eq("id", sequence.id);
+    return NextResponse.json({ deleted: true });
   }
 
-  return NextResponse.json({ deleted: true });
+  await ctx.svc
+    .from("sequences")
+    .update({ status: "archived", updated_at: new Date().toISOString() })
+    .eq("id", sequence.id);
+  // Stop the scheduler touching this sequence's recipients again.
+  await ctx.svc
+    .from("sequence_enrollments")
+    .update({ next_run_at: null, updated_at: new Date().toISOString() })
+    .eq("sequence_id", sequence.id)
+    .eq("status", "active");
+
+  return NextResponse.json({ archived: true });
 }

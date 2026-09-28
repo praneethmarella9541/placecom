@@ -26,7 +26,7 @@ const DEFAULT_STAGES: Omit<CrmStage, "id">[] = [
   },
   {
     name: "No contact yet",
-    description: "No meaningful mail or WhatsApp with them since the season started.",
+    description: "No meaningful mail with them since the season started.",
     position: 1,
     color: "#94A3B8",
     is_unsorted: false,

@@ -1,5 +1,5 @@
 export type CrmSettings = {
-  /** YYYY-MM-DD. Only mail/WhatsApp on or after this date is fed to the classifier. */
+  /** YYYY-MM-DD. Only mail on or after this date is fed to the classifier. */
   season_start_date: string | null;
   model: string;
   confidence_threshold: number;

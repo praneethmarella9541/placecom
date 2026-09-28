@@ -6,29 +6,11 @@ import Link from "next/link";
 import { titleCase } from "@/lib/title-case";
 import { DateRangePicker, rangeEndingToday, type DateRange } from "@/components/DateRangePicker";
 
-type UsageCosts = {
-  callsInr: number;
-  whatsappInr: number;
-  totalInr: number;
-  callBillableMinutes: number;
-  whatsappUtilityMsgs: number;
-  whatsappPromotionalMsgs: number;
-  whatsappSessionMsgs: number;
-};
-
-function formatInr(amount: number): string {
-  return `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
 type Totals = {
-  callsIn: number;
-  callsOut: number;
-  callsFailed: number;
-  talkMinutes: number;
-  whatsappSent: number;
-  whatsappReceived: number;
+  emailsSent: number;
+  tokensIn: number;
+  tokensOut: number;
   costUsd: number;
-  costs: UsageCosts;
 };
 
 type UserAnalytics = {
@@ -120,8 +102,6 @@ export default function AdminUserAnalyticsPage() {
     void load(range);
   }, [load, range]);
 
-  const totalCalls = user ? user.totals.callsIn + user.totals.callsOut : 0;
-
   return (
     <div className="mx-auto max-w-6xl space-y-6 p-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -165,35 +145,18 @@ export default function AdminUserAnalyticsPage() {
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       {user && (
-        <>
-          <div className="analytics-hero-cost relative px-6 py-5">
-            <div className="relative z-[1]">
-              <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#9a4510]">Telephony total</p>
-              <p className="font-display mt-1 text-[38px] font-extrabold leading-none text-[#c45c1a]">
-                {formatInr(user.totals.costs.totalInr)}
-              </p>
-              <p className="mt-2 text-[12px] text-[var(--color-text-muted)]">
-                Calls {formatInr(user.totals.costs.callsInr)} · WhatsApp {formatInr(user.totals.costs.whatsappInr)}
-              </p>
-            </div>
+        <SectionBlock title="Usage">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <StatCard label="Emails sent" value={String(user.totals.emailsSent)} accent="#1a73e8" />
+            <StatCard
+              label="Tokens"
+              value={(user.totals.tokensIn + user.totals.tokensOut).toLocaleString("en-IN")}
+              sub={`${user.totals.tokensIn.toLocaleString("en-IN")} in · ${user.totals.tokensOut.toLocaleString("en-IN")} out`}
+              accent="#4285f4"
+            />
+            <StatCard label="API cost" value={`$${user.totals.costUsd.toFixed(4)}`} accent="#e37400" />
           </div>
-
-          <SectionBlock title="Calls">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <StatCard label="Total calls" value={String(totalCalls)} sub={`${user.totals.callsIn} in · ${user.totals.callsOut} out`} accent="#1a73e8" />
-              <StatCard label="Talk minutes" value={String(user.totals.costs.callBillableMinutes)} accent="#4285f4" />
-              <StatCard label="Call cost" value={formatInr(user.totals.costs.callsInr)} sub="₹0.60/min, rounded up per call" accent="#1a73e8" />
-              <StatCard label="Failed" value={String(user.totals.callsFailed)} accent="#d93025" />
-            </div>
-          </SectionBlock>
-
-          <SectionBlock title="WhatsApp">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <StatCard label="Messages" value={String(user.totals.whatsappSent + user.totals.whatsappReceived)} sub={`${user.totals.whatsappSent} sent · ${user.totals.whatsappReceived} received`} accent="#25d366" />
-              <StatCard label="WA cost" value={formatInr(user.totals.costs.whatsappInr)} sub={`${user.totals.costs.whatsappUtilityMsgs} utility · ${user.totals.costs.whatsappPromotionalMsgs} promo · ${user.totals.costs.whatsappSessionMsgs} session`} accent="#128c7e" />
-            </div>
-          </SectionBlock>
-        </>
+        </SectionBlock>
       )}
     </div>
   );

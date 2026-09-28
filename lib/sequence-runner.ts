@@ -1,11 +1,14 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { extractEmailAddress } from "@/lib/email-parse";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
-import { getThreadMessages, sendMailViaGmail } from "@/lib/gmail-inbox";
+import { getThreadMessages, sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-google-token";
+import { loadStepSendAttachments } from "@/lib/sequence-attachments";
 import { buildStepEmail } from "@/lib/sequence-body";
 import {
   isWithinSendWindow,
@@ -14,7 +17,7 @@ import {
   zonedParts,
   zonedTimeToUtc,
 } from "@/lib/sequence-schedule";
-import { windowFromSequenceRow } from "@/lib/sequence-server";
+import { resolveEnrollmentMergeFields, windowFromSequenceRow } from "@/lib/sequence-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 
 /**
@@ -22,15 +25,26 @@ import { createServiceSupabase } from "@/lib/supabase-service";
  * GET /api/cron/sequences; see lib/sequence-schedule.ts for the timing rules.
  *
  * Safety model — both layers are required:
- *  - claim_due_sequence_enrollments() leases rows with FOR UPDATE SKIP LOCKED,
+ *  - claimDueSequenceEnrollments() leases rows via a conditional UPDATE (see
+ *    its own comment for why — not the `claim_due_sequence_enrollments()`
+ *    Postgres function of the same name that still exists in migration 0036),
  *    so two overlapping runs never pick the same enrollment;
  *  - a partial unique index on sequence_sends (enrollment_id, step_id) where
  *    status in ('sending','sent') makes a duplicate send impossible even if a
  *    lease is somehow bypassed (double invocation, retry after a network blip).
  */
 
-/** Leave headroom under the route's maxDuration of 300s. */
-const DEADLINE_MS = 240_000;
+/**
+ * Work budget for one tick. Sized for cron-job.org, which closes the connection
+ * after 30s — the tick has to answer well inside that or every run is logged as
+ * a timeout. The check runs between enrollments, so one in-flight send can
+ * overshoot; 20s leaves room for that plus the pre-flight claim/token queries.
+ * Callers with a longer-lived pinger can raise it up to MAX_DEADLINE_MS.
+ */
+const DEFAULT_DEADLINE_MS = 20_000;
+/** Ceiling on an override — still under the route's maxDuration of 300s. */
+const MAX_DEADLINE_MS = 240_000;
+const MIN_DEADLINE_MS = 5_000;
 const BATCH_SIZE = 25;
 const MAX_SENDS_PER_RUN = 60;
 /** Same pacing as app/api/broadcast/email/route.ts. */
@@ -40,6 +54,8 @@ const TOKEN_BACKOFF_MS = 15 * 60_000;
 /** A send stuck mid-flight past this is assumed dead and released for retry. */
 const STUCK_SEND_MINUTES = 15;
 const MAX_ATTEMPTS = 3;
+/** Ceiling on base64 held across one run's attachment cache. */
+const MAX_ATTACHMENT_CACHE_BYTES = 40 * 1024 * 1024;
 
 export type CronSummary = {
   ok: true;
@@ -83,6 +99,7 @@ type SequenceRow = {
   signature_html: string | null;
   track_opens: boolean;
   exit_on_reply: boolean;
+  variable_fallbacks: Record<string, string> | null;
 };
 
 type StepRow = {
@@ -94,6 +111,7 @@ type StepRow = {
   body_html: string | null;
   delay_days: number;
   delay_hours: number;
+  delay_minutes: number;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -125,6 +143,13 @@ type RunContext = {
   svc: SupabaseClient;
   dryRun: boolean;
   summary: CronSummary;
+  /**
+   * Step id → its files, base64'd, downloaded at most once per run. Every
+   * recipient of a step gets the same attachments, so fetching them per
+   * enrollment would re-download the same bytes for the whole batch.
+   */
+  attachmentCache: Map<string, SendAttachment[]>;
+  attachmentCacheBytes: number;
 };
 
 /** Hand a lease back so the row is retried on a later tick. */
@@ -208,6 +233,8 @@ async function processEnrollment(
   sequence: SequenceRow,
   steps: StepRow[],
   mailbox: MailboxContext,
+  /** Contact-resolved fields for this recipient, from the caller's batch lookup. */
+  resolved: { mergeFields: Record<string, string> },
 ): Promise<void> {
   const window = windowFromSequenceRow(sequence);
   const now = new Date();
@@ -222,6 +249,7 @@ async function processEnrollment(
         kind: s.kind,
         delayDays: s.delay_days,
         delayHours: s.delay_hours,
+        delayMinutes: s.delay_minutes ?? 0,
       })),
       enrollment.current_step_order,
       now,
@@ -291,11 +319,12 @@ async function processEnrollment(
       bodyHtml: step.body_html ?? "",
       includeSignature: sequence.include_signature,
       signatureHtml: sequence.signature_html,
+      variableFallbacks: sequence.variable_fallbacks,
     },
     {
       email: enrollment.email,
       displayName: enrollment.display_name,
-      mergeFields: enrollment.merge_fields,
+      mergeFields: resolved.mergeFields,
     },
   );
 
@@ -376,6 +405,20 @@ async function processEnrollment(
   //    "Re: <original>" from the previous message — Gmail only threads when the
   //    subject matches, so letting the helper derive it is what makes it work.
   const threading = sequence.thread_emails && Boolean(enrollment.gmail_thread_id);
+
+  let attachments = ctx.attachmentCache.get(step.id);
+  if (!attachments) {
+    attachments = await loadStepSendAttachments(step.id);
+    // Bounded: caching is a bandwidth optimisation, and a run touching several
+    // heavily-attached steps must not trade a re-download for an out-of-memory
+    // kill that loses the whole batch.
+    const bytes = attachments.reduce((sum, a) => sum + a.base64Data.length, 0);
+    if (ctx.attachmentCacheBytes + bytes <= MAX_ATTACHMENT_CACHE_BYTES) {
+      ctx.attachmentCache.set(step.id, attachments);
+      ctx.attachmentCacheBytes += bytes;
+    }
+  }
+
   try {
     const result = await sendMailViaGmail(mailbox.accessToken, {
       to: enrollment.email,
@@ -386,6 +429,7 @@ async function processEnrollment(
       threadId: threading ? enrollment.gmail_thread_id ?? undefined : undefined,
       inReplyToMessageId: threading ? enrollment.last_gmail_message_id ?? undefined : undefined,
       trackingPixelUrl,
+      attachments: attachments.length > 0 ? attachments : undefined,
       mailboxKey: mailbox.ownerId,
       priority: "batch",
     });
@@ -419,6 +463,7 @@ async function processEnrollment(
         kind: s.kind,
         delayDays: s.delay_days,
         delayHours: s.delay_hours,
+        delayMinutes: s.delay_minutes ?? 0,
       })),
       step.step_order,
       new Date(),
@@ -487,8 +532,84 @@ async function processEnrollment(
   }
 }
 
-export async function runSequencesCron(options: { dryRun?: boolean } = {}): Promise<CronSummary> {
+/**
+ * Leases up to `limit` due enrollments.
+ *
+ * This used to be one round trip to a `claim_due_sequence_enrollments()`
+ * Postgres function (`SELECT ... FOR UPDATE SKIP LOCKED`, still present in
+ * migration 0036 but no longer called from here). On this project that RPC
+ * reproducibly returned zero rows through this exact service-role connection
+ * while an identical plain SELECT through the same connection — and the same
+ * SQL run directly against the database — found the rows immediately every
+ * time. The function's owner has BYPASSRLS, so it isn't a RLS-inside-
+ * SECURITY-DEFINER issue either; the divergence sits specifically in calling
+ * a function via PostgREST's RPC path versus a plain table request, which
+ * is a platform-level anomaly, not an application bug — see the commit that
+ * added this replacement for the full diagnostic trail.
+ *
+ * This does the same job as two plain requests instead: a SELECT for
+ * candidates, ordered and limited exactly like the RPC was, followed by a
+ * conditional UPDATE per row. The UPDATE's WHERE clause re-checks the same
+ * claimability conditions at write time rather than trusting the read — that
+ * substitutes for `FOR UPDATE SKIP LOCKED`: two concurrent callers targeting
+ * the same row serialize on Postgres's own row lock, and whichever loses
+ * finds `claimed_at` no longer null when its blocked UPDATE finally runs, so
+ * it affects zero rows and is correctly treated as "someone else has it."
+ * The only difference from SKIP LOCKED is a brief block instead of an
+ * instant skip, which is immaterial at this workload's scale (single-digit
+ * enrollments per minute).
+ */
+async function claimDueSequenceEnrollments(
+  svc: SupabaseClient,
+  limit: number,
+  leaseSeconds: number,
+): Promise<EnrollmentRow[]> {
+  const nowIso = new Date().toISOString();
+  const staleCutoffIso = new Date(Date.now() - leaseSeconds * 1000).toISOString();
+  // Re-used on both the select and every per-row update below — must be
+  // identical each time, or a row claimable at select time could look
+  // already-fresh (and get skipped) by the time its update runs.
+  const claimableFilter = `claimed_at.is.null,claimed_at.lt.${staleCutoffIso}`;
+
+  const { data: candidates, error: selectError } = await svc
+    .from("sequence_enrollments")
+    .select("id, sequences!inner(status)")
+    .eq("status", "active")
+    .eq("sequences.status", "active")
+    .not("next_run_at", "is", null)
+    .lte("next_run_at", nowIso)
+    .or(claimableFilter)
+    .order("next_run_at", { ascending: true })
+    .limit(limit);
+
+  if (selectError) throw new Error(`Claim select failed: ${selectError.message}`);
+
+  const claimed: EnrollmentRow[] = [];
+  for (const candidate of (candidates ?? []) as { id: string }[]) {
+    const { data: updated, error: updateError } = await svc
+      .from("sequence_enrollments")
+      .update({ claimed_at: nowIso, claim_token: randomUUID(), updated_at: nowIso })
+      .eq("id", candidate.id)
+      .eq("status", "active")
+      .or(claimableFilter)
+      .select("*")
+      .maybeSingle();
+
+    if (updateError) throw new Error(`Claim update failed: ${updateError.message}`);
+    if (updated) claimed.push(updated as EnrollmentRow);
+  }
+
+  return claimed;
+}
+
+export async function runSequencesCron(
+  options: { dryRun?: boolean; deadlineMs?: number } = {},
+): Promise<CronSummary> {
   const startedAt = Date.now();
+  const deadlineMs = Math.min(
+    MAX_DEADLINE_MS,
+    Math.max(MIN_DEADLINE_MS, Math.trunc(options.deadlineMs ?? DEFAULT_DEADLINE_MS)),
+  );
   const svc = createServiceSupabase();
   const summary: CronSummary = {
     ok: true,
@@ -503,7 +624,13 @@ export async function runSequencesCron(options: { dryRun?: boolean } = {}): Prom
     durationMs: 0,
   };
 
-  const ctx: RunContext = { svc, dryRun: Boolean(options.dryRun), summary };
+  const ctx: RunContext = {
+    svc,
+    dryRun: Boolean(options.dryRun),
+    summary,
+    attachmentCache: new Map(),
+    attachmentCacheBytes: 0,
+  };
 
   // Release sends abandoned by a crashed worker so they can be retried.
   await svc
@@ -519,14 +646,8 @@ export async function runSequencesCron(options: { dryRun?: boolean } = {}): Prom
   // loop would spin until the deadline making no progress.
   const handled = new Set<string>();
 
-  while (Date.now() - startedAt < DEADLINE_MS && summary.sent < MAX_SENDS_PER_RUN) {
-    const { data: claimed, error: claimError } = await svc.rpc("claim_due_sequence_enrollments", {
-      p_limit: BATCH_SIZE,
-      p_lease_seconds: LEASE_SECONDS,
-    });
-
-    if (claimError) throw new Error(`Claim failed: ${claimError.message}`);
-    const claimedRows = (claimed ?? []) as EnrollmentRow[];
+  while (Date.now() - startedAt < deadlineMs && summary.sent < MAX_SENDS_PER_RUN) {
+    const claimedRows = await claimDueSequenceEnrollments(svc, BATCH_SIZE, LEASE_SECONDS);
     if (claimedRows.length === 0) break;
 
     const rows = claimedRows.filter((row) => !handled.has(row.id));
@@ -583,6 +704,20 @@ export async function runSequencesCron(options: { dryRun?: boolean } = {}): Prom
         sentTodayBySequence: new Map(),
       };
 
+      // Merge fields are read from the contacts now, not from the copy taken
+      // when these people were enrolled — the same thing mass sending does,
+      // where a recipient's variables are resolved from their card at send
+      // time. One lookup for the whole mailbox's batch, not one per email.
+      const resolvedFields = await resolveEnrollmentMergeFields(
+        svc,
+        ownerId,
+        enrollments.map((e: EnrollmentRow) => ({
+          email: e.email,
+          display_name: e.display_name,
+          merge_fields: e.merge_fields,
+        })),
+      );
+
       // Seed today's counts so the daily cap survives across cron ticks.
       const mailboxSequenceIds = Array.from(
         new Set(enrollments.map((e: EnrollmentRow) => e.sequence_id)),
@@ -601,7 +736,7 @@ export async function runSequencesCron(options: { dryRun?: boolean } = {}): Prom
 
       try {
         for (const enrollment of enrollments) {
-          if (Date.now() - startedAt > DEADLINE_MS || summary.sent >= MAX_SENDS_PER_RUN) {
+          if (Date.now() - startedAt > deadlineMs || summary.sent >= MAX_SENDS_PER_RUN) {
             await releaseClaim(ctx, enrollment.id);
             continue;
           }
@@ -611,7 +746,12 @@ export async function runSequencesCron(options: { dryRun?: boolean } = {}): Prom
             await releaseClaim(ctx, enrollment.id);
             continue;
           }
-          await processEnrollment(ctx, enrollment, sequence, steps, mailbox);
+          await processEnrollment(ctx, enrollment, sequence, steps, mailbox, {
+            mergeFields:
+              resolvedFields.get(enrollment.email.trim().toLowerCase()) ??
+              enrollment.merge_fields ??
+              {},
+          });
           await sleep(GAP_MS);
         }
       } catch {

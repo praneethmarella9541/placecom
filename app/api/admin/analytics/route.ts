@@ -1,17 +1,6 @@
 import { NextResponse } from "next/server";
 import { assertAdminUserId } from "@/lib/admin-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
-import {
-  addCallCost,
-  addWhatsAppCost,
-  emptyUsageCosts,
-  roundInr,
-  type UsageCosts,
-} from "@/lib/member-analytics-cost";
-import { callTalkSecondsFromRow, rowNeedsTalkDurationBackfill } from "@/lib/call-talk-seconds";
-import { resolveAnalyticsCallDirection } from "@/lib/analytics-call-direction";
-import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
-import { fetchExotelCallPatch } from "@/lib/exotel-call-refresh";
 
 export const runtime = "nodejs";
 
@@ -19,29 +8,6 @@ export const runtime = "nodejs";
 // 180 days so the response stays bounded.
 const DEFAULT_WINDOW_DAYS = 14;
 const MAX_WINDOW_DAYS = 180;
-
-type CallRow = {
-  id: string;
-  user_id: string;
-  call_sid: string | null;
-  status: string;
-  from_number: string;
-  to_number: string;
-  duration_seconds: number | null;
-  conversation_duration_seconds: number | null;
-  recording_duration_seconds: number | null;
-  recording_sid: string | null;
-  created_at: string;
-};
-
-type MessageRow = {
-  user_id: string | null;
-  direction: string;
-  content_type: string | null;
-  template_name: string | null;
-  body: string | null;
-  created_at: string;
-};
 
 type JobRow = {
   user_id: string;
@@ -53,8 +19,6 @@ type JobRow = {
 
 type DaySeriesPoint = {
   date: string; // YYYY-MM-DD
-  callsIn: number;
-  callsOut: number;
   messages: number;
   tokens: number;
 };
@@ -65,19 +29,11 @@ type UserAnalytics = {
   displayUsername: string | null;
   role: string;
   totals: {
-    callsIn: number;
-    callsOut: number;
-    callsFailed: number;
-    talkMinutes: number;
-    whatsappSent: number;
-    whatsappReceived: number;
     emailsSent: number;
     tokensIn: number;
     tokensOut: number;
     costUsd: number;
-    costs: UsageCosts;
   };
-  callStatusBreakdown: Record<string, number>;
   series: DaySeriesPoint[];
 };
 
@@ -94,8 +50,6 @@ function emptySeries(fromUtc: Date, toUtc: Date): DaySeriesPoint[] {
   while (d.getTime() <= toUtc.getTime()) {
     series.push({
       date: d.toISOString().slice(0, 10),
-      callsIn: 0,
-      callsOut: 0,
       messages: 0,
       tokens: 0,
     });
@@ -111,8 +65,6 @@ function parseDateOnly(s: string | null): Date | null {
   const d = new Date(`${s}T00:00:00.000Z`);
   return Number.isNaN(d.getTime()) ? null : d;
 }
-
-// Direction uses the same rules as /api/calls (per-member Exotel line + mobile).
 
 export async function GET(request: Request) {
   const auth = await assertAdminUserId(request);
@@ -165,7 +117,7 @@ export async function GET(request: Request) {
   // userId so the admin can drill into themselves if they go via direct URL.
   const { data: profiles, error: profileErr } = await svc
     .from("profiles")
-    .select("id, role, display_username, mailbox_owner_id, mobile_phone, exotel_virtual_number")
+    .select("id, role, display_username, mailbox_owner_id")
     .or(`id.eq.${adminId},mailbox_owner_id.eq.${adminId}`)
     .order("created_at", { ascending: true });
   if (profileErr) {
@@ -190,15 +142,11 @@ export async function GET(request: Request) {
   const userIdsForQuery = teamUserIds;
 
   if (allTime) {
-    const [callEarliest, waEarliest, emailEarliest, jobEarliest] = await Promise.all([
-      svc.from("call_logs").select("created_at").in("user_id", userIdsForQuery).order("created_at", { ascending: true }).limit(1).maybeSingle(),
-      svc.from("whatsapp_messages").select("created_at").in("user_id", userIdsForQuery).order("created_at", { ascending: true }).limit(1).maybeSingle(),
+    const [emailEarliest, jobEarliest] = await Promise.all([
       svc.from("email_tracking").select("sent_at").in("user_id", userIdsForQuery).order("sent_at", { ascending: true }).limit(1).maybeSingle(),
       svc.from("extraction_jobs").select("created_at").in("user_id", userIdsForQuery).order("created_at", { ascending: true }).limit(1).maybeSingle(),
     ]);
     const candidates = [
-      callEarliest.data?.created_at,
-      waEarliest.data?.created_at,
       emailEarliest.data?.sent_at,
       jobEarliest.data?.created_at,
     ]
@@ -215,17 +163,6 @@ export async function GET(request: Request) {
     toUtc = today;
   }
 
-  const allVirtuals = await getExotelVirtualNumbers();
-  const telephonyByUser = new Map(
-    (profiles ?? []).map((p) => [
-      p.id as string,
-      {
-        mobile: ((p.mobile_phone as string | null) ?? "").trim(),
-        exotel: ((p.exotel_virtual_number as string | null) ?? "").trim(),
-      },
-    ])
-  );
-
   // Pull activity rows + emails in one parallel batch. Switching from
   // auth.admin.listUsers (which pages through ALL auth users) to per-team
   // getUserById calls cuts the slow path: we only fetch the team's emails,
@@ -240,21 +177,7 @@ export async function GET(request: Request) {
   // Pull activity rows scoped to the team window. We do per-query .in() filters
   // so RLS-bypass (service role) is targeted, not table-wide. Upper bound
   // (`lt`) is exclusive next-day-midnight so `toUtc` itself is included.
-  const [callsRes, waRes, emailsRes, jobsRes, ...emailEntries] = await Promise.all([
-    svc
-      .from("call_logs")
-      .select(
-        "id, call_sid, user_id, status, from_number, to_number, duration_seconds, conversation_duration_seconds, recording_duration_seconds, recording_sid, created_at"
-      )
-      .in("user_id", userIdsForQuery)
-      .gte("created_at", sinceIso)
-      .lt("created_at", queryUpperIso),
-    svc
-      .from("whatsapp_messages")
-      .select("user_id, direction, content_type, template_name, body, created_at")
-      .in("user_id", userIdsForQuery)
-      .gte("created_at", sinceIso)
-      .lt("created_at", queryUpperIso),
+  const [emailsRes, jobsRes, ...emailEntries] = await Promise.all([
     svc
       .from("email_tracking")
       .select("user_id, sent_at")
@@ -274,106 +197,23 @@ export async function GET(request: Request) {
 
   // Surface the first hard error if any; missing tables (e.g. migration not
   // applied) give a friendlier message than a 500.
-  for (const { error } of [callsRes, waRes, emailsRes, jobsRes]) {
-    if (error) {
-      // 42P01 = table doesn't exist. Treat as empty rather than failing the
-      // whole dashboard — different installs are at different migration levels.
-      if (error.code !== "42P01" && !/template_name|conversation_duration_seconds/i.test(error.message)) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
+  for (const { error } of [emailsRes, jobsRes]) {
+    if (error && error.code !== "42P01") {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
-  }
-
-  let waRows = ((waRes.data as MessageRow[] | null) ?? []).map((r) => r);
-  if (waRes.error && /template_name/i.test(waRes.error.message)) {
-    const fallback = await svc
-      .from("whatsapp_messages")
-      .select("user_id, direction, content_type, body, created_at")
-      .in("user_id", userIdsForQuery)
-      .gte("created_at", sinceIso)
-      .lt("created_at", queryUpperIso);
-    if (fallback.error && fallback.error.code !== "42P01") {
-      return NextResponse.json({ error: fallback.error.message }, { status: 500 });
-    }
-    waRows = ((fallback.data as Omit<MessageRow, "template_name">[] | null) ?? []).map((r) => ({
-      ...r,
-      template_name: null,
-    }));
-  }
-
-  const callRows = ((callsRes.data as CallRow[] | null) ?? []).map((r) => r);
-  const toBackfill = callRows
-    .filter((r) => rowNeedsTalkDurationBackfill(r))
-    .slice(0, 20);
-  if (toBackfill.length > 0) {
-    await Promise.all(
-      toBackfill.map(async (row) => {
-        if (!row.call_sid) return;
-        const patch = await fetchExotelCallPatch(row.call_sid, row.from_number);
-        if (!patch) return;
-        await svc.from("call_logs").update(patch).eq("id", row.id);
-        Object.assign(row, patch);
-      })
-    );
   }
 
   const result: UserAnalytics[] = userIdsForQuery.map((uid) => {
     const profile = teamProfiles.find((p) => p.id === uid);
-    const telephony = telephonyByUser.get(uid) ?? { mobile: "", exotel: "" };
     const series = emptySeries(fromUtc, toUtc);
     const dayIdx = new Map(series.map((s, i) => [s.date, i]));
 
     const totals = {
-      callsIn: 0,
-      callsOut: 0,
-      callsFailed: 0,
-      talkMinutes: 0,
-      whatsappSent: 0,
-      whatsappReceived: 0,
       emailsSent: 0,
       tokensIn: 0,
       tokensOut: 0,
       costUsd: 0,
-      costs: emptyUsageCosts(),
     };
-    const callStatusBreakdown: Record<string, number> = {};
-
-    // Calls
-    for (const r of callRows) {
-      if (r.user_id !== uid) continue;
-      const dir = resolveAnalyticsCallDirection(r, telephony.mobile, telephony.exotel, allVirtuals);
-      const status = (r.status ?? "").toLowerCase();
-      const d = dayKey(r.created_at);
-      const i = dayIdx.get(d);
-      if (dir === "in") {
-        totals.callsIn += 1;
-        if (i !== undefined) series[i].callsIn += 1;
-      } else {
-        totals.callsOut += 1;
-        if (i !== undefined) series[i].callsOut += 1;
-      }
-      if (["failed", "busy", "no-answer"].includes(status)) totals.callsFailed += 1;
-      callStatusBreakdown[status] = (callStatusBreakdown[status] ?? 0) + 1;
-      const talkSecs = callTalkSecondsFromRow(r);
-      if (talkSecs > 0) {
-        totals.talkMinutes += talkSecs / 60;
-        addCallCost(totals.costs, talkSecs);
-      }
-    }
-
-    // WhatsApp (inbound + outbound, billed per message)
-    for (const r of waRows) {
-      if (r.user_id !== uid) continue;
-      const dir = (r.direction ?? "").toLowerCase();
-      if (dir === "outbound") {
-        totals.whatsappSent += 1;
-        const i = dayIdx.get(dayKey(r.created_at));
-        if (i !== undefined) series[i].messages += 1;
-      } else if (dir === "inbound") {
-        totals.whatsappReceived += 1;
-      }
-      addWhatsAppCost(totals.costs, r);
-    }
 
     // Email
     for (const r of (emailsRes.data as { user_id: string; sent_at: string }[] | null) ?? []) {
@@ -395,11 +235,7 @@ export async function GET(request: Request) {
       if (i !== undefined) series[i].tokens += tIn + tOut;
     }
 
-    totals.talkMinutes = Math.round(totals.talkMinutes * 10) / 10;
     totals.costUsd = Math.round(totals.costUsd * 10000) / 10000;
-    totals.costs.callsInr = roundInr(totals.costs.callsInr);
-    totals.costs.whatsappInr = roundInr(totals.costs.whatsappInr);
-    totals.costs.totalInr = roundInr(totals.costs.totalInr);
 
     return {
       userId: uid,
@@ -407,7 +243,6 @@ export async function GET(request: Request) {
       displayUsername: (profile?.display_username as string | null) ?? null,
       role: (profile?.role as string) ?? "staff",
       totals,
-      callStatusBreakdown,
       series,
     };
   });
@@ -415,33 +250,12 @@ export async function GET(request: Request) {
   // Account-level totals (sum across all team members)
   const accountTotals = result.reduce(
     (acc, u) => ({
-      callsIn: acc.callsIn + u.totals.callsIn,
-      callsOut: acc.callsOut + u.totals.callsOut,
-      talkMinutes: Math.round((acc.talkMinutes + u.totals.talkMinutes) * 10) / 10,
-      whatsappSent: acc.whatsappSent + u.totals.whatsappSent,
-      whatsappReceived: acc.whatsappReceived + u.totals.whatsappReceived,
       emailsSent: acc.emailsSent + u.totals.emailsSent,
       costUsd: Math.round((acc.costUsd + u.totals.costUsd) * 10000) / 10000,
-      costs: {
-        callsInr: roundInr(acc.costs.callsInr + u.totals.costs.callsInr),
-        whatsappInr: roundInr(acc.costs.whatsappInr + u.totals.costs.whatsappInr),
-        totalInr: roundInr(acc.costs.totalInr + u.totals.costs.totalInr),
-        callBillableMinutes: acc.costs.callBillableMinutes + u.totals.costs.callBillableMinutes,
-        whatsappUtilityMsgs: acc.costs.whatsappUtilityMsgs + u.totals.costs.whatsappUtilityMsgs,
-        whatsappPromotionalMsgs:
-          acc.costs.whatsappPromotionalMsgs + u.totals.costs.whatsappPromotionalMsgs,
-        whatsappSessionMsgs: acc.costs.whatsappSessionMsgs + u.totals.costs.whatsappSessionMsgs,
-      },
     }),
     {
-      callsIn: 0,
-      callsOut: 0,
-      talkMinutes: 0,
-      whatsappSent: 0,
-      whatsappReceived: 0,
       emailsSent: 0,
       costUsd: 0,
-      costs: emptyUsageCosts(),
     }
   );
 

@@ -195,7 +195,13 @@ export function isWithinSendWindow(instant: Date, window: SendWindow): boolean {
  * 3 days" set on a Thursday lands the following Tuesday, which is what someone
  * configuring a follow-up cadence means.
  */
-export function addDelay(from: Date, days: number, hours: number, window: SendWindow): Date {
+export function addDelay(
+  from: Date,
+  days: number,
+  hours: number,
+  minutes: number,
+  window: SendWindow,
+): Date {
   let target: Date;
 
   if (window.businessDaysOnly && days > 0) {
@@ -207,6 +213,7 @@ export function addDelay(from: Date, days: number, hours: number, window: SendWi
   }
 
   if (hours > 0) target = new Date(target.getTime() + hours * HOUR_MS);
+  if (minutes > 0) target = new Date(target.getTime() + minutes * MINUTE_MS);
   return nextSendSlot(target, window);
 }
 
@@ -216,6 +223,8 @@ export type SequenceStepLite = {
   kind: "email" | "wait";
   delayDays: number;
   delayHours: number;
+  /** Testing aid — see the 0060 migration header. */
+  delayMinutes: number;
 };
 
 /**
@@ -234,6 +243,7 @@ export function planNextEmailStep(
   const ordered = [...steps].sort((a, b) => a.stepOrder - b.stepOrder);
   let waitDays = 0;
   let waitHours = 0;
+  let waitMinutes = 0;
 
   for (const step of ordered) {
     if (step.stepOrder <= afterOrder) continue;
@@ -241,12 +251,13 @@ export function planNextEmailStep(
     if (step.kind === "wait") {
       waitDays += step.delayDays;
       waitHours += step.delayHours;
+      waitMinutes += step.delayMinutes ?? 0;
       continue;
     }
 
     const runAt =
-      waitDays > 0 || waitHours > 0
-        ? addDelay(from, waitDays, waitHours, window)
+      waitDays > 0 || waitHours > 0 || waitMinutes > 0
+        ? addDelay(from, waitDays, waitHours, waitMinutes, window)
         : nextSendSlot(from, window);
     return { stepId: step.id, runAt };
   }
@@ -262,14 +273,20 @@ export function jitteredStart(runAt: Date, maxJitterMinutes = 30): Date {
   return new Date(runAt.getTime() + Math.floor(Math.random() * maxJitterMinutes * MINUTE_MS));
 }
 
-/** "3 business days", "2 days 4 hours", "6 hours" — for the wait-step UI. */
-export function describeDelay(days: number, hours: number, businessDaysOnly: boolean): string {
+/** "3 business days", "2 days 4 hours", "5 minutes" — for the wait-step UI. */
+export function describeDelay(
+  days: number,
+  hours: number,
+  minutes: number,
+  businessDaysOnly: boolean,
+): string {
   const bits: string[] = [];
   if (days > 0) {
     const unit = days === 1 ? "day" : "days";
     bits.push(businessDaysOnly ? `${days} business ${unit}` : `${days} ${unit}`);
   }
   if (hours > 0) bits.push(`${hours} ${hours === 1 ? "hour" : "hours"}`);
+  if (minutes > 0) bits.push(`${minutes} ${minutes === 1 ? "minute" : "minutes"}`);
   return bits.length ? bits.join(" ") : "no delay";
 }
 

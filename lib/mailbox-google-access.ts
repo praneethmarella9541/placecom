@@ -1,12 +1,11 @@
 import "server-only";
 
-import { refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
+import { ACCESS_SKEW_MS, refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import type { AuthedRequest } from "@/lib/api-auth";
 
-const ACCESS_SKEW_MS = 120_000;
 
 export type MailboxTokenResult =
   | { ok: true; accessToken: string; sessionUserId: string; mailboxOwnerId: string; gmailAddress?: string }

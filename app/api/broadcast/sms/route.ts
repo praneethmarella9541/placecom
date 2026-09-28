@@ -3,7 +3,7 @@ import { getUserOr401 } from "@/lib/request-auth";
 import { isExotelSmsConfigured, sendExotelSms } from "@/lib/exotel-sms";
 import { getUserSmsLine } from "@/lib/sms-telephony";
 import { normalizeToE164 } from "@/lib/broadcast-phones";
-import { peerForOutbound } from "@/lib/whatsapp-address";
+import { peerForOutbound } from "@/lib/e164-peer";
 import { createServiceSupabase } from "@/lib/supabase-service";
 
 export const runtime = "nodejs";

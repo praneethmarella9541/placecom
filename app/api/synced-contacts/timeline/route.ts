@@ -16,7 +16,7 @@ export const runtime = "nodejs";
  * (see lib/people-mailbox-sync.ts), not a directory_contacts row. So this
  * takes the address directly instead of looking one up by id, and only
  * covers email/meetings — synced contacts don't carry a phone number, so
- * there's nothing to look up for Calls/WhatsApp.
+ * there's nothing else to look up.
  */
 export async function GET(request: Request) {
   const { user } = await getUserOr401(request);

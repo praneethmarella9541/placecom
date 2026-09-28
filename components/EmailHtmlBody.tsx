@@ -43,6 +43,36 @@ function prepareEmailFragment(html: string): { styles: string; body: string } {
   return { styles: styles.join("\n"), body: fragment.trim() };
 }
 
+/**
+ * Cold-outreach and marketing HTML routinely hides a "preheader" (controls
+ * the inbox preview snippet — often the exact greeting line duplicated) or a
+ * tracking/unsubscribe footer behind `overflow:hidden` + a near-zero
+ * `max-height`, or `opacity:0`, on a WRAPPING element — while the hidden text
+ * itself sits in an ordinary child whose own computed style and bounding
+ * rect look completely normal: display:block, opacity:1, full natural text
+ * height (sometimes hundreds of pixels of padding filler). None of the
+ * direct per-element checks below catch that: CSS opacity doesn't propagate
+ * into a descendant's own computed value the way `visibility` genuinely
+ * inherits, and clipping via an ancestor's `overflow:hidden` changes what's
+ * painted, not the clipped descendant's own geometry. Left unhandled, that
+ * invisible block's real height counts toward the iframe's total, leaving a
+ * blank gap below the actually-visible email content — most visibly right
+ * after a message's real sign-off, where these trailing blocks tend to sit.
+ */
+function isClippedByAncestor(el: Element, doc: Document, view: Window): boolean {
+  let node: Element | null = el.parentElement;
+  while (node && node !== doc.body) {
+    const s = view.getComputedStyle(node);
+    if (parseFloat(s.opacity) === 0) return true;
+    if (/hidden|clip/.test(s.overflow) || /hidden|clip/.test(s.overflowX) || /hidden|clip/.test(s.overflowY)) {
+      const rect = node.getBoundingClientRect();
+      if (rect.height <= 2 || rect.width <= 2) return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 function isHiddenForHeight(el: Element, doc: Document): boolean {
   const view = doc.defaultView;
   if (!view) return false;
@@ -52,6 +82,7 @@ function isHiddenForHeight(el: Element, doc: Document): boolean {
   const rect = el.getBoundingClientRect();
   if (rect.width <= 0 && rect.height <= 0) return true;
   if (rect.width <= 1 && rect.height <= 1) return true;
+  if (isClippedByAncestor(el, doc, view)) return true;
   return false;
 }
 
@@ -171,7 +202,21 @@ export function EmailHtmlBody({
     html, body { margin: 0; padding: 0; }
     body { overflow-wrap: break-word; word-wrap: break-word; }
     img { max-width: 100%; height: auto; }
-    /* Gmail-style "···" quoted-history toggle — see lib/email-quote-collapse.ts. */
+    /* Gmail-style "···" quoted-history toggle — see lib/email-quote-collapse.ts.
+       The browser's native <details> behavior already hides non-summary
+       children when closed, with no [open] attribute needed — but that's a
+       low-priority user-agent default, and this stylesheet also carries
+       whatever CSS the email itself brings (appended right below, via
+       prepared.styles). Bulk cold-outreach/marketing templates routinely ship
+       a broad reset for Outlook/old-client compatibility — e.g.
+       "div, blockquote { display: block !important; }" — which trivially
+       overrides that native default the instant it targets the same tags our
+       collapsed quote uses, rendering it wide open instead of hidden. This
+       explicit, !important, higher-specificity rule is what actually keeps
+       the quote closed regardless of what the email's own stylesheet does. */
+    details.__quote-toggle:not([open]) > *:not(summary) {
+      display: none !important;
+    }
     details.__quote-toggle { margin: 4px 0; }
     details.__quote-toggle > summary {
       display: inline-flex;

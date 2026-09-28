@@ -49,7 +49,7 @@ function systemPrompt(stages: CrmStage[], seasonStart: string | null): string {
     "You sort sales leads into pipeline stages for a recruitment/placement team.",
     "",
     "For each lead you are given its name and the recent communication with them",
-    `(email subjects and snippets, WhatsApp messages, and manually logged notes)${
+    `(email subjects and snippets, and manually logged notes)${
       seasonStart ? `, limited to activity on or after ${seasonStart}` : ""
     }.`,
     "",

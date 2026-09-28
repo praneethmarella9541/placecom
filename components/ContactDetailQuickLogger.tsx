@@ -2,27 +2,25 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { IconCalendar, IconMail, IconMenu, IconWhatsAppLogo } from "@/components/Icons";
+import { IconCalendar, IconMail, IconMenu } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
 
 type QuickPost = "note" | null;
 
 /**
- * Quick Interaction Logger — Send Email / Schedule Meeting / Send WhatsApp / Add Note.
- * Email/WhatsApp/Meeting deep-link into existing flows (/inbox?composeTo=, /whatsapp?peer=,
- * /calendar); Add Note posts straight to crm_contact_notes (kind: note).
+ * Quick Interaction Logger — Send Email / Schedule Meeting / Add Note.
+ * Email/Meeting deep-link into existing flows (/inbox?composeTo=, /calendar);
+ * Add Note posts straight to crm_contact_notes (kind: note).
  */
 export function ContactDetailQuickLogger({
   contactId,
   email,
-  phone,
   name,
   company,
   onLogged,
 }: {
   contactId: string;
   email: string | null;
-  phone: string | null;
   name?: string | null;
   company?: string | null;
   onLogged: () => void;
@@ -83,15 +81,6 @@ export function ContactDetailQuickLogger({
           <IconCalendar className="h-3.5 w-3.5" />
           {titleCase("Schedule meeting")}
         </Link>
-        {phone ? (
-          <Link
-            href={`/whatsapp?peer=${encodeURIComponent(phone)}`}
-            className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
-          >
-            <IconWhatsAppLogo className="h-3.5 w-3.5" />
-            {titleCase("Send WhatsApp")}
-          </Link>
-        ) : null}
         <button
           type="button"
           onClick={() => setOpen(open === "note" ? null : "note")}

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Mail, Phone, Sparkles, Trash2, User, Zap } from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { createClient } from "@/lib/supabase";
 import { groupContactsFromExtraction } from "@/lib/contact-grouping";
 import { sanitizeContactPhone, sanitizeExtractedPhones } from "@/lib/phone";
@@ -201,6 +202,7 @@ export default function DashboardPage() {
   const [notifyOnComplete, setNotifyOnComplete] = useState(true);
   const [settingsReady, setSettingsReady] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
 
   const loadExtractions = useCallback(async () => {
@@ -317,15 +319,6 @@ export default function DashboardPage() {
   }
 
   async function deleteAllExtractions() {
-    if (
-      !window.confirm(
-        titleCase(
-          "Delete all extraction jobs and stored email rows for your account? This cannot be undone."
-        )
-      )
-    ) {
-      return;
-    }
     setDeleting(true);
     setSettingsMsg(null);
     try {
@@ -338,6 +331,7 @@ export default function DashboardPage() {
       setSettingsMsg(e instanceof Error ? e.message : "Delete failed");
     } finally {
       setDeleting(false);
+      setConfirmingDeleteAll(false);
     }
   }
 
@@ -428,7 +422,7 @@ export default function DashboardPage() {
             <button
               data-testid="extract-delete-all-btn"
               type="button"
-              onClick={() => void deleteAllExtractions()}
+              onClick={() => setConfirmingDeleteAll(true)}
               disabled={busy || deleting}
               className="btn-ghost gap-1.5 text-[var(--color-danger)] text-[13px] hover:bg-red-50 hover:text-[var(--color-danger)] dark:hover:bg-red-950/30"
             >
@@ -603,6 +597,19 @@ export default function DashboardPage() {
           <ResultsTable rows={rows} />
         )}
       </div>
+
+      {confirmingDeleteAll ? (
+        <ConfirmDialog
+          tone="danger"
+          busy={deleting}
+          title="Delete all extracted data?"
+          body="Every extraction job and stored email row for your account will be removed. This cannot be undone."
+          confirmLabel={deleting ? "Deleting…" : "Delete everything"}
+          cancelLabel="Keep it"
+          onConfirm={() => void deleteAllExtractions()}
+          onCancel={() => setConfirmingDeleteAll(false)}
+        />
+      ) : null}
     </div>
   );
 }

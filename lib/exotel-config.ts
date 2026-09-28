@@ -22,8 +22,8 @@ export function getExotelCredentials(): ExotelCredentials | null {
 }
 
 /**
- * API host for v2 (WhatsApp). Defaults to Singapore to match voice v1 in this app.
- * India WhatsApp accounts: set EXOTEL_API_HOST=api.in.exotel.com in Vercel.
+ * API host for Exotel requests. Defaults to Singapore.
+ * India accounts: set EXOTEL_API_HOST=api.in.exotel.com in Vercel.
  */
 export function getExotelApiHost(): string {
   const explicit = process.env.EXOTEL_API_HOST?.trim();
@@ -47,11 +47,6 @@ export function getExotelBasicAuthHeader(creds: ExotelCredentials): string {
   return `Basic ${Buffer.from(`${creds.apiKey}:${creds.apiToken}`).toString("base64")}`;
 }
 
-export function getExotelV2MessagesUrl(host: string, sid: string): string {
-  const h = host.replace(/^https?:\/\//, "").replace(/\/+$/, "");
-  return `https://${h}/v2/accounts/${sid}/messages`;
-}
-
 export function parseExotelErrorBody(json: unknown, status: number): string {
   if (!json || typeof json !== "object") {
     return `Exotel request failed (${status})`;
@@ -61,22 +56,11 @@ export function parseExotelErrorBody(json: unknown, status: number): string {
   if (rest?.Message) return rest.Message;
   if (typeof o.message === "string" && o.message) return o.message;
   if (typeof o.error === "string" && o.error) return o.error;
-  const response = o.response;
-  if (response && typeof response === "object") {
-    const messages = (response as Record<string, unknown>).whatsapp;
-    if (messages && typeof messages === "object") {
-      const list = (messages as Record<string, unknown>).messages;
-      if (Array.isArray(list) && list[0] && typeof list[0] === "object") {
-        const msg = (list[0] as Record<string, unknown>).message;
-        if (typeof msg === "string" && msg) return msg;
-      }
-    }
-  }
   if (status === 401) {
     return (
       "Exotel authentication failed (401). In Vercel, verify EXOTEL_API_KEY and EXOTEL_API_TOKEN " +
       "(Dashboard → Settings → API), and set EXOTEL_API_HOST to your cluster: api.exotel.com (Singapore) " +
-      "or api.in.exotel.com (Mumbai). Voice in this app uses api.exotel.com by default."
+      "or api.in.exotel.com (Mumbai). This app uses api.exotel.com by default."
     );
   }
   return `Exotel request failed (${status})`;

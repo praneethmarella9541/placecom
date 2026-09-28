@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { listPlaceholdersInTemplate } from "@/lib/mail-merge";
+import { purgeAttachmentsForSteps } from "@/lib/sequence-attachments";
 import { planNextEmailStep } from "@/lib/sequence-schedule";
 import {
   getSequenceContext,
@@ -44,8 +45,11 @@ export async function PUT(request: Request, { params }: Params) {
   if (incoming.some((s) => s.kind !== "email" && s.kind !== "wait")) {
     return NextResponse.json({ error: "Unknown step type" }, { status: 400 });
   }
-  if (incoming[0].kind !== "email") {
-    return NextResponse.json({ error: "The first step must be an email" }, { status: 400 });
+  // A leading wait is how "start N days after enrollment" is expressed —
+  // planNextEmailStep already accumulates waits before an email, so the only
+  // real rule is that the sequence has an email in it somewhere.
+  if (!incoming.some((s) => s.kind === "email")) {
+    return NextResponse.json({ error: "A sequence needs at least one email" }, { status: 400 });
   }
 
   const { data: existingRows } = await ctx.svc
@@ -62,8 +66,9 @@ export async function PUT(request: Request, { params }: Params) {
     const isWait = step.kind === "wait";
     const delayDays = Math.max(0, Math.min(365, Math.round(step.delayDays ?? 0)));
     const delayHours = Math.max(0, Math.min(23, Math.round(step.delayHours ?? 0)));
+    const delayMinutes = Math.max(0, Math.min(59, Math.round(step.delayMinutes ?? 0)));
 
-    if (isWait && delayDays + delayHours === 0) {
+    if (isWait && delayDays + delayHours + delayMinutes === 0) {
       return NextResponse.json({ error: "A delay step needs a duration" }, { status: 400 });
     }
 
@@ -76,6 +81,7 @@ export async function PUT(request: Request, { params }: Params) {
       body_html: isWait ? null : (step.bodyHtml ?? ""),
       delay_days: isWait ? delayDays : 0,
       delay_hours: isWait ? delayHours : 0,
+      delay_minutes: isWait ? delayMinutes : 0,
       updated_at: now,
     };
 
@@ -98,12 +104,14 @@ export async function PUT(request: Request, { params }: Params) {
 
   const removed = Array.from(existingIds).filter((id) => !keptIds.includes(id));
   if (removed.length > 0) {
+    // Rows cascade with the step; the stored files don't, so they go first.
+    await purgeAttachmentsForSteps(ctx.svc, removed);
     await ctx.svc.from("sequence_steps").delete().in("id", removed);
   }
 
   const { data: savedRows } = await ctx.svc
     .from("sequence_steps")
-    .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours")
+    .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours, delay_minutes")
     .eq("sequence_id", sequence.id)
     .order("step_order");
 

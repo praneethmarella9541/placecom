@@ -85,7 +85,12 @@ export async function GET(request: Request, { params }: { params: { campaignId: 
       const now = new Date().toISOString();
       for (const { id, outcome } of results) {
         if (!outcome) continue;
-        await supabase
+        // The in-memory row — and so the report's counts — must mirror what
+        // actually persisted, not what we merely intended to write. An update
+        // error here used to be silently ignored, so a failed write still
+        // counted toward the response even though the next view would see it
+        // as unresolved again — the report and the database disagreeing.
+        const { error: updateErr } = await supabase
           .from("email_tracking")
           .update(
             outcome === "replied"
@@ -93,6 +98,7 @@ export async function GET(request: Request, { params }: { params: { campaignId: 
               : { bounced: true, bounced_at: now }
           )
           .eq("id", id);
+        if (updateErr) continue;
         const row = pending.find((r) => r.id === id);
         if (row) {
           if (outcome === "replied") row.replied = true;

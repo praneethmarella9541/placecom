@@ -78,9 +78,19 @@ export async function checkThreadForReplyOrBounce(
  * mailer-daemon/postmaster message naming this exact recipient, sent after we
  * sent to them, catches that case too.
  *
+ * The search hit alone isn't trusted, though — confirmed in prod that it
+ * over-matches. Gmail's quoted-phrase search on an email address isn't a
+ * guaranteed exact substring match (it tokenizes on "@"/"."), so a single
+ * mail-merge batch sent seconds apart to several recipients can have every
+ * recipient's query land on the SAME one real bounce notification. Each
+ * candidate thread's actual content is opened and checked for the exact
+ * recipient address before counting it — the extra fetch only happens for
+ * genuine search hits, which should be rare.
+ *
  * Only called as a fallback once the thread-based check finds nothing — it
- * costs a Gmail search rather than a single thread fetch, so it's not worth
- * paying for every row, only the ones still genuinely undecided.
+ * costs a Gmail search (plus a thread fetch per candidate) rather than a
+ * single thread fetch, so it's not worth paying for every row, only the ones
+ * still genuinely undecided.
  */
 export async function searchForBounceNotification(
   accessToken: string,
@@ -97,6 +107,7 @@ export async function searchForBounceNotification(
     `(from:mailer-daemon OR from:postmaster) "${recipientEmail}" ` +
     `after:${since.getFullYear()}/${since.getMonth() + 1}/${since.getDate()}`;
 
+  let candidates;
   try {
     const page = await listThreadsPage(accessToken, {
       folder: "allmail",
@@ -105,8 +116,29 @@ export async function searchForBounceNotification(
       mailboxKey: opts.mailboxKey,
       priority: opts.priority,
     });
-    return page.threads.length > 0;
+    candidates = page.threads;
   } catch {
     return false;
   }
+
+  const needle = recipientEmail.trim().toLowerCase();
+  for (const thread of candidates) {
+    try {
+      const { messages } = await getThreadMessages(accessToken, thread.id, {
+        mailboxKey: opts.mailboxKey,
+        priority: opts.priority,
+      });
+      const hasBounceForRecipient = messages.some((m) => {
+        const from = extractEmailAddress(m.from).toLowerCase();
+        if (!isBounceSender(from)) return false;
+        const receivedAt = Date.parse(m.date);
+        if (Number.isFinite(receivedAt) && receivedAt < opts.sinceMs) return false;
+        return (m.body || "").toLowerCase().includes(needle) || (m.subject || "").toLowerCase().includes(needle);
+      });
+      if (hasBounceForRecipient) return true;
+    } catch {
+      // Unreadable candidate — try the next one rather than failing the whole check.
+    }
+  }
+  return false;
 }

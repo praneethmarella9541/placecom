@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
-import { checkThreadForReplyOrBounce } from "@/lib/email-thread-outcome";
+import { checkThreadForReplyOrBounce, searchForBounceNotification } from "@/lib/email-thread-outcome";
 
 export const runtime = "nodejs";
 
@@ -62,12 +62,23 @@ export async function GET(request: Request, { params }: { params: { campaignId: 
     if (auth.ok) {
       const results = await Promise.all(
         pending.map(async (row) => {
-          const outcome = await checkThreadForReplyOrBounce(auth.accessToken, row.gmail_thread_id!, {
+          const sinceMs = Date.parse(row.sent_at) || 0;
+          const threadOutcome = await checkThreadForReplyOrBounce(auth.accessToken, row.gmail_thread_id!, {
             mailboxAddress: auth.gmailAddress,
-            firstSentAt: Date.parse(row.sent_at) || 0,
+            firstSentAt: sinceMs,
             mailboxKey: auth.mailboxOwnerId,
           }).catch(() => null);
-          return { id: row.id, outcome };
+          if (threadOutcome) return { id: row.id, outcome: threadOutcome };
+
+          // Gmail bounce notices commonly land as their own thread rather
+          // than the one that bounced — see searchForBounceNotification's
+          // doc comment. Only worth searching for once the thread itself
+          // came back empty.
+          const bounced = await searchForBounceNotification(auth.accessToken, row.to_address, {
+            sinceMs,
+            mailboxKey: auth.mailboxOwnerId,
+          }).catch(() => false);
+          return { id: row.id, outcome: bounced ? ("bounced" as const) : null };
         })
       );
 

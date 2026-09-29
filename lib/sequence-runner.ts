@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { checkThreadForReplyOrBounce } from "@/lib/email-thread-outcome";
+import { checkThreadForReplyOrBounce, searchForBounceNotification } from "@/lib/email-thread-outcome";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-google-token";
@@ -213,15 +213,28 @@ async function processEnrollment(
 
   // 1. Exit criteria — reply or bounce in the thread we started.
   if (sequence.exit_on_reply && enrollment.gmail_thread_id) {
-    const outcome = await checkThreadForReplyOrBounce(
+    const firstSentAt = enrollment.first_sent_at ? Date.parse(enrollment.first_sent_at) : 0;
+    let outcome = await checkThreadForReplyOrBounce(
       mailbox.accessToken,
       enrollment.gmail_thread_id,
       {
         mailboxAddress: mailbox.mailboxAddress,
-        firstSentAt: enrollment.first_sent_at ? Date.parse(enrollment.first_sent_at) : 0,
+        firstSentAt,
         mailboxKey: mailbox.ownerId,
       },
     );
+    // Gmail's own bounce notices frequently land as a new thread rather than
+    // the one that bounced (no References/In-Reply-To back to it) — see
+    // searchForBounceNotification's doc comment. Confirmed missed in
+    // production for a mail-merge send checked the same way; worth the extra
+    // search only once the thread itself comes back empty.
+    if (!outcome && firstSentAt) {
+      const bounced = await searchForBounceNotification(mailbox.accessToken, enrollment.email, {
+        sinceMs: firstSentAt,
+        mailboxKey: mailbox.ownerId,
+      }).catch(() => false);
+      if (bounced) outcome = "bounced";
+    }
     if (outcome === "replied") {
       ctx.summary.replied += 1;
       await finishEnrollment(ctx, enrollment.id, "replied", {

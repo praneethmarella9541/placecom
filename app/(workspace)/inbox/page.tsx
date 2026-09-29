@@ -4353,6 +4353,12 @@ export default function InboxPage() {
       files: composeFiles,
       draftId: composeDraftId,
     };
+    // Shared across every recipient in this batch so the campaign report
+    // (app/(workspace)/campaigns) can group them — one Send click, one
+    // campaign. Named after the template subject rather than prompting for a
+    // name, so this send flow doesn't gain an extra required step.
+    const campaignId = crypto.randomUUID();
+    const campaignName = snapshot.subject.trim() || "Untitled campaign";
 
     setMassSendProgress({ sent: 0, total: rows.length });
 
@@ -4378,6 +4384,8 @@ export default function InboxPage() {
               textBody: "",
               htmlBody,
               attachments: attachments.length ? attachments : undefined,
+              campaignId,
+              campaignName,
             }),
           });
           if (!res.ok) {

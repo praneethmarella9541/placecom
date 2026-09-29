@@ -16,6 +16,7 @@ import {
   KanbanSquare,
   LogOut,
   Mail,
+  Megaphone,
   UserRound,
   Users,
   Workflow,
@@ -37,6 +38,7 @@ const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
 const commsNav = [
   { href: "/inbox", label: "Mail", Icon: Mail },
   { href: "/sequences", label: "Sequences", Icon: Workflow },
+  { href: "/campaigns", label: "Campaigns", Icon: Megaphone },
   { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;
 

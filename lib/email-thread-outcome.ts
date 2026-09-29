@@ -2,6 +2,7 @@ import "server-only";
 
 import { extractEmailAddress } from "@/lib/email-parse";
 import { getThreadMessages, listThreadsPage } from "@/lib/gmail-inbox";
+import type { GmailPriority } from "@/lib/gmail-quota";
 
 /** Auto-responders must not be mistaken for a real reply. */
 function looksAutomated(subject: string): boolean {
@@ -31,11 +32,16 @@ export async function checkThreadForReplyOrBounce(
     /** Epoch ms of our own first message — an inbound message before this can't be a reply to it. */
     firstSentAt: number;
     mailboxKey: string;
+    /** Defaults to "interactive" — a background/cron caller should opt into "batch". */
+    priority?: GmailPriority;
   }
 ): Promise<"replied" | "bounced" | null> {
   let messages;
   try {
-    ({ messages } = await getThreadMessages(accessToken, threadId, { mailboxKey: opts.mailboxKey }));
+    ({ messages } = await getThreadMessages(accessToken, threadId, {
+      mailboxKey: opts.mailboxKey,
+      priority: opts.priority,
+    }));
   } catch {
     // Thread deleted or momentarily unavailable — never block the caller on this.
     return null;
@@ -79,7 +85,12 @@ export async function checkThreadForReplyOrBounce(
 export async function searchForBounceNotification(
   accessToken: string,
   recipientEmail: string,
-  opts: { sinceMs: number; mailboxKey: string }
+  opts: {
+    sinceMs: number;
+    mailboxKey: string;
+    /** Defaults to "interactive" — a background/cron caller should opt into "batch". */
+    priority?: GmailPriority;
+  }
 ): Promise<boolean> {
   const since = new Date(opts.sinceMs);
   const query =
@@ -92,6 +103,7 @@ export async function searchForBounceNotification(
       maxResults: 5,
       searchQuery: query,
       mailboxKey: opts.mailboxKey,
+      priority: opts.priority,
     });
     return page.threads.length > 0;
   } catch {

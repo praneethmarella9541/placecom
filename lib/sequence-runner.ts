@@ -221,6 +221,7 @@ async function processEnrollment(
         mailboxAddress: mailbox.mailboxAddress,
         firstSentAt,
         mailboxKey: mailbox.ownerId,
+        priority: "batch",
       },
     );
     // Gmail's own bounce notices frequently land as a new thread rather than
@@ -232,6 +233,7 @@ async function processEnrollment(
       const bounced = await searchForBounceNotification(mailbox.accessToken, enrollment.email, {
         sinceMs: firstSentAt,
         mailboxKey: mailbox.ownerId,
+        priority: "batch",
       }).catch(() => false);
       if (bounced) outcome = "bounced";
     }

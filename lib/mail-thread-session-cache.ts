@@ -102,3 +102,12 @@ export function clearMailThreadSessionCache(): void {
     /* ignore */
   }
 }
+
+/** Drops one thread's persisted body — a reply just sent into it made this entry stale. */
+export function removeThreadFromSessionCache(threadId: string): void {
+  if (typeof window === "undefined" || !threadId) return;
+  const store = readStore();
+  if (!(threadId in store)) return;
+  delete store[threadId];
+  writeStore(store);
+}

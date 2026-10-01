@@ -101,6 +101,7 @@ import {
 import {
   clearMailThreadPrefetchCache,
   getCachedThread,
+  invalidateCachedThread,
   MAIL_THREAD_PREFETCH_DISABLED,
   rememberOpenThread,
   rememberPrefetchThread,
@@ -4579,7 +4580,19 @@ export default function InboxPage() {
       }
 
       if (isReply && snapshot.threadId) {
-        threadDataCache.current.delete(snapshot.threadId);
+        // The previous call here used the bare thread id as the cache key,
+        // which matches neither of threadDataCache's real keys (`open:`/
+        // `prefetch:`) — it deleted nothing. Worse, even a correct delete
+        // wouldn't have been enough: fetchThreadData falls back to
+        // getCachedThread's own module-level cache (up to a 30-minute TTL)
+        // before ever hitting the network, and that was never touched either.
+        // Between the two, a just-sent reply could sit invisible for a long
+        // time — not slow, just confidently showing a stale snapshot while
+        // reopening the thread. invalidateThreadCache clears the local Map
+        // correctly; invalidateCachedThread clears the module-level one (and
+        // its sessionStorage mirror) so the reopen actually refetches.
+        invalidateThreadCache(snapshot.threadId);
+        invalidateCachedThread(snapshot.threadId);
         void openThread(snapshot.threadId);
       } else {
         // Remove the optimistic row — the real refresh will add the true row.

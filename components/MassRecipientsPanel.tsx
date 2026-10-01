@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import { AlertTriangle, FileSpreadsheet, Plus, Search, Upload, X } from "lucide-react";
 import type { RecipientSuggestion } from "@/components/RecipientField";
 import { recipientMatchesQuery } from "@/lib/email-recipients";
+import { isValidEmail } from "@/lib/broadcast-recipients";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import type { ComposeVariable } from "@/lib/compose-variables";
 
@@ -133,10 +134,29 @@ export function MassRecipientsPanel({
       .slice(0, 10);
   }, [suggestions, selectedEmails, query]);
 
+  // A mass send isn't limited to people already in contacts/synced mail — a
+  // typed address that's a real email and isn't already a result or already
+  // added gets offered directly, the same way the single-send To field lets
+  // you add any address. Without this, the only way to include someone
+  // outside the suggestion list was a CSV import for just one row.
+  const rawEmailCandidate = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || !isValidEmail(q)) return null;
+    if (selectedEmails.has(q)) return null;
+    if (results.some((s) => s.email.toLowerCase() === q)) return null;
+    return q;
+  }, [query, selectedEmails, results]);
+
   function add(s: RecipientSuggestion) {
     const email = s.email.trim().toLowerCase();
     if (!email || selectedEmails.has(email)) return;
     onChange([...selected, { email, name: s.displayName?.trim() || "" }]);
+    setQuery("");
+  }
+
+  function addRawEmail(email: string) {
+    if (selectedEmails.has(email)) return;
+    onChange([...selected, { email, name: "" }]);
     setQuery("");
   }
 
@@ -302,7 +322,7 @@ export function MassRecipientsPanel({
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search contacts"
+              placeholder="Search contacts or type an email"
               className="w-full bg-transparent text-[13px] text-[#202124] outline-none placeholder:text-[#70757a]"
             />
           </div>
@@ -310,53 +330,71 @@ export function MassRecipientsPanel({
           <div className="scrollbar-thin mt-2 max-h-[240px] overflow-y-auto">
             {!query.trim() ? (
               <p className="px-1 py-3 text-[12px] text-[#5f6368]">
-                Start typing to search your contacts.
-              </p>
-            ) : results.length === 0 ? (
-              <p className="px-1 py-3 text-[12px] text-[#5f6368]">
-                No contacts match that search.
+                Start typing to search your contacts, or type an email address to add it directly.
               </p>
             ) : (
-              results.map((s) => (
-                <button
-                  key={s.email}
-                  type="button"
-                  onClick={() => add(s)}
-                  className="flex w-full items-center gap-2 rounded px-1 py-1.5 text-left hover:bg-[#f1f3f4]"
-                >
-                  <GmailAvatar
-                    seed={s.email}
-                    email={s.email}
-                    name={s.displayName || s.email}
-                    size={24}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="min-w-0 truncate text-[13px] text-[#202124]">
-                        {s.displayName || s.email}
-                      </span>
-                      {directoryEmails?.has(s.email.toLowerCase()) ? (
-                        <span
-                          title="In Team Directory — every merge variable can fill"
-                          className="shrink-0 rounded bg-[#e6f4ea] px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-[#137333]"
-                        >
-                          Directory
-                        </span>
-                      ) : syncedEmails?.has(s.email.toLowerCase()) ? (
-                        <span
-                          title="Auto-synced from mail — name, company and last interaction only"
-                          className="shrink-0 rounded bg-[#e8f0fe] px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-[#1967d2]"
-                        >
-                          Synced
-                        </span>
-                      ) : null}
+              <>
+                {rawEmailCandidate && (
+                  <button
+                    type="button"
+                    onClick={() => addRawEmail(rawEmailCandidate)}
+                    className="flex w-full items-center gap-2 rounded px-1 py-1.5 text-left hover:bg-[#f1f3f4]"
+                  >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#e8f0fe] text-[#1967d2]">
+                      <Plus className="h-3.5 w-3.5" strokeWidth={2} />
                     </span>
-                    {s.displayName && (
-                      <span className="block truncate text-[11px] text-[#5f6368]">{s.email}</span>
-                    )}
-                  </span>
-                </button>
-              ))
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-[#202124]">
+                      Add <span className="font-medium">{rawEmailCandidate}</span>
+                    </span>
+                  </button>
+                )}
+                {results.length === 0 && !rawEmailCandidate ? (
+                  <p className="px-1 py-3 text-[12px] text-[#5f6368]">
+                    No contacts match that search.
+                  </p>
+                ) : (
+                  results.map((s) => (
+                    <button
+                      key={s.email}
+                      type="button"
+                      onClick={() => add(s)}
+                      className="flex w-full items-center gap-2 rounded px-1 py-1.5 text-left hover:bg-[#f1f3f4]"
+                    >
+                      <GmailAvatar
+                        seed={s.email}
+                        email={s.email}
+                        name={s.displayName || s.email}
+                        size={24}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5">
+                          <span className="min-w-0 truncate text-[13px] text-[#202124]">
+                            {s.displayName || s.email}
+                          </span>
+                          {directoryEmails?.has(s.email.toLowerCase()) ? (
+                            <span
+                              title="In Team Directory — every merge variable can fill"
+                              className="shrink-0 rounded bg-[#e6f4ea] px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-[#137333]"
+                            >
+                              Directory
+                            </span>
+                          ) : syncedEmails?.has(s.email.toLowerCase()) ? (
+                            <span
+                              title="Auto-synced from mail — name, company and last interaction only"
+                              className="shrink-0 rounded bg-[#e8f0fe] px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-[#1967d2]"
+                            >
+                              Synced
+                            </span>
+                          ) : null}
+                        </span>
+                        {s.displayName && (
+                          <span className="block truncate text-[11px] text-[#5f6368]">{s.email}</span>
+                        )}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </>
             )}
           </div>
         </div>

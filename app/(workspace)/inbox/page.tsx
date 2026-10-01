@@ -1248,7 +1248,6 @@ export default function InboxPage() {
   const [massToggleConfirm, setMassToggleConfirm] = useState<MassToggleDirection | null>(null);
   /** Email currently shown on the review screen; null means "still editing". */
   const [reviewEmail, setReviewEmail] = useState<string | null>(null);
-  const [massSendProgress, setMassSendProgress] = useState<{ sent: number; total: number } | null>(null);
   /**
    * Campaign-wide default per variable key, set from the review screen's
    * warning banner. Applies to every recipient missing that field, not just
@@ -4360,7 +4359,13 @@ export default function InboxPage() {
     const campaignId = crypto.randomUUID();
     const campaignName = snapshot.subject.trim() || "Untitled campaign";
 
-    setMassSendProgress({ sent: 0, total: rows.length });
+    // Close immediately and finish the batch in the background — same
+    // pattern as a normal single send (sendCompose), instead of leaving the
+    // whole compose dialog open and blocked for as long as the campaign
+    // takes. Progress surfaces in the snackbar instead of the dialog's send
+    // button, since the dialog is no longer around to show it.
+    closeMassCompose();
+    showSendSnack({ phase: "sending", message: `Sending 0/${rows.length}…` });
 
     let sent = 0;
     const failed: string[] = [];
@@ -4393,13 +4398,12 @@ export default function InboxPage() {
             throw new Error(data.error || "Send failed");
           }
           sent += 1;
-          setMassSendProgress({ sent, total: rows.length });
+          showSendSnack({ phase: "sending", message: `Sending ${sent}/${rows.length}…` });
         } catch {
           failed.push(row.email);
         }
       }
     } catch (e) {
-      setMassSendProgress(null);
       showSendSnack({
         phase: "error",
         message: e instanceof Error ? e.message : "Could not send campaign",
@@ -4407,11 +4411,8 @@ export default function InboxPage() {
       return;
     }
 
-    setMassSendProgress(null);
-    closeMassCompose();
-
     if (failed.length === 0) {
-      showSendSnack({ phase: "sent", message: `Sent to ${sent} recipient${sent === 1 ? "" : "s"}` });
+      showSendSnack({ phase: "sent", message: `Sent to ${sent} recipient${sent === 1 ? "" : "s"}` }, 3000);
     } else {
       showSendSnack({
         phase: "error",
@@ -5902,15 +5903,7 @@ export default function InboxPage() {
           }
           applyMassSending(on);
         }}
-        massToggleDisabled={!!massSendProgress}
-        sending={!!massSendProgress}
-        sendLabel={
-          massSendProgress
-            ? `Sending ${massSendProgress.sent}/${massSendProgress.total}…`
-            : massSending
-            ? `Send emails (${massMergeRows.length})`
-            : "Send email"
-        }
+        sendLabel={massSending ? `Send emails (${massMergeRows.length})` : "Send email"}
         review={
           reviewRow
             ? {

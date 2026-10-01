@@ -29,32 +29,47 @@ export default function CampaignReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
-  const load = useCallback(
-    async (opts?: { silent?: boolean }) => {
-      if (opts?.silent) setRefreshing(true);
-      else setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/campaigns/${encodeURIComponent(params.campaignId)}`, {
-          cache: "no-store",
-        });
-        const data = (await res.json()) as { error?: string; report?: CampaignReport };
-        if (!res.ok) throw new Error(data.error || "Failed to load campaign");
-        setReport(data.report ?? null);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load");
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [params.campaignId]
-  );
+  // Plain GET — a pure read, no Gmail calls, safe to run on every mount/nav.
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/campaigns/${encodeURIComponent(params.campaignId)}`, {
+        cache: "no-store",
+      });
+      const data = (await res.json()) as { error?: string; report?: CampaignReport };
+      if (!res.ok) throw new Error(data.error || "Failed to load campaign");
+      setReport(data.report ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, [params.campaignId]);
+
+  // POST — the explicit Refresh click. Actively checks Gmail for every still-
+  // pending recipient, unlike a plain page view/load above.
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/campaigns/${encodeURIComponent(params.campaignId)}`, {
+        method: "POST",
+        cache: "no-store",
+      });
+      const data = (await res.json()) as { error?: string; report?: CampaignReport };
+      if (!res.ok) throw new Error(data.error || "Failed to refresh campaign");
+      setReport(data.report ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to refresh");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [params.campaignId]);
 
   useEffect(() => {
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.campaignId]);
+  }, [load]);
 
   const filteredRecipients = useMemo(() => {
     if (!report) return [];
@@ -85,12 +100,13 @@ export default function CampaignReportPage() {
             </h1>
             <button
               type="button"
-              onClick={() => void load({ silent: true })}
+              onClick={() => void refresh()}
               disabled={refreshing}
+              title={titleCase("Actively checks Gmail for new replies/bounces — unlike the automatic page load")}
               className="btn-ghost inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-60"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
-              {titleCase(refreshing ? "Refreshing…" : "Refresh")}
+              {titleCase(refreshing ? "Checking…" : "Refresh")}
             </button>
           </div>
 
@@ -182,7 +198,7 @@ export default function CampaignReportPage() {
 
           <p className="text-[12px] text-[var(--color-text-faint)]">
             {titleCase(
-              "Responded and Bounced update automatically as you read your mail in the inbox — opening the reply or the bounce notice is what marks it here. Refresh just re-checks what's already been picked up."
+              "Responded and Bounced update automatically as you read your mail in the inbox, and Refresh actively checks Gmail for anything that hasn't been picked up yet."
             )}
           </p>
         </div>

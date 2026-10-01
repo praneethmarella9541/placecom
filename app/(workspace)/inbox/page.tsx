@@ -4569,7 +4569,7 @@ export default function InboxPage() {
           attachments: attachments.length ? attachments : undefined,
         }),
       });
-      const data = (await res.json()) as { error?: string };
+      const data = (await res.json()) as { error?: string; id?: string; threadId?: string };
       if (!res.ok) throw new Error(data.error || "Send failed");
 
       // Delete the draft it was based on (fire-and-forget).
@@ -4586,14 +4586,52 @@ export default function InboxPage() {
         // wouldn't have been enough: fetchThreadData falls back to
         // getCachedThread's own module-level cache (up to a 30-minute TTL)
         // before ever hitting the network, and that was never touched either.
-        // Between the two, a just-sent reply could sit invisible for a long
-        // time — not slow, just confidently showing a stale snapshot while
-        // reopening the thread. invalidateThreadCache clears the local Map
-        // correctly; invalidateCachedThread clears the module-level one (and
-        // its sessionStorage mirror) so the reopen actually refetches.
+        // invalidateThreadCache clears the local Map correctly;
+        // invalidateCachedThread clears the module-level one (and its
+        // sessionStorage mirror) so a future open actually refetches.
         invalidateThreadCache(snapshot.threadId);
         invalidateCachedThread(snapshot.threadId);
-        void openThread(snapshot.threadId);
+
+        // Append the reply straight into the open thread immediately, rather
+        // than waiting on a refetch — we already know exactly what we sent,
+        // so there's nothing to wait for. This also sidesteps a real Gmail
+        // quirk: threads.get can lag behind messages.send by a few seconds
+        // (the Sent list's own snippet updates faster than the full thread
+        // read does), so an immediate refetch can legitimately come back
+        // without the message we just sent. If the thread is still open when
+        // this lands, merge: trust the background refetch's content once it
+        // includes our message, but never let it make the reply disappear in
+        // the meantime by overwriting with a response that doesn't have it yet.
+        if (data.id && selectedId === snapshot.threadId) {
+          const sentMessageId = data.id;
+          const optimisticMessage: MsgView = {
+            id: sentMessageId,
+            threadId: data.threadId || snapshot.threadId,
+            subject: snapshot.subject,
+            from: myEmail,
+            to: snapshot.to,
+            cc: snapshot.cc,
+            bcc: snapshot.bcc,
+            date: new Date().toISOString(),
+            body: "",
+            bodyHtml: finalHtmlBody,
+          };
+          setMessages((prev) => [...(prev ?? []), optimisticMessage]);
+
+          loadThreadForOpen(snapshot.threadId)
+            .then((fresh) => {
+              if (activeThreadLoadRef.current !== snapshot.threadId) return;
+              const hasRealMessage = fresh.messages.some((m) => m.id === sentMessageId);
+              setMessages(
+                hasRealMessage ? fresh.messages : [...fresh.messages, optimisticMessage]
+              );
+            })
+            .catch(() => {
+              // Keep the optimistic message showing rather than clearing it on a failed reconcile.
+            });
+        } else {
+          void openThread(snapshot.threadId);
+        }
       } else {
         // Remove the optimistic row — the real refresh will add the true row.
         mutateThreads((rows) => rows.filter((r) => r.id !== optId));

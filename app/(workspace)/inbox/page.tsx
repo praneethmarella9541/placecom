@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { LabelChip, labelAccentStyle, buildLabelColorMap } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
@@ -108,7 +109,7 @@ import {
   startMailListAndBodyPrefetchWarm,
 } from "@/lib/mail-thread-prefetch";
 import { isPrefetchPausedAfterBrowserReload } from "@/lib/login-prefetch-session";
-import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon } from "lucide-react";
+import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon, Reply, AlertTriangle, Megaphone } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -322,6 +323,10 @@ type TrackingRow = {
   opened: boolean;
   opened_at: string | null;
   open_count: number;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  replied: boolean;
+  bounced: boolean;
 };
 
 /**
@@ -604,9 +609,17 @@ function MessageBubble({
               <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
                 {formatFromHeader(m.from || "")}
               </p>
-              <div className="flex shrink-0 items-center gap-1.5">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                 {trackingRow && !isSelfSentEmail(m.from, m.to, m.cc, myEmail) && (
-                  trackingRow.opened ? (
+                  trackingRow.bounced ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[var(--color-danger-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-danger)]"
+                      title="Delivery failed"
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      {titleCase("Bounced")}
+                    </span>
+                  ) : trackingRow.opened ? (
                     <span
                       className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
                       title={`Opened ${trackingRow.open_count}x`}
@@ -620,6 +633,26 @@ function MessageBubble({
                       {titleCase("Sent")}
                     </span>
                   )
+                )}
+                {trackingRow?.replied && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
+                    title="They replied in this thread"
+                  >
+                    <Reply className="h-3 w-3" />
+                    {titleCase("Replied")}
+                  </span>
+                )}
+                {trackingRow?.campaign_id && (
+                  <Link
+                    href={`/campaigns/${encodeURIComponent(trackingRow.campaign_id)}`}
+                    onClick={(e) => e.stopPropagation()}
+                    title={`Part of campaign: ${trackingRow.campaign_name ?? "Untitled campaign"} — view full report`}
+                    className="inline-flex max-w-[140px] items-center gap-1 rounded-full bg-[var(--color-copper-tint)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-copper)] hover:underline"
+                  >
+                    <Megaphone className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{trackingRow.campaign_name || "Campaign"}</span>
+                  </Link>
                 )}
                 <time className="whitespace-nowrap text-[12px] text-[var(--color-text-faint)]">
                   {formatDate(m.date)}

@@ -11,6 +11,16 @@ type TrackingRow = {
   gmail_thread_id: string | null;
   sent_at: string;
   opened: boolean;
+  opened_at: string | null;
+  replied: boolean;
+  bounced: boolean;
+};
+
+export type CampaignRecipient = {
+  email: string;
+  sentAt: string;
+  opened: boolean;
+  openedAt: string | null;
   replied: boolean;
   bounced: boolean;
 };
@@ -22,6 +32,7 @@ export type CampaignReport = {
   opened: number;
   replied: number;
   bounced: number;
+  recipients: CampaignRecipient[];
 };
 
 /**
@@ -43,7 +54,7 @@ export async function GET(request: Request, { params }: { params: { campaignId: 
 
   const { data: rows, error } = await supabase
     .from("email_tracking")
-    .select("id, to_address, gmail_thread_id, sent_at, opened, replied, bounced, campaign_name")
+    .select("id, to_address, gmail_thread_id, sent_at, opened, opened_at, replied, bounced, campaign_name")
     .eq("user_id", user.id)
     .eq("campaign_id", params.campaignId);
 
@@ -110,13 +121,24 @@ export async function GET(request: Request, { params }: { params: { campaignId: 
     // already settled from previous views; it just can't resolve anything new.
   }
 
+  const trackingRows = rows as TrackingRow[];
   const report: CampaignReport = {
     campaignId: params.campaignId,
     campaignName,
-    sent: rows.length,
-    opened: (rows as TrackingRow[]).filter((r) => r.opened).length,
-    replied: (rows as TrackingRow[]).filter((r) => r.replied).length,
-    bounced: (rows as TrackingRow[]).filter((r) => r.bounced).length,
+    sent: trackingRows.length,
+    opened: trackingRows.filter((r) => r.opened).length,
+    replied: trackingRows.filter((r) => r.replied).length,
+    bounced: trackingRows.filter((r) => r.bounced).length,
+    recipients: trackingRows
+      .map((r) => ({
+        email: r.to_address,
+        sentAt: r.sent_at,
+        opened: r.opened,
+        openedAt: r.opened_at,
+        replied: r.replied,
+        bounced: r.bounced,
+      }))
+      .sort((a, b) => a.email.localeCompare(b.email)),
   };
 
   return NextResponse.json({ report });

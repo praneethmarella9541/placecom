@@ -3,15 +3,23 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Check, AlertTriangle, Minus } from "lucide-react";
+import { formatDate } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import type { CampaignReport } from "@/app/api/campaigns/[campaignId]/route";
 
-const METRICS: { key: keyof Omit<CampaignReport, "campaignId" | "campaignName" | "sent">; label: string; barClass: string }[] = [
+const METRICS: { key: "opened" | "replied" | "bounced"; label: string; barClass: string }[] = [
   { key: "opened", label: "Opened", barClass: "bg-[var(--color-copper)]" },
   { key: "replied", label: "Responded", barClass: "bg-emerald-500" },
   { key: "bounced", label: "Bounced", barClass: "bg-[var(--color-danger)]" },
 ];
+
+/** One glance per column, instead of making someone read three true/false cells. */
+function StatusIcon({ on, danger }: { on: boolean; danger?: boolean }) {
+  if (!on) return <Minus className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />;
+  if (danger) return <AlertTriangle className="h-3.5 w-3.5 text-[var(--color-danger)]" />;
+  return <Check className="h-3.5 w-3.5 text-[var(--color-success)]" />;
+}
 
 export default function CampaignReportPage() {
   const params = useParams<{ campaignId: string }>();
@@ -39,7 +47,7 @@ export default function CampaignReportPage() {
   }, [params.campaignId]);
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <Link
         href="/campaigns"
         className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -64,7 +72,7 @@ export default function CampaignReportPage() {
 
           <div className="space-y-5">
             {METRICS.map(({ key, label, barClass }) => {
-              const count = report[key] as number;
+              const count = report[key];
               const pct = report.sent > 0 ? Math.round((count / report.sent) * 100) : 0;
               return (
                 <div key={key}>
@@ -80,6 +88,45 @@ export default function CampaignReportPage() {
                 </div>
               );
             })}
+          </div>
+
+          <div>
+            <h2 className="mb-2 text-[13px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+              {titleCase("Recipients")}
+            </h2>
+            <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">
+                    <th className="px-3 py-2">{titleCase("Recipient")}</th>
+                    <th className="px-3 py-2 text-center">{titleCase("Opened")}</th>
+                    <th className="px-3 py-2 text-center">{titleCase("Responded")}</th>
+                    <th className="px-3 py-2 text-center">{titleCase("Bounced")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.recipients.map((r) => (
+                    <tr key={r.email} className="border-b border-[var(--color-border)] last:border-0">
+                      <td className="min-w-0 px-3 py-2">
+                        <span className="block truncate text-[var(--color-text)]">{r.email}</span>
+                        <span className="block text-[11px] text-[var(--color-text-faint)]">
+                          {formatDate(r.sentAt)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-center" title={r.openedAt ? formatDate(r.openedAt) : undefined}>
+                        <StatusIcon on={r.opened} />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <StatusIcon on={r.replied} />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <StatusIcon on={r.bounced} danger />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <p className="text-[12px] text-[var(--color-text-faint)]">

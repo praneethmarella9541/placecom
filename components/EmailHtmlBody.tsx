@@ -9,8 +9,24 @@ import {
 import { linkifyBareUrlsInHtml, linkifyPlainTextToHtml } from "@/lib/linkify-plain-text";
 import { collapseQuotedHtml, splitPlainTextQuote } from "@/lib/email-quote-collapse";
 
+/**
+ * Strips this app's own open-tracking pixel (see app/api/gmail/send's
+ * trackingPixelUrl / app/api/track/[id]) before rendering a message body here.
+ *
+ * The pixel's only legitimate signal is an external mail client — the real
+ * recipient's Gmail/Outlook — remotely loading it. This viewer is not that:
+ * it's the same app that sent the mail, rendered inside an iframe with no
+ * gate on remote images, so simply opening a thread here to check it sent
+ * correctly fired the pixel ourselves. Confirmed in prod — three test sends
+ * all showed "opened" within single-digit seconds of sending, which is this,
+ * not a real recipient open.
+ */
+function stripOwnTrackingPixel(html: string): string {
+  return html.replace(/<img\b[^>]*\bsrc\s*=\s*("|')[^"']*\/api\/track\/[^"']*\1[^>]*>/gi, "");
+}
+
 function sanitizeEmailHtml(html: string): string {
-  return html
+  return stripOwnTrackingPixel(html)
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
     .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
     .replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");

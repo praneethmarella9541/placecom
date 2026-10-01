@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ArrowLeft, Check, AlertTriangle, Minus } from "lucide-react";
+import { ArrowLeft, Check, AlertTriangle, Minus, RefreshCw, Search } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import type { CampaignReport } from "@/app/api/campaigns/[campaignId]/route";
@@ -25,11 +25,14 @@ export default function CampaignReportPage() {
   const params = useParams<{ campaignId: string }>();
   const [report, setReport] = useState<CampaignReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (opts?.silent) setRefreshing(true);
+      else setLoading(true);
       setError(null);
       try {
         const res = await fetch(`/api/campaigns/${encodeURIComponent(params.campaignId)}`, {
@@ -42,9 +45,23 @@ export default function CampaignReportPage() {
         setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
         setLoading(false);
+        setRefreshing(false);
       }
-    })();
+    },
+    [params.campaignId]
+  );
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.campaignId]);
+
+  const filteredRecipients = useMemo(() => {
+    if (!report) return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return report.recipients;
+    return report.recipients.filter((r) => r.email.toLowerCase().includes(q));
+  }, [report, search]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -62,9 +79,20 @@ export default function CampaignReportPage() {
         <p className="text-[13px] text-[var(--color-danger)]">{error}</p>
       ) : report ? (
         <div className="surface-card space-y-6 p-6">
-          <h1 className="font-display text-[19px] font-bold tracking-tight text-[var(--color-text)]">
-            {report.campaignName}
-          </h1>
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="font-display text-[19px] font-bold tracking-tight text-[var(--color-text)]">
+              {report.campaignName}
+            </h1>
+            <button
+              type="button"
+              onClick={() => void load({ silent: true })}
+              disabled={refreshing}
+              className="btn-ghost inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-[12.5px] font-semibold disabled:opacity-60"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              {titleCase(refreshing ? "Refreshing…" : "Refresh")}
+            </button>
+          </div>
 
           <p className="text-[15px] font-semibold text-[var(--color-text)]">
             {titleCase("Sent")}: {report.sent} {report.sent === 1 ? "email" : "emails"}
@@ -91,9 +119,24 @@ export default function CampaignReportPage() {
           </div>
 
           <div>
-            <h2 className="mb-2 text-[13px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
-              {titleCase("Recipients")}
-            </h2>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <h2 className="text-[13px] font-bold uppercase tracking-wide text-[var(--color-text-muted)]">
+                {titleCase("Recipients")}
+              </h2>
+              <div className="relative w-56">
+                <Search
+                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]"
+                  strokeWidth={2}
+                />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={titleCase("Search recipients")}
+                  className="h-8 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-3 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)]"
+                />
+              </div>
+            </div>
             <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
               <table className="w-full text-[13px]">
                 <thead>
@@ -105,25 +148,33 @@ export default function CampaignReportPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {report.recipients.map((r) => (
-                    <tr key={r.email} className="border-b border-[var(--color-border)] last:border-0">
-                      <td className="min-w-0 px-3 py-2">
-                        <span className="block truncate text-[var(--color-text)]">{r.email}</span>
-                        <span className="block text-[11px] text-[var(--color-text-faint)]">
-                          {formatDate(r.sentAt)}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 text-center" title={r.openedAt ? formatDate(r.openedAt) : undefined}>
-                        <StatusIcon on={r.opened} />
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <StatusIcon on={r.replied} />
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <StatusIcon on={r.bounced} danger />
+                  {filteredRecipients.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
+                        {titleCase("No recipients match that search.")}
                       </td>
                     </tr>
-                  ))}
+                  ) : (
+                    filteredRecipients.map((r) => (
+                      <tr key={r.email} className="border-b border-[var(--color-border)] last:border-0">
+                        <td className="min-w-0 px-3 py-2">
+                          <span className="block truncate text-[var(--color-text)]">{r.email}</span>
+                          <span className="block text-[11px] text-[var(--color-text-faint)]">
+                            {formatDate(r.sentAt)}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-center" title={r.openedAt ? formatDate(r.openedAt) : undefined}>
+                          <StatusIcon on={r.opened} />
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <StatusIcon on={r.replied} />
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <StatusIcon on={r.bounced} danger />
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -131,7 +182,7 @@ export default function CampaignReportPage() {
 
           <p className="text-[12px] text-[var(--color-text-faint)]">
             {titleCase(
-              "Responded and Bounced are checked live against each thread and cached once a recipient's outcome is known — refresh to pick up anything new."
+              "Responded and Bounced are checked live against each thread and cached once a recipient's outcome is known — use Refresh to pick up anything new."
             )}
           </p>
         </div>

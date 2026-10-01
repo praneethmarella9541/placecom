@@ -68,8 +68,14 @@ export default function CampaignReportPage() {
   }, [params.campaignId]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    // Paint instantly from whatever's already stored (pure read, no Gmail
+    // calls), then immediately follow with the active check so entering a
+    // campaign doesn't require a separate Refresh click to see current
+    // numbers — a deliberate navigation into one specific campaign is rare
+    // enough that doing the real check here, once, is worth it.
+    void load().then(() => void refresh());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.campaignId]);
 
   const filteredRecipients = useMemo(() => {
     if (!report) return [];
@@ -198,7 +204,7 @@ export default function CampaignReportPage() {
 
           <p className="text-[12px] text-[var(--color-text-faint)]">
             {titleCase(
-              "Responded and Bounced update automatically as you read your mail in the inbox, and Refresh actively checks Gmail for anything that hasn't been picked up yet."
+              "Responded and Bounced are checked against Gmail each time you open this campaign — use Refresh to check again without leaving the page."
             )}
           </p>
         </div>

@@ -4,9 +4,9 @@ import { randomUUID } from "node:crypto";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { extractEmailAddress } from "@/lib/email-parse";
+import { checkThreadForReplyOrBounce, searchForBounceNotification } from "@/lib/email-thread-outcome";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
-import { getThreadMessages, sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
+import { sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-google-token";
 import { loadStepSendAttachments } from "@/lib/sequence-attachments";
 import { buildStepEmail } from "@/lib/sequence-body";
@@ -130,15 +130,6 @@ function startOfLocalDay(now: Date, timezone: string): Date {
   return zonedTimeToUtc({ ...parts, hour: 0, minute: 0 }, timezone);
 }
 
-/** Auto-responders must not be mistaken for a real reply. */
-function looksAutomated(subject: string): boolean {
-  return /^\s*(automatic reply|auto[- ]?reply|out of office|ooo\b)/i.test(subject);
-}
-
-function isBounceSender(email: string): boolean {
-  return /(^|\W)(mailer-daemon|postmaster)@/i.test(email);
-}
-
 type RunContext = {
   svc: SupabaseClient;
   dryRun: boolean;
@@ -171,52 +162,6 @@ async function finishEnrollment(
   patch: Record<string, unknown> = {},
 ): Promise<void> {
   await releaseClaim(ctx, enrollmentId, { status, next_run_at: null, ...patch });
-}
-
-/**
- * Look for a reply or a bounce in the thread we started.
- *
- * Uses the stored thread id rather than a Gmail search: it is the exact
- * conversation, so there is no risk of matching unrelated mail from the same
- * person and no dependency on Gmail's search indexing lag.
- */
-async function checkThreadForExit(
-  accessToken: string,
-  threadId: string,
-  enrollment: EnrollmentRow,
-  mailboxAddress: string | undefined,
-  mailboxKey: string,
-): Promise<"replied" | "bounced" | null> {
-  let messages;
-  try {
-    ({ messages } = await getThreadMessages(accessToken, threadId, {
-      mailboxKey,
-      priority: "batch",
-    }));
-  } catch {
-    // Thread deleted or momentarily unavailable — never block the send on this.
-    return null;
-  }
-
-  const ourAddress = mailboxAddress?.trim().toLowerCase();
-  const firstSentAt = enrollment.first_sent_at ? Date.parse(enrollment.first_sent_at) : 0;
-
-  for (const message of messages) {
-    const from = extractEmailAddress(message.from).toLowerCase();
-    if (!from) continue;
-    if (ourAddress && from === ourAddress) continue;
-    if (isBounceSender(from)) return "bounced";
-
-    const receivedAt = Date.parse(message.date);
-    if (Number.isFinite(receivedAt) && firstSentAt && receivedAt < firstSentAt) continue;
-    if (looksAutomated(message.subject ?? "")) continue;
-
-    // We started this thread, so any other inbound participant is the recipient
-    // replying — including from an alias or an assistant's address.
-    return "replied";
-  }
-
-  return null;
 }
 
 type MailboxContext = {
@@ -268,13 +213,30 @@ async function processEnrollment(
 
   // 1. Exit criteria — reply or bounce in the thread we started.
   if (sequence.exit_on_reply && enrollment.gmail_thread_id) {
-    const outcome = await checkThreadForExit(
+    const firstSentAt = enrollment.first_sent_at ? Date.parse(enrollment.first_sent_at) : 0;
+    let outcome = await checkThreadForReplyOrBounce(
       mailbox.accessToken,
       enrollment.gmail_thread_id,
-      enrollment,
-      mailbox.mailboxAddress,
-      mailbox.ownerId,
+      {
+        mailboxAddress: mailbox.mailboxAddress,
+        firstSentAt,
+        mailboxKey: mailbox.ownerId,
+        priority: "batch",
+      },
     );
+    // Gmail's own bounce notices frequently land as a new thread rather than
+    // the one that bounced (no References/In-Reply-To back to it) — see
+    // searchForBounceNotification's doc comment. Confirmed missed in
+    // production for a mail-merge send checked the same way; worth the extra
+    // search only once the thread itself comes back empty.
+    if (!outcome && firstSentAt) {
+      const bounced = await searchForBounceNotification(mailbox.accessToken, enrollment.email, {
+        sinceMs: firstSentAt,
+        mailboxKey: mailbox.ownerId,
+        priority: "batch",
+      }).catch(() => false);
+      if (bounced) outcome = "bounced";
+    }
     if (outcome === "replied") {
       ctx.summary.replied += 1;
       await finishEnrollment(ctx, enrollment.id, "replied", {

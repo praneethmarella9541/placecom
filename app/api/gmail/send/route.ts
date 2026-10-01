@@ -26,6 +26,9 @@ type Body = {
   threadId?: string;
   inReplyToMessageId?: string;
   attachments?: AttachmentPayload[];
+  /** Shared across every recipient of one mass/mail-merge send — see app/api/campaigns. */
+  campaignId?: string;
+  campaignName?: string;
 };
 
 function getAppUrl(): string {
@@ -74,6 +77,8 @@ export async function POST(request: Request) {
         gmail_message_id: "__pending__",
         to_address: to,
         subject: subject || null,
+        campaign_id: body.campaignId || null,
+        campaign_name: body.campaignId ? body.campaignName?.trim() || null : null,
       })
       .select("id")
       .single();
@@ -110,7 +115,7 @@ export async function POST(request: Request) {
     if (trackRow) {
       await supabase
         .from("email_tracking")
-        .update({ gmail_message_id: sent.id })
+        .update({ gmail_message_id: sent.id, gmail_thread_id: sent.threadId })
         .eq("id", trackRow.id);
     }
 

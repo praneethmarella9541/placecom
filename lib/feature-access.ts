@@ -81,6 +81,9 @@ export function pathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/sequences")) return "sequences";
   if (pathname.startsWith("/sms")) return "sms";
   if (pathname.startsWith("/contacts")) return "contacts";
+  // Reports on mail sent from the inbox composer's mass-send — gated with it,
+  // same reasoning as /api/broadcast/parse-mail-merge below.
+  if (pathname.startsWith("/campaigns")) return "inbox";
   return null;
 }
 
@@ -116,6 +119,7 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/api/docs")) return "docs";
 
   if (pathname.startsWith("/api/sequences")) return "sequences";
+  if (pathname.startsWith("/api/campaigns")) return "inbox";
 
   if (
     pathname.startsWith("/api/extract") ||

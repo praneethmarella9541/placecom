@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { getThreadMessages, markThreadRead } from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
+import { syncTrackingFromOpenedThread } from "@/lib/tracking-passive-sync";
+import { createServiceSupabase } from "@/lib/supabase-service";
 
 export const runtime = "nodejs";
 
@@ -37,6 +39,19 @@ export async function GET(
         console.warn("[gmail] mark-read failed:", e?.message ?? e);
       });
     }
+
+    // Piggybacks replied/bounced detection onto this fetch — which is
+    // happening regardless, for rendering — instead of spending a dedicated
+    // Gmail call to answer that question later. See that function's doc
+    // comment. Fire-and-forget: bookkeeping must never slow down the thread
+    // the user is actually waiting to read.
+    void syncTrackingFromOpenedThread(
+      createServiceSupabase(),
+      auth.userId,
+      auth.gmailAddress,
+      threadId,
+      messages
+    );
 
     return NextResponse.json(
       { threadId, messages, labelIds },

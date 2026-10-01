@@ -20,6 +20,7 @@ import {
   clearMailThreadSessionCache,
   hydrateMailThreadSessionCache,
   persistMailThreadSessionCache,
+  removeThreadFromSessionCache,
   type MailThreadCachePayload,
 } from "@/lib/mail-thread-session-cache";
 
@@ -71,6 +72,22 @@ function gcThreadCache(): void {
   for (const [key, entry] of Array.from(threadCache.entries())) {
     if (now - entry.fetchedAt > SESSION_THREAD_TTL_MS) threadCache.delete(key);
   }
+}
+
+/**
+ * Drops one thread's cached body — in-memory, in-flight, and the sessionStorage
+ * copy. Needed after sending a reply into it: getCachedThread would otherwise
+ * keep serving the pre-reply snapshot (fresh by its 30-minute TTL) the instant
+ * openThread re-opens it, so the new message appeared to take a long time to
+ * show up — it wasn't slow, the UI was confidently showing stale data while
+ * the real refetch happened invisibly behind it.
+ */
+export function invalidateCachedThread(threadId: string): void {
+  if (!threadId) return;
+  threadCache.delete(cacheKey(threadId, "open"));
+  threadCache.delete(cacheKey(threadId, "prefetch"));
+  inflight.delete(`prefetch:${threadId}`);
+  removeThreadFromSessionCache(threadId);
 }
 
 export function clearMailThreadPrefetchCache(): void {

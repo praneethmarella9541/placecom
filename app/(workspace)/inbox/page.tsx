@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { LabelChip, labelAccentStyle, buildLabelColorMap } from "@/components/LabelChip";
 import { LabelPicker } from "@/components/LabelPicker";
@@ -99,6 +100,7 @@ import {
 import {
   clearMailThreadPrefetchCache,
   getCachedThread,
+  invalidateCachedThread,
   MAIL_THREAD_PREFETCH_DISABLED,
   rememberOpenThread,
   rememberPrefetchThread,
@@ -107,7 +109,7 @@ import {
   startMailListAndBodyPrefetchWarm,
 } from "@/lib/mail-thread-prefetch";
 import { isPrefetchPausedAfterBrowserReload } from "@/lib/login-prefetch-session";
-import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon } from "lucide-react";
+import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon, Reply, AlertTriangle, Megaphone } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -321,6 +323,10 @@ type TrackingRow = {
   opened: boolean;
   opened_at: string | null;
   open_count: number;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  replied: boolean;
+  bounced: boolean;
 };
 
 /**
@@ -603,9 +609,17 @@ function MessageBubble({
               <p className="truncate text-[14px] font-semibold text-[var(--color-text)]">
                 {formatFromHeader(m.from || "")}
               </p>
-              <div className="flex shrink-0 items-center gap-1.5">
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                 {trackingRow && !isSelfSentEmail(m.from, m.to, m.cc, myEmail) && (
-                  trackingRow.opened ? (
+                  trackingRow.bounced ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-[var(--color-danger-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-danger)]"
+                      title="Delivery failed"
+                    >
+                      <AlertTriangle className="h-3 w-3" />
+                      {titleCase("Bounced")}
+                    </span>
+                  ) : trackingRow.opened ? (
                     <span
                       className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
                       title={`Opened ${trackingRow.open_count}x`}
@@ -619,6 +633,26 @@ function MessageBubble({
                       {titleCase("Sent")}
                     </span>
                   )
+                )}
+                {trackingRow?.replied && (
+                  <span
+                    className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
+                    title="They replied in this thread"
+                  >
+                    <Reply className="h-3 w-3" />
+                    {titleCase("Replied")}
+                  </span>
+                )}
+                {trackingRow?.campaign_id && (
+                  <Link
+                    href={`/campaigns/${encodeURIComponent(trackingRow.campaign_id)}`}
+                    onClick={(e) => e.stopPropagation()}
+                    title={`Part of campaign: ${trackingRow.campaign_name ?? "Untitled campaign"} — view full report`}
+                    className="inline-flex max-w-[140px] items-center gap-1 rounded-full bg-[var(--color-copper-tint)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-copper)] hover:underline"
+                  >
+                    <Megaphone className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{trackingRow.campaign_name || "Campaign"}</span>
+                  </Link>
                 )}
                 <time className="whitespace-nowrap text-[12px] text-[var(--color-text-faint)]">
                   {formatDate(m.date)}
@@ -1247,7 +1281,6 @@ export default function InboxPage() {
   const [massToggleConfirm, setMassToggleConfirm] = useState<MassToggleDirection | null>(null);
   /** Email currently shown on the review screen; null means "still editing". */
   const [reviewEmail, setReviewEmail] = useState<string | null>(null);
-  const [massSendProgress, setMassSendProgress] = useState<{ sent: number; total: number } | null>(null);
   /**
    * Campaign-wide default per variable key, set from the review screen's
    * warning banner. Applies to every recipient missing that field, not just
@@ -4352,8 +4385,20 @@ export default function InboxPage() {
       files: composeFiles,
       draftId: composeDraftId,
     };
+    // Shared across every recipient in this batch so the campaign report
+    // (app/(workspace)/campaigns) can group them — one Send click, one
+    // campaign. Named after the template subject rather than prompting for a
+    // name, so this send flow doesn't gain an extra required step.
+    const campaignId = crypto.randomUUID();
+    const campaignName = snapshot.subject.trim() || "Untitled campaign";
 
-    setMassSendProgress({ sent: 0, total: rows.length });
+    // Close immediately and finish the batch in the background — same
+    // pattern as a normal single send (sendCompose), instead of leaving the
+    // whole compose dialog open and blocked for as long as the campaign
+    // takes. Progress surfaces in the snackbar instead of the dialog's send
+    // button, since the dialog is no longer around to show it.
+    closeMassCompose();
+    showSendSnack({ phase: "sending", message: `Sending 0/${rows.length}…` });
 
     let sent = 0;
     const failed: string[] = [];
@@ -4377,6 +4422,8 @@ export default function InboxPage() {
               textBody: "",
               htmlBody,
               attachments: attachments.length ? attachments : undefined,
+              campaignId,
+              campaignName,
             }),
           });
           if (!res.ok) {
@@ -4384,13 +4431,12 @@ export default function InboxPage() {
             throw new Error(data.error || "Send failed");
           }
           sent += 1;
-          setMassSendProgress({ sent, total: rows.length });
+          showSendSnack({ phase: "sending", message: `Sending ${sent}/${rows.length}…` });
         } catch {
           failed.push(row.email);
         }
       }
     } catch (e) {
-      setMassSendProgress(null);
       showSendSnack({
         phase: "error",
         message: e instanceof Error ? e.message : "Could not send campaign",
@@ -4398,11 +4444,8 @@ export default function InboxPage() {
       return;
     }
 
-    setMassSendProgress(null);
-    closeMassCompose();
-
     if (failed.length === 0) {
-      showSendSnack({ phase: "sent", message: `Sent to ${sent} recipient${sent === 1 ? "" : "s"}` });
+      showSendSnack({ phase: "sent", message: `Sent to ${sent} recipient${sent === 1 ? "" : "s"}` }, 3000);
     } else {
       showSendSnack({
         phase: "error",
@@ -4525,7 +4568,7 @@ export default function InboxPage() {
           attachments: attachments.length ? attachments : undefined,
         }),
       });
-      const data = (await res.json()) as { error?: string };
+      const data = (await res.json()) as { error?: string; id?: string; threadId?: string };
       if (!res.ok) throw new Error(data.error || "Send failed");
 
       // Delete the draft it was based on (fire-and-forget).
@@ -4536,8 +4579,58 @@ export default function InboxPage() {
       }
 
       if (isReply && snapshot.threadId) {
-        threadDataCache.current.delete(snapshot.threadId);
-        void openThread(snapshot.threadId);
+        // The previous call here used the bare thread id as the cache key,
+        // which matches neither of threadDataCache's real keys (`open:`/
+        // `prefetch:`) — it deleted nothing. Worse, even a correct delete
+        // wouldn't have been enough: fetchThreadData falls back to
+        // getCachedThread's own module-level cache (up to a 30-minute TTL)
+        // before ever hitting the network, and that was never touched either.
+        // invalidateThreadCache clears the local Map correctly;
+        // invalidateCachedThread clears the module-level one (and its
+        // sessionStorage mirror) so a future open actually refetches.
+        invalidateThreadCache(snapshot.threadId);
+        invalidateCachedThread(snapshot.threadId);
+
+        // Append the reply straight into the open thread immediately, rather
+        // than waiting on a refetch — we already know exactly what we sent,
+        // so there's nothing to wait for. This also sidesteps a real Gmail
+        // quirk: threads.get can lag behind messages.send by a few seconds
+        // (the Sent list's own snippet updates faster than the full thread
+        // read does), so an immediate refetch can legitimately come back
+        // without the message we just sent. If the thread is still open when
+        // this lands, merge: trust the background refetch's content once it
+        // includes our message, but never let it make the reply disappear in
+        // the meantime by overwriting with a response that doesn't have it yet.
+        if (data.id && selectedId === snapshot.threadId) {
+          const sentMessageId = data.id;
+          const optimisticMessage: MsgView = {
+            id: sentMessageId,
+            threadId: data.threadId || snapshot.threadId,
+            subject: snapshot.subject,
+            from: myEmail,
+            to: snapshot.to,
+            cc: snapshot.cc,
+            bcc: snapshot.bcc,
+            date: new Date().toISOString(),
+            body: "",
+            bodyHtml: finalHtmlBody,
+          };
+          setMessages((prev) => [...(prev ?? []), optimisticMessage]);
+
+          loadThreadForOpen(snapshot.threadId)
+            .then((fresh) => {
+              if (activeThreadLoadRef.current !== snapshot.threadId) return;
+              const hasRealMessage = fresh.messages.some((m) => m.id === sentMessageId);
+              setMessages(
+                hasRealMessage ? fresh.messages : [...fresh.messages, optimisticMessage]
+              );
+            })
+            .catch(() => {
+              // Keep the optimistic message showing rather than clearing it on a failed reconcile.
+            });
+        } else {
+          void openThread(snapshot.threadId);
+        }
       } else {
         // Remove the optimistic row — the real refresh will add the true row.
         mutateThreads((rows) => rows.filter((r) => r.id !== optId));
@@ -5893,15 +5986,7 @@ export default function InboxPage() {
           }
           applyMassSending(on);
         }}
-        massToggleDisabled={!!massSendProgress}
-        sending={!!massSendProgress}
-        sendLabel={
-          massSendProgress
-            ? `Sending ${massSendProgress.sent}/${massSendProgress.total}…`
-            : massSending
-            ? `Send emails (${massMergeRows.length})`
-            : "Send email"
-        }
+        sendLabel={massSending ? `Send emails (${massMergeRows.length})` : "Send email"}
         review={
           reviewRow
             ? {

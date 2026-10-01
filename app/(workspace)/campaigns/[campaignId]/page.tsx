@@ -182,7 +182,7 @@ export default function CampaignReportPage() {
 
           <p className="text-[12px] text-[var(--color-text-faint)]">
             {titleCase(
-              "Responded and Bounced are checked live against each thread and cached once a recipient's outcome is known — use Refresh to pick up anything new."
+              "Responded and Bounced update automatically as you read your mail in the inbox — opening the reply or the bounce notice is what marks it here. Refresh just re-checks what's already been picked up."
             )}
           </p>
         </div>

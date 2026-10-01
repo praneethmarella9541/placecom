@@ -1,7 +1,7 @@
 import "server-only";
 
 import { extractEmailAddress } from "@/lib/email-parse";
-import { getThreadMessages, listThreadsPage } from "@/lib/gmail-inbox";
+import { getThreadMessages, listThreadsPage, type ThreadMessageView } from "@/lib/gmail-inbox";
 import type { GmailPriority } from "@/lib/gmail-quota";
 
 /** Auto-responders must not be mistaken for a real reply. */
@@ -14,39 +14,23 @@ function isBounceSender(email: string): boolean {
 }
 
 /**
- * Looks for a reply or a bounce in a thread we started — shared by
- * lib/sequence-runner.ts (per-enrollment exit check) and the mail-merge
- * campaign report (per-recipient status), so the same heuristic answers
- * "did they reply" the same way everywhere it's asked.
- *
- * Uses the stored thread id rather than a Gmail search: it is the exact
- * conversation, so there is no risk of matching unrelated mail from the same
- * person and no dependency on Gmail's search indexing lag.
+ * Pure reply/bounce heuristic over messages the caller already has in hand —
+ * no Gmail call of its own. Split out of checkThreadForReplyOrBounce so a
+ * caller that fetched a thread's messages for some other reason (rendering it
+ * for someone reading their mail) can reuse the exact same judgment without
+ * re-fetching, which is how lib/tracking-passive-sync.ts avoids ever asking
+ * Gmail a question purely to answer "did this bounce/get a reply" — see that
+ * file's doc comment for the fuller reasoning.
  */
-export async function checkThreadForReplyOrBounce(
-  accessToken: string,
-  threadId: string,
+export function evaluateMessagesForOutcome(
+  messages: ThreadMessageView[],
   opts: {
     /** The sending mailbox's own address — messages from it are never a reply. */
     mailboxAddress: string | undefined;
     /** Epoch ms of our own first message — an inbound message before this can't be a reply to it. */
     firstSentAt: number;
-    mailboxKey: string;
-    /** Defaults to "interactive" — a background/cron caller should opt into "batch". */
-    priority?: GmailPriority;
   }
-): Promise<"replied" | "bounced" | null> {
-  let messages;
-  try {
-    ({ messages } = await getThreadMessages(accessToken, threadId, {
-      mailboxKey: opts.mailboxKey,
-      priority: opts.priority,
-    }));
-  } catch {
-    // Thread deleted or momentarily unavailable — never block the caller on this.
-    return null;
-  }
-
+): "replied" | "bounced" | null {
   const ourAddress = opts.mailboxAddress?.trim().toLowerCase();
 
   for (const message of messages) {
@@ -65,6 +49,72 @@ export async function checkThreadForReplyOrBounce(
   }
 
   return null;
+}
+
+/**
+ * Scans already-fetched messages (any thread the app happened to render) for
+ * a bounce notice naming one of `candidateEmails` — used to catch a bounce
+ * that landed in a thread other than the one that bounced (see
+ * searchForBounceNotification's doc comment for why that happens) without
+ * ever issuing a Gmail search for it. Only meaningful when the thread
+ * actually contains a mailer-daemon/postmaster message; cheap to call
+ * speculatively since it does no I/O of its own.
+ */
+export function findBounceMatchInMessages(
+  messages: ThreadMessageView[],
+  candidateEmails: string[],
+  sinceMs: number
+): string | null {
+  const candidates = candidateEmails.map((e) => e.trim().toLowerCase()).filter(Boolean);
+  if (candidates.length === 0) return null;
+
+  for (const message of messages) {
+    const from = extractEmailAddress(message.from).toLowerCase();
+    if (!isBounceSender(from)) continue;
+    const receivedAt = Date.parse(message.date);
+    if (Number.isFinite(receivedAt) && receivedAt < sinceMs) continue;
+    const haystack = `${message.body || ""} ${message.subject || ""}`.toLowerCase();
+    const hit = candidates.find((email) => haystack.includes(email));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Looks for a reply or a bounce in a thread we started — shared by
+ * lib/sequence-runner.ts (per-enrollment exit check), which is a periodic
+ * background cron with a specific enrollment to resolve, not a page view.
+ * The mail-merge campaign report no longer calls this — see
+ * lib/tracking-passive-sync.ts for how it gets replied/bounced without
+ * spending a Gmail call on every report view instead.
+ *
+ * Uses the stored thread id rather than a Gmail search: it is the exact
+ * conversation, so there is no risk of matching unrelated mail from the same
+ * person and no dependency on Gmail's search indexing lag.
+ */
+export async function checkThreadForReplyOrBounce(
+  accessToken: string,
+  threadId: string,
+  opts: {
+    mailboxAddress: string | undefined;
+    firstSentAt: number;
+    mailboxKey: string;
+    /** Defaults to "interactive" — a background/cron caller should opt into "batch". */
+    priority?: GmailPriority;
+  }
+): Promise<"replied" | "bounced" | null> {
+  let messages;
+  try {
+    ({ messages } = await getThreadMessages(accessToken, threadId, {
+      mailboxKey: opts.mailboxKey,
+      priority: opts.priority,
+    }));
+  } catch {
+    // Thread deleted or momentarily unavailable — never block the caller on this.
+    return null;
+  }
+
+  return evaluateMessagesForOutcome(messages, opts);
 }
 
 /**

@@ -5946,7 +5946,10 @@ export default function InboxPage() {
         onCcBccOpenChange={setComposeCcBccOpen}
         suggestions={composeRecipientSuggestions}
         contactsHint={contactsHint}
-        sendDisabled={massSending ? massMergeRows.length === 0 : !composeTo.trim()}
+        sendDisabled={
+          Object.keys(driveUploadProgress).length > 0 ||
+          (massSending ? massMergeRows.length === 0 : !composeTo.trim())
+        }
         composeError={composeFieldError}
         onDismissComposeError={() => setComposeFieldError(null)}
         onMinimize={() => setComposeMinimized((m) => !m)}

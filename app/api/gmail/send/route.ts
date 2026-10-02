@@ -4,6 +4,10 @@ import { sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
+import {
+  getStagedAttachment,
+  releaseStagedAttachments,
+} from "@/lib/draft-attachment-staging";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -26,6 +30,8 @@ type Body = {
   threadId?: string;
   inReplyToMessageId?: string;
   attachments?: AttachmentPayload[];
+  /** Large-file attachments staged via /api/gmail/drafts/attachment-chunk. */
+  stagedUploadIds?: string[];
   /** Shared across every recipient of one mass/mail-merge send — see app/api/campaigns. */
   campaignId?: string;
   campaignName?: string;
@@ -92,11 +98,24 @@ export async function POST(request: Request) {
     : undefined;
 
   try {
-    const attachments: SendAttachment[] | undefined = body.attachments?.map((a) => ({
+    const attachments: SendAttachment[] = (body.attachments ?? []).map((a) => ({
       filename: a.filename,
       mimeType: a.mimeType,
       base64Data: a.base64Data,
     }));
+
+    // Resolve any large-file attachments that were staged via chunked upload.
+    const stagedIds = body.stagedUploadIds ?? [];
+    for (const uploadId of stagedIds) {
+      const staged = await getStagedAttachment(auth.userId, uploadId);
+      if (staged) {
+        attachments.push({
+          filename: staged.filename,
+          mimeType: staged.mimeType,
+          base64Data: staged.base64Data,
+        });
+      }
+    }
 
     const sent = await sendMailViaGmail(auth.accessToken, {
       to,
@@ -108,7 +127,7 @@ export async function POST(request: Request) {
       threadId: body.threadId,
       inReplyToMessageId: body.inReplyToMessageId,
       trackingPixelUrl,
-      attachments,
+      attachments: attachments.length ? attachments : undefined,
       mailboxKey: auth.mailboxOwnerId,
     });
 
@@ -117,6 +136,11 @@ export async function POST(request: Request) {
         .from("email_tracking")
         .update({ gmail_message_id: sent.id, gmail_thread_id: sent.threadId })
         .eq("id", trackRow.id);
+    }
+
+    // Clean up staging after a successful send (fire-and-forget).
+    if (stagedIds.length > 0) {
+      void releaseStagedAttachments(auth.userId, stagedIds).catch(() => {});
     }
 
     return NextResponse.json(sent);

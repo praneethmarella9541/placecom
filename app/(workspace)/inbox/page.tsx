@@ -4546,6 +4546,9 @@ export default function InboxPage() {
     // ── Background send ───────────────────────────────────────────────────
     try {
       const attachments = await resolveAttachmentsForUpload(snapshot.files);
+      const stagedUploadIds = snapshot.files
+        .filter((f) => f.kind === "staged")
+        .map((f) => f.uploadId);
 
       // Strip editor-only variable tinting here too — a draft written with
       // mass sending on can be sent as a normal single email after toggling off.
@@ -4567,6 +4570,7 @@ export default function InboxPage() {
           threadId: isReply ? snapshot.threadId ?? undefined : undefined,
           inReplyToMessageId: isReply ? snapshot.inReplyToMessageId ?? undefined : undefined,
           attachments: attachments.length ? attachments : undefined,
+          stagedUploadIds: stagedUploadIds.length ? stagedUploadIds : undefined,
         }),
       });
       const data = (await res.json()) as { error?: string; id?: string; threadId?: string };

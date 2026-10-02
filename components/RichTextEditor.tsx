@@ -630,6 +630,28 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   }));
 
   function handlePaste(e: React.ClipboardEvent<HTMLDivElement>) {
+    const html = e.clipboardData.getData("text/html");
+    if (html) {
+      e.preventDefault();
+      // Parse and strip dangerous nodes/attributes before inserting.
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      doc.querySelectorAll("script,style,iframe,object,embed,form,input,button,select,textarea,meta,link,base").forEach(el => el.remove());
+      doc.body.querySelectorAll("*").forEach(el => {
+        const remove: string[] = [];
+        for (const attr of Array.from(el.attributes)) {
+          if (
+            attr.name.startsWith("on") ||
+            (attr.name === "href" && /^javascript:/i.test(attr.value)) ||
+            (attr.name === "src" && !/^https?:/i.test(attr.value) && !/^data:image\//i.test(attr.value))
+          ) {
+            remove.push(attr.name);
+          }
+        }
+        remove.forEach(a => el.removeAttribute(a));
+      });
+      document.execCommand("insertHTML", false, doc.body.innerHTML);
+      return;
+    }
     const text = e.clipboardData.getData("text/plain");
     if (text) {
       e.preventDefault();

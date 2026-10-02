@@ -105,16 +105,25 @@ export async function POST(request: Request) {
     }));
 
     // Resolve any large-file attachments that were staged via chunked upload.
+    // Fail loudly if one can't be resolved rather than sending a silently
+    // incomplete email — the whole point of this route's staging support.
     const stagedIds = body.stagedUploadIds ?? [];
     for (const uploadId of stagedIds) {
       const staged = await getStagedAttachment(auth.userId, uploadId);
-      if (staged) {
-        attachments.push({
-          filename: staged.filename,
-          mimeType: staged.mimeType,
-          base64Data: staged.base64Data,
-        });
+      if (!staged) {
+        return NextResponse.json(
+          {
+            error:
+              "An attachment didn't finish uploading. Wait for the upload to complete, then send again.",
+          },
+          { status: 409 }
+        );
       }
+      attachments.push({
+        filename: staged.filename,
+        mimeType: staged.mimeType,
+        base64Data: staged.base64Data,
+      });
     }
 
     const sent = await sendMailViaGmail(auth.accessToken, {

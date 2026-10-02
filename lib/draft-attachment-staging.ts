@@ -269,26 +269,24 @@ export async function appendStagedChunk(
     await writeMetaDisk(meta, uploadId);
   };
 
-  // Fire-and-forget for all intermediate chunks. Only await on the final chunk
-  // to ensure durable completion across instances.
-  if (done) {
-    if (supabaseConfigured) {
-      // Await the final chunk's durable write so getStagedAttachment from
-      // another instance is guaranteed to succeed. This is the only sync point.
-      await supabaseUploadPart(userId, uploadId, offset, chunk);
-      await supabaseWriteMeta(userId, uploadId, meta);
-    } else {
-      // No Supabase: flush final chunk to disk to ensure same-instance save works.
-      await writeDisk();
-    }
-  } else {
-    // Intermediate chunks: fire-and-forget for speed. Memory copy is available
-    // immediately, disk/Supabase writes happen in background.
+  if (supabaseConfigured) {
+    // Every chunk's part must be durably in Supabase before this HTTP response
+    // returns. The client uploads chunks sequentially, so awaiting each part
+    // guarantees that once the final chunk resolves, the whole file is
+    // reassemblable from any serverless instance — the send/draft routes may
+    // run on a different instance with no shared memory or /tmp. Previously
+    // intermediate parts were fire-and-forget, so a send firing right after the
+    // upload "finished" could hit an instance whose Supabase parts hadn't
+    // landed yet, silently dropping the attachment.
+    await supabaseUploadPart(userId, uploadId, offset, chunk);
+    await supabaseWriteMeta(userId, uploadId, meta);
+    // Disk is a best-effort same-instance fast path; never block on it.
     void writeDisk().catch(() => {});
-    if (supabaseConfigured) {
-      void supabaseUploadPart(userId, uploadId, offset, chunk).catch(() => {});
-      void supabaseWriteMeta(userId, uploadId, meta).catch(() => {});
-    }
+  } else if (done) {
+    // No Supabase: flush final chunk to disk to ensure same-instance save works.
+    await writeDisk();
+  } else {
+    void writeDisk().catch(() => {});
   }
 
   return { done, received: entry.received };

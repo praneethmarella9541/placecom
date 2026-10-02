@@ -4484,16 +4484,6 @@ export default function InboxPage() {
     }
     setComposeFieldError(null);
 
-    // If any attachment is still in staged state (chunked upload complete but
-    // not yet saved to Gmail), force a draft save now and wait for it.
-    // syncComposeFilesFromDraft runs inside saveDraft and promotes staged files
-    // to "saved" (real Gmail attachment IDs) before it resolves — so the
-    // snapshot below will always have the attachment in a form the send route
-    // can fetch from Gmail, with no dependency on cross-instance staging memory.
-    if (composeStateRef.current.files.some((f) => f.kind === "staged")) {
-      await saveDraft();
-    }
-
     const snapshot = {
       kind: composeKind,
       to: composeTo.trim(),
@@ -4501,8 +4491,12 @@ export default function InboxPage() {
       bcc: composeBcc.trim(),
       subject: composeSubject.trim(),
       htmlBody: composeBody,
-      // Use the ref — syncComposeFilesFromDraft updates it before the React
-      // state flush, so this is always current even right after a forced save.
+      // Read files/draftId from the ref rather than React state: an in-flight
+      // autosave (syncComposeFilesFromDraft) may have just promoted staged files
+      // to "saved" and updated the ref before the state flush. Staged files that
+      // haven't been promoted yet are still covered — stagedUploadIds below
+      // carries them to the send route, which resolves them from durable
+      // cross-instance staging.
       files: composeStateRef.current.files,
       draftId: composeStateRef.current.draftId,
       threadId: composeThreadId,

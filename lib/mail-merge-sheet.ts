@@ -180,6 +180,32 @@ function parseTableRows(table: string[][]): MailMergeParseResult {
   return { rows, columns, headerLabels, skipped, emailColumnIndex };
 }
 
+function nonEmptyCount(row: string[]): number {
+  return row.reduce((n, c) => (c.trim() ? n + 1 : n), 0);
+}
+
+/**
+ * Sheets are often laid out with a title or note above the real header row.
+ * Drops leading rows holding a single cell when the row after them has two or
+ * more — the shape of "title, then headers". A genuine one-column list (header
+ * then more single-cell rows) is left alone.
+ */
+function dropLeadingTitleRows(table: string[][]): string[][] {
+  let i = 0;
+  while (i < table.length - 1) {
+    const here = nonEmptyCount(table[i] ?? []);
+    const next = nonEmptyCount(table[i + 1] ?? []);
+    if (here <= 1 && next >= 2) i++;
+    else break;
+  }
+  return i > 0 ? table.slice(i) : table;
+}
+
+/** Parse an already-gridded table (row 1 = headers), e.g. values read from a Google Sheet. */
+export function parseMailMergeTable(table: string[][]): MailMergeParseResult {
+  return parseTableRows(dropLeadingTitleRows(table.map((row) => row.map(stripBom))));
+}
+
 export function parseMailMergeCsv(text: string): MailMergeParseResult {
   const cleaned = text.replace(/^\uFEFF/, "");
   const lines = cleaned.split(/\r?\n/).filter((l) => l.trim().length > 0);

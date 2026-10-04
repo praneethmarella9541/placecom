@@ -1298,6 +1298,8 @@ export default function InboxPage() {
       })
     | null
   >(null);
+  const massImportRef = useRef(massImport);
+  massImportRef.current = massImport;
   const [massImportBusy, setMassImportBusy] = useState(false);
   const [massImportError, setMassImportError] = useState<string | null>(null);
   /** Pending mass-sending toggle awaiting confirmation; null when none. */
@@ -1574,18 +1576,14 @@ export default function InboxPage() {
   );
 
   /**
-   * Parse a CSV/Excel file into merge rows. Reuses the broadcast mail-merge
-   * parser endpoint — same header detection, email-column resolution and row
-   * cap, so an import behaves identically in both places.
+   * Shared tail of every mass-import path (file or Google Sheet): validates the
+   * parser response and swaps it in as the campaign audience. Throws with a
+   * user-facing message on failure.
    */
-  const importMassFile = useCallback(async (file: File) => {
-    setMassImportBusy(true);
-    setMassImportError(null);
-    try {
-      const fd = new FormData();
-      fd.set("file", file);
-      const res = await fetch("/api/broadcast/parse-mail-merge", { method: "POST", body: fd });
-      const data = (await res.json()) as {
+  const applyParsedImport = useCallback(
+    (
+      res: Response,
+      data: {
         error?: string;
         headersFound?: string;
         detectedHeaders?: string[];
@@ -1595,7 +1593,12 @@ export default function InboxPage() {
         skipped?: number;
         truncated?: boolean;
         maxRows?: number;
-      };
+        fileName?: string;
+        tabs?: string[];
+        tab?: string;
+      },
+      opts: { fileName: string; sheetId?: string; keepFallbacks?: boolean }
+    ) => {
       if (!res.ok) {
         const headers = data.headersFound || data.detectedHeaders?.join(", ");
         throw new Error(
@@ -1606,25 +1609,86 @@ export default function InboxPage() {
       if (rows.length === 0) throw new Error("No rows with a valid email address in that file.");
 
       const headerLabels = data.headerLabels ?? data.detectedHeaders ?? [];
+      const columns = data.columns ?? [];
+      // A refresh of the same sheet keeps its typed fallbacks only if the
+      // columns didn't change underneath them.
+      const prev = massImportRef.current;
+      const sameColumns =
+        !!opts.keepFallbacks &&
+        !!prev &&
+        prev.variables.map((v) => v.key).join("|") === columns.join("|");
+      if (!sameColumns) setVariableFallbacks({});
       setMassImport({
-        fileName: file.name,
+        fileName: opts.fileName,
         rows,
         count: rows.length,
         skipped: data.skipped,
         truncated: data.truncated,
         maxRows: data.maxRows,
-        variables: columnsToComposeVariables(data.columns ?? [], headerLabels),
+        variables: columnsToComposeVariables(columns, headerLabels),
+        ...(opts.sheetId && data.tab && data.tabs
+          ? { sheet: { id: opts.sheetId, tab: data.tab, tabs: data.tabs } }
+          : {}),
       });
-      // A new file means new columns — any fallback typed against the old
-      // ones is meaningless, and the review screen must be re-entered.
+      // Rows may have changed, so the review screen must be re-entered.
       setReviewEmail(null);
-      setVariableFallbacks({});
-    } catch (e) {
-      setMassImportError(e instanceof Error ? e.message : "Import failed");
-    } finally {
-      setMassImportBusy(false);
-    }
-  }, []);
+    },
+    []
+  );
+
+  /**
+   * Parse a CSV/Excel file into merge rows. Reuses the broadcast mail-merge
+   * parser endpoint — same header detection, email-column resolution and row
+   * cap, so an import behaves identically in both places.
+   */
+  const importMassFile = useCallback(
+    async (file: File) => {
+      setMassImportBusy(true);
+      setMassImportError(null);
+      try {
+        const fd = new FormData();
+        fd.set("file", file);
+        const res = await fetch("/api/broadcast/parse-mail-merge", { method: "POST", body: fd });
+        const data = await res.json();
+        applyParsedImport(res, data, { fileName: file.name });
+      } catch (e) {
+        setMassImportError(e instanceof Error ? e.message : "Import failed");
+      } finally {
+        setMassImportBusy(false);
+      }
+    },
+    [applyParsedImport]
+  );
+
+  /**
+   * Read a tab of an existing Google Sheet into merge rows. A snapshot, like a
+   * file import — "Refresh" in the panel simply calls this again for the same
+   * sheet and tab. Fallbacks survive a refresh when the columns are unchanged.
+   */
+  const importMassSheet = useCallback(
+    async (sheet: { id: string; name: string }, tab?: string) => {
+      setMassImportBusy(true);
+      setMassImportError(null);
+      try {
+        const res = await fetch("/api/broadcast/parse-mail-merge-sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spreadsheetId: sheet.id, tab }),
+        });
+        const data = await res.json().catch(() => ({}));
+        applyParsedImport(res, data, {
+          fileName: data.fileName || sheet.name,
+          sheetId: sheet.id,
+          keepFallbacks: true,
+        });
+      } catch (e) {
+        setMassImportError(e instanceof Error ? e.message : "Could not read that sheet");
+      } finally {
+        setMassImportBusy(false);
+      }
+    },
+    [applyParsedImport]
+  );
 
   // In-flight guard for openDraft. A ref (vs state) keeps the useCallback
   // identity stable so click handlers don't rebind on every flip.
@@ -6257,6 +6321,7 @@ export default function InboxPage() {
               }}
               imported={massImport}
               onImportFile={(file) => void importMassFile(file)}
+              onImportSheet={(sheet, tab) => void importMassSheet(sheet, tab)}
               onClearImport={clearMassImport}
               importBusy={massImportBusy}
               importError={massImportError}

@@ -180,6 +180,10 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
     // The spreadsheet parser now serves the inbox's mass sending, not the
     // retired mail channel — gate it with the composer that uses it.
     if (pathname.endsWith("/parse-mail-merge")) return "inbox";
+    // Google Sheet as the mass-send recipient source (list + parse). Gated on
+    // inbox, not "sheets" — a mail-only user must be able to use the picker.
+    if (pathname.endsWith("/parse-mail-merge-sheet")) return "inbox";
+    if (pathname.endsWith("/mail-merge-sheets")) return "inbox";
     return null;
   }
 

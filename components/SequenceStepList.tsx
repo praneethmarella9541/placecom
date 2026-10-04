@@ -17,9 +17,14 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
+import {
+  RichTextEditor,
+  richTextIsEmpty,
+  type RichTextEditorHandle,
+} from "@/components/RichTextEditor";
 import { SubjectWithVariables, type SubjectHandle } from "@/components/SubjectWithVariables";
 import { VariableFallbackChip } from "@/components/VariableFallbackChip";
+import { MailTemplatesButton } from "@/components/MailTemplatesModal";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 import { listPlaceholdersInTemplate } from "@/lib/mail-merge";
@@ -27,6 +32,7 @@ import { describeDelay } from "@/lib/sequence-schedule";
 import { SEQUENCE_VARIABLES } from "@/lib/sequence-variables";
 import type { SequenceStepAttachment, SequenceStepInput } from "@/lib/sequence-types";
 import type { ComposeVariable } from "@/lib/compose-variables";
+import { useModuleVisibility } from "@/lib/module-visibility";
 
 type PreviewResult = {
   subject: string;
@@ -392,6 +398,7 @@ function StepComposer({
   const photoRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const templatesEnabled = useModuleVisibility().isVisible("mailTemplates");
 
   // A step only gets an id once it has been saved, and the file has to be
   // stored against something — so a brand-new step says so rather than
@@ -522,6 +529,46 @@ function StepComposer({
           >
             <Braces className="h-[18px] w-[18px]" strokeWidth={2} />
           </FooterBtn>
+
+          {/* Same library the composer reads from. A step is exactly the shape a
+              template stores — subject plus body — and unlike compose there is
+              no variable caveat here: a sequence always merges per recipient, so
+              an inserted `{company_name}` resolves by definition. */}
+          {templatesEnabled ? (
+            <MailTemplatesButton
+              // The step editor's own vocabulary, which is wider than compose's
+              // (first/last name parts, {email}) — a template written here
+              // should offer what a sequence can actually merge.
+              variables={variables}
+              subject={step.subjectTemplate ?? ""}
+              bodyHtml={step.bodyHtml ?? ""}
+              // A threaded follow-up inherits the first email's subject, so a
+              // template must not quietly give it one of its own.
+              canSetSubject={!subjectLocked}
+              draftIsEmpty={
+                !(step.subjectTemplate ?? "").trim() && richTextIsEmpty(step.bodyHtml ?? "")
+              }
+              disabled={disabled}
+              onApply={(template, mode) => {
+                const body =
+                  mode === "replace" || richTextIsEmpty(step.bodyHtml ?? "")
+                    ? template.bodyHtml
+                    : `${step.bodyHtml ?? ""}<br>${template.bodyHtml}`;
+                const keepSubject =
+                  subjectLocked ||
+                  // Nothing to apply: a template saved from a reply composer
+                  // carries no subject, and writing its empty string over the
+                  // step's own would be a deletion dressed up as an insert.
+                  !template.subjectTemplate.trim() ||
+                  (mode === "append" && !!(step.subjectTemplate ?? "").trim());
+                onPatch(
+                  keepSubject
+                    ? { bodyHtml: body }
+                    : { subjectTemplate: template.subjectTemplate, bodyHtml: body }
+                );
+              }}
+            />
+          ) : null}
         </div>
 
         {attachments.length > 0 ? (

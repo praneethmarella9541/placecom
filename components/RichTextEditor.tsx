@@ -212,10 +212,23 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
     // open; the next value change after it closes will resync.
     if (linkOpen) return;
     if (value !== lastSetValueRef.current) {
-      el.innerHTML = value;
+      // Tint `{variable}` tokens on the way in, the way SubjectWithVariables
+      // already does. Without this, any body that arrives as stored text rather
+      // than as typing shows bare braces until the editor happens to be focused
+      // and blurred — a saved mail template (spans are stripped before storing),
+      // a reopened draft, a sequence step loaded from the database. Safe here
+      // specifically: this branch only runs for an external change, and it is
+      // rebuilding innerHTML regardless, so there is no caret to collapse.
+      el.innerHTML = variablesEnabled ? wrapVariablesInHtml(value, variables) : value;
+      // Records the incoming value, not the wrapped markup: the comparison above
+      // is against what the parent holds. Storing the wrapped form would make
+      // every later external set look like a change and rewrite the DOM on each
+      // render. The wrapping stays presentation-only — it is never emitted, so
+      // loading content cannot mark a pristine form dirty, and the send path
+      // strips these spans anyway.
       lastSetValueRef.current = value;
     }
-  }, [value, linkOpen]);
+  }, [value, linkOpen, variablesEnabled, variables]);
 
   useEffect(() => {
     if (autoFocus) editorRef.current?.focus();

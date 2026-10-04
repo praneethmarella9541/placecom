@@ -30,6 +30,14 @@ export type GmailComposeFooterProps = {
   sendHidden?: boolean;
   /** Inserts `{` at the caret. Omit to hide — mass sending only. */
   onInsertVariable?: () => void;
+  /**
+   * Templates button + the modal behind it, passed in rather than built here:
+   * it owns its own fetching and CRUD, and the caller is the only one that
+   * knows how a chosen template should land in its particular draft. Omit to
+   * hide — the module can be switched off in /configs. Same node-slot idiom as
+   * the dialog's attachmentChips and sidePanel.
+   */
+  templatesButton?: React.ReactNode;
 };
 
 export function GmailComposeFooter({
@@ -49,6 +57,7 @@ export function GmailComposeFooter({
   reviewDisabled,
   sendHidden,
   onInsertVariable,
+  templatesButton,
 }: GmailComposeFooterProps) {
   const label = sending ? "Sending…" : sendLabel ?? "Send";
   const showMassToggle = massSending !== undefined && !!onMassSendingChange;
@@ -82,6 +91,8 @@ export function GmailComposeFooter({
                 <Braces className="h-[18px] w-[18px]" strokeWidth={2} />
               </FooterBtn>
             )}
+
+            {templatesButton}
           </>
         )}
 

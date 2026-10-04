@@ -264,3 +264,25 @@ export function templateUsesVariables(subjectTemplate: string, bodyTemplate: str
     listPlaceholdersInTemplate(bodyTemplate).length > 0
   );
 }
+
+/**
+ * True when the template uses at least one placeholder that can actually be
+ * filled from `variables`.
+ *
+ * Deliberately stricter than templateUsesVariables, which counts any `{token}`.
+ * Prose like "the {TBD} slot" or a pasted code snippet is not a merge field,
+ * and treating it as one would put an ordinary mail behind the merge review
+ * gate and refuse to send it until a recipient was picked.
+ */
+export function templateUsesKnownVariables(
+  subjectTemplate: string,
+  bodyTemplate: string,
+  variables: ComposeVariable[] = COMPOSE_VARIABLES
+): boolean {
+  const known = new Set(variables.map((v) => v.key));
+  if (known.size === 0) return false;
+  return [
+    ...listPlaceholdersInTemplate(subjectTemplate),
+    ...listPlaceholdersInTemplate(bodyTemplate),
+  ].some((k) => known.has(k));
+}

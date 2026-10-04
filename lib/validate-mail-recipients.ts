@@ -52,3 +52,14 @@ export function formatRecipientError(invalid: InvalidRecipient): string {
   }
   return `The address "${invalid.address}" in the "${invalid.field}" field was not recognized. Please make sure that all addresses are properly formed.`;
 }
+
+/**
+ * Heading for the dialog that carries {@link formatRecipientError}.
+ *
+ * Kept next to the message rather than at the call site so the two cannot
+ * describe different problems — "Error" told the reader nothing they could act
+ * on, which is the whole job of a heading on a blocking dialog.
+ */
+export function recipientErrorTitle(invalid: InvalidRecipient): string {
+  return invalid.empty ? "Add a recipient" : "Check this address";
+}

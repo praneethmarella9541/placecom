@@ -34,8 +34,16 @@ export const MODULE_GROUPS: readonly ModuleGroup[] = [
     key: "comms",
     label: "Comms",
     description:
-      "Mail, outbound sequences, campaign reporting, the contact book, SMS, and WhatsApp.",
-    modules: ["inbox", "sequences", "campaigns", "contacts", "sms", "whatsapp"],
+      "Mail, saved templates, outbound sequences, campaign reporting, the contact book, SMS, and WhatsApp.",
+    modules: [
+      "inbox",
+      "mailTemplates",
+      "sequences",
+      "campaigns",
+      "contacts",
+      "sms",
+      "whatsapp",
+    ],
   },
   {
     key: "pipeline",
@@ -60,6 +68,8 @@ export const MODULE_GROUPS: readonly ModuleGroup[] = [
 /** Short per-module blurb for the /configs rows. */
 export const MODULE_DESCRIPTIONS: Record<FeatureKey, string> = {
   inbox: "Gmail-backed mail client, composer, and mass send.",
+  mailTemplates:
+    "Saved subject + body templates, inserted from the composer and sequence step editors. No page of its own — switching this off removes the Templates button everywhere.",
   sequences: "Multi-step automated outbound email with scheduling.",
   campaigns: "Open/click reporting for mail sent from the composer.",
   contacts: "Team directory and synced Google Contacts.",

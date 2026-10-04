@@ -52,6 +52,8 @@ export type GmailComposeDialogProps = {
   draftSaveStatus?: ComposeDraftSaveStatus;
   /** Gmail-style recipient validation error — blocks send until dismissed. */
   composeError?: string | null;
+  /** Heading for that error; omit for the generic one. */
+  composeErrorTitle?: string | null;
   onDismissComposeError?: () => void;
 
   /**
@@ -82,6 +84,13 @@ export type GmailComposeDialogProps = {
   lockedRecipientCount?: number;
   /** Right-hand rail, rendered inside the dialog next to the editor. */
   sidePanel?: React.ReactNode;
+  /**
+   * Templates button for the footer. A node rather than a callback because the
+   * modal belongs to the caller: only it knows whether a chosen template should
+   * replace this draft, and whether the subject is even editable here. Hidden
+   * on the review screen along with the rest of the icon row.
+   */
+  templatesButton?: React.ReactNode;
   /** Small notice strip above the footer (outbox delivery hint). */
   footerNotice?: React.ReactNode;
 
@@ -149,6 +158,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     attachmentChips,
     draftSaveStatus = "idle",
     composeError,
+    composeErrorTitle,
     onDismissComposeError,
     placement = "docked",
     variables,
@@ -156,6 +166,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     recipientsLocked,
     lockedRecipientCount = 0,
     sidePanel,
+    templatesButton,
     footerNotice,
     massSending,
     onMassSendingChange,
@@ -590,6 +601,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             massSending={massSending}
             onMassSendingChange={onMassSendingChange}
             massToggleDisabled={massToggleDisabled}
+            templatesButton={templatesButton}
             backLabel={reviewing ? "Back to editor" : undefined}
             onBack={reviewing ? onBackToEditor : undefined}
             onReview={reviewing ? undefined : onReview}
@@ -609,7 +621,11 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
         </div>
       )}
       {composeError && onDismissComposeError ? (
-        <GmailComposeErrorDialog message={composeError} onDismiss={onDismissComposeError} />
+        <GmailComposeErrorDialog
+          title={composeErrorTitle ?? undefined}
+          message={composeError}
+          onDismiss={onDismissComposeError}
+        />
       ) : null}
     </>,
     document.body

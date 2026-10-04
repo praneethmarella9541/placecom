@@ -9,6 +9,7 @@ import { LabelSidebarItem } from "@/components/LabelSidebarItem";
 import {
   findInvalidRecipient,
   formatRecipientError,
+  recipientErrorTitle,
 } from "@/lib/validate-mail-recipients";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
@@ -27,6 +28,11 @@ import {
   MassSendingToggleDialog,
   type MassToggleDirection,
 } from "@/components/MassSendingToggleDialog";
+import {
+  MailTemplatesButton,
+  type TemplateApplyMode,
+} from "@/components/MailTemplatesModal";
+import type { MailTemplate } from "@/lib/mail-template-types";
 import { useDirectoryContacts } from "@/hooks/useDirectoryContacts";
 import { useSyncedContacts } from "@/hooks/useSyncedContacts";
 import type { DirectoryContact } from "@/lib/contact-directory";
@@ -39,7 +45,7 @@ import {
   reportMissingVariables,
   stripVariableSpans,
   syncedContactToMergeFields,
-  templateUsesVariables,
+  templateUsesKnownVariables,
   type ComposeVariable,
 } from "@/lib/compose-variables";
 import { listPlaceholdersInTemplate, mergeTemplate, type MailMergeRow } from "@/lib/mail-merge";
@@ -874,6 +880,10 @@ const INBOX_CATEGORY_LABEL: Record<InboxCategoryKey, string> = {
 export default function InboxPage() {
   // Recruiter suggestions in the composer come from the Extraction module.
   const extractionEnabled = useModuleVisibility().isVisible("dashboard");
+  // Saved templates are a /configs module of their own, with no page to hide —
+  // this flag is the only thing standing between the operator's switch and the
+  // Templates button in the composer footer.
+  const templatesEnabled = useModuleVisibility().isVisible("mailTemplates");
   const topbarActionsNode = useWorkspaceTopbarActionsNode();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
@@ -1234,7 +1244,14 @@ export default function InboxPage() {
     | { phase: "error"; message: string; retry?: () => void };
   const [sendSnack, setSendSnack] = useState<SendSnackState | null>(null);
   const sendSnackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [composeFieldError, setComposeFieldError] = useState<string | null>(null);
+  /**
+   * Blocking pre-send problem, heading and all. Held together rather than as a
+   * bare string so the dialog can name the specific problem instead of saying
+   * "Error" over every one of them.
+   */
+  const [composeFieldError, setComposeFieldError] = useState<
+    { title: string; message: string } | null
+  >(null);
 
   /** Show the snackbar and auto-dismiss it after `ms` milliseconds. */
   const showSendSnack = useCallback((state: SendSnackState, autoDismissMs?: number) => {
@@ -1294,11 +1311,36 @@ export default function InboxPage() {
    * be unusable.
    */
   const [variableFallbacks, setVariableFallbacks] = useState<Record<string, string>>({});
+  /**
+   * Every address typed into To. Drives the single-recipient merge, so it is
+   * derived here rather than inside the send path — the `{` picker and the
+   * review gate both need to know how many people the draft is going to before
+   * anything is sent.
+   */
+  const composeToEmails = useMemo(() => extractAllEmailsFromText(composeTo), [composeTo]);
+
+  /**
+   * Whether the draft uses a placeholder a contact card can fill. Gates the
+   * single-recipient merge and the contact lookups that feed it.
+   *
+   * Strict on purpose (templateUsesKnownVariables, not templateUsesVariables):
+   * an ordinary mail containing "{TBD}" or a pasted code snippet must not be
+   * treated as a merge draft and held behind the review gate.
+   */
+  const draftUsesVariables = useMemo(
+    () => templateUsesKnownVariables(composeSubject, composeBody),
+    [composeSubject, composeBody]
+  );
+
   const { contacts: directoryContacts } = useDirectoryContacts();
-  // Loaded only once mass sending is switched on — see useSyncedContacts.
-  // An imported list merges from its own columns, so the sync is dead weight.
+  /**
+   * Fetched for a campaign audience, and for a normal compose only once the
+   * draft actually uses a variable — most single mails never do, and the sync
+   * is a large payload to pull for a menu nobody opened. An imported list
+   * merges from its own columns, so the sync is dead weight there.
+   */
   const { contacts: syncedContacts } = useSyncedContacts(
-    massSending && massSource === "contacts"
+    massSending ? massSource === "contacts" : draftUsesVariables
   );
 
   /**
@@ -1330,6 +1372,19 @@ export default function InboxPage() {
   );
 
   /**
+   * Whether the draft uses a placeholder the *live audience* can fill — the
+   * review gate. Differs from draftUsesVariables only for an imported list,
+   * whose vocabulary is its own columns rather than the contact-card set.
+   */
+  const draftUsesMergeVariables = useMemo(
+    () =>
+      massSending
+        ? templateUsesKnownVariables(composeSubject, composeBody, massVariables)
+        : draftUsesVariables,
+    [massSending, composeSubject, composeBody, massVariables, draftUsesVariables]
+  );
+
+  /**
    * Email → ISO date of the newest thread exchanged with them, fetched only
    * for the campaign audience and only when the draft actually uses
    * {last_mail_interaction}. This is the same Gmail search the contact's
@@ -1341,17 +1396,25 @@ export default function InboxPage() {
   const lastMailFetchingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Imported rows merge from their own columns, so there is no contact to
-    // look mail up for.
-    if (!massSending || massSource !== "contacts") return;
     const used = new Set([
       ...listPlaceholdersInTemplate(composeSubject),
       ...listPlaceholdersInTemplate(composeBody),
     ]);
     if (!used.has("last_mail_interaction")) return;
 
-    const wanted = massAudience
-      .map((r) => r.email.toLowerCase())
+    // Imported rows merge from their own columns, so there is no contact to
+    // look mail up for. A normal compose looks up its one recipient — with two
+    // or more there is no single person to merge against anyway.
+    const targets = massSending
+      ? massSource === "contacts"
+        ? massAudience.map((r) => r.email)
+        : []
+      : composeToEmails.length === 1
+        ? composeToEmails
+        : [];
+
+    const wanted = targets
+      .map((e) => e.toLowerCase())
       .filter((e) => !(e in lastMailByEmail) && !lastMailFetchingRef.current.has(e));
     if (wanted.length === 0) return;
 
@@ -1378,7 +1441,15 @@ export default function InboxPage() {
         for (const e of wanted) lastMailFetchingRef.current.delete(e);
       }
     })();
-  }, [massSending, massSource, massAudience, composeSubject, composeBody, lastMailByEmail]);
+  }, [
+    massSending,
+    massSource,
+    massAudience,
+    composeToEmails,
+    composeSubject,
+    composeBody,
+    lastMailByEmail,
+  ]);
 
   // The rail owns the audience while mass sending is on; the To field is a
   // read-only mirror of it. Kept in sync here so the draft that gets autosaved
@@ -1447,21 +1518,60 @@ export default function InboxPage() {
       setComposeBcc("");
       setComposeCcBccOpen(false);
     } else {
+      const wasImport = massSource === "import";
       setMassRecipients([]);
       setMassSource("contacts");
       setMassImport(null);
       setMassImportError(null);
+      // Campaign-wide defaults were typed against that audience's variable set,
+      // which an imported list does not share with a contact card.
       setVariableFallbacks({});
       // The To field is only a mirror of the rail while mass sending is on,
       // and the effect that maintains it stops here — so it has to be cleared
       // explicitly, or the audience survives as a plain address list.
       setComposeTo("");
-      // The draft goes with the audience it was written for — its variables
-      // would otherwise send as literal `{name}` text to a single recipient.
-      setComposeSubject("");
-      setComposeBody("");
+      // Only an imported campaign's draft has to go. Its `{column}` tokens have
+      // nothing behind them once the file is gone, so the text cannot be saved.
+      // A contact-card draft survives: its variables merge against a single
+      // recipient's card just as well as against a list of them.
+      if (wasImport) {
+        setComposeSubject("");
+        setComposeBody("");
+      }
     }
-  }, []);
+  }, [massSource]);
+
+  /**
+   * Pull a saved template into the open draft.
+   *
+   * "append" puts the template after what is already written rather than at the
+   * caret: the editor's caret is owned by RichTextEditor and the menu steals
+   * focus to open, so "where the cursor was" is not reliably recoverable here —
+   * and quietly inserting in the wrong place is worse than always inserting at
+   * the end, which is at least predictable.
+   */
+  const applyMailTemplate = useCallback(
+    (template: MailTemplate, mode: TemplateApplyMode) => {
+      if (mode === "replace") {
+        // A template saved from a reply has no subject of its own. "Replace"
+        // then means replace the body — clearing a subject the user typed on
+        // the strength of a template that never had one would be a loss, not a
+        // replacement.
+        setComposeSubject((prev) =>
+          template.subjectTemplate.trim() ? template.subjectTemplate : prev
+        );
+        setComposeBody(template.bodyHtml);
+      } else {
+        // Appending must not silently drop the template's subject when the
+        // draft has none — but it must not overwrite one the user typed either.
+        setComposeSubject((prev) => (prev.trim() ? prev : template.subjectTemplate));
+        setComposeBody((prev) =>
+          richTextIsEmpty(prev) ? template.bodyHtml : `${prev}<br>${template.bodyHtml}`
+        );
+      }
+    },
+    []
+  );
 
   /**
    * Parse a CSV/Excel file into merge rows. Reuses the broadcast mail-merge
@@ -4244,36 +4354,16 @@ export default function InboxPage() {
    * An imported list skips the card lookup entirely — the spreadsheet row is
    * the only source of truth for those recipients.
    */
-  const massMergeRows = useMemo(() => {
-    if (massSource === "import") {
-      const seen = new Set<string>();
-      const rows: Array<{
-        email: string;
-        name: string;
-        baseFields: Record<string, string>;
-        fields: Record<string, string>;
-        hasCard: boolean;
-      }> = [];
-      for (const row of massImport?.rows ?? []) {
-        const email = row.email.trim().toLowerCase();
-        if (!email || seen.has(email)) continue;
-        seen.add(email);
-        const baseFields: Record<string, string> = { ...row.fields, email };
-        rows.push({
-          email,
-          name: baseFields.name?.trim() || email,
-          baseFields,
-          // Fallbacks fill columns the row left blank, exactly as they do for
-          // contact-card recipients.
-          fields: mergeFieldSources(baseFields, variableFallbacks),
-          // No card is expected here, so the review banner should not claim
-          // one is missing — a blank cell is a blank cell.
-          hasCard: true,
-        });
-      }
-      return rows;
-    }
-
+  /**
+   * Resolves one contact-card recipient into the merge-field bag
+   * mergeTemplate() consumes.
+   *
+   * Shared by mass sending and the single-recipient composer on purpose: both
+   * answer "where does {company_name} come from for this address?", and two
+   * copies of that answer would drift. Returns a function rather than rows so
+   * the single-send path can call it for one address without building a list.
+   */
+  const buildContactMergeRow = useMemo(() => {
     const cardByEmail = new Map<string, DirectoryContact>();
     const cardByName = new Map<string, DirectoryContact>();
     for (const c of directoryContacts) {
@@ -4291,7 +4381,7 @@ export default function InboxPage() {
         .map((s) => [s.email.trim().toLowerCase(), s])
     );
 
-    return massRecipients.map((r) => {
+    return (r: MassRecipient) => {
       const key = r.email.toLowerCase();
       // Email is the reliable key; the display name is a fallback for people
       // whose card was filed under a different (or missing) address.
@@ -4328,33 +4418,65 @@ export default function InboxPage() {
         fields,
         hasCard: !!card || !!synced,
       };
-    });
-  }, [
-    massSource,
-    massImport,
-    massRecipients,
-    directoryContacts,
-    syncedContacts,
-    lastMailByEmail,
-    variableFallbacks,
-  ]);
+    };
+  }, [directoryContacts, syncedContacts, lastMailByEmail, variableFallbacks]);
 
   /**
-   * Missing variables measured against the *real* data only, ignoring
-   * fallbacks — so the banner keeps listing a field after you give it a
-   * fallback, letting you edit or clear it instead of having the control
-   * vanish the moment it's used.
+   * The one recipient a normal (non-mass) compose merges against.
+   *
+   * Null unless exactly one address is in To: a normal compose sends a single
+   * mail to everyone addressed, so with two recipients there is no one person
+   * {name} could mean — see the guard in sendCompose, which says so rather than
+   * silently merging the first.
+   *
+   * The display name has to be looked up rather than read off the field. Mass
+   * sending gets it for free because its rail stores {email, name} together,
+   * but the To field keeps only the address (serializeRecipientValue drops the
+   * label) — so without this, {name} would fill for a campaign and come out
+   * blank for the very same person in a single mail, and the directory's
+   * by-name card fallback could never fire either.
    */
-  const massMissing = useMemo(
-    () =>
-      reportMissingVariables(
-        composeSubject,
-        composeBody,
-        massMergeRows.map((r) => ({ email: r.email, fields: r.baseFields })),
-        massVariables
-      ),
-    [composeSubject, composeBody, massMergeRows, massVariables]
-  );
+  const singleMergeRow = useMemo(() => {
+    if (massSending || composeToEmails.length !== 1) return null;
+    const email = composeToEmails[0];
+    const suggested = composeRecipientSuggestions.find(
+      (s) => s.email.trim().toLowerCase() === email
+    )?.displayName;
+    return buildContactMergeRow({ email, name: suggested?.trim() || "" });
+  }, [massSending, composeToEmails, composeRecipientSuggestions, buildContactMergeRow]);
+
+  const massMergeRows = useMemo(() => {
+    if (massSource === "import") {
+      const seen = new Set<string>();
+      const rows: Array<{
+        email: string;
+        name: string;
+        baseFields: Record<string, string>;
+        fields: Record<string, string>;
+        hasCard: boolean;
+      }> = [];
+      for (const row of massImport?.rows ?? []) {
+        const email = row.email.trim().toLowerCase();
+        if (!email || seen.has(email)) continue;
+        seen.add(email);
+        const baseFields: Record<string, string> = { ...row.fields, email };
+        rows.push({
+          email,
+          name: baseFields.name?.trim() || email,
+          baseFields,
+          // Fallbacks fill columns the row left blank, exactly as they do for
+          // contact-card recipients.
+          fields: mergeFieldSources(baseFields, variableFallbacks),
+          // No card is expected here, so the review banner should not claim
+          // one is missing — a blank cell is a blank cell.
+          hasCard: true,
+        });
+      }
+      return rows;
+    }
+
+    return massRecipients.map(buildContactMergeRow);
+  }, [massSource, massImport, massRecipients, buildContactMergeRow, variableFallbacks]);
 
   /**
    * What is *still* missing once fallbacks are applied — the recipient rail's
@@ -4373,17 +4495,33 @@ export default function InboxPage() {
     [composeSubject, composeBody, massMergeRows, massVariables]
   );
 
-  /** Only a variable-bearing draft needs the review gate before sending. */
-  const massTemplateHasVariables = useMemo(
-    () => templateUsesVariables(composeSubject, composeBody),
-    [composeSubject, composeBody]
-  );
-
   /** The row currently being previewed on the review screen. */
   const reviewRow = useMemo(() => {
     if (!reviewEmail) return null;
-    return massMergeRows.find((r) => r.email.toLowerCase() === reviewEmail.toLowerCase()) ?? null;
-  }, [reviewEmail, massMergeRows]);
+    const key = reviewEmail.toLowerCase();
+    // A normal compose has exactly one candidate rather than a list to search.
+    if (!massSending) {
+      return singleMergeRow && singleMergeRow.email.toLowerCase() === key
+        ? singleMergeRow
+        : null;
+    }
+    return massMergeRows.find((r) => r.email.toLowerCase() === key) ?? null;
+  }, [reviewEmail, massSending, singleMergeRow, massMergeRows]);
+
+  /**
+   * Variables that resolve to nothing for the row on screen, measured against
+   * real data only so the review banner keeps offering a fallback after one is
+   * typed. Single and mass share the report; only the row set differs.
+   */
+  const reviewMissing = useMemo(() => {
+    if (!reviewRow) return undefined;
+    return reportMissingVariables(
+      composeSubject,
+      composeBody,
+      [{ email: reviewRow.email, fields: reviewRow.baseFields }],
+      massSending ? massVariables : COMPOSE_VARIABLES
+    ).byRecipient.get(reviewRow.email);
+  }, [reviewRow, composeSubject, composeBody, massSending, massVariables]);
 
   async function sendMassCampaign() {
     const rows = massMergeRows;
@@ -4489,9 +4627,42 @@ export default function InboxPage() {
       bcc: composeBcc,
     });
     if (invalid) {
-      setComposeFieldError(formatRecipientError(invalid));
+      setComposeFieldError({
+        title: recipientErrorTitle(invalid),
+        message: formatRecipientError(invalid),
+      });
       return;
     }
+
+    /**
+     * Fields to substitute into this one mail, or null when it sends verbatim.
+     *
+     * A normal compose sends one message to everyone addressed, so `{name}` only
+     * has a single meaning when there is a single recipient. With none or
+     * several, refuse rather than merge somebody arbitrary — the alternative is
+     * a recruiter opening a mail addressed to a colleague.
+     */
+    let mergeFields: Record<string, string> | null = null;
+    if (draftUsesVariables) {
+      if (composeToEmails.length !== 1) {
+        setComposeFieldError(
+          composeToEmails.length === 0
+            ? {
+                title: "Can't read that address",
+                message:
+                  "This draft uses variables like {name}, which are filled in from the recipient's contact card — but no usable address could be read from the To field. Check it and try again.",
+              }
+            : {
+                title: "Variables need a single recipient",
+                message:
+                  "This draft uses variables like {name}, which are filled in per person. A normal email goes to everyone at once, so there is no one person to fill them from. Send it to one recipient, or switch on mass sending to give each of them their own personalised copy.",
+              }
+        );
+        return;
+      }
+      mergeFields = singleMergeRow?.fields ?? null;
+    }
+
     setComposeFieldError(null);
 
     const snapshot = {
@@ -4499,8 +4670,12 @@ export default function InboxPage() {
       to: composeTo.trim(),
       cc: composeCc.trim(),
       bcc: composeBcc.trim(),
-      subject: composeSubject.trim(),
-      htmlBody: composeBody,
+      // Merged here, not in the editor: the draft that stays autosaved keeps its
+      // `{variable}` form, so reopening it still shows the template. Spans are
+      // stripped further down, after the substitution — same order the review
+      // screen renders in, so what was previewed is what gets sent.
+      subject: mergeFields ? mergeTemplate(composeSubject.trim(), mergeFields) : composeSubject.trim(),
+      htmlBody: mergeFields ? mergeTemplate(composeBody, mergeFields) : composeBody,
       // Read files/draftId from the ref rather than React state: an in-flight
       // autosave (syncComposeFilesFromDraft) may have just promoted staged files
       // to "saved" and updated the ref before the state flush. Staged files that
@@ -5966,7 +6141,8 @@ export default function InboxPage() {
           Object.keys(driveUploadProgress).length > 0 ||
           (massSending ? massMergeRows.length === 0 : !composeTo.trim())
         }
-        composeError={composeFieldError}
+        composeError={composeFieldError?.message ?? null}
+        composeErrorTitle={composeFieldError?.title ?? null}
         onDismissComposeError={() => setComposeFieldError(null)}
         onMinimize={() => setComposeMinimized((m) => !m)}
         onToggleFullscreen={() => setComposeFullscreen((v) => !v)}
@@ -5975,20 +6151,35 @@ export default function InboxPage() {
           if (!massSending) return void sendCompose();
           void sendMassCampaign();
         }}
+        // Any draft with variables gets reviewed once before it can go out —
+        // mass or not. Deliberately not offered when there is nothing to merge
+        // against (no recipient yet, or several): GmailComposeDialog hides Send
+        // whenever Review exists, so offering an impossible review would leave
+        // the draft with no way forward. sendCompose explains those cases.
         onReview={
-          massSending && massTemplateHasVariables
-            ? () => setReviewEmail(massMergeRows[0]?.email ?? null)
+          draftUsesMergeVariables && (massSending ? massMergeRows.length > 0 : !!singleMergeRow)
+            ? () =>
+                setReviewEmail(
+                  massSending ? massMergeRows[0]?.email ?? null : singleMergeRow?.email ?? null
+                )
             : undefined
         }
-        reviewDisabled={massMergeRows.length === 0}
+        reviewDisabled={massSending ? massMergeRows.length === 0 : !singleMergeRow}
         onDiscard={discardComposeDraft}
         placement="centered"
-        variables={massSending ? massVariables : undefined}
-        // A normal compose has no variables to offer, but hiding the button
-        // makes that look like a missing feature — it stays and explains,
-        // with a one-click way to get what the user was reaching for.
-        onVariableBlocked={
-          !massSending ? () => setMassToggleConfirm("blocked") : undefined
+        // Normal compose merges against its one recipient's contact card, so it
+        // offers the same card-backed set a campaign does. Only an imported
+        // list replaces that set with its own columns.
+        variables={massSending ? massVariables : COMPOSE_VARIABLES}
+        templatesButton={
+          templatesEnabled ? (
+            <MailTemplatesButton
+              subject={composeSubject}
+              bodyHtml={composeBody}
+              draftIsEmpty={!composeSubject.trim() && richTextIsEmpty(composeBody)}
+              onApply={applyMailTemplate}
+            />
+          ) : undefined
         }
         recipientsLocked={massSending}
         lockedRecipientCount={massAudience.length}
@@ -5996,13 +6187,12 @@ export default function InboxPage() {
         onMassSendingChange={(on) => {
           // Confirm only when the flip actually destroys something: To
           // addresses survive the conversion, so going in only costs Cc/Bcc,
-          // while coming out clears the audience and the draft written for it.
+          // while coming out clears the audience (and, for an imported list,
+          // the draft written against its columns). A contact-card draft is no
+          // longer at risk either way, so it no longer forces a prompt.
           const losesWork = on
             ? !!(composeCc.trim() || composeBcc.trim())
-            : massAudience.length > 0 ||
-              !!massImport ||
-              !!composeSubject.trim() ||
-              !richTextIsEmpty(composeBody);
+            : massAudience.length > 0 || !!massImport;
           if (losesWork) {
             setMassToggleConfirm(on ? "on" : "off");
             return;
@@ -6018,7 +6208,7 @@ export default function InboxPage() {
                 // Tinting is an editor affordance — the review screen shows
                 // the mail exactly as the recipient will receive it.
                 bodyHtml: stripVariableSpans(mergeTemplate(composeBody, reviewRow.fields)),
-                missingKeys: massMissing.byRecipient.get(reviewRow.email),
+                missingKeys: reviewMissing,
                 noContactCard: !reviewRow.hasCard,
                 fallbacks: variableFallbacks,
                 onFallbackChange: (key, value) =>

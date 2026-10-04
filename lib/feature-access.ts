@@ -12,6 +12,7 @@ export const FEATURE_KEYS = [
   "contacts",
   "campaigns",
   "whatsapp",
+  "mailTemplates",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -30,6 +31,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   contacts: "Contacts",
   campaigns: "Campaigns",
   whatsapp: "WhatsApp",
+  mailTemplates: "Mail templates",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -46,6 +48,7 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "contacts",
   "campaigns",
   "whatsapp",
+  "mailTemplates",
 ];
 
 const SET = new Set<string>(FEATURE_KEYS);
@@ -137,6 +140,11 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
 
   if (pathname.startsWith("/api/sequences")) return "sequences";
   if (pathname.startsWith("/api/campaigns")) return "campaigns";
+
+  // Saved compose/sequence templates. The only module with no page of its own —
+  // it is reached entirely from the composer's footer, so pathToFeature has no
+  // entry for it and this is the only gate that can refuse it.
+  if (pathname.startsWith("/api/mail-templates")) return "mailTemplates";
 
   if (
     pathname.startsWith("/api/extract") ||

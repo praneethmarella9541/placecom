@@ -3,12 +3,18 @@
 import { createPortal } from "react-dom";
 
 type Props = {
+  /**
+   * What is wrong, in the reader's terms. Several different problems route
+   * through this dialog, so the heading is the caller's to supply — a shared
+   * "Error" made every one of them look like the same unexplained failure.
+   */
+  title?: string;
   message: string;
   onDismiss: () => void;
 };
 
 /** Gmail-style compose validation error (invalid recipient, etc.). */
-export function GmailComposeErrorDialog({ message, onDismiss }: Props) {
+export function GmailComposeErrorDialog({ title, message, onDismiss }: Props) {
   if (typeof document === "undefined") return null;
 
   return createPortal(
@@ -27,7 +33,7 @@ export function GmailComposeErrorDialog({ message, onDismiss }: Props) {
         onMouseDown={(e) => e.stopPropagation()}
       >
         <h2 id="compose-error-title" className="text-[22px] font-normal text-[#202124]">
-          Error
+          {title ?? "This draft can't be sent yet"}
         </h2>
         <p id="compose-error-body" className="mt-4 text-[14px] leading-relaxed text-[#202124]">
           {message}

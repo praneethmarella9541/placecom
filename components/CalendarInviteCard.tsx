@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import {
   extractCalendarEventId,
   hasCalendarInviteCardData,
@@ -55,6 +56,9 @@ export function CalendarInviteOrHtml({
 /** Gmail-style structured calendar invitation (When / Organizer / RSVP). */
 export function CalendarInviteCard({ subject, bodyHtml, className }: CalendarInviteCardProps) {
   const router = useRouter();
+  // The invite still renders in the mail body; only the "Edit in Calendar"
+  // jump goes away when the Calendar module is off.
+  const calendarEnabled = useModuleVisibility().isVisible("calendar");
   const parsed = useMemo(
     () => (bodyHtml ? parseCalendarInviteHtml(bodyHtml, subject) : null),
     [bodyHtml, subject]
@@ -142,7 +146,7 @@ export function CalendarInviteCard({ subject, bodyHtml, className }: CalendarInv
               </div>
             )}
 
-            {eventId && (
+            {eventId && calendarEnabled && (
               <div className="mt-4 flex flex-wrap gap-2 border-t border-[#e8eaed] pt-4">
                 <button
                   type="button"

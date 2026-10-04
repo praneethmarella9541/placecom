@@ -1,5 +1,5 @@
 /**
- * Session-scoped prefetch for Contacts, Calendar, Forms, and Sheets.
+ * Session-scoped prefetch for Contacts, WhatsApp, Calendar, Forms, and Sheets.
  * Runs after mail + drive warm on login; pages read caches for instant paint (SWR).
  */
 
@@ -13,6 +13,10 @@ import {
   clearWorkspacePrefetchSession,
 } from "@/lib/login-prefetch-session";
 import { clearMailThreadPrefetchCache, warmMailListsThenThreadBodies } from "@/lib/mail-thread-prefetch";
+import {
+  clearWhatsAppThreadPrefetchCache,
+  prefetchWhatsAppThreads,
+} from "@/lib/whatsapp-thread-prefetch";
 
 /* ─── Directory contacts (Contact Book → Team Directory) ────── */
 
@@ -32,6 +36,79 @@ async function prefetchDirectoryContactsData(signal?: AbortSignal): Promise<void
   const data = (await res.json()) as { contacts?: DirectoryContact[] };
   if (signal?.aborted) return;
   setDirectoryContactsPrefetchCache(data.contacts ?? []);
+}
+
+/* ─── WhatsApp ─────────────────────────────────────────────── */
+
+export type WhatsAppPrefetchConversation = {
+  peer_e164: string;
+  last_body: string | null;
+  last_at: string;
+  last_dir: string;
+  unread_count?: number;
+};
+
+export type WhatsAppPrefetchStatus = {
+  provider?: string;
+  sendConfigured?: boolean;
+  apiHost?: string;
+  businessLine?: string | null;
+  lineError?: string | null;
+  templates?: unknown[];
+  defaultTemplate?: unknown;
+  sandbox?: boolean;
+  fromPreview?: string | null;
+  suggestedInboundWebhookUrl?: string | null;
+  migrationHint?: string;
+};
+
+export type WhatsAppPrefetchSnapshot = {
+  status: WhatsAppPrefetchStatus | null;
+  conversations: WhatsAppPrefetchConversation[];
+};
+
+let whatsappCache: WhatsAppPrefetchSnapshot | null = null;
+
+export function getWhatsAppPrefetchCache(): WhatsAppPrefetchSnapshot | null {
+  return whatsappCache;
+}
+
+export function setWhatsAppPrefetchCache(snapshot: WhatsAppPrefetchSnapshot): void {
+  whatsappCache = snapshot;
+}
+
+export function patchWhatsAppPrefetchCache(patch: Partial<WhatsAppPrefetchSnapshot>): void {
+  whatsappCache = { ...(whatsappCache ?? { status: null, conversations: [] }), ...patch };
+}
+
+async function prefetchWhatsAppData(signal?: AbortSignal): Promise<void> {
+  // Contact names come from directory_contacts (useDirectoryContacts), not a
+  // WhatsApp-specific prefetch — no /api/whatsapp/contacts call here.
+  const [statusRes, convRes] = await Promise.all([
+    fetch("/api/whatsapp/status", { cache: "no-store", signal }),
+    fetch("/api/whatsapp/conversations", { cache: "no-store", signal }),
+  ]);
+
+  if (signal?.aborted) return;
+
+  let status: WhatsAppPrefetchStatus | null = null;
+  if (statusRes.ok) {
+    status = (await statusRes.json()) as WhatsAppPrefetchStatus;
+  }
+
+  let conversations: WhatsAppPrefetchConversation[] = [];
+  if (convRes.ok) {
+    const body = (await convRes.json()) as { conversations?: WhatsAppPrefetchConversation[] };
+    conversations = body.conversations ?? [];
+  }
+
+  if (signal?.aborted) return;
+  setWhatsAppPrefetchCache({ status, conversations });
+
+  const peers = conversations.map((c) => c.peer_e164).filter(Boolean);
+  if (peers.length) {
+    void prefetchWhatsAppThreads(peers, { limit: 24 });
+  }
 }
 
 /* ─── Calendar ─────────────────────────────────────────────── */
@@ -274,13 +351,21 @@ export async function prefetchSecondaryFeaturesInOrder(opts?: {
   const restricted = new Set(opts?.restrictedFeatures ?? []);
   const signal = opts?.signal;
 
-  // Not gated by restrictedFeatures — Contacts isn't a toggleable FeatureKey,
-  // it's always available. Warmed early since SMS/Team-viewer resolve names
-  // against this same cache. The auto-synced-from-mail list
-  // (SyncedContactsSection) deliberately isn't warmed here — it only needs
-  // to be fresh right after an explicit "Sync from Mailbox" run, so it keeps
-  // its own simple fetch-once-then-cache-until-sync-finishes behavior.
-  await prefetchDirectoryContactsData(signal);
+  // Warmed early since SMS and the Team viewer resolve display names against
+  // this same cache. Now gated: /api/directory-contacts is tied to the Contacts
+  // module, so warming it with Contacts off would 403. Those callers fall back
+  // to raw addresses/numbers in that case. The auto-synced-from-mail list
+  // (SyncedContactsSection) deliberately isn't warmed here — it only needs to
+  // be fresh right after an explicit "Sync from Mailbox" run, so it keeps its
+  // own simple fetch-once-then-cache-until-sync-finishes behavior.
+  if (!restricted.has("contacts")) {
+    await prefetchDirectoryContactsData(signal);
+  }
+  if (signal?.aborted) return;
+
+  if (!restricted.has("whatsapp")) {
+    await prefetchWhatsAppData(signal);
+  }
   if (signal?.aborted) return;
 
   if (!restricted.has("calendar")) {
@@ -323,17 +408,25 @@ export async function runLoginPrefetchChain(opts?: {
   if (!beginWorkspacePrefetchWarm({ force: opts?.force })) return;
 
   const signal = opts?.signal;
+  // Mail and Drive used to warm unconditionally. They are gated now because a
+  // module switched off in /configs 403s every one of these requests — see
+  // hiddenFeatureSet in lib/module-visibility.ts for what the caller passes.
+  const blocked = new Set(opts?.restrictedFeatures ?? []);
   try {
     await Promise.all([
-      warmMailListsThenThreadBodies({
-        signal,
-        listConcurrency: opts?.mailConcurrency ?? 3,
-        bodyConcurrency: 2,
-      }),
-      prefetchDriveListViews({
-        signal,
-        concurrency: opts?.driveConcurrency ?? 2,
-      }),
+      blocked.has("inbox")
+        ? Promise.resolve()
+        : warmMailListsThenThreadBodies({
+            signal,
+            listConcurrency: opts?.mailConcurrency ?? 3,
+            bodyConcurrency: 2,
+          }),
+      blocked.has("drive")
+        ? Promise.resolve()
+        : prefetchDriveListViews({
+            signal,
+            concurrency: opts?.driveConcurrency ?? 2,
+          }),
     ]);
     if (signal?.aborted) return;
     await prefetchSecondaryFeaturesInOrder({
@@ -356,6 +449,8 @@ export function clearSecondaryFeaturePrefetchCache(): void {
   sheetsCache = null;
   docsCache = null;
   sequencesCache = null;
+  whatsappCache = null;
+  clearWhatsAppThreadPrefetchCache();
   clearWorkspacePrefetchSession();
   clearAdminTeamPrefetchCache();
   clearMailThreadPrefetchCache();

@@ -11,6 +11,7 @@ import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
+import { hiddenFeatureSet, isFeatureVisible } from "@/lib/module-visibility";
 import { ContactPhotoProvider } from "@/components/ContactPhotoProvider";
 import { ExtractionRunProvider } from "@/components/ExtractionRunProvider";
 import { ExtractionRunBanner } from "@/components/ExtractionRunBanner";
@@ -69,6 +70,10 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
   const [actionsPortalNode, setActionsPortalNode] = useState<HTMLDivElement | null>(null);
   const { me } = useMeMailbox();
 
+  // Extraction has no nav entry of its own when switched off in /configs, and
+  // its background job check and progress banner must go with it.
+  const extractionEnabled = isFeatureVisible(me, "dashboard");
+
   // Read the saved preference after mount (not in the initializer) so the
   // server-rendered and first client-rendered markup match — avoids a
   // hydration mismatch.
@@ -90,7 +95,9 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
     const ac = new AbortController();
     const t = window.setTimeout(() => {
       void runLoginPrefetchChain({
-        restrictedFeatures: me.restrictedFeatures,
+        // The union, not just group restrictions — warming a module that
+        // /configs switched off would 403 on every request.
+        restrictedFeatures: Array.from(hiddenFeatureSet(me)),
         signal: ac.signal,
         mailConcurrency: 3,
         driveConcurrency: 2,
@@ -100,7 +107,7 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
       clearTimeout(t);
       ac.abort();
     };
-  }, [me?.hasStoredMailbox, me?.restrictedFeatures]);
+  }, [me, me?.hasStoredMailbox]);
 
   useEffect(() => {
     if (me?.role !== "admin") return;
@@ -180,7 +187,7 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
       )}
 
       <TopbarActionsPortalContext.Provider value={actionsPortalNode}>
-        <ExtractionRunProvider>
+        <ExtractionRunProvider enabled={extractionEnabled}>
           <ContactPhotoProvider>
             <main
               className={cn(
@@ -192,7 +199,7 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
             >
               {children}
             </main>
-            <ExtractionRunBanner />
+            {extractionEnabled && <ExtractionRunBanner />}
           </ContactPhotoProvider>
         </ExtractionRunProvider>
       </TopbarActionsPortalContext.Provider>

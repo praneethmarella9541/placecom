@@ -5,6 +5,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconX } from "@/components/Icons";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { parseRecipientValue } from "@/lib/email-recipients";
 
 /**
@@ -47,6 +48,10 @@ const ROLE_VERB: Record<Role, string> = {
 };
 
 export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) {
+  // Sharing itself is a Drive operation, but both recipient-suggestion sources
+  // are Gmail/People endpoints owned by the Mail module. With Mail off, sharing
+  // still works — you type the address instead of picking it.
+  const mailEnabled = useModuleVisibility().isVisible("inbox");
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -110,6 +115,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
   // means the first keystroke has no suggestions until the live search below
   // catches up.
   useEffect(() => {
+    if (!mailEnabled) return;
     let cancelled = false;
     fetch("/api/gmail/contacts")
       .then((r) => (r.ok ? r.json() : null))
@@ -120,7 +126,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [mailEnabled]);
 
   // Same live suggest endpoint the mail search bar uses (Google People API's
   // own fuzzy contact search), queried as-you-type — lightly debounced so it
@@ -130,7 +136,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
   const suggestFetchRef = useRef(0);
   useEffect(() => {
     const draft = parseRecipientValue(emailInput).draft.trim();
-    if (draft.length < 1) {
+    if (!mailEnabled || draft.length < 1) {
       setLiveSuggestions([]);
       return;
     }
@@ -150,7 +156,7 @@ export function DriveShareModal({ fileId, fileName, isFolder, onClose }: Props) 
         });
     }, 120);
     return () => clearTimeout(t);
-  }, [emailInput]);
+  }, [emailInput, mailEnabled]);
 
   /** Add a user permission for the email(s) in the input. Splits on comma/space. */
   async function handleAddPeople() {

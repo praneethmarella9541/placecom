@@ -67,7 +67,18 @@ export function useExtractionRun(): ExtractionRunContextValue {
   return ctx;
 }
 
-export function ExtractionRunProvider({ children }: { children: ReactNode }) {
+/**
+ * `enabled` is false when the Extraction module is switched off in /configs.
+ * The provider stays mounted (its context is read unconditionally) but skips
+ * the /api/jobs resume check, which middleware would 403 anyway.
+ */
+export function ExtractionRunProvider({
+  children,
+  enabled = true,
+}: {
+  children: ReactNode;
+  enabled?: boolean;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const abortRef = useRef<AbortController | null>(null);
   const completeListeners = useRef(new Set<() => void>());
@@ -189,8 +200,9 @@ export function ExtractionRunProvider({ children }: { children: ReactNode }) {
   }, [busy]);
 
   useEffect(() => {
+    if (!enabled) return;
     void checkInterruptedJobs();
-  }, [checkInterruptedJobs]);
+  }, [enabled, checkInterruptedJobs]);
 
   const runExtractPhase = useCallback(
     async (options: {

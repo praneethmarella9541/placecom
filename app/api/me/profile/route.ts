@@ -4,6 +4,9 @@ import { createServiceSupabase } from "@/lib/supabase-service";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import { getUserTokenLimitStatus } from "@/lib/openai-token-limit";
 import { getAuthedRequest } from "@/lib/api-auth";
+import { disabledFeaturesFromConfig, type ModuleConfig } from "@/lib/module-config";
+import { loadModuleConfig } from "@/lib/module-config-store";
+import type { FeatureKey } from "@/lib/feature-access";
 
 export const runtime = "nodejs";
 
@@ -21,6 +24,8 @@ export type MeProfileResponse = {
   role: string;
   groupName: string | null;
   restrictedFeatures: string[];
+  /** Modules switched off platform-wide in /configs — see MeMailboxResponse. */
+  disabledModules: FeatureKey[];
   tokenLimit: number | null;
   tokensUsed: number;
   tokensRemaining: number | null;
@@ -121,6 +126,9 @@ export async function GET(request: Request) {
         restricted_features: profile?.restricted_features,
       },
       group
+    ),
+    disabledModules: disabledFeaturesFromConfig(
+      await loadModuleConfig(supabase) as ModuleConfig
     ),
     tokenLimit: tokenStatus.limit,
     tokensUsed: tokenStatus.used,

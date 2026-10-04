@@ -1,28 +1,52 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { IconCalendar, IconMail, IconMenu } from "@/components/Icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { IconCalendar, IconMail, IconMenu, IconWhatsApp } from "@/components/Icons";
 import { EmailThreadPreviewModal } from "@/components/EmailThreadPreviewModal";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { titleCase } from "@/lib/title-case";
 import type { ContactNoteRow } from "@/app/api/directory-contacts/[id]/notes/route";
 import type { TimelineItem } from "@/app/api/directory-contacts/[id]/timeline/route";
 
-type Tab = "All Interaction" | "Emails" | "Meetings" | "Notes";
-const TABS: Tab[] = ["All Interaction", "Emails", "Meetings", "Notes"];
+type Tab = "All Interaction" | "Emails" | "Meetings" | "WhatsApp" | "Notes";
 
 const SOURCE_BY_TAB: Partial<Record<Tab, TimelineItem["type"]>> = {
   Emails: "email",
   Meetings: "meeting",
+  WhatsApp: "whatsapp",
 };
 
 const ICON_BY_TYPE: Record<TimelineItem["type"] | "note", React.ComponentType<{ className?: string }>> = {
   email: IconMail,
   meeting: IconCalendar,
+  whatsapp: IconWhatsApp,
   note: IconMenu,
 };
 
-/** Tabbed unified activity feed for a contact — pulls Gmail, calendar, and notes. */
+/**
+ * Tabbed unified activity feed for a contact — pulls Gmail, calendar, WhatsApp,
+ * and notes.
+ *
+ * The WhatsApp tab and its source are both conditional: the module ships
+ * switched off, and its /api/directory-contacts/[id]/timeline?source=whatsapp
+ * read is gated with it, so showing the tab regardless would mean an empty tab
+ * backed by a 403.
+ */
 export function ContactActivityTimeline({ contactId }: { contactId: string }) {
+  const whatsappEnabled = useModuleVisibility().isVisible("whatsapp");
+  const TABS = useMemo<Tab[]>(
+    () =>
+      whatsappEnabled
+        ? ["All Interaction", "Emails", "Meetings", "WhatsApp", "Notes"]
+        : ["All Interaction", "Emails", "Meetings", "Notes"],
+    [whatsappEnabled],
+  );
+  /** Sources merged for "All Interaction", and warmed together. */
+  const ALL_SOURCES = useMemo<readonly TimelineItem["type"][]>(
+    () => (whatsappEnabled ? ["email", "meeting", "whatsapp"] : ["email", "meeting"]),
+    [whatsappEnabled],
+  );
+
   const [activeTab, setActiveTab] = useState<Tab>("All Interaction");
   const [sources, setSources] = useState<Partial<Record<TimelineItem["type"], TimelineItem[] | "loading" | "error">>>({});
   const [notes, setNotes] = useState<ContactNoteRow[] | "loading" | "error" | null>(null);
@@ -69,13 +93,13 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
     const single = SOURCE_BY_TAB[activeTab];
     if (single && sources[single] === undefined) void loadSource(single);
     if (activeTab === "All Interaction") {
-      (["email", "meeting"] as const).forEach((t) => {
+      ALL_SOURCES.forEach((t) => {
         if (sources[t] === undefined) void loadSource(t);
       });
       if (notes === null) void loadNotes();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, contactId]);
+  }, [activeTab, contactId, ALL_SOURCES]);
 
   async function handleAddNote(e: React.FormEvent) {
     e.preventDefault();
@@ -103,7 +127,7 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
 
   const allItems: (TimelineItem | { id: string; type: "note"; summary: string; at: string })[] = isAll
     ? [
-        ...(["email", "meeting"] as const).flatMap((t) => {
+        ...ALL_SOURCES.flatMap((t) => {
           const v = sources[t];
           return Array.isArray(v) ? v : [];
         }),
@@ -113,7 +137,7 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
 
   const loadingAll =
     isAll &&
-    (["email", "meeting"] as const).some((t) => sources[t] === "loading" || sources[t] === undefined);
+    ALL_SOURCES.some((t) => sources[t] === "loading" || sources[t] === undefined);
 
   return (
     <div>
@@ -231,12 +255,15 @@ function TimelineList({
   items: (TimelineItem | { id: string; type: "note"; summary: string; at: string })[];
   onOpenThread: (threadId: string) => void;
 }) {
+  const mailEnabled = useModuleVisibility().isVisible("inbox");
   return (
     <ul className="space-y-2.5">
       {items.map((item) => {
         const Icon = ICON_BY_TYPE[item.type];
         const threadId = "threadId" in item ? item.threadId : undefined;
-        const clickable = Boolean(threadId);
+        // Opening a row shows the mail thread, which needs the Mail module —
+        // without it the row stays visible as history but is inert.
+        const clickable = Boolean(threadId) && mailEnabled;
         return (
           <li
             key={`${item.type}-${item.id}`}

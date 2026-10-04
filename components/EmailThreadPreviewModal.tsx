@@ -10,6 +10,7 @@ import { IconX } from "@/components/Icons";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
 import type { RecipientSuggestion } from "@/components/RecipientField";
 import { titleCase } from "@/lib/title-case";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { previewLineFromBody } from "@/lib/utils";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
@@ -69,12 +70,20 @@ type ComposeKind = "reply" | "replyAll" | "forward";
  * page's full pipeline, which is a lot of machinery to replicate for what's
  * meant to be a lightweight popup.
  */
+/**
+ * Surfaced from Contacts and CRM, but it reads and replies to mail through
+ * /api/gmail — so it is gated here rather than at each of its four call sites.
+ * With Mail off the request would 403 and the reply actions would go nowhere,
+ * so the modal renders nothing at all.
+ */
 export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: string; onClose: () => void }) {
+  const mailEnabled = useModuleVisibility().isVisible("inbox");
   const [thread, setThread] = useState<ThreadMessageView[] | "loading" | "error">("loading");
   /** Which messages are open. Gmail's rule: the newest starts expanded, the rest collapsed. */
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!mailEnabled) return;
     let cancelled = false;
     setThread("loading");
     setExpandedIds(new Set());
@@ -96,7 +105,7 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
     return () => {
       cancelled = true;
     };
-  }, [threadId]);
+  }, [threadId, mailEnabled]);
 
   // Reply/Reply All/Forward act on the newest message, as they did when this
   // popup rendered only that one — replying to a thread means replying to its
@@ -242,6 +251,7 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
     setFiles((prev) => [...prev, ...Array.from(fileList)]);
   }
 
+  if (!mailEnabled) return null;
   if (typeof document === "undefined") return null;
 
   // Portal straight to <body>, same as GmailComposeDialog below — this is

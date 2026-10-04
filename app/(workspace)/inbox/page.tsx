@@ -74,6 +74,7 @@ import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, previewLineFromBody, timeAgo } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import {
   buildDateSearchClauses,
   buildExclusionTokens,
@@ -505,6 +506,9 @@ function MessageBubble({
   onReplyAll?: () => void;
   onForward?: () => void;
 }) {
+  // The campaign chip deep-links into the Campaigns report; hide it when that
+  // module is off rather than offering a link that redirects away.
+  const campaignsEnabled = useModuleVisibility().isVisible("campaigns");
   const [expanded, setExpanded] = useState(isLast);
   const [fullscreen, setFullscreen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -643,7 +647,7 @@ function MessageBubble({
                     {titleCase("Replied")}
                   </span>
                 )}
-                {trackingRow?.campaign_id && (
+                {trackingRow?.campaign_id && campaignsEnabled && (
                   <Link
                     href={`/campaigns/${encodeURIComponent(trackingRow.campaign_id)}`}
                     onClick={(e) => e.stopPropagation()}
@@ -868,6 +872,8 @@ const INBOX_CATEGORY_LABEL: Record<InboxCategoryKey, string> = {
 };
 
 export default function InboxPage() {
+  // Recruiter suggestions in the composer come from the Extraction module.
+  const extractionEnabled = useModuleVisibility().isVisible("dashboard");
   const topbarActionsNode = useWorkspaceTopbarActionsNode();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
@@ -2860,7 +2866,11 @@ export default function InboxPage() {
     let cancelled = false;
     setContactsHint(null);
     void Promise.all([
-      fetch("/api/recruiters").then((r) => (r.ok ? r.json() : null)),
+      // Recruiter suggestions come from Extraction; skip that half when the
+      // module is off so the composer still gets Google contacts.
+      extractionEnabled
+        ? fetch("/api/recruiters").then((r) => (r.ok ? r.json() : null))
+        : Promise.resolve(null),
       fetch("/api/gmail/contacts").then((r) => (r.ok ? r.json() : null)),
     ])
       .then(([recruitersJson, contactsJson]) => {
@@ -2887,7 +2897,7 @@ export default function InboxPage() {
     return () => {
       cancelled = true;
     };
-  }, [composeOpen, filterOpen]);
+  }, [composeOpen, filterOpen, extractionEnabled]);
 
   const openDraft = useCallback(async (draftId: string) => {
     if (draftLoadingRef.current) return;

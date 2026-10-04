@@ -1,15 +1,18 @@
 "use client";
 
+import Link from "next/link";
+
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, Plus, Search, Trash2, UserRound } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
-import { IconLinkedin } from "@/components/Icons";
+import { IconLinkedin, IconWhatsAppLogo } from "@/components/Icons";
 import { SyncedContactsSection } from "@/components/SyncedContactsSection";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { armSyncedContactsInvalidation, warmSyncedContacts } from "@/lib/synced-contacts-prefetch";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { contactLinkedInSearchUrl, type DirectoryContact } from "@/lib/contact-directory";
 import { formatPhone } from "@/lib/phone-contacts-display";
 import { titleCase } from "@/lib/title-case";
@@ -48,6 +51,9 @@ function statusStyle(c: DirectoryContact): React.CSSProperties | undefined {
 
 /** Org-wide contact directory — filterable/sortable table, shared across every signed-in user/admin. */
 export function ContactDirectory() {
+  // Row action deep-links into the WhatsApp thread for this number; the module
+  // ships switched off, so the action follows it.
+  const whatsappEnabled = useModuleVisibility().isVisible("whatsapp");
   const router = useRouter();
   const { contacts, loading, error, reload, deleteContact } = useDirectoryContacts();
   const [search, setSearch] = useState("");
@@ -377,6 +383,15 @@ export function ContactDirectory() {
                         >
                           <IconLinkedin className="h-4 w-4" />
                         </a>
+                        {c.phone && whatsappEnabled && (
+                          <Link
+                            href={`/whatsapp?peer=${encodeURIComponent(c.phone)}`}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-[#25D366]/10"
+                            title={titleCase("WhatsApp")}
+                          >
+                            <IconWhatsAppLogo className="h-4 w-4" />
+                          </Link>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-3">

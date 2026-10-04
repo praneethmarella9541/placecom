@@ -10,6 +10,8 @@ export const FEATURE_KEYS = [
   "calendar",
   "sms",
   "contacts",
+  "campaigns",
+  "whatsapp",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -26,6 +28,8 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   calendar: "Calendar",
   sms: "SMS",
   contacts: "Contacts",
+  campaigns: "Campaigns",
+  whatsapp: "WhatsApp",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -40,6 +44,8 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "crm",
   "sms",
   "contacts",
+  "campaigns",
+  "whatsapp",
 ];
 
 const SET = new Set<string>(FEATURE_KEYS);
@@ -81,9 +87,13 @@ export function pathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/sequences")) return "sequences";
   if (pathname.startsWith("/sms")) return "sms";
   if (pathname.startsWith("/contacts")) return "contacts";
-  // Reports on mail sent from the inbox composer's mass-send — gated with it,
-  // same reasoning as /api/broadcast/parse-mail-merge below.
-  if (pathname.startsWith("/campaigns")) return "inbox";
+  if (pathname.startsWith("/whatsapp")) return "whatsapp";
+  if (pathname.startsWith("/broadcasting")) return "whatsapp";
+  // Open/click reports for mail sent from the inbox composer. Its own module
+  // since /configs can switch the reporting off while leaving Mail on; legacy
+  // group rows that blocked "inbox" still cascade to it — see
+  // mergeRestrictedFeatures in lib/profile-access.ts.
+  if (pathname.startsWith("/campaigns")) return "campaigns";
   return null;
 }
 
@@ -108,7 +118,14 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
 
   if (pathname.startsWith("/api/fetch-emails")) return "dashboard";
   if (pathname.startsWith("/api/gmail")) return "inbox";
-  if (pathname.startsWith("/api/mailbox")) return "inbox";
+
+  // Persisting the Google refresh token is shared account infrastructure, not a
+  // Mail feature: Drive, Calendar, Forms, Sheets, Docs, CRM, Contacts,
+  // Campaigns and Extraction all authenticate with that same token via
+  // lib/gmail-auth.ts. Gating it on "inbox" meant switching Mail off silently
+  // stopped the token being refreshed and degraded every one of them, so it is
+  // gated on being signed in only.
+  if (pathname.startsWith("/api/mailbox")) return null;
 
   if (pathname.startsWith("/api/drive")) return "drive";
 
@@ -119,7 +136,7 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/api/docs")) return "docs";
 
   if (pathname.startsWith("/api/sequences")) return "sequences";
-  if (pathname.startsWith("/api/campaigns")) return "inbox";
+  if (pathname.startsWith("/api/campaigns")) return "campaigns";
 
   if (
     pathname.startsWith("/api/extract") ||
@@ -134,10 +151,22 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";
 
+  // The contact book's own data routes. Previously ungated, which meant a
+  // Contacts restriction hid /contacts but still served every contact to a
+  // direct fetch. Inbound Exotel webhooks and /api/people/photos stay ungated
+  // on purpose — the first carries no session, the second serves avatars for
+  // mail, CRM, and SMS alike.
+  if (pathname.startsWith("/api/directory-contacts")) return "contacts";
+  if (pathname.startsWith("/api/synced-contacts")) return "contacts";
+
   if (pathname.startsWith("/api/sms")) return "sms";
+  if (pathname.startsWith("/api/whatsapp")) return "whatsapp";
 
   if (pathname.startsWith("/api/broadcast")) {
     if (pathname.includes("/sms")) return "sms";
+    if (pathname.includes("/whatsapp")) return "whatsapp";
+    // Spreadsheet parser for WhatsApp broadcast mail-merge.
+    if (pathname.endsWith("/parse-wa-merge")) return "whatsapp";
     // Shared by SMS session import — gated by sign-in only.
     if (pathname.endsWith("/parse-phones")) return null;
     // The spreadsheet parser now serves the inbox's mass sending, not the
@@ -156,16 +185,22 @@ export function requestPathToFeature(pathname: string): FeatureKey | null {
 /** First workspace URL that is not in the restricted set (same order as main nav). Used when redirecting blocked committee users. */
 export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
   const blocked = new Set(restricted);
+  // Sidebar order, so a redirected user lands on the first thing they can
+  // actually see in the nav.
   const candidates = [
     "/inbox",
+    "/sequences",
+    "/campaigns",
+    "/contacts",
+    "/crm",
     "/drive",
+    "/calendar",
     "/forms",
     "/sheets",
     "/docs",
-    "/sequences",
+    "/sms",
+    "/whatsapp",
     "/dashboard",
-    "/calendar",
-    "/contacts",
   ];
   for (const path of candidates) {
     const f = pathToFeature(path);

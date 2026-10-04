@@ -5,6 +5,9 @@ import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import { getAuthedRequest } from "@/lib/api-auth";
+import { isConfigsEmailAllowed } from "@/lib/configs-access";
+import { disabledFeaturesFromConfig } from "@/lib/module-config";
+import { loadModuleConfig } from "@/lib/module-config-store";
 
 export const runtime = "nodejs";
 
@@ -20,6 +23,11 @@ export async function GET(request: Request) {
     }
     user = data.user;
   }
+
+  // Platform module config travels with the session payload so the client has
+  // it without a second request, and picks changes up on its next revalidate.
+  const disabledModules = disabledFeaturesFromConfig(await loadModuleConfig(supabase));
+  const isConfigsAdmin = isConfigsEmailAllowed(user.email);
 
   let { data: profile, error: profileErr } = await supabase
     .from("profiles")
@@ -44,6 +52,8 @@ export async function GET(request: Request) {
       role: "staff",
       groupName: null,
       restrictedFeatures: [],
+      disabledModules,
+      isConfigsAdmin,
       mailboxOwnerId: null,
       mailboxEmail: null,
       hasStoredMailbox: false,
@@ -62,6 +72,8 @@ export async function GET(request: Request) {
       role: "staff",
       groupName: null,
       restrictedFeatures: [],
+      disabledModules,
+      isConfigsAdmin,
       mailboxOwnerId: null,
       mailboxEmail: null,
       hasStoredMailbox: false,
@@ -132,6 +144,8 @@ export async function GET(request: Request) {
       },
       group
     ),
+    disabledModules,
+    isConfigsAdmin,
     groupName: group?.name ?? null,
     mailboxOwnerId,
     mailboxEmail,

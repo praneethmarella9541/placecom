@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { Pause, RefreshCw } from "lucide-react";
 import { IconX } from "@/components/Icons";
 import {
@@ -149,6 +150,9 @@ async function refreshStatus() {
  * is open. Drives the resumable batch loop against /api/directory-contacts/sync.
  */
 export function ContactSyncStatus() {
+  // Mounted globally in AppShell, but it drives the Contacts directory sync —
+  // with Contacts off there is nothing to sync and every poll would 403.
+  const contactsEnabled = useModuleVisibility().isVisible("contacts");
   const snapshot = useContactSyncSnapshot();
   const loopActiveRef = useRef(false);
   /** Epoch ms before which driveLoop won't re-POST after a 409 — see driveLoop. */
@@ -172,10 +176,12 @@ export function ContactSyncStatus() {
   }, [snapshot.status]);
 
   useEffect(() => {
+    if (!contactsEnabled) return;
     void refreshStatus();
-  }, []);
+  }, [contactsEnabled]);
 
   useEffect(() => {
+    if (!contactsEnabled) return;
     async function driveLoop() {
       if (loopActiveRef.current) return;
       const wantsRun = consumeContactSyncRunRequest();
@@ -333,12 +339,13 @@ export function ContactSyncStatus() {
       window.clearInterval(slowTick);
       window.clearInterval(liveProgressTick);
     };
-  }, []);
+  }, [contactsEnabled]);
 
   // Paused keeps the pill up rather than hiding it: an unfinished sync is state
   // the user needs to know persists across sessions, and this is where they get
   // to act on it. It stays until they resume or the run completes.
   const paused = snapshot.status === "paused";
+  if (!contactsEnabled) return null;
   if ((snapshot.status !== "running" && !paused) || dismissed) return null;
 
   return (

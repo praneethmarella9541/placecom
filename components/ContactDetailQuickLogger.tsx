@@ -2,29 +2,41 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { IconCalendar, IconMail, IconMenu } from "@/components/Icons";
+import { IconCalendar, IconMail, IconMenu, IconWhatsAppLogo } from "@/components/Icons";
 import { titleCase } from "@/lib/title-case";
+import { useModuleVisibility } from "@/lib/module-visibility";
 
 type QuickPost = "note" | null;
 
 /**
- * Quick Interaction Logger — Send Email / Schedule Meeting / Add Note.
+ * Quick Interaction Logger — Send Email / Schedule Meeting / Send WhatsApp / Add Note.
  * Email/Meeting deep-link into existing flows (/inbox?composeTo=, /calendar);
  * Add Note posts straight to crm_contact_notes (kind: note).
+ *
+ * The two deep links only appear while their target module is on. Offering
+ * "Schedule meeting" with Calendar switched off would bounce the user back to
+ * their first reachable page; "Add note" is local to Contacts and always shown.
  */
 export function ContactDetailQuickLogger({
   contactId,
   email,
+  phone,
   name,
   company,
   onLogged,
 }: {
   contactId: string;
   email: string | null;
+  phone: string | null;
   name?: string | null;
   company?: string | null;
   onLogged: () => void;
 }) {
+  const { isVisible } = useModuleVisibility();
+  const mailEnabled = isVisible("inbox");
+  const calendarEnabled = isVisible("calendar");
+  const whatsappEnabled = isVisible("whatsapp");
+
   const [open, setOpen] = useState<QuickPost>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -59,7 +71,7 @@ export function ContactDetailQuickLogger({
         {titleCase("Quick interaction logger")}
       </h3>
       <div className="flex flex-wrap gap-2">
-        {email ? (
+        {email && mailEnabled ? (
           <Link
             href={`/inbox?composeTo=${encodeURIComponent(email)}`}
             className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
@@ -68,6 +80,7 @@ export function ContactDetailQuickLogger({
             {titleCase("Send email")}
           </Link>
         ) : null}
+        {calendarEnabled && (
         <Link
           href={(() => {
             const params = new URLSearchParams({ action: "new" });
@@ -81,6 +94,16 @@ export function ContactDetailQuickLogger({
           <IconCalendar className="h-3.5 w-3.5" />
           {titleCase("Schedule meeting")}
         </Link>
+        )}
+        {phone && whatsappEnabled && (
+          <Link
+            href={`/whatsapp?peer=${encodeURIComponent(phone)}`}
+            className="btn-ghost inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold"
+          >
+            <IconWhatsAppLogo className="h-3.5 w-3.5" />
+            {titleCase("Send WhatsApp")}
+          </Link>
+        )}
         <button
           type="button"
           onClick={() => setOpen(open === "note" ? null : "note")}

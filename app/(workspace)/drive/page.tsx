@@ -17,6 +17,7 @@ import {
   IconX,
 } from "@/components/Icons";
 import { supportsInAppPreview, isOfficeMimeType, isSheetConvertibleMimeType } from "@/lib/drive-file-proxy";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
 import { DriveDetailsPanel } from "@/components/DriveDetailsPanel";
@@ -162,6 +163,9 @@ type SortKey = "name" | "modifiedTime" | "size";
 
 export default function DrivePage() {
   const router = useRouter();
+  // Converting a CSV/XLSX lands the user in /sheets, so the action is only
+  // offered while the Sheets module is on.
+  const sheetsEnabled = useModuleVisibility().isVisible("sheets");
   const topbarActionsNode = useWorkspaceTopbarActionsNode();
   /** Top-level sidebar selection. "shared-drive" is internal — the actual
    *  drive id is held separately in currentSharedDrive. */
@@ -2853,7 +2857,7 @@ export default function DrivePage() {
                   {titleCase("Open in Drive")}
                 </a>
               ) : null}
-              {isSheetConvertibleMimeType(previewFile.mimeType, previewFile.name) ? (
+              {sheetsEnabled && isSheetConvertibleMimeType(previewFile.mimeType, previewFile.name) ? (
                 <button
                   data-testid="drive-preview-open-in-sheets"
                   type="button"

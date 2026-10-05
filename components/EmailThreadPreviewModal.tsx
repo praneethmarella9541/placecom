@@ -468,6 +468,9 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
               subject={subject}
               bodyHtml={body}
               canSetSubject={false}
+              // This reply window only takes small inline files, so a
+              // template's attachments stay behind (the modal says so).
+              attachmentsSupported={false}
               draftIsEmpty={richTextIsEmpty(body)}
               onApply={(template, mode) =>
                 setBody((prev) =>

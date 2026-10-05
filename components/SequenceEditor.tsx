@@ -5,7 +5,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, ChevronLeft, Loader2, Mail, Save, Settings2, Trash2, Users } from "lucide-react";
 import { SequenceStatusPill } from "@/components/SequenceStatusPill";
-import { SequenceStepList } from "@/components/SequenceStepList";
+import { sendsAsDriveLink } from "@/lib/gmail-draft-limits";
+import { uploadToSignedUrl } from "@/lib/upload-to-signed-url";
+import { uploadLargeFileToDrive } from "@/lib/upload-large-file-to-drive";
+import { SequenceStepList, type FileProgress } from "@/components/SequenceStepList";
 import { SequenceRecipientsTab } from "@/components/SequenceRecipientsTab";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { UnsavedChangesDialog } from "@/components/UnsavedChangesDialog";
@@ -518,26 +521,114 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
   }, [previewingIndex, steps, previewRecipients, sequence]);
 
   /**
-   * Upload one at a time: each file is its own request, so a batch that busts
-   * the per-step size cap still lands everything that fits and reports the
-   * first refusal instead of failing the lot.
+   * Attach files one at a time, by the rule compose and templates use
+   * (sendsAsDriveLink): up to Gmail's 25 MB a file goes straight to storage on a
+   * signed URL and is sent as an attachment; past that it goes to Google Drive
+   * through compose's own upload, is shared by link, and is sent as a link.
+   * Each file lands on its own, so one failure doesn't undo the others.
    */
-  async function uploadAttachments(stepId: string, files: File[]) {
-    for (const file of files) {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch(
-        `/api/sequences/${encodeURIComponent(sequenceId)}/steps/${encodeURIComponent(stepId)}/attachments`,
-        { method: "POST", body: form },
-      );
-      const data = (await res.json()) as { error?: string; attachment?: SequenceStepAttachment };
-      if (!res.ok || !data.attachment) throw new Error(data.error || `Could not attach ${file.name}`);
+  async function uploadAttachments(
+    stepId: string,
+    files: File[],
+    onFileProgress?: FileProgress,
+  ) {
+    const base = `/api/sequences/${encodeURIComponent(sequenceId)}/steps/${encodeURIComponent(stepId)}/attachments`;
+    const record = async (payload: unknown, name: string) => {
+      const res = await fetch(base, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        attachment?: SequenceStepAttachment;
+      };
+      if (!res.ok || !data.attachment) throw new Error(data.error || `Could not attach ${name}`);
       const added = data.attachment;
       setAttachmentsByStep((prev) => ({
         ...prev,
         [stepId]: [...(prev[stepId] ?? []), added],
       }));
+    };
+
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      if (sendsAsDriveLink(file.size)) {
+        let driveFile;
+        try {
+          driveFile = await uploadLargeFileToDrive(file, (percent) =>
+            onFileProgress?.(index, { percent, kind: "drive" }),
+          );
+        } catch (e) {
+          throw new Error(
+            `Could not put "${file.name}" on Google Drive: ${e instanceof Error ? e.message : "network error"}`,
+          );
+        }
+        await record(
+          {
+            driveFile: {
+              id: driveFile.id,
+              name: driveFile.name || file.name,
+              mimeType: driveFile.mimeType || file.type,
+              size: file.size,
+              webViewLink: driveFile.webViewLink,
+            },
+          },
+          file.name,
+        );
+        onFileProgress?.(index, "done");
+        continue;
+      }
+
+      const signRes = await fetch(base, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, size: file.size }),
+      });
+      const signed = (await signRes.json().catch(() => ({}))) as {
+        path?: string;
+        signedUrl?: string;
+        error?: string;
+      };
+      if (!signRes.ok || !signed.path || !signed.signedUrl) {
+        throw new Error(signed.error || `Could not attach ${file.name}`);
+      }
+      try {
+        await uploadToSignedUrl(signed.signedUrl, file, (percent) =>
+          onFileProgress?.(index, { percent, kind: "attachment" }),
+        );
+      } catch (e) {
+        throw new Error(
+          `Could not upload "${file.name}": ${e instanceof Error ? e.message : "network error"}`,
+        );
+      }
+      await record({ path: signed.path, filename: file.name, mimeType: file.type }, file.name);
+      onFileProgress?.(index, "done");
     }
+  }
+
+  /** Copies a template's files onto the step — attachments and Drive links alike. */
+  async function applyTemplateAttachments(stepId: string, templateId: string) {
+    const res = await fetch(
+      `/api/sequences/${encodeURIComponent(sequenceId)}/steps/${encodeURIComponent(stepId)}/attachments/from-template`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templateId }),
+      },
+    );
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      attachments?: SequenceStepAttachment[];
+    };
+    if (!res.ok || !data.attachments) {
+      throw new Error(data.error || "Could not add the template's attachments");
+    }
+    const added = data.attachments;
+    setAttachmentsByStep((prev) => ({
+      ...prev,
+      [stepId]: [...(prev[stepId] ?? []), ...added],
+    }));
   }
 
   async function removeAttachment(stepId: string, attachmentId: string) {
@@ -774,6 +865,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
           attachmentsByStep={attachmentsByStep}
           onUploadAttachments={uploadAttachments}
           onRemoveAttachment={removeAttachment}
+          onApplyTemplateAttachments={applyTemplateAttachments}
         />
       ) : null}
 

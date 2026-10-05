@@ -16,7 +16,7 @@ import { IconX } from "@/components/Icons";
 import { GMAIL_COMPOSE_DIALOG_BORDER, GMAIL_COMPOSE_HEADER } from "@/lib/gmail-theme";
 import { pickRandomComposeProTip } from "@/lib/compose-pro-tips";
 import type { ComposeDraftSaveStatus } from "@/lib/gmail-draft-autosave";
-import type { ComposeVariable } from "@/lib/compose-variables";
+import type { ComposeVariable, UnknownPlaceholderMode } from "@/lib/compose-variables";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 
@@ -64,6 +64,8 @@ export type GmailComposeDialogProps = {
   placement?: "docked" | "centered";
   /** Merge variables offered by the body editor's `{` picker. */
   variables?: ComposeVariable[];
+  /** How subject/body placeholders outside `variables` are drawn. */
+  unknownPlaceholders?: UnknownPlaceholderMode;
   /**
    * Called when the variable button is used on a draft that has no variables
    * to offer. Supplying it keeps the button visible outside mass sending, so
@@ -113,6 +115,13 @@ export type GmailComposeDialogProps = {
     missingKeys?: string[];
     /** No directory card matched — explains why several variables are blank at once. */
     noContactCard?: boolean;
+    /**
+     * Placeholders matching none of an imported list's columns. Every
+     * recipient is missing these, so they get their own line in the banner.
+     */
+    unknownKeys?: string[];
+    /** Name of the imported file, for that line's wording. */
+    unknownSource?: string;
     /** Campaign-wide default per variable key, editable from the warning banner. */
     fallbacks?: Record<string, string>;
     onFallbackChange?: (key: string, value: string) => void;
@@ -163,6 +172,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     onDismissComposeError,
     placement = "docked",
     variables,
+    unknownPlaceholders,
     onVariableBlocked,
     recipientsLocked,
     lockedRecipientCount = 0,
@@ -408,7 +418,11 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           </div>
 
           <div className="flex min-h-0 flex-1">
-          <div className="scrollbar-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white">
+          {/* Attachments sit outside the scrolling area, pinned to the bottom of
+              the column — on the review screen the whole mail scrolls above
+              them, and they would otherwise ride along wherever it ends. */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+          <div className="scrollbar-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 
             {/* Read-only sender identity. Sends always go from the connected
                 mailbox, so this is information, not a choice. Compose only —
@@ -527,6 +541,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                       onChange={onSubjectChange}
                       placeholder="Subject"
                       variables={variables}
+                      unknownPlaceholders={unknownPlaceholders}
                     />
                   </div>
                 )}
@@ -535,6 +550,25 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
 
             {reviewing ? (
               <>
+                {review.unknownKeys && review.unknownKeys.length > 0 && (
+                  <div className="border-b border-[#f1f3f4] bg-[#fce8e6] px-4 py-2 text-[12px] leading-snug text-[#c5221f]">
+                    <span>
+                      {review.unknownSource ? `Not a column in ${review.unknownSource}` : "Not a column in the imported file"}
+                      , so these would be sent as typed. Hover a field to set a value for every recipient:
+                    </span>
+                    <span className="ml-1 inline-flex flex-wrap items-center gap-1 align-middle">
+                      {review.unknownKeys.map((k) => (
+                        <VariableFallbackChip
+                          key={k}
+                          variableKey={k}
+                          value={review.fallbacks?.[k] ?? ""}
+                          onChange={(v) => review.onFallbackChange?.(k, v)}
+                          hint="No column has this, so the same value goes to every recipient."
+                        />
+                      ))}
+                    </span>
+                  </div>
+                )}
                 {review.missingKeys && review.missingKeys.length > 0 && (
                   <div className="border-b border-[#f1f3f4] bg-[#fef7e0] px-4 py-2 text-[12px] leading-snug text-[#b06000]">
                     <span>
@@ -574,11 +608,17 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                   placeholder={bodyPlaceholder}
                   autoFocus
                   variables={variables}
+                  unknownPlaceholders={unknownPlaceholders}
                 />
               </div>
             )}
 
-            {attachmentChips}
+          </div>
+            {attachmentChips ? (
+              <div className="scrollbar-thin max-h-[40%] shrink-0 overflow-y-auto">
+                {attachmentChips}
+              </div>
+            ) : null}
           </div>
           {sidePanel}
           </div>

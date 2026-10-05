@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { MailTemplate, MailTemplateInput } from "@/lib/mail-template-types";
+import { sendsAsDriveLink } from "@/lib/gmail-draft-limits";
+import { uploadToSignedUrl } from "@/lib/upload-to-signed-url";
+import { uploadLargeFileToDrive } from "@/lib/upload-large-file-to-drive";
+import {
+  type MailTemplate,
+  type MailTemplateAttachment,
+  type MailTemplateInput,
+} from "@/lib/mail-template-types";
 
 type ListResponse = { templates?: MailTemplate[]; configured?: boolean; error?: string };
 type OneResponse = { template?: MailTemplate; error?: string };
@@ -50,12 +57,138 @@ async function fetchTemplates(): Promise<MailTemplate[]> {
   return inflight;
 }
 
+/**
+ * Templates whose files are still being copied into a draft or sequence step,
+ * with a count because the same template can be mid-copy in two places. Kept
+ * here, beside the cache, because the modal that offers "Use" has usually
+ * closed by the time the copy it started finishes — the hosts mark the copy,
+ * the modal reads it, and "Use" stays off until it is done, so a second click
+ * can't attach the same files twice.
+ */
+const copying = new Map<string, number>();
+const copySubscribers = new Set<(ids: Set<string>) => void>();
+
+function copyingIds(): Set<string> {
+  return new Set(Array.from(copying.keys()));
+}
+
+/** Mark a template as mid-copy; call the returned function once it has finished. */
+export function markTemplateCopy(templateId: string): () => void {
+  copying.set(templateId, (copying.get(templateId) ?? 0) + 1);
+  copySubscribers.forEach((fn) => fn(copyingIds()));
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    const left = (copying.get(templateId) ?? 1) - 1;
+    if (left <= 0) copying.delete(templateId);
+    else copying.set(templateId, left);
+    copySubscribers.forEach((fn) => fn(copyingIds()));
+  };
+}
+
+/** Ids of templates whose files are still being copied somewhere. */
+export function useCopyingTemplates(): Set<string> {
+  const [ids, setIds] = useState<Set<string>>(copyingIds);
+  useEffect(() => {
+    copySubscribers.add(setIds);
+    // A copy may have finished between render and subscribe.
+    setIds(copyingIds());
+    return () => {
+      copySubscribers.delete(setIds);
+    };
+  }, []);
+  return ids;
+}
+
+/**
+ * A file picked in the template editor and already uploaded — to storage, or
+ * to Google Drive when it is over Gmail's 25 MB (sendsAsDriveLink) — waiting
+ * for Save to record it against the template.
+ */
+export type PickedUpload =
+  | { kind: "stored"; path: string; filename: string; mimeType: string }
+  | {
+      kind: "drive";
+      driveFile: { id: string; name: string; mimeType: string; size: number; webViewLink: string };
+    };
+
+/**
+ * Upload a picked file straight away, reporting progress — the way compose
+ * uploads an attachment the moment it is added — rather than waiting for Save.
+ */
+export async function uploadPickedFile(
+  file: File,
+  onProgress?: (percent: number) => void
+): Promise<PickedUpload> {
+  if (sendsAsDriveLink(file.size)) {
+    let driveFile;
+    try {
+      driveFile = await uploadLargeFileToDrive(file, onProgress);
+    } catch (e) {
+      throw new Error(
+        `Could not put "${file.name}" on Google Drive: ${e instanceof Error ? e.message : "network error"}`
+      );
+    }
+    return {
+      kind: "drive",
+      driveFile: {
+        id: driveFile.id,
+        name: driveFile.name || file.name,
+        mimeType: driveFile.mimeType || file.type || "application/octet-stream",
+        size: file.size,
+        webViewLink: driveFile.webViewLink,
+      },
+    };
+  }
+
+  const signRes = await fetch("/api/mail-templates/uploads", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, size: file.size }),
+  });
+  const signed = (await signRes.json().catch(() => ({}))) as {
+    path?: string;
+    signedUrl?: string;
+    error?: string;
+  };
+  if (!signRes.ok || !signed.path || !signed.signedUrl) {
+    throw new Error(signed.error || `Could not attach "${file.name}"`);
+  }
+  try {
+    await uploadToSignedUrl(signed.signedUrl, file, onProgress);
+  } catch (e) {
+    throw new Error(
+      `Could not upload "${file.name}": ${e instanceof Error ? e.message : "network error"}`
+    );
+  }
+  return { kind: "stored", path: signed.path, filename: file.name, mimeType: file.type };
+}
+
+/**
+ * Drop an upload that was never saved (removed before Save, or the edit was
+ * discarded). Best-effort; a Drive file stays in the user's Drive, as compose's do.
+ */
+export function discardPickedUpload(upload: PickedUpload): void {
+  if (upload.kind !== "stored") return;
+  void fetch("/api/mail-templates/uploads", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: upload.path }),
+  }).catch(() => {});
+}
+
 /** Keeps the cache ordered the way the API returns it: most recently used first. */
 function byRecency(a: MailTemplate, b: MailTemplate): number {
   const aKey = a.lastUsedAt ?? "";
   const bKey = b.lastUsedAt ?? "";
   if (aKey !== bKey) return bKey.localeCompare(aKey);
   return b.updatedAt.localeCompare(a.updatedAt);
+}
+
+/** Rewrite one cached template in place, keeping the list's order. */
+function patchCached(id: string, fn: (t: MailTemplate) => MailTemplate) {
+  publish((cache ?? []).map((t) => (t.id === id ? fn(t) : t)));
 }
 
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -151,5 +284,57 @@ export function useMailTemplates(enabled: boolean) {
     }).catch(() => {});
   }, []);
 
-  return { templates, loading, error, configured, create, update, remove, touch };
+  /**
+   * Record a file that was already uploaded when it was picked (see
+   * uploadPickedFile) against a saved template. Fast — the bytes are in place.
+   */
+  const recordUpload = useCallback(
+    async (templateId: string, upload: PickedUpload): Promise<MailTemplateAttachment> => {
+      const res = await fetch(`/api/mail-templates/${templateId}/attachments`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          upload.kind === "drive"
+            ? { driveFile: upload.driveFile }
+            : { path: upload.path, filename: upload.filename, mimeType: upload.mimeType }
+        ),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        attachment?: MailTemplateAttachment;
+        error?: string;
+      };
+      const name = upload.kind === "drive" ? upload.driveFile.name : upload.filename;
+      if (!res.ok || !data.attachment) {
+        throw new Error(data.error || `Could not attach "${name}"`);
+      }
+      const added = data.attachment;
+      patchCached(templateId, (t) => ({ ...t, attachments: [...t.attachments, added] }));
+      return added;
+    },
+    []
+  );
+
+  const removeAttachment = useCallback(async (templateId: string, attachmentId: string) => {
+    const res = await fetch(`/api/mail-templates/${templateId}/attachments/${attachmentId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) throw new Error(await readError(res, "Could not remove the attachment"));
+    patchCached(templateId, (t) => ({
+      ...t,
+      attachments: t.attachments.filter((a) => a.id !== attachmentId),
+    }));
+  }, []);
+
+  return {
+    templates,
+    loading,
+    error,
+    configured,
+    create,
+    update,
+    remove,
+    touch,
+    recordUpload,
+    removeAttachment,
+  };
 }

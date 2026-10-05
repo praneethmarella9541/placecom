@@ -1,17 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { FileText, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { FileText, Loader2, Paperclip, Plus, Search, Trash2, X } from "lucide-react";
 
+import { AttachmentUploadRow } from "@/components/AttachmentUploadRow";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { SubjectWithVariables } from "@/components/SubjectWithVariables";
-import { useMailTemplates } from "@/hooks/useMailTemplates";
 import {
+  discardPickedUpload,
+  uploadPickedFile,
+  useCopyingTemplates,
+  useMailTemplates,
+  type PickedUpload,
+} from "@/hooks/useMailTemplates";
+import { formatBytes } from "@/lib/gmail-compose-types";
+import { GMAIL_ATTACHMENT_MAX_BYTES, sendsAsDriveLink } from "@/lib/gmail-draft-limits";
+import {
+  formatMb,
   MAIL_TEMPLATE_NAME_MAX,
   suggestedTemplateName,
   validateMailTemplateInput,
   type MailTemplate,
+  type MailTemplateAttachment,
 } from "@/lib/mail-template-types";
 import { COMPOSE_VARIABLES, type ComposeVariable } from "@/lib/compose-variables";
 import { cleanMailSnippet, cn } from "@/lib/utils";
@@ -50,7 +61,18 @@ type Props = {
   canSetSubject?: boolean;
   /** Nothing written yet, so applying a template cannot destroy anything. */
   draftIsEmpty: boolean;
-  onApply: (template: MailTemplate, mode: TemplateApplyMode) => void;
+  /**
+   * Put the template into the host's draft. Hosts apply the text immediately
+   * and copy the template's files in the background, showing progress where
+   * their attachments live. May throw for a problem known up front (a step
+   * with nowhere to keep files yet): the modal shows it and stays open.
+   */
+  onApply: (template: MailTemplate, mode: TemplateApplyMode) => void | Promise<void>;
+  /**
+   * False where the host cannot take the template's files (a thread reply).
+   * Using a template with files there asks first, then applies the text only.
+   */
+  attachmentsSupported?: boolean;
   /**
    * Vocabulary offered by the `{` picker while writing a template. Defaults to
    * the composer's set; the sequence editor passes its own wider one.
@@ -65,19 +87,63 @@ type Selection =
   | { kind: "new" }
   | null;
 
-type Form = { name: string; subject: string; body: string };
+/**
+ * A file in the editor: already on the template, or picked in this edit. A
+ * picked file starts uploading at once (like compose); `upload` is null while
+ * that runs and set once the bytes are in place, ready for Save to record.
+ */
+type FormAttachment =
+  | { kind: "saved"; attachment: MailTemplateAttachment }
+  | {
+      kind: "new";
+      key: string;
+      file: File;
+      /** Over Gmail's 25 MB, so it goes to Drive and travels as a link. */
+      viaDrive: boolean;
+      upload: PickedUpload | null;
+    };
 
-const EMPTY_FORM: Form = { name: "", subject: "", body: "" };
+type Form = { name: string; subject: string; body: string; attachments: FormAttachment[] };
+
+const EMPTY_FORM: Form = { name: "", subject: "", body: "", attachments: [] };
 
 /** Templates below this count read fine unsorted; above it, searching helps. */
 const SEARCH_THRESHOLD = 5;
 
 function formFromTemplate(t: MailTemplate): Form {
-  return { name: t.name, subject: t.subjectTemplate, body: t.bodyHtml };
+  return {
+    name: t.name,
+    subject: t.subjectTemplate,
+    body: t.bodyHtml,
+    attachments: t.attachments.map((attachment) => ({ kind: "saved", attachment })),
+  };
 }
 
+function attachmentKey(a: FormAttachment): string {
+  return a.kind === "saved" ? a.attachment.id : a.key;
+}
+
+function attachmentName(a: FormAttachment): string {
+  return a.kind === "saved" ? a.attachment.filename : a.file.name;
+}
+
+function attachmentSize(a: FormAttachment): number {
+  return a.kind === "saved" ? a.attachment.sizeBytes : a.file.size;
+}
+
+function attachmentViaDrive(a: FormAttachment): boolean {
+  return a.kind === "saved" ? !!a.attachment.driveFileId : a.viaDrive;
+}
+
+
 function sameForm(a: Form, b: Form): boolean {
-  return a.name === b.name && a.subject === b.subject && a.body === b.body;
+  return (
+    a.name === b.name &&
+    a.subject === b.subject &&
+    a.body === b.body &&
+    a.attachments.length === b.attachments.length &&
+    a.attachments.every((x, i) => attachmentKey(x) === attachmentKey(b.attachments[i]))
+  );
 }
 
 export function MailTemplatesButton({
@@ -86,13 +152,32 @@ export function MailTemplatesButton({
   canSetSubject = true,
   draftIsEmpty,
   onApply,
+  attachmentsSupported = true,
   variables = COMPOSE_VARIABLES,
   disabled,
 }: Props) {
   const [open, setOpen] = useState(false);
   // The list is only fetched once the modal has been opened — see useMailTemplates.
-  const { templates, loading, error, configured, create, update, remove, touch } =
-    useMailTemplates(open);
+  const {
+    templates,
+    loading,
+    error,
+    configured,
+    create,
+    update,
+    remove,
+    touch,
+    recordUpload,
+    removeAttachment,
+  } = useMailTemplates(open);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const copyingTemplates = useCopyingTemplates();
+  /** What Save is doing right now, shown next to the spinner. */
+  const [progress, setProgress] = useState<string | null>(null);
+  /** Form attachment key → upload percent, for picked files still uploading. */
+  const [uploadPct, setUploadPct] = useState<Record<string, number>>({});
+  /** Neutral heads-up (a file going to Drive) — not an error. */
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<Selection>(null);
@@ -112,6 +197,15 @@ export function MailTemplatesButton({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const dirty = !sameForm(form, baseline);
+  /** Latest form, for uploads that finish after the user has moved on. */
+  const formRef = useRef(form);
+  formRef.current = form;
+  const uploadingCount = form.attachments.filter((a) => a.kind === "new" && !a.upload).length;
+
+  /** Delete uploads picked in this edit that will now never be saved. */
+  const discardUnsaved = useCallback((list: FormAttachment[]) => {
+    for (const a of list) if (a.kind === "new" && a.upload) discardPickedUpload(a.upload);
+  }, []);
 
   /**
    * What gets stored as a template's subject when captured from the draft.
@@ -123,9 +217,13 @@ export function MailTemplatesButton({
 
   const loadSelection = useCallback(
     (next: Selection, seed?: Form) => {
+      // Leaving this edit: anything picked but not saved is dropped. (After a
+      // save every picked file is already "saved", so nothing is lost.)
+      discardUnsaved(formRef.current.attachments);
       setSelection(next);
       setConfirmDelete(false);
       setActionError(null);
+      setNotice(null);
       const nextForm =
         seed ??
         (next?.kind === "existing"
@@ -137,7 +235,7 @@ export function MailTemplatesButton({
       setForm(nextForm);
       setBaseline(nextForm);
     },
-    [templates]
+    [templates, discardUnsaved]
   );
 
   /** Guarded selection change — unsaved edits get a say first. */
@@ -155,6 +253,7 @@ export function MailTemplatesButton({
   );
 
   const close = useCallback(() => {
+    discardUnsaved(formRef.current.attachments);
     setOpen(false);
     setSelection(null);
     setForm(EMPTY_FORM);
@@ -163,8 +262,9 @@ export function MailTemplatesButton({
     setApplying(null);
     setConfirmDelete(false);
     setActionError(null);
+    setNotice(null);
     setQuery("");
-  }, []);
+  }, [discardUnsaved]);
 
   useEffect(() => {
     if (!open) return;
@@ -208,6 +308,103 @@ export function MailTemplatesButton({
     }
   }
 
+  /**
+   * The shared attachment rule (sendsAsDriveLink): a file up to Gmail's 25 MB is
+   * attached, a bigger one goes to Google Drive and travels as a link — the
+   * same as in compose. Uploading starts the moment files are picked, one at a
+   * time, each with its own progress row; Save then only records them.
+   */
+  function addFiles(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    if (files.length === 0) return;
+    const added = files.map((file) => ({
+      kind: "new" as const,
+      key: `new-${Math.random().toString(36).slice(2)}`,
+      file,
+      viaDrive: sendsAsDriveLink(file.size),
+      upload: null,
+    }));
+
+    const toDrive = files.filter((f) => sendsAsDriveLink(f.size)).map((f) => f.name);
+    setActionError(null);
+    setNotice(
+      toDrive.length === 0
+        ? null
+        : `${toDrive.length === 1 ? `"${toDrive[0]}" is` : `${toDrive.length} files are`} over Gmail's ${formatMb(GMAIL_ATTACHMENT_MAX_BYTES)} attachment limit, so ${toDrive.length === 1 ? "it goes" : "they go"} to Google Drive and will be sent as a link — the same way compose handles large files.`
+    );
+    setUploadPct((p) => ({ ...p, ...Object.fromEntries(added.map((a) => [a.key, 0])) }));
+    setForm((f) => ({ ...f, attachments: [...f.attachments, ...added] }));
+    void uploadInOrder(added);
+  }
+
+  async function uploadInOrder(entries: Array<{ key: string; file: File }>) {
+    for (const entry of entries) {
+      let upload: PickedUpload | null = null;
+      try {
+        upload = await uploadPickedFile(entry.file, (pct) =>
+          setUploadPct((p) => (entry.key in p ? { ...p, [entry.key]: pct } : p))
+        );
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : `Could not attach "${entry.file.name}"`);
+      }
+      setUploadPct((p) => {
+        const next = { ...p };
+        delete next[entry.key];
+        return next;
+      });
+
+      // The user may have discarded the edit or moved to another template
+      // while this ran; then the upload has nowhere to go.
+      const stillWanted = formRef.current.attachments.some(
+        (a) => a.kind === "new" && a.key === entry.key
+      );
+      if (upload && !stillWanted) {
+        discardPickedUpload(upload);
+        continue;
+      }
+      const done = upload;
+      setForm((f) => ({
+        ...f,
+        attachments: done
+          ? f.attachments.map((a) =>
+              a.kind === "new" && a.key === entry.key ? { ...a, upload: done } : a
+            )
+          : f.attachments.filter((a) => !(a.kind === "new" && a.key === entry.key)),
+      }));
+    }
+  }
+
+  /**
+   * Bring the template's files in line with the form: removals first, then
+   * record each picked file — already uploaded, so this is quick. The baseline
+   * moves with each one, so if one fails part-way the form still shows exactly
+   * what is left to save.
+   */
+  async function syncAttachments(templateId: string, wanted: FormAttachment[]) {
+    const keep = new Set(
+      wanted.filter((a) => a.kind === "saved").map((a) => attachmentKey(a))
+    );
+    for (const a of baseline.attachments) {
+      if (a.kind !== "saved" || keep.has(a.attachment.id)) continue;
+      setProgress(`Removing ${a.attachment.filename}…`);
+      await removeAttachment(templateId, a.attachment.id);
+      setBaseline((b) => ({
+        ...b,
+        attachments: b.attachments.filter((x) => attachmentKey(x) !== a.attachment.id),
+      }));
+    }
+    for (const a of wanted) {
+      if (a.kind !== "new" || !a.upload) continue;
+      setProgress(`Saving ${a.file.name}…`);
+      const stored = await recordUpload(templateId, a.upload);
+      const saved: FormAttachment = { kind: "saved", attachment: stored };
+      const swap = (list: FormAttachment[]) =>
+        list.map((x) => (attachmentKey(x) === a.key ? saved : x));
+      setForm((f) => ({ ...f, attachments: swap(f.attachments) }));
+      setBaseline((b) => ({ ...b, attachments: [...b.attachments, saved] }));
+    }
+  }
+
   async function save() {
     const input = {
       name: form.name.trim(),
@@ -219,34 +416,58 @@ export function MailTemplatesButton({
       setActionError(invalid);
       return false;
     }
-    if (selection?.kind === "existing") {
-      const ok = await runAction(() => update(selection.id, input));
-      if (ok) setBaseline(form);
-      return ok;
+    if (uploadingCount > 0) {
+      setActionError("Wait for the attachments to finish uploading, then save.");
+      return false;
     }
-    let createdId: string | null = null;
+    // Text first, files second: a template has to exist before anything can be
+    // stored against it, and the text should not be lost to a failed upload.
+    const snapshot = form;
+    const textSaved = (b: Form): Form => ({ ...snapshot, attachments: b.attachments });
+    let templateId: string | null = selection?.kind === "existing" ? selection.id : null;
     const ok = await runAction(async () => {
-      const created = await create(input);
-      createdId = created.id;
+      try {
+        if (templateId) {
+          await update(templateId, input);
+        } else {
+          const created = await create(input);
+          templateId = created.id;
+          // Stay on what was just written, now as a saved template, so a
+          // second edit does not create a duplicate.
+          setSelection({ kind: "existing", id: created.id });
+        }
+        setBaseline(textSaved);
+        await syncAttachments(templateId, snapshot.attachments);
+      } finally {
+        setProgress(null);
+      }
     });
-    if (ok && createdId) {
-      // Stay on what was just written, now as a saved template, so a second
-      // edit does not create a duplicate.
-      setSelection({ kind: "existing", id: createdId });
-      setBaseline(form);
-    }
     return ok;
   }
 
-  function apply(template: MailTemplate, mode: TemplateApplyMode) {
-    onApply(template, mode);
+  async function apply(template: MailTemplate, mode: TemplateApplyMode) {
+    // Hosts apply the text at once and bring the files in behind it, in their
+    // own attachment area, so the modal can close straight away.
+    const ok = await runAction(async () => {
+      await onApply(template, mode);
+    });
+    if (!ok) return;
     touch(template.id);
     close();
   }
 
+  /** Files that would be dropped because this host cannot take them. */
+  const dropsFiles = (template: MailTemplate) =>
+    !attachmentsSupported && template.attachments.length > 0;
+
+  /** Shown on a disabled "Use" while that template's files are still copying. */
+  const COPYING_TITLE = "Still adding this template's attachments — available again when that finishes";
+
   function requestApply(template: MailTemplate) {
-    // An empty draft has nothing to lose, so the click is the whole gesture.
-    if (draftIsEmpty) return apply(template, "replace");
+    if (copyingTemplates.has(template.id)) return;
+    // An empty draft has nothing to lose, so the click is the whole gesture —
+    // unless the template's files can't come along, which is worth a word first.
+    if (draftIsEmpty && !dropsFiles(template)) return void apply(template, "replace");
     setApplying(template);
   }
 
@@ -349,6 +570,9 @@ export function MailTemplatesButton({
                               name: suggestedTemplateName(draftSubject),
                               subject: draftSubject,
                               body: bodyHtml,
+                              // The draft's own files are not carried over —
+                              // attach them here, where the limit is checked.
+                              attachments: [],
                             }
                           )
                         }
@@ -418,8 +642,19 @@ export function MailTemplatesButton({
                                     }
                                     className="min-w-0 flex-1 px-3 py-2 text-left"
                                   >
-                                    <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">
-                                      {item.name}
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="truncate text-[13px] font-medium text-[var(--color-text)]">
+                                        {item.name}
+                                      </span>
+                                      {item.attachments.length > 0 ? (
+                                        <span
+                                          className="flex shrink-0 items-center gap-0.5 text-[11px] text-[var(--color-text-faint)]"
+                                          title={`${item.attachments.length} attachment${item.attachments.length === 1 ? "" : "s"}`}
+                                        >
+                                          <Paperclip className="h-3 w-3" strokeWidth={2} />
+                                          {item.attachments.length}
+                                        </span>
+                                      ) : null}
                                     </span>
                                     <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-faint)]">
                                       {(canSetSubject && item.subjectTemplate.trim()) ||
@@ -429,7 +664,12 @@ export function MailTemplatesButton({
                                   </button>
                                   <button
                                     type="button"
-                                    title={`Use ${item.name} in the draft`}
+                                    disabled={copyingTemplates.has(item.id)}
+                                    title={
+                                      copyingTemplates.has(item.id)
+                                        ? COPYING_TITLE
+                                        : `Use ${item.name} in the draft`
+                                    }
                                     onClick={() => {
                                       // Unsaved edits to another template are not
                                       // this template's problem, but leaving the
@@ -444,8 +684,11 @@ export function MailTemplatesButton({
                                     // is no hover on a touch screen, and an
                                     // invisible-but-tappable control is worse
                                     // than a quiet one.
-                                    className="mr-2 shrink-0 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]"
+                                    className="mr-2 inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
                                   >
+                                    {copyingTemplates.has(item.id) ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : null}
                                     Use
                                   </button>
                                 </div>
@@ -471,7 +714,7 @@ export function MailTemplatesButton({
                             : "Pick a template to use or edit"}
                         </p>
                         <p className="mt-1 max-w-[320px] text-[12px] leading-snug text-[var(--color-text-faint)]">
-                          Templates hold a subject and a body. Placeholders like{" "}
+                          Templates hold a subject, a body and any attachments. Placeholders like{" "}
                           <code className="rounded bg-[var(--color-surface-2)] px-1">
                             {"{name}"}
                           </code>{" "}
@@ -527,8 +770,113 @@ export function MailTemplatesButton({
                             placeholder="Hi {name}, …"
                             variables={variables}
                           />
+
+                          <label className="mb-1 mt-3 block text-[11.5px] font-medium text-[var(--color-text-muted)]">
+                            {titleCase("Attachments")}
+                          </label>
+                          {form.attachments.length > 0 ? (
+                            <div className="mb-2 flex flex-wrap gap-1.5">
+                              {form.attachments.map((a) =>
+                                attachmentKey(a) in uploadPct ? (
+                                  <div key={attachmentKey(a)} className="w-full">
+                                    <AttachmentUploadRow
+                                      theme="app"
+                                      name={attachmentName(a)}
+                                      percent={uploadPct[attachmentKey(a)]}
+                                      kind={attachmentViaDrive(a) ? "drive" : "attachment"}
+                                    />
+                                  </div>
+                                ) : (
+                                <span
+                                  key={attachmentKey(a)}
+                                  className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] py-1 pl-2.5 pr-1.5 text-[12px] text-[var(--color-text)]"
+                                >
+                                  <Paperclip
+                                    className="h-3 w-3 shrink-0 text-[var(--color-text-faint)]"
+                                    strokeWidth={2}
+                                  />
+                                  <span className="truncate">{attachmentName(a)}</span>
+                                  <span className="shrink-0 font-mono text-[10.5px] text-[var(--color-text-faint)]">
+                                    {formatBytes(attachmentSize(a))}
+                                  </span>
+                                  {attachmentViaDrive(a) ? (
+                                    <span
+                                      className="shrink-0 rounded bg-[var(--color-surface-offset)] px-1 text-[10.5px] text-[var(--color-text-muted)]"
+                                      title="Over Gmail's 25 MB per file — sent as a Google Drive link"
+                                    >
+                                      Drive link
+                                    </span>
+                                  ) : null}
+                                  {a.kind === "new" ? (
+                                    <span className="shrink-0 text-[10.5px] text-[var(--color-text-faint)]">
+                                      not saved
+                                    </span>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      // Picked in this edit and never saved —
+                                      // its upload has nowhere to go now.
+                                      if (a.kind === "new" && a.upload) {
+                                        discardPickedUpload(a.upload);
+                                      }
+                                      setForm((f) => ({
+                                        ...f,
+                                        attachments: f.attachments.filter(
+                                          (x) => attachmentKey(x) !== attachmentKey(a)
+                                        ),
+                                      }));
+                                    }}
+                                    aria-label={`Remove ${attachmentName(a)}`}
+                                    className="shrink-0 rounded p-0.5 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-danger)]"
+                                  >
+                                    <X className="h-3 w-3" strokeWidth={2.5} />
+                                  </button>
+                                </span>
+                                )
+                              )}
+                            </div>
+                          ) : null}
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => {
+                              addFiles(e.target.files);
+                              // Same file picked twice in a row must fire again.
+                              e.target.value = "";
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => fileInputRef.current?.click()}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)] disabled:opacity-50"
+                          >
+                            <Paperclip className="h-3.5 w-3.5" strokeWidth={2} />
+                            {titleCase("Attach files")}
+                          </button>
+                          <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
+                            Files over {formatMb(GMAIL_ATTACHMENT_MAX_BYTES)} are shared as a Google
+                            Drive link, the same as in compose.
+                          </p>
                       </div>
                     )}
+
+                    {notice && !progress ? (
+                      <p className="shrink-0 border-t border-[var(--color-border)] px-4 py-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                        {notice}
+                      </p>
+                    ) : null}
+
+                    {progress ? (
+                      <p className="flex shrink-0 items-center gap-2 border-t border-[var(--color-border)] px-4 py-2 text-[12px] text-[var(--color-text-muted)]">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {progress}
+                      </p>
+                    ) : null}
 
                     {actionError ? (
                           <p className="shrink-0 border-t border-[var(--color-border)] px-4 py-2 text-[12px] leading-snug text-[var(--color-danger)]">
@@ -541,27 +889,53 @@ export function MailTemplatesButton({
                             destructive thing this modal can do. */}
                         {applying ? (
                           <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3">
-                            <p className="text-[12px] leading-snug text-[var(--color-text-muted)]">
-                              Your draft already has content. Replace it, or add “{applying.name}”
-                              below what you have written?
-                            </p>
-                            <div className="mt-2 flex flex-wrap gap-2">
+                            {dropsFiles(applying) ? (
+                              <p className="mb-1.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                                “{applying.name}” has {applying.attachments.length} attachment
+                                {applying.attachments.length === 1 ? "" : "s"}, which can’t be added
+                                here. Only its text will be used — attach the files from the main
+                                compose window instead.
+                              </p>
+                            ) : null}
+                            {draftIsEmpty ? null : (
+                              <p className="text-[12px] leading-snug text-[var(--color-text-muted)]">
+                                Your draft already has content. Replace it, or add “{applying.name}”
+                                below what you have written?
+                              </p>
+                            )}
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              {draftIsEmpty ? (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void apply(applying, "replace")}
+                                  className="btn-primary-copper"
+                                >
+                                  Use text only
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void apply(applying, "replace")}
+                                    className="btn-primary-copper"
+                                  >
+                                    Replace draft
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void apply(applying, "append")}
+                                    className="btn-ghost border border-[var(--color-border)]"
+                                  >
+                                    Add below
+                                  </button>
+                                </>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => apply(applying, "replace")}
-                                className="btn-primary-copper"
-                              >
-                                Replace draft
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => apply(applying, "append")}
-                                className="btn-ghost border border-[var(--color-border)]"
-                              >
-                                Add below
-                              </button>
-                              <button
-                                type="button"
+                                disabled={busy}
                                 onClick={() => setApplying(null)}
                                 className="btn-ghost"
                               >
@@ -643,7 +1017,12 @@ export function MailTemplatesButton({
                           <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--color-border)] px-4 py-3">
                             <button
                               type="button"
-                              disabled={busy || !dirty || !form.name.trim()}
+                              disabled={busy || !dirty || !form.name.trim() || uploadingCount > 0}
+                              title={
+                                uploadingCount > 0
+                                  ? "Wait for the attachments to finish uploading"
+                                  : undefined
+                              }
                               onClick={() => void save()}
                               className="btn-primary-copper inline-flex items-center gap-1.5 disabled:pointer-events-none disabled:opacity-50"
                             >
@@ -658,8 +1037,10 @@ export function MailTemplatesButton({
                                 type="button"
                                 disabled={busy}
                                 onClick={() => {
+                                  discardUnsaved(form.attachments);
                                   setForm(baseline);
                                   setActionError(null);
+                                  setNotice(null);
                                 }}
                                 className="btn-ghost"
                               >
@@ -673,9 +1054,13 @@ export function MailTemplatesButton({
                             {selected ? (
                               <button
                                 type="button"
-                                disabled={dirty}
+                                disabled={dirty || copyingTemplates.has(selected.id)}
                                 title={
-                                  dirty ? "Save your changes before using this template" : undefined
+                                  dirty
+                                    ? "Save your changes before using this template"
+                                    : copyingTemplates.has(selected.id)
+                                      ? COPYING_TITLE
+                                      : undefined
                                 }
                                 onClick={() => requestApply(selected)}
                                 className="btn-ghost border border-[var(--color-border)] font-medium disabled:pointer-events-none disabled:opacity-50"
@@ -686,7 +1071,11 @@ export function MailTemplatesButton({
 
                             <span className="flex-1" />
 
-                            {dirty ? (
+                            {uploadingCount > 0 ? (
+                              <span className="text-[11.5px] text-[var(--color-text-faint)]">
+                                Uploading {uploadingCount} file{uploadingCount === 1 ? "" : "s"}…
+                              </span>
+                            ) : dirty ? (
                               <span className="text-[11.5px] text-[var(--color-text-faint)]">
                                 Unsaved changes
                               </span>

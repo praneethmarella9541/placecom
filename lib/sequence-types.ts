@@ -20,6 +20,9 @@ export type SendStatus = (typeof SEND_STATUSES)[number];
 
 export type SequenceStepKind = "email" | "wait";
 
+/** Private bucket for step files. The browser uploads to it with signed URLs. */
+export const SEQUENCE_ATTACHMENT_BUCKET = "sequence-attachments";
+
 export type SequenceStepAttachment = {
   id: string;
   stepId: string;
@@ -27,6 +30,12 @@ export type SequenceStepAttachment = {
   mimeType: string;
   sizeBytes: number;
   createdAt: string;
+  /**
+   * Set when the file was over Gmail's 25 MB and lives on Google Drive instead;
+   * it is sent as a link in the body, as compose does.
+   */
+  driveFileId: string | null;
+  webViewLink: string | null;
 };
 
 export type SequenceStep = {

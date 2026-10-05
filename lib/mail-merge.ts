@@ -74,6 +74,16 @@ const PLACEHOLDER_ALIASES: Record<string, string[]> = {
   company: ["column_4", "field_4", "organisation", "organization"],
 };
 
+/**
+ * Every field key a placeholder can be filled from, in lookup order: itself,
+ * then the aliases lookupField() falls back to. Lets the editor judge whether a
+ * `{token}` will merge without duplicating the alias table.
+ */
+export function mergeKeyCandidates(key: string): string[] {
+  const k = normalizeMergeFieldKey(key);
+  return [k, ...(PLACEHOLDER_ALIASES[k] || [])];
+}
+
 function lookupField(fields: Record<string, string>, key: string): string {
   const k = normalizeMergeFieldKey(key);
   if (fields[k] !== undefined && fields[k] !== "") return fields[k];

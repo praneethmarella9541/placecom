@@ -86,10 +86,19 @@ export function GmailComposeFooter({
               </FooterBtn>
             )}
 
+            {/* A labelled pill, like Templates beside it, rather than a bare
+                glyph: "{ }" alone doesn't say "personalise this mail", and the
+                feature went unnoticed. */}
             {onInsertVariable && (
-              <FooterBtn title="Insert variable" onClick={onInsertVariable}>
-                <Braces className="h-[18px] w-[18px]" strokeWidth={2} />
-              </FooterBtn>
+              <button
+                type="button"
+                onClick={onInsertVariable}
+                title="Insert a personalised field like {name}, filled in for each recipient"
+                className="ml-0.5 flex shrink-0 items-center gap-1.5 rounded-full border border-[#dadce0] px-3 py-[6px] text-[13px] font-medium leading-none text-[#3c4043] transition-colors hover:bg-[#e8eaed]"
+              >
+                <Braces className="h-4 w-4" strokeWidth={2} />
+                Variables
+              </button>
             )}
 
             {templatesButton}

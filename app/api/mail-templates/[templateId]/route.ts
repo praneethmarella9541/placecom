@@ -7,6 +7,12 @@ import {
   validateMailTemplateInput,
 } from "@/lib/mail-template-types";
 import { stripVariableSpans } from "@/lib/compose-variables";
+import {
+  loadAttachmentsByTemplate,
+  loadTemplateFiles,
+  removeTemplateFiles,
+  storedPaths,
+} from "@/lib/mail-template-attachments";
 
 export const runtime = "nodejs";
 
@@ -99,13 +105,22 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ template: rowToMailTemplate(data as never) });
+  // The response replaces the client's cached copy, so it has to carry the
+  // files too or an edit would make them vanish from the picker.
+  const files = await loadAttachmentsByTemplate(supabase, user.id, [params.templateId]);
+  return NextResponse.json({
+    template: rowToMailTemplate(data as never, files.get(params.templateId) ?? []),
+  });
 }
 
 /** DELETE /api/mail-templates/:id */
 export async function DELETE(request: Request, { params }: Params) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Rows cascade with the template, but storage has no foreign keys — read
+  // where the files are while the rows still say so.
+  const { rows: files } = await loadTemplateFiles(supabase, user.id, params.templateId);
 
   // Returns the deleted row so a missing id is a 404 rather than a success that
   // deleted nothing — the two are indistinguishable from the client otherwise.
@@ -120,5 +135,7 @@ export async function DELETE(request: Request, { params }: Params) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ error: "Template not found" }, { status: 404 });
 
+  // Drive-linked files stay in the user's Drive, as compose's do.
+  await removeTemplateFiles(storedPaths(files));
   return NextResponse.json({ ok: true });
 }

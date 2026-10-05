@@ -38,7 +38,8 @@ export async function DELETE(request: Request, { params }: Params) {
     .eq("id", row.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  await removeStepAttachmentFile(row.storage_path as string);
+  // A Drive-linked file has no stored bytes; it stays in the mailbox's Drive.
+  await removeStepAttachmentFile(row.storage_path as string | null);
 
   return NextResponse.json({ deleted: true });
 }

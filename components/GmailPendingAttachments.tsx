@@ -1,6 +1,7 @@
 "use client";
 
-import { Loader2, Paperclip } from "lucide-react";
+import { Paperclip } from "lucide-react";
+import { AttachmentUploadRow, type AttachmentUploadKind } from "@/components/AttachmentUploadRow";
 import { IconX } from "@/components/Icons";
 import {
   formatBytes,
@@ -14,8 +15,8 @@ import { titleCase } from "@/lib/title-case";
 type GmailPendingAttachmentsProps = {
   files: PendingFile[];
   driveUploadProgress: DriveUploadProgressMap;
-  /** When set, progress rows show Drive vs attachment upload copy. */
-  uploadProgressKind?: Record<string, "drive" | "attachment">;
+  /** What each in-flight row is becoming: an attachment, a Drive link, or a template copy. */
+  uploadProgressKind?: Record<string, AttachmentUploadKind>;
   onRemove: (index: number) => void;
 };
 
@@ -32,42 +33,15 @@ export function GmailPendingAttachments({
   return (
     <div className="border-t border-[#f1f3f4] px-3 py-2">
       <ul className="flex flex-col gap-1.5">
-        {uploading.map(([name, percent]) => {
-          const toDrive = uploadProgressKind?.[name] === "drive";
-          const statusLabel = toDrive
-            ? titleCase("Uploading to Drive…")
-            : titleCase("Uploading attachment…");
-          return (
-          <li
-            key={`uploading-${name}`}
-            className="rounded border border-[#c5e1f5] bg-[#e8f4fd] px-2 py-2 text-[12px]"
-          >
-            <div className="mb-1.5 flex items-center gap-2">
-              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[#1a73e8]" />
-              <span className="min-w-0 flex-1 truncate font-medium text-[#202124]" title={name}>
-                {name}
-              </span>
-              <span className="shrink-0 tabular-nums text-[11px] font-medium text-[#1a73e8]">
-                {percent}%
-              </span>
-            </div>
-            <div
-              className="h-1 overflow-hidden rounded-full bg-[#d2e3fc]"
-              role="progressbar"
-              aria-valuenow={percent}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label={`${statusLabel} ${percent}%`}
-            >
-              <div
-                className="h-full rounded-full bg-[#1a73e8] transition-[width] duration-200 ease-out"
-                style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
-              />
-            </div>
-            <p className="mt-1 text-[10px] text-[#5f6368]">{statusLabel}</p>
+        {uploading.map(([name, percent]) => (
+          <li key={`uploading-${name}`}>
+            <AttachmentUploadRow
+              name={name}
+              percent={percent}
+              kind={uploadProgressKind?.[name] ?? "attachment"}
+            />
           </li>
-          );
-        })}
+        ))}
         {files.map((f, i) => (
           <li
             key={i}

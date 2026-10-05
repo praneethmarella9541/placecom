@@ -9,6 +9,21 @@
  * WhatsAppTemplateMeta in lib/whatsapp-template-shared.ts.
  */
 
+import { GMAIL_ATTACHMENT_MAX_BYTES, sendsAsDriveLink } from "@/lib/gmail-draft-limits";
+
+export type MailTemplateAttachment = {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  /**
+   * Set when the file was over Gmail's 25 MB and lives on Google Drive instead.
+   * It travels as a link in the mail body, like compose's Drive attachments.
+   */
+  driveFileId: string | null;
+  webViewLink: string | null;
+};
+
 export type MailTemplate = {
   id: string;
   name: string;
@@ -18,6 +33,8 @@ export type MailTemplate = {
   bodyHtml: string;
   lastUsedAt: string | null;
   updatedAt: string;
+  /** Files that come along when the template is used. [] before migration 0068. */
+  attachments: MailTemplateAttachment[];
 };
 
 export const MAIL_TEMPLATE_NAME_MAX = 120;
@@ -68,6 +85,26 @@ export function suggestedTemplateName(subject: string, now: Date = new Date()): 
   })}`;
 }
 
+/** Private storage bucket holding template files. Uploads go to it via signed URLs. */
+export const MAIL_TEMPLATE_ATTACHMENT_BUCKET = "mail-template-attachments";
+
+/** "12.4 MB" — attachment sizes are always talked about in MB. */
+export function formatMb(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
+/**
+ * Why a file can't be stored as a template attachment, or null when it can.
+ * Under the shared rule (sendsAsDriveLink) a file over Gmail's 25 MB is a Drive
+ * link instead, which the editor arranges; the API checks again because the
+ * client can't be trusted.
+ */
+export function storedAttachmentError(name: string, sizeBytes: number): string | null {
+  if (!sendsAsDriveLink(sizeBytes)) return null;
+  return `File size exceeded: "${name}" is ${formatMb(sizeBytes)}, over Gmail's ${formatMb(GMAIL_ATTACHMENT_MAX_BYTES)} per-file limit, so it has to be shared as a Google Drive link.`;
+}
+
 type MailTemplateRow = {
   id: string;
   name: string;
@@ -77,7 +114,10 @@ type MailTemplateRow = {
   updated_at: string;
 };
 
-export function rowToMailTemplate(row: MailTemplateRow): MailTemplate {
+export function rowToMailTemplate(
+  row: MailTemplateRow,
+  attachments: MailTemplateAttachment[] = []
+): MailTemplate {
   return {
     id: row.id,
     name: row.name,
@@ -85,6 +125,32 @@ export function rowToMailTemplate(row: MailTemplateRow): MailTemplate {
     bodyHtml: row.body_html ?? "",
     lastUsedAt: row.last_used_at,
     updatedAt: row.updated_at,
+    attachments,
+  };
+}
+
+export type MailTemplateAttachmentRow = {
+  id: string;
+  template_id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  drive_file_id: string | null;
+  web_view_link: string | null;
+};
+
+export const MAIL_TEMPLATE_ATTACHMENT_COLUMNS =
+  "id, template_id, filename, mime_type, size_bytes, drive_file_id, web_view_link";
+
+export function rowToMailTemplateAttachment(row: MailTemplateAttachmentRow): MailTemplateAttachment {
+  return {
+    id: row.id,
+    filename: row.filename,
+    mimeType: row.mime_type,
+    // bigint arrives as a string from PostgREST once it outgrows a JS-safe int.
+    sizeBytes: Number(row.size_bytes),
+    driveFileId: row.drive_file_id,
+    webViewLink: row.web_view_link,
   };
 }
 

@@ -9,8 +9,10 @@ import {
 import {
   filterComposeVariables,
   wrapVariablesInHtml,
+  UNKNOWN_VARIABLE_CLASS,
   VARIABLE_SPAN_CLASS,
   type ComposeVariable,
+  type UnknownPlaceholderMode,
 } from "@/lib/compose-variables";
 
 export function richTextIsEmpty(html: string): boolean {
@@ -53,6 +55,11 @@ type Props = {
    * (code snippets, JSON) behave exactly as before.
    */
   variables?: ComposeVariable[];
+  /**
+   * How `{placeholders}` that match none of `variables` are drawn. Defaults to
+   * "ignore"; see UnknownPlaceholderMode.
+   */
+  unknownPlaceholders?: UnknownPlaceholderMode;
 };
 
 /** Caret context for an in-progress `{query` the user is typing. */
@@ -144,7 +151,7 @@ const EMOJI_GROUPS = [
   { label: "Objects", emojis: ["📎","📏","📐","✂️","🗃️","🗄️","🗑️","🔒","🔓","🔏","🔐","🔑","🗝️","🔨","🪓","⛏️","⚒️","🛠️","🗡️","⚔️","🔫","🪃","🏹","🛡️","🪚","🔧","🪛","🔩","⚙️","🗜️","⚖️","🦯","🔗","⛓️","🪝","🧲","🔮","🪄","🧿","🪬","🧸","🪅","🎭","🖼️","🎨","🧵","🪡","🧶","🪢"] },
 ];
 
-export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function RichTextEditor({ value, onChange, placeholder, className, autoFocus, variables }: Props, ref) {
+export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function RichTextEditor({ value, onChange, placeholder, className, autoFocus, variables, unknownPlaceholders = "ignore" }: Props, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastSetValueRef = useRef<string>("");
   const [activeCmds, setActiveCmds] = useState<Record<string, boolean>>({});
@@ -169,6 +176,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
 
   // Merge-variable picker (only armed when `variables` is supplied)
   const variablesEnabled = (variables?.length ?? 0) > 0;
+  // Tinting can be wanted with nothing to pick yet — an imported-list draft
+  // before its file is chosen — so it is gated separately from the picker.
+  const tintEnabled = variablesEnabled || unknownPlaceholders !== "ignore";
   const [varMenu, setVarMenu] = useState<{
     matches: ComposeVariable[];
     index: number;
@@ -219,7 +229,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
       // a reopened draft, a sequence step loaded from the database. Safe here
       // specifically: this branch only runs for an external change, and it is
       // rebuilding innerHTML regardless, so there is no caret to collapse.
-      el.innerHTML = variablesEnabled ? wrapVariablesInHtml(value, variables) : value;
+      el.innerHTML = tintEnabled
+        ? wrapVariablesInHtml(value, variables, unknownPlaceholders)
+        : value;
       // Records the incoming value, not the wrapped markup: the comparison above
       // is against what the parent holds. Storing the wrapped form would make
       // every later external set look like a change and rewrite the DOM on each
@@ -228,7 +240,19 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
       // strips these spans anyway.
       lastSetValueRef.current = value;
     }
-  }, [value, linkOpen, variablesEnabled, variables]);
+  }, [value, linkOpen, tintEnabled, variables, unknownPlaceholders]);
+
+  // Re-tint when what counts as a variable changes under unchanged text —
+  // importing a file, switching the audience tab. The effect above only fires
+  // for a new value. Skipped while the editor has focus: rebuilding innerHTML
+  // would drop the caret, and the blur pass catches up anyway.
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el || !tintEnabled || linkOpen || document.activeElement === el) return;
+    const wrapped = wrapVariablesInHtml(el.innerHTML, variables, unknownPlaceholders);
+    if (wrapped !== el.innerHTML) el.innerHTML = wrapped;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- linkOpen only guards
+  }, [tintEnabled, variables, unknownPlaceholders]);
 
   useEffect(() => {
     if (autoFocus) editorRef.current?.focus();
@@ -297,8 +321,8 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
    */
   function highlightVariablesOnBlur() {
     const el = editorRef.current;
-    if (!variablesEnabled || !el) return;
-    const wrapped = wrapVariablesInHtml(el.innerHTML, variables);
+    if (!tintEnabled || !el) return;
+    const wrapped = wrapVariablesInHtml(el.innerHTML, variables, unknownPlaceholders);
     if (wrapped !== el.innerHTML) el.innerHTML = wrapped;
   }
 
@@ -406,11 +430,13 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
 
   /** Backspace/Delete removes a whole variable token rather than one character. */
   function handleVariableDelete(e: React.KeyboardEvent<HTMLDivElement>): boolean {
-    if (!variablesEnabled) return false;
+    if (!tintEnabled) return false;
     if (e.key !== "Backspace" && e.key !== "Delete") return false;
 
     const span = adjacentVariableSpan(e.key === "Backspace");
-    if (!span) return false;
+    // A flagged token is usually a typo being fixed — let it be edited a
+    // character at a time instead of vanishing whole.
+    if (!span || span.classList.contains(UNKNOWN_VARIABLE_CLASS)) return false;
 
     const range = document.createRange();
     range.selectNode(span);
@@ -725,7 +751,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
             }
           }}
           onPaste={handlePaste}
-          className="min-h-[200px] w-full px-3 py-3 text-[13px] leading-relaxed text-[#202124] outline-none [overflow-wrap:anywhere] [&_.cv-var]:rounded [&_.cv-var]:bg-[#e8f0fe] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[#1967d2] [&_a]:text-[#1a73e8] [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-[#ccc] [&_blockquote]:pl-3 [&_blockquote]:text-[#666] [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
+          className="min-h-[200px] w-full px-3 py-3 text-[13px] leading-relaxed text-[#202124] outline-none [overflow-wrap:anywhere] [&_.cv-var]:rounded [&_.cv-var]:bg-[#e8f0fe] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[#1967d2] [&_.cv-var.cv-var-unknown]:bg-[#fce8e6] [&_.cv-var.cv-var-unknown]:text-[#c5221f] [&_a]:text-[#1a73e8] [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-[#ccc] [&_blockquote]:pl-3 [&_blockquote]:text-[#666] [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
           role="textbox"
           aria-multiline="true"
           aria-label={placeholder || "Message body"}

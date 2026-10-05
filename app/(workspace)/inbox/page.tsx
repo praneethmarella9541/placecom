@@ -32,7 +32,7 @@ import {
   MailTemplatesButton,
   type TemplateApplyMode,
 } from "@/components/MailTemplatesModal";
-import type { MailTemplate } from "@/lib/mail-template-types";
+import type { MailTemplate, MailTemplateAttachment } from "@/lib/mail-template-types";
 import { useDirectoryContacts } from "@/hooks/useDirectoryContacts";
 import { useSyncedContacts } from "@/hooks/useSyncedContacts";
 import type { DirectoryContact } from "@/lib/contact-directory";
@@ -47,6 +47,7 @@ import {
   syncedContactToMergeFields,
   templateUsesKnownVariables,
   type ComposeVariable,
+  type UnknownPlaceholderMode,
 } from "@/lib/compose-variables";
 import { listPlaceholdersInTemplate, mergeTemplate, type MailMergeRow } from "@/lib/mail-merge";
 import { GmailInlineReply } from "@/components/GmailInlineReply";
@@ -57,13 +58,14 @@ import {
   DRAFT_AUTOSAVE_DELAY_MS,
   type ComposeDraftSaveStatus,
 } from "@/lib/gmail-draft-autosave";
-import {
-  DRAFT_JSON_INLINE_MAX_BYTES,
-  GMAIL_ATTACHMENT_MAX_BYTES,
-} from "@/lib/gmail-draft-limits";
+import { sendsAsDriveLink } from "@/lib/gmail-draft-limits";
+import { markTemplateCopy } from "@/hooks/useMailTemplates";
+import { creepProgress, type AttachmentUploadKind } from "@/components/AttachmentUploadRow";
 import { uploadStagedDraftAttachment } from "@/lib/upload-staged-draft-attachment";
 import {
   pendingFileFingerprint,
+  pendingFileName,
+  pendingFileSize,
   pendingFilesFromDraftAttachments,
   type DraftApiAttachment,
   type PendingFile,
@@ -805,19 +807,6 @@ function MessageBubble({
   );
 }
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(",")[1] || "";
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 const STORAGE_SIDEBAR_W = "placecom-inbox-sidebar-w";
 const STORAGE_LIST_W = "placecom-inbox-list-w";
 
@@ -1414,10 +1403,21 @@ export default function InboxPage() {
   const [composeSubject, setComposeSubject] = useState(_restoredCompose?.subject ?? "");
   const [composeBody, setComposeBody] = useState(_restoredCompose?.body ?? "");
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
+  /**
+   * Bumped whenever the draft's files are cleared (sent, discarded, closed, a
+   * new compose). Work that finishes later — a template's attachments being
+   * copied in the background — checks it so a file never lands in the next
+   * draft instead of the one it was meant for.
+   */
+  const composeFilesGenRef = useRef(0);
+  const resetComposeFiles = useCallback(() => {
+    composeFilesGenRef.current += 1;
+    setComposeFiles([]);
+  }, []);
   /** File name → 0–100 while a large attachment uploads (Drive or staged). */
   const [driveUploadProgress, setDriveUploadProgress] = useState<Record<string, number>>({});
   const [uploadProgressKind, setUploadProgressKind] = useState<
-    Record<string, "drive" | "attachment">
+    Record<string, AttachmentUploadKind>
   >({});
   const [composeCcBccOpen, setComposeCcBccOpen] = useState(_restoredCompose?.ccBccOpen ?? false);
   // Restore as minimized if coming back from another tab, unless the user
@@ -1523,6 +1523,42 @@ export default function InboxPage() {
   );
 
   /**
+   * Placeholders the audience can't fill. Before a file is chosen there are no
+   * columns to judge against, so every `{token}` is tinted — they are written
+   * for the file about to arrive. Once it has, a token matching no column is
+   * flagged: it would go out as literal braces.
+   */
+  const unknownPlaceholders: UnknownPlaceholderMode =
+    massSending && massSource === "import" ? (massImport ? "flag" : "tint") : "ignore";
+
+  /**
+   * Placeholders in an imported-list draft that match none of its columns.
+   * Without a fallback they go out as literal braces, so the review screen
+   * offers one for each — the same chip a blank cell gets, applied to every
+   * recipient since no row has a value to prefer.
+   */
+  const draftUnknownKeys = useMemo(
+    () =>
+      massSending && massSource === "import" && massImport
+        ? reportMissingVariables(composeSubject, composeBody, [], massVariables).unknownKeys
+        : [],
+    [massSending, massSource, massImport, composeSubject, composeBody, massVariables]
+  );
+
+  /**
+   * What the editor tints and offers. A not-a-column placeholder that has been
+   * given a fallback will be filled, so it stops showing red and joins the
+   * picker — the red tint means "this will be sent as typed".
+   */
+  const editorVariables = useMemo<ComposeVariable[]>(() => {
+    if (!massSending) return COMPOSE_VARIABLES;
+    const covered = draftUnknownKeys
+      .filter((k) => variableFallbacks[k]?.trim())
+      .map((k) => ({ key: k, label: k, hint: "Fallback value, same for every recipient" }));
+    return covered.length ? [...massVariables, ...covered] : massVariables;
+  }, [massSending, massVariables, draftUnknownKeys, variableFallbacks]);
+
+  /**
    * Whether the draft uses a placeholder the *live audience* can fill — the
    * review gate. Differs from draftUsesVariables only for an imported list,
    * whose vocabulary is its own columns rather than the contact-card set.
@@ -1530,9 +1566,12 @@ export default function InboxPage() {
   const draftUsesMergeVariables = useMemo(
     () =>
       massSending
-        ? templateUsesKnownVariables(composeSubject, composeBody, massVariables)
+        ? // A not-a-column placeholder also needs the review screen — it is
+          // the only place its fallback can be set.
+          templateUsesKnownVariables(composeSubject, composeBody, massVariables) ||
+          draftUnknownKeys.length > 0
         : draftUsesVariables,
-    [massSending, composeSubject, composeBody, massVariables, draftUsesVariables]
+    [massSending, composeSubject, composeBody, massVariables, draftUsesVariables, draftUnknownKeys]
   );
 
   /**
@@ -1701,8 +1740,69 @@ export default function InboxPage() {
    * and quietly inserting in the wrong place is worse than always inserting at
    * the end, which is at least predictable.
    */
+  /**
+   * Copy one stored template file into compose's attachment staging, in the
+   * background. It shows as an "Uploading attachment…" row where the draft's
+   * attachments live, and Send / draft save wait for it like any upload.
+   */
+  const stageTemplateAttachment = useCallback(
+    async (templateId: string, attachment: MailTemplateAttachment) => {
+      const key = attachment.filename;
+      const gen = composeFilesGenRef.current;
+      setUploadProgressKind((prev) => ({ ...prev, [key]: "copy" }));
+      // The copy happens server-side, so there are no bytes to count: creep
+      // toward 90% on a timer and finish on the response.
+      const stopCreep = creepProgress((percent) =>
+        setDriveUploadProgress((prev) => ({ ...prev, [key]: Math.round(percent) }))
+      );
+
+      try {
+        const res = await fetch(`/api/mail-templates/${templateId}/attachments/stage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ attachmentIds: [attachment.id] }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          files?: PendingFile[];
+          error?: string;
+        };
+        if (!res.ok || !data.files) {
+          throw new Error(data.error || "the copy failed");
+        }
+        // The draft was sent, discarded or replaced while this ran.
+        if (composeFilesGenRef.current !== gen) return;
+        const added = data.files;
+        setComposeFiles((prev) => [...prev, ...added]);
+      } catch (e) {
+        if (composeFilesGenRef.current !== gen) return;
+        setComposeFieldError({
+          title: "Attachment not added",
+          message: `"${attachment.filename}" from the template couldn't be attached (${
+            e instanceof Error ? e.message : "network error"
+          }). Attach it again with the paperclip.`,
+        });
+      } finally {
+        stopCreep();
+        setDriveUploadProgress((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setUploadProgressKind((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      }
+    },
+    []
+  );
+
   const applyMailTemplate = useCallback(
     (template: MailTemplate, mode: TemplateApplyMode) => {
+      // Text goes in at once and the modal closes; the template's files follow
+      // in the compose window's own attachment area rather than holding the
+      // modal open on a spinner.
       if (mode === "replace") {
         // A template saved from a reply has no subject of its own. "Replace"
         // then means replace the body — clearing a subject the user typed on
@@ -1720,8 +1820,43 @@ export default function InboxPage() {
           richTextIsEmpty(prev) ? template.bodyHtml : `${prev}<br>${template.bodyHtml}`
         );
       }
+
+      if (template.attachments.length === 0) return;
+      const inDraft = new Set(
+        composeFiles.map((f) => `${pendingFileName(f)}:${pendingFileSize(f)}`)
+      );
+      // Using the same template twice shouldn't attach its files twice.
+      const adding = template.attachments.filter(
+        (a) => !inDraft.has(`${a.filename}:${a.sizeBytes}`)
+      );
+
+      // Drive-linked files are only links — nothing to copy, so they appear now.
+      const links: PendingFile[] = adding.flatMap((a) =>
+        a.driveFileId && a.webViewLink
+          ? [
+              {
+                kind: "drive" as const,
+                name: a.filename,
+                mimeType: a.mimeType,
+                size: a.sizeBytes,
+                driveFileId: a.driveFileId,
+                webViewLink: a.webViewLink,
+              },
+            ]
+          : []
+      );
+      if (links.length > 0) setComposeFiles((prev) => [...prev, ...links]);
+
+      const toCopy = adding.filter((a) => !a.driveFileId);
+      if (toCopy.length === 0) return;
+      // "Use" stays off for this template until every file has landed (or
+      // failed), so a second click can't attach the same files twice.
+      const done = markTemplateCopy(template.id);
+      void Promise.allSettled(toCopy.map((a) => stageTemplateAttachment(template.id, a))).then(
+        done
+      );
     },
-    []
+    [composeFiles, stageTemplateAttachment]
   );
 
   /**
@@ -2001,12 +2136,29 @@ export default function InboxPage() {
   );
 
   /** After a draft save, Gmail rotates messageId/attachmentId — rehydrate from server. */
-  const syncComposeFilesFromDraft = useCallback(async (draftId: string) => {
+  /**
+   * `sentFiles` is the file list (fingerprinted) the save sent. Gmail's copy
+   * only replaces the local list if the user hasn't touched it since: a file
+   * removed while the save was in flight would otherwise come straight back
+   * from Gmail, and be marked as saved so nothing ever dropped it again. When
+   * the list has moved on, it is left alone and the next autosave rewrites the
+   * Gmail draft to match it.
+   */
+  const syncComposeFilesFromDraft = useCallback(async (draftId: string, sentFiles: string[]) => {
     const res = await fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
       cache: "no-store",
     });
     if (!res.ok) return;
     const data = (await res.json()) as { attachments?: DraftApiAttachment[] };
+    const current = composeStateRef.current;
+    // Another draft is open now (this one was sent, discarded or closed), or
+    // the user added/removed a file meanwhile — Gmail's list is stale for it.
+    if (current.draftId !== draftId) return;
+    if (
+      JSON.stringify(current.files.map(pendingFileFingerprint)) !== JSON.stringify(sentFiles)
+    ) {
+      return;
+    }
     const serverFiles = pendingFilesFromDraftAttachments(data.attachments ?? []);
     const driveFiles = composeStateRef.current.files.filter((f) => f.kind === "drive");
     const merged = [...serverFiles, ...driveFiles];
@@ -2152,7 +2304,7 @@ export default function InboxPage() {
       if (preserveAttachments) {
         draftLastSavedRef.current = snapshot;
       } else if (draftId && attachmentPayloadSent) {
-        await syncComposeFilesFromDraft(draftId);
+        await syncComposeFilesFromDraft(draftId, fileFingerprints);
       } else {
         draftLastSavedRef.current = snapshot;
       }
@@ -2161,7 +2313,7 @@ export default function InboxPage() {
       const wasNewDraft = !s.draftId && !!data.draftId;
       onDraftCountChangeRef.current(wasNewDraft);
       if (draftId && preserveAttachments) {
-        void syncComposeFilesFromDraft(draftId).catch(() => {});
+        void syncComposeFilesFromDraft(draftId, fileFingerprints).catch(() => {});
       }
       return draftId ?? null;
     } catch {
@@ -2205,7 +2357,7 @@ export default function InboxPage() {
       setComposeBcc("");
       setComposeSubject("");
       setComposeBody("");
-      setComposeFiles([]);
+      resetComposeFiles();
       // Mass state lives outside the compose fields, so discarding or closing
       // the window would otherwise leave the campaign standing — and the To
       // mirror would refill the "cleared" field from it on reopen.
@@ -2218,7 +2370,7 @@ export default function InboxPage() {
     if (composeCc.trim() || composeBcc.trim()) {
       setComposeCcBccOpen(true);
     }
-  }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer, resetMassState]);
+  }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer, resetMassState, resetComposeFiles]);
 
   // Auto-open compose when navigated here with ?composeTo=email (e.g. from Google Contacts).
   // Must be registered AFTER the reset effect above so this runs last and wins.
@@ -2234,7 +2386,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject("");
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     setComposeCcBccOpen(false);
     setComposeMinimized(false);
@@ -2376,81 +2528,86 @@ export default function InboxPage() {
     return results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
+  /**
+   * Attach picked files. Every file uploads with a progress row in the
+   * attachment area — the same row sequences and templates show — and its chip
+   * appears the moment it lands, not when the whole batch has finished. Up to
+   * Gmail's 25 MB a file is staged as an attachment; past that it goes to Drive
+   * and is sent as a link (sendsAsDriveLink, shared with templates and
+   * sequences). Send and draft save wait while any row is showing.
+   */
   async function handleFileSelect(files: FileList | null) {
     if (!files) return;
-    const newFiles: PendingFile[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.size <= DRAFT_JSON_INLINE_MAX_BYTES) {
-        const base64 = await fileToBase64(file);
-        newFiles.push({ kind: "new", file, base64 });
-      } else if (file.size <= GMAIL_ATTACHMENT_MAX_BYTES) {
-        setUploadProgressKind((prev) => ({ ...prev, [file.name]: "attachment" }));
-        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
-        try {
-          const staged = await uploadStagedDraftAttachment(file, (percent) => {
-            setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
-          });
-          newFiles.push({
+    const picked = Array.from(files);
+    const gen = composeFilesGenRef.current;
+
+    // Every row appears at once, queued at 0%, so a batch shows what's coming.
+    setUploadProgressKind((prev) => ({
+      ...prev,
+      ...Object.fromEntries(
+        picked.map((f) => [f.name, sendsAsDriveLink(f.size) ? "drive" : "attachment"])
+      ),
+    }));
+    setDriveUploadProgress((prev) => ({
+      ...prev,
+      ...Object.fromEntries(picked.map((f) => [f.name, 0])),
+    }));
+
+    for (const file of picked) {
+      const onProgress = (percent: number) =>
+        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
+      try {
+        let added: PendingFile;
+        if (!sendsAsDriveLink(file.size)) {
+          const staged = await uploadStagedDraftAttachment(file, onProgress);
+          added = {
             kind: "staged",
             uploadId: staged.uploadId,
             name: staged.name,
             mimeType: staged.mimeType,
             size: staged.size,
-          });
-        } catch (e) {
-          alert(
-            `Failed to upload ${file.name}: ${e instanceof Error ? e.message : "network error"}. Please try again.`
-          );
-        } finally {
-          setDriveUploadProgress((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
-          });
-          setUploadProgressKind((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
-          });
-        }
-      } else {
-        // Exceeds Gmail's 25 MB limit — upload to Drive in 4 MB chunks via our API
-        // (browser cannot PUT to googleapis.com directly due to CORS).
-        setUploadProgressKind((prev) => ({ ...prev, [file.name]: "drive" }));
-        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
-        try {
-          const driveFile = await uploadLargeFileToDrive(file, (percent) => {
-            setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
-          });
-          newFiles.push({
+          };
+        } else {
+          // Over Gmail's 25 MB — upload to Drive in 4 MB chunks via our API
+          // (the browser cannot PUT to googleapis.com directly due to CORS).
+          const driveFile = await uploadLargeFileToDrive(file, onProgress);
+          added = {
             kind: "drive",
             name: driveFile.name,
             mimeType: driveFile.mimeType,
             size: driveFile.size ? parseInt(driveFile.size, 10) : file.size,
             driveFileId: driveFile.id,
             webViewLink: driveFile.webViewLink,
-          });
-        } catch (e) {
-          alert(
-            `Failed to upload ${file.name} to Drive: ${e instanceof Error ? e.message : "network error"}. Please try again.`
-          );
-        } finally {
-          setDriveUploadProgress((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
-          });
-          setUploadProgressKind((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
+          };
+        }
+        // The draft was sent, discarded or replaced while this uploaded.
+        if (composeFilesGenRef.current === gen) {
+          setComposeFiles((prev) => [...prev, added]);
+        }
+      } catch (e) {
+        if (composeFilesGenRef.current === gen) {
+          setComposeFieldError({
+            title: "Attachment not added",
+            message: `"${file.name}" couldn't be ${
+              sendsAsDriveLink(file.size) ? "uploaded to Drive" : "uploaded"
+            } (${e instanceof Error ? e.message : "network error"}). Please try again.`,
           });
         }
+      } finally {
+        setDriveUploadProgress((prev) => {
+          const next = { ...prev };
+          delete next[file.name];
+          return next;
+        });
+        setUploadProgressKind((prev) => {
+          const next = { ...prev };
+          delete next[file.name];
+          return next;
+        });
       }
     }
-    setComposeFiles((prev) => [...prev, ...newFiles]);
   }
+
 
   useEffect(() => {
     const trimmed = mailSearchInput.trim();
@@ -4471,7 +4628,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject("");
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     setComposeCcBccOpen(false);
     setComposeMinimized(false);
@@ -4497,7 +4654,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject(replySubject(last.subject || ""));
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     setComposeCcBccOpen(mode === "replyAll" && !!cc.trim());
     setComposeMinimized(false);
@@ -4555,7 +4712,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject(fwdSubject);
     setComposeBody(quotedHtml);
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     setComposeCcBccOpen(false);
     setComposeMinimized(false);
@@ -4701,16 +4858,22 @@ export default function InboxPage() {
    * ones so typing a fallback clears the badge for everyone it covers, which
    * is the whole point of the badge being there.
    */
-  const massUnresolved = useMemo(
-    () =>
-      reportMissingVariables(
-        composeSubject,
-        composeBody,
-        massMergeRows.map((r) => ({ email: r.email, fields: r.fields })),
-        massVariables
-      ).byRecipient,
-    [composeSubject, composeBody, massMergeRows, massVariables]
-  );
+  const massUnresolved = useMemo(() => {
+    const byRecipient = reportMissingVariables(
+      composeSubject,
+      composeBody,
+      massMergeRows.map((r) => ({ email: r.email, fields: r.fields })),
+      massVariables
+    ).byRecipient;
+    // A not-a-column placeholder is unresolved for every row until its
+    // fallback is set.
+    const uncovered = draftUnknownKeys.filter((k) => !variableFallbacks[k]?.trim());
+    if (uncovered.length === 0) return byRecipient;
+    for (const r of massMergeRows) {
+      byRecipient.set(r.email, [...(byRecipient.get(r.email) ?? []), ...uncovered]);
+    }
+    return byRecipient;
+  }, [composeSubject, composeBody, massMergeRows, massVariables, draftUnknownKeys, variableFallbacks]);
 
   /** The row currently being previewed on the review screen. */
   const reviewRow = useMemo(() => {
@@ -4832,7 +4995,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject("");
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     resetMassState();
   }
@@ -4915,7 +5078,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject("");
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     showSendSnack({ phase: "sending" });
 
     const isReply = snapshot.kind === "reply" || snapshot.kind === "replyAll";
@@ -6511,7 +6674,8 @@ export default function InboxPage() {
         // Normal compose merges against its one recipient's contact card, so it
         // offers the same card-backed set a campaign does. Only an imported
         // list replaces that set with its own columns.
-        variables={massSending ? massVariables : COMPOSE_VARIABLES}
+        variables={editorVariables}
+        unknownPlaceholders={unknownPlaceholders}
         templatesButton={
           templatesEnabled ? (
             <MailTemplatesButton
@@ -6550,6 +6714,8 @@ export default function InboxPage() {
                 // the mail exactly as the recipient will receive it.
                 bodyHtml: stripVariableSpans(mergeTemplate(composeBody, reviewRow.fields)),
                 missingKeys: reviewMissing,
+                unknownKeys: massSending ? draftUnknownKeys : undefined,
+                unknownSource: massImport?.fileName,
                 noContactCard: !reviewRow.hasCard,
                 fallbacks: variableFallbacks,
                 onFallbackChange: (key, value) =>

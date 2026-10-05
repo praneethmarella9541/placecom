@@ -24,6 +24,13 @@ import {
 } from "@/components/RichTextEditor";
 import { SubjectWithVariables, type SubjectHandle } from "@/components/SubjectWithVariables";
 import { VariableFallbackChip } from "@/components/VariableFallbackChip";
+import {
+  AttachmentUploadRow,
+  creepProgress,
+  type AttachmentUploadKind,
+} from "@/components/AttachmentUploadRow";
+import { sendsAsDriveLink } from "@/lib/gmail-draft-limits";
+import { markTemplateCopy } from "@/hooks/useMailTemplates";
 import { MailTemplatesButton } from "@/components/MailTemplatesModal";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
@@ -73,9 +80,20 @@ type Props = {
   onFallbackChange?: (key: string, value: string) => void;
   /** Step id → its saved attachments, and the handlers the footer calls. */
   attachmentsByStep?: Record<string, SequenceStepAttachment[]>;
-  onUploadAttachments?: (stepId: string, files: File[]) => Promise<void>;
+  onUploadAttachments?: (stepId: string, files: File[], onFileProgress?: FileProgress) => Promise<void>;
   onRemoveAttachment?: (stepId: string, attachmentId: string) => Promise<void>;
+  /** Copies a mail template's files onto a saved step. Throws a user-facing message. */
+  onApplyTemplateAttachments?: (stepId: string, templateId: string) => Promise<void>;
 };
+
+/**
+ * Progress for file `index` of an upload batch: how far along it is and what
+ * it is becoming, or "done" once it has landed on the step.
+ */
+export type FileProgress = (
+  index: number,
+  state: { percent: number; kind: "attachment" | "drive" } | "done",
+) => void;
 
 /** Sentinel for the "start after enrollment" delay, which has no step index. */
 const START_DELAY = -1;
@@ -100,6 +118,7 @@ export function SequenceStepList({
   attachmentsByStep = {},
   onUploadAttachments,
   onRemoveAttachment,
+  onApplyTemplateAttachments,
 }: Props) {
   const missingMap = missingByRecipient ?? new Map<string, string[]>();
   // Which delay is expanded — one at a time, so the column of steps stays
@@ -316,6 +335,7 @@ export function SequenceStepList({
                   coverage={coverage}
                   attachments={step.id ? (attachmentsByStep[step.id] ?? []) : []}
                   onUploadAttachments={onUploadAttachments}
+                  onApplyTemplateAttachments={onApplyTemplateAttachments}
                   onRemoveAttachment={
                     step.id && onRemoveAttachment
                       ? (attachmentId) => onRemoveAttachment(step.id as string, attachmentId)
@@ -373,6 +393,7 @@ function StepComposer({
   attachments,
   onUploadAttachments,
   onRemoveAttachment,
+  onApplyTemplateAttachments,
   onPatch,
 }: {
   index: number;
@@ -382,8 +403,9 @@ function StepComposer({
   variables: ComposeVariable[];
   coverage: Record<string, number>;
   attachments: SequenceStepAttachment[];
-  onUploadAttachments?: (stepId: string, files: File[]) => Promise<void>;
+  onUploadAttachments?: (stepId: string, files: File[], onFileProgress?: FileProgress) => Promise<void>;
   onRemoveAttachment?: (attachmentId: string) => Promise<void>;
+  onApplyTemplateAttachments?: (stepId: string, templateId: string) => Promise<void>;
   onPatch: (next: Partial<SequenceStepInput>) => void;
 }) {
   const bodyRef = useRef<RichTextEditorHandle>(null);
@@ -398,6 +420,14 @@ function StepComposer({
   const photoRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /** Files on their way onto the step — picked uploads and template copies. */
+  const [inFlight, setInFlight] = useState<
+    Array<{ key: string; name: string; percent: number; kind: AttachmentUploadKind }>
+  >([]);
+  const patchInFlight = (key: string, patch: { percent?: number; kind?: AttachmentUploadKind }) =>
+    setInFlight((list) => list.map((f) => (f.key === key ? { ...f, ...patch } : f)));
+  const dropInFlight = (keys: string[]) =>
+    setInFlight((list) => list.filter((f) => !keys.includes(f.key)));
   const templatesEnabled = useModuleVisibility().isVisible("mailTemplates");
 
   // A step only gets an id once it has been saved, and the file has to be
@@ -411,13 +441,30 @@ function StepComposer({
   async function upload(list: FileList | null) {
     const files = Array.from(list ?? []);
     if (!files.length || !step.id || !onUploadAttachments) return;
+    // One progress row per file — the same row compose and templates show —
+    // each replaced by its chip as it lands.
+    const batch = `up-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const keys = files.map((_, i) => `${batch}-${i}`);
+    setInFlight((list) => [
+      ...list,
+      ...files.map((f, i) => ({
+        key: keys[i],
+        name: f.name,
+        percent: 0,
+        kind: (sendsAsDriveLink(f.size) ? "drive" : "attachment") as AttachmentUploadKind,
+      })),
+    ]);
     setUploading(true);
     setUploadError(null);
     try {
-      await onUploadAttachments(step.id, files);
+      await onUploadAttachments(step.id, files, (index, state) => {
+        if (state === "done") dropInFlight([keys[index]]);
+        else patchInFlight(keys[index], { percent: state.percent, kind: state.kind });
+      });
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Could not attach file");
     } finally {
+      dropInFlight(keys);
       setUploading(false);
     }
   }
@@ -517,8 +564,11 @@ function StepComposer({
           >
             <ImageIcon className="h-[18px] w-[18px]" strokeWidth={2} />
           </FooterBtn>
-          <FooterBtn
-            title="Insert variable"
+          {/* Labelled, like Templates beside it and the compose footer's own
+              Variables button — a bare "{ }" glyph went unnoticed. */}
+          <button
+            type="button"
+            title="Insert a personalised field like {name}, filled in for each recipient"
             onClick={() => {
               if (lastFocused.current === "subject" && !subjectLocked) {
                 subjectRef.current?.insertVariableTrigger();
@@ -526,9 +576,11 @@ function StepComposer({
                 bodyRef.current?.insertVariableTrigger();
               }
             }}
+            className="ml-0.5 flex shrink-0 items-center gap-1.5 rounded-full border border-[#dadce0] px-3 py-[6px] text-[13px] font-medium leading-none text-[#3c4043] transition-colors hover:bg-[#e8eaed]"
           >
-            <Braces className="h-[18px] w-[18px]" strokeWidth={2} />
-          </FooterBtn>
+            <Braces className="h-4 w-4" strokeWidth={2} />
+            Variables
+          </button>
 
           {/* Same library the composer reads from. A step is exactly the shape a
               template stores — subject plus body — and unlike compose there is
@@ -549,7 +601,17 @@ function StepComposer({
                 !(step.subjectTemplate ?? "").trim() && richTextIsEmpty(step.bodyHtml ?? "")
               }
               disabled={disabled}
+              attachmentsSupported={Boolean(onApplyTemplateAttachments)}
               onApply={(template, mode) => {
+                // Checked up front so the modal can say why; everything else
+                // happens after it closes.
+                const copyFiles =
+                  template.attachments.length > 0 && onApplyTemplateAttachments;
+                if (copyFiles && !step.id) {
+                  throw new Error(
+                    "Save the sequence first — a new step has nowhere to keep this template's attachments yet."
+                  );
+                }
                 const body =
                   mode === "replace" || richTextIsEmpty(step.bodyHtml ?? "")
                     ? template.bodyHtml
@@ -566,10 +628,63 @@ function StepComposer({
                     ? { bodyHtml: body }
                     : { subjectTemplate: template.subjectTemplate, bodyHtml: body }
                 );
+
+                // Text is in and the modal closes; the files copy in the
+                // step's own attachment row instead of holding the modal open.
+                if (copyFiles && step.id) {
+                  // A server-side copy has no bytes to count, so its rows creep
+                  // toward 90% and clear when the copied files land.
+                  const batch = `copy-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+                  const keys = template.attachments.map((_, i) => `${batch}-${i}`);
+                  setUploadError(null);
+                  setInFlight((list) => [
+                    ...list,
+                    ...template.attachments.map((a, i) => ({
+                      key: keys[i],
+                      name: a.filename,
+                      percent: 0,
+                      kind: "copy" as const,
+                    })),
+                  ]);
+                  const stopCreep = creepProgress((percent) =>
+                    setInFlight((list) =>
+                      list.map((f) => (keys.includes(f.key) ? { ...f, percent } : f))
+                    )
+                  );
+                  // Keeps "Use" off for this template until the copy is done.
+                  const done = markTemplateCopy(template.id);
+                  void onApplyTemplateAttachments(step.id, template.id)
+                    .catch((e) =>
+                      setUploadError(
+                        `The template's attachments couldn't be added: ${
+                          e instanceof Error ? e.message : "network error"
+                        }`
+                      )
+                    )
+                    .finally(() => {
+                      done();
+                      stopCreep();
+                      dropInFlight(keys);
+                    });
+                }
               }}
             />
           ) : null}
         </div>
+
+        {inFlight.length > 0 ? (
+          <div className="flex flex-col gap-1.5 pt-2">
+            {inFlight.map((f) => (
+              <AttachmentUploadRow
+                key={f.key}
+                theme="app"
+                name={f.name}
+                percent={f.percent}
+                kind={f.kind}
+              />
+            ))}
+          </div>
+        ) : null}
 
         {attachments.length > 0 ? (
           <div className="flex flex-wrap gap-1.5 pt-2">
@@ -586,6 +701,14 @@ function StepComposer({
                 <span className="shrink-0 font-mono text-[10.5px] text-[var(--color-text-faint)]">
                   {formatBytes(a.sizeBytes)}
                 </span>
+                {a.driveFileId ? (
+                  <span
+                    className="shrink-0 rounded bg-[var(--color-surface-offset)] px-1 text-[10.5px] text-[var(--color-text-muted)]"
+                    title="Over Gmail's 25 MB per file — sent as a Google Drive link"
+                  >
+                    Drive link
+                  </span>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => void onRemoveAttachment?.(a.id)}

@@ -30,6 +30,7 @@ export function uploadFormDataWithProgress(
   options?: {
     method?: string;
     signal?: AbortSignal;
+    headers?: Record<string, string>;
     onProgress?: (progress: UploadFormProgress) => void;
   }
 ): Promise<{ status: number; responseText: string }> {
@@ -38,6 +39,9 @@ export function uploadFormDataWithProgress(
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open(options?.method ?? "POST", url);
+    for (const [name, value] of Object.entries(options?.headers ?? {})) {
+      xhr.setRequestHeader(name, value);
+    }
 
     const cleanup = () => {
       options?.signal?.removeEventListener("abort", onAbort);

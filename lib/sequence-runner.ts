@@ -6,9 +6,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { checkThreadForReplyOrBounce, searchForBounceNotification } from "@/lib/email-thread-outcome";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
-import { sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
+import { sendMailViaGmail } from "@/lib/gmail-inbox";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-google-token";
-import { loadStepSendAttachments } from "@/lib/sequence-attachments";
+import { loadStepSendAttachments, type StepSendFiles } from "@/lib/sequence-attachments";
+import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
 import { buildStepEmail } from "@/lib/sequence-body";
 import {
   isWithinSendWindow,
@@ -139,7 +140,7 @@ type RunContext = {
    * recipient of a step gets the same attachments, so fetching them per
    * enrollment would re-download the same bytes for the whole batch.
    */
-  attachmentCache: Map<string, SendAttachment[]>;
+  attachmentCache: Map<string, StepSendFiles>;
   attachmentCacheBytes: number;
 };
 
@@ -368,18 +369,19 @@ async function processEnrollment(
   //    subject matches, so letting the helper derive it is what makes it work.
   const threading = sequence.thread_emails && Boolean(enrollment.gmail_thread_id);
 
-  let attachments = ctx.attachmentCache.get(step.id);
-  if (!attachments) {
-    attachments = await loadStepSendAttachments(step.id);
+  let stepFiles = ctx.attachmentCache.get(step.id);
+  if (!stepFiles) {
+    stepFiles = await loadStepSendAttachments(step.id);
     // Bounded: caching is a bandwidth optimisation, and a run touching several
     // heavily-attached steps must not trade a re-download for an out-of-memory
     // kill that loses the whole batch.
-    const bytes = attachments.reduce((sum, a) => sum + a.base64Data.length, 0);
+    const bytes = stepFiles.attachments.reduce((sum, a) => sum + a.base64Data.length, 0);
     if (ctx.attachmentCacheBytes + bytes <= MAX_ATTACHMENT_CACHE_BYTES) {
-      ctx.attachmentCache.set(step.id, attachments);
+      ctx.attachmentCache.set(step.id, stepFiles);
       ctx.attachmentCacheBytes += bytes;
     }
   }
+  const attachments = stepFiles.attachments;
 
   try {
     const result = await sendMailViaGmail(mailbox.accessToken, {
@@ -387,7 +389,9 @@ async function processEnrollment(
       cc: enrollment.cc || undefined,
       subject: threading ? "" : built.subject,
       textBody: built.text,
-      htmlBody: built.html,
+      // Files over Gmail's 25 MB travel as Drive links under the body, exactly
+      // as compose sends them.
+      htmlBody: appendDriveLinksToHtml(built.html, stepFiles.driveLinks),
       threadId: threading ? enrollment.gmail_thread_id ?? undefined : undefined,
       inReplyToMessageId: threading ? enrollment.last_gmail_message_id ?? undefined : undefined,
       trackingPixelUrl,

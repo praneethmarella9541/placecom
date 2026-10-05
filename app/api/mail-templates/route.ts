@@ -7,6 +7,7 @@ import {
   validateMailTemplateInput,
 } from "@/lib/mail-template-types";
 import { stripVariableSpans } from "@/lib/compose-variables";
+import { loadAttachmentsByTemplate } from "@/lib/mail-template-attachments";
 
 export const runtime = "nodejs";
 
@@ -56,8 +57,15 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const rows = (data ?? []) as Array<{ id: string }>;
+  const files = await loadAttachmentsByTemplate(
+    supabase,
+    user.id,
+    rows.map((r) => r.id)
+  );
+
   return NextResponse.json({
-    templates: (data ?? []).map((row) => rowToMailTemplate(row as never)),
+    templates: rows.map((row) => rowToMailTemplate(row as never, files.get(row.id) ?? [])),
     configured: true,
   });
 }

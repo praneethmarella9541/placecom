@@ -8,6 +8,7 @@ import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import { CreateNamePopup } from "@/components/CreateNamePopup";
+import { DeleteListItemButton } from "@/components/DeleteListItemButton";
 import {
   getSheetsPrefetchCache,
   setSheetsPrefetchCache,
@@ -123,6 +124,18 @@ export default function SheetsListPage() {
     }
   }
 
+  /** Drop a just-trashed row from the list and from the prefetch cache so it does not reappear on revisit. */
+  function removeFromList(id: string) {
+    setSheets((prev) => prev.filter((x) => x.id !== id));
+    const cached = getSheetsPrefetchCache();
+    if (cached) {
+      setSheetsPrefetchCache({
+        sheets: cached.sheets.filter((x) => x.id !== id),
+        nextPageToken: cached.nextPageToken,
+      });
+    }
+  }
+
   const empty = useMemo(() => !loading && sheets.length === 0, [loading, sheets.length]);
 
   return (
@@ -220,6 +233,13 @@ export default function SheetsListPage() {
                 >
                   {titleCase("Open")}
                 </Link>
+                <DeleteListItemButton
+                  fileId={s.id}
+                  label={s.name?.trim() || "Untitled"}
+                  kind="sheet"
+                  onDeleted={() => removeFromList(s.id)}
+                  onError={setError}
+                />
               </li>
             ))}
           </ul>

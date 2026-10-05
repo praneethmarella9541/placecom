@@ -14,6 +14,8 @@ export type MeMailboxResponse = {
    * `hiddenFeatureSet` in lib/module-visibility.ts.
    */
   disabledModules: FeatureKey[];
+  /** Platform-wide delete switch from /configs. False hides every delete action. */
+  allowDelete: boolean;
   /** True when this email is in CONFIGS_ALLOWED_EMAILS, i.e. may open /configs. */
   isConfigsAdmin: boolean;
   mailboxOwnerId: string | null;

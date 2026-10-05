@@ -26,7 +26,9 @@ export async function GET(request: Request) {
 
   // Platform module config travels with the session payload so the client has
   // it without a second request, and picks changes up on its next revalidate.
-  const disabledModules = disabledFeaturesFromConfig(await loadModuleConfig(supabase));
+  const moduleConfig = await loadModuleConfig(supabase);
+  const disabledModules = disabledFeaturesFromConfig(moduleConfig);
+  const allowDelete = moduleConfig.allowDelete;
   const isConfigsAdmin = isConfigsEmailAllowed(user.email);
 
   let { data: profile, error: profileErr } = await supabase
@@ -53,6 +55,7 @@ export async function GET(request: Request) {
       groupName: null,
       restrictedFeatures: [],
       disabledModules,
+      allowDelete,
       isConfigsAdmin,
       mailboxOwnerId: null,
       mailboxEmail: null,
@@ -73,6 +76,7 @@ export async function GET(request: Request) {
       groupName: null,
       restrictedFeatures: [],
       disabledModules,
+      allowDelete,
       isConfigsAdmin,
       mailboxOwnerId: null,
       mailboxEmail: null,
@@ -145,6 +149,7 @@ export async function GET(request: Request) {
       group
     ),
     disabledModules,
+    allowDelete,
     isConfigsAdmin,
     groupName: group?.name ?? null,
     mailboxOwnerId,

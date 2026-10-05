@@ -17,13 +17,14 @@ import { refreshMeMailbox } from "@/lib/use-me-mailbox";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 
-const EMPTY: ModuleConfig = { disabledGroups: [], disabledModules: [] };
+const EMPTY: ModuleConfig = { disabledGroups: [], disabledModules: [], allowDelete: false };
 
 function sameConfig(a: ModuleConfig, b: ModuleConfig): boolean {
   const norm = (c: ModuleConfig) =>
     JSON.stringify({
       g: [...c.disabledGroups].sort(),
       m: [...c.disabledModules].sort(),
+      d: c.allowDelete,
     });
   return norm(a) === norm(b);
 }
@@ -139,6 +140,10 @@ export default function ConfigsPage() {
           : [...prev.disabledModules, feature],
       };
     });
+  }, []);
+
+  const toggleAllowDelete = useCallback(() => {
+    setDraft((prev) => ({ ...prev, allowDelete: !prev.allowDelete }));
   }, []);
 
   async function save() {
@@ -277,6 +282,31 @@ export default function ConfigsPage() {
                 </div>
               );
             })}
+          </div>
+
+          <div className="surface-card flex items-start justify-between gap-4 p-5">
+            <div className="min-w-0">
+              <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">
+                {titleCase("Deleting")}
+              </h2>
+              <p className="mt-0.5 text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+                {titleCase(
+                  "Lets people delete mail, Drive files and folders, Docs, Sheets, and Forms. Off by default. Items go to Google's trash and can be restored there; only Mail's Delete forever, inside Trash, is permanent.",
+                )}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2.5">
+              {draft.allowDelete !== saved.allowDelete && (
+                <span className="rounded-full bg-[var(--color-copper)]/12 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[var(--color-copper)]">
+                  {draft.allowDelete ? "On" : "Off"}
+                </span>
+              )}
+              <Toggle
+                checked={draft.allowDelete}
+                onChange={toggleAllowDelete}
+                label="Allow delete"
+              />
+            </div>
           </div>
 
           <div className="surface-card p-5 text-[12px] text-[var(--color-text-muted)]">

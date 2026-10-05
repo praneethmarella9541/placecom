@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { deleteForbiddenResponse } from "@/lib/delete-access";
 import {
   buildDriveContentFetch,
   isCsvMimeType,
@@ -12,6 +13,7 @@ import {
   moveDriveFile,
   renameDriveFile,
   setDriveFileStarred,
+  trashDriveFile,
 } from "@/lib/drive";
 
 export const runtime = "nodejs";
@@ -283,6 +285,34 @@ export async function PATCH(
     return NextResponse.json(
       { error: err.message || "Drive update failed" },
       { status: 500 }
+    );
+  }
+}
+
+/** DELETE — move a file or folder to Drive's trash. Gated by /configs "Allow delete". */
+export async function DELETE(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const forbidden = await deleteForbiddenResponse();
+  if (forbidden) return forbidden;
+
+  const auth = await requireGmailAccessToken(request);
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.message }, { status: auth.status });
+  }
+  const fileId = params.id?.trim();
+  if (!fileId) {
+    return NextResponse.json({ error: "Missing file id" }, { status: 400 });
+  }
+  try {
+    await trashDriveFile(auth.accessToken, fileId);
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    const err = e as Error & { status?: number };
+    return NextResponse.json(
+      { error: err.message || "Could not delete" },
+      { status: err.status && err.status >= 400 ? err.status : 500 }
     );
   }
 }

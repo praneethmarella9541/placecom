@@ -87,6 +87,7 @@ import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, previewLineFromBody, timeAgo } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { useModuleVisibility } from "@/lib/module-visibility";
+import { useAllowDelete } from "@/lib/use-allow-delete";
 import {
   buildDateSearchClauses,
   buildExclusionTokens,
@@ -890,6 +891,7 @@ export default function InboxPage() {
   // this flag is the only thing standing between the operator's switch and the
   // Templates button in the composer footer.
   const templatesEnabled = useModuleVisibility().isVisible("mailTemplates");
+  const allowDelete = useAllowDelete();
   const topbarActionsNode = useWorkspaceTopbarActionsNode();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
@@ -5626,6 +5628,22 @@ export default function InboxPage() {
                           </RowAction>
                         );
                       })()}
+                      {allowDelete && (
+                        <RowAction
+                          title={folder === "trash" ? "Delete forever" : "Move to trash"}
+                          onClick={() => {
+                            if (
+                              folder === "trash" &&
+                              !window.confirm("Delete the selected conversations forever? This cannot be undone.")
+                            ) {
+                              return;
+                            }
+                            void performBulkAction(folder === "trash" ? "deleteForever" : "trash");
+                          }}
+                        >
+                          <Trash2 className="h-[15px] w-[15px]" />
+                        </RowAction>
+                      )}
                     </div>
                   </>
                 ) : (

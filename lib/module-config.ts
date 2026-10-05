@@ -100,6 +100,14 @@ export const GROUP_FOR_MODULE: Record<FeatureKey, ModuleGroupKey> = (() => {
 export type ModuleConfig = {
   disabledGroups: ModuleGroupKey[];
   disabledModules: FeatureKey[];
+  /**
+   * Master switch for deleting anything — mail threads, Drive items, Docs,
+   * Sheets, and Forms. Off by default: the product was built without delete,
+   * so a missing or unreadable config must never turn it on. Deletes go to
+   * Google's trash, not permanent removal, except Mail's explicit "Delete
+   * forever" from Trash.
+   */
+  allowDelete: boolean;
 };
 
 /**
@@ -123,6 +131,7 @@ export type ModuleConfig = {
 export const DEFAULT_MODULE_CONFIG: ModuleConfig = {
   disabledGroups: [],
   disabledModules: ["sms", "dashboard", "whatsapp"],
+  allowDelete: false,
 };
 
 function normalizeList<T extends string>(value: unknown, allowed: Set<string>): T[] {
@@ -137,11 +146,15 @@ function normalizeList<T extends string>(value: unknown, allowed: Set<string>): 
 
 /** Coerce an untrusted payload (DB jsonb, request body) into a valid config. */
 export function normalizeModuleConfig(value: unknown): ModuleConfig {
-  if (!value || typeof value !== "object") return { disabledGroups: [], disabledModules: [] };
+  if (!value || typeof value !== "object") {
+    return { disabledGroups: [], disabledModules: [], allowDelete: false };
+  }
   const raw = value as Record<string, unknown>;
   return {
     disabledGroups: normalizeList<ModuleGroupKey>(raw.disabledGroups, GROUP_KEYS),
     disabledModules: normalizeList<FeatureKey>(raw.disabledModules, FEATURE_SET),
+    // Strictly `true` — anything else (missing, "true", 1) stays off.
+    allowDelete: raw.allowDelete === true,
   };
 }
 

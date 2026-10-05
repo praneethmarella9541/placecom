@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { deleteForbiddenResponse } from "@/lib/delete-access";
 import {
   listDriveFilesPage,
   DRIVE_MIME_CATEGORIES,
@@ -9,7 +10,7 @@ import {
 
 export const runtime = "nodejs";
 
-const VALID_VIEWS: DriveView[] = ["my-drive", "shared-with-me", "starred", "recent"];
+const VALID_VIEWS: DriveView[] = ["my-drive", "shared-with-me", "starred", "recent", "trash"];
 
 export async function GET(request: Request) {
   const auth = await requireGmailAccessToken(request);
@@ -25,6 +26,11 @@ export async function GET(request: Request) {
   const viewRaw = searchParams.get("view")?.trim() as DriveView | null;
   const view: DriveView | undefined =
     viewRaw && VALID_VIEWS.includes(viewRaw) ? viewRaw : undefined;
+  // The Trash view only exists while deleting is switched on.
+  if (view === "trash") {
+    const forbidden = await deleteForbiddenResponse();
+    if (forbidden) return forbidden;
+  }
   // Allow up to 100 when a mimeType filter is supplied (e.g. folder-only
   // requests from the Move modal) — the filtered set is much smaller so
   // a larger page is still fast. Default cap is 50 for mixed listings.

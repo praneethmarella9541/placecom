@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { deleteForbiddenResponse } from "@/lib/delete-access";
 import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 
@@ -14,6 +15,9 @@ type BatchBody = { threadIds?: string[] };
 
 /** Permanently delete threads (Gmail "Delete forever" in Trash). */
 export async function POST(request: Request) {
+  const forbidden = await deleteForbiddenResponse();
+  if (forbidden) return forbidden;
+
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });

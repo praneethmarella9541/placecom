@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { Menu, X } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { Menu, X, Maximize2 } from "lucide-react";
 import { TopbarActionsPortalContext } from "@/lib/workspace-topbar-context";
 import { isWorkspacePrefetchSessionComplete } from "@/lib/login-prefetch-session";
 import { runLoginPrefetchChain } from "@/lib/workspace-feature-prefetch";
@@ -17,6 +17,13 @@ import { ExtractionRunProvider } from "@/components/ExtractionRunProvider";
 import { ExtractionRunBanner } from "@/components/ExtractionRunBanner";
 import { WorkspaceSidebar, workspaceNavGroups } from "@/components/WorkspaceSidebar";
 import { titleCase } from "@/lib/title-case";
+import { IconX } from "@/components/Icons";
+import {
+  getComposePersistedState,
+  discardComposePersistedState,
+  requestExpandComposeOnReturn,
+  subscribeComposePersistedState,
+} from "@/lib/compose-persist";
 
 /** Breadcrumb for the content topbar: section label + active page label, derived from the sidebar's nav groups. */
 function useContentBreadcrumb(pathname: string) {
@@ -63,6 +70,68 @@ function ContentTopbar({
 }
 
 const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed";
+
+/** Renders the minimized compose bar when the user has navigated away from /inbox. */
+function MinimizedComposeBar() {
+  const pathname = usePathname();
+  const router = useRouter();
+
+  const persistedCompose = useSyncExternalStore(
+    subscribeComposePersistedState,
+    getComposePersistedState,
+    () => null,
+  );
+
+  // The inbox page renders its own minimized bar — only show ours elsewhere.
+  if (!persistedCompose || pathname === "/inbox") return null;
+
+  function handleExpand() {
+    requestExpandComposeOnReturn();
+    router.push("/inbox");
+  }
+
+  function handleClose() {
+    discardComposePersistedState();
+  }
+
+  const displayLabel = persistedCompose.subject.trim() || persistedCompose.windowTitle;
+
+  return (
+    <div
+      className={cn(
+        "fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border border-[#404040] bg-[#404040] px-2 text-white",
+        "lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[280px] lg:rounded-t-lg",
+        "shadow-[0_-4px_16px_rgba(60,64,67,0.25)] lg:shadow-lg",
+      )}
+      role="complementary"
+      aria-label={persistedCompose.windowTitle}
+    >
+      <button
+        type="button"
+        onClick={handleExpand}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
+        title={titleCase("Expand")}
+      >
+        <Maximize2 className="h-4 w-4" strokeWidth={2} />
+      </button>
+      <button
+        type="button"
+        onClick={handleExpand}
+        className="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-white"
+      >
+        {displayLabel}
+      </button>
+      <button
+        type="button"
+        onClick={handleClose}
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
+        aria-label={titleCase("Close")}
+      >
+        <IconX className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
 
 export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -203,6 +272,7 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
           </ContactPhotoProvider>
         </ExtractionRunProvider>
       </TopbarActionsPortalContext.Provider>
+      <MinimizedComposeBar />
     </div>
   );
 }

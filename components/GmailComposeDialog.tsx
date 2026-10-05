@@ -14,6 +14,7 @@ import { GmailAvatar } from "@/components/GmailAvatar";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
 import { IconX } from "@/components/Icons";
 import { GMAIL_COMPOSE_DIALOG_BORDER, GMAIL_COMPOSE_HEADER } from "@/lib/gmail-theme";
+import { pickRandomComposeProTip } from "@/lib/compose-pro-tips";
 import type { ComposeDraftSaveStatus } from "@/lib/gmail-draft-autosave";
 import type { ComposeVariable } from "@/lib/compose-variables";
 import { cn } from "@/lib/utils";
@@ -201,6 +202,17 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
   const [resizeW, setResizeW] = useState<number | null>(null);
   const [resizeH, setResizeH] = useState<number | null>(null);
   const resizeRef = useRef({ startX: 0, startY: 0, startW: 0, startH: 0, edge: "" });
+
+  // Rotating body placeholder: a new "Pro tip:" is chosen each time the
+  // dialog opens, so writers slowly notice templates, variables, mass
+  // sending and paste shortcuts without an intrusive tour. Stays stable
+  // while open so the hint doesn't shuffle under them mid-draft.
+  const [bodyPlaceholder, setBodyPlaceholder] = useState<string>(() =>
+    pickRandomComposeProTip()
+  );
+  useEffect(() => {
+    if (open) setBodyPlaceholder(pickRandomComposeProTip());
+  }, [open]);
 
   const startResize = useCallback((e: React.MouseEvent, edge: string) => {
     if (fullscreen) return;
@@ -559,7 +571,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                   ref={editorRef}
                   value={body}
                   onChange={onBodyChange}
-                  placeholder="Compose email"
+                  placeholder={bodyPlaceholder}
                   autoFocus
                   variables={variables}
                 />

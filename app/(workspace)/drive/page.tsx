@@ -76,11 +76,12 @@ import {
   Menu,
   Filter,
   Frame,
+  BookText,
   Trash2,
   Undo2,
 } from "lucide-react";
 
-/** Native Google Docs / Sheets open in our own editors instead of the preview panel. */
+/** Native Google Docs / Sheets get an "Open in Docs/Sheets" button in the preview panel. */
 const GOOGLE_DOC_MIME = "application/vnd.google-apps.document";
 const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet";
 
@@ -2652,11 +2653,7 @@ export default function DrivePage() {
                   if (isRenaming) return;
                   if (view === "trash") return;
                   if (isFolder) enterFolder(file.id, file.name);
-                  else if (file.mimeType === GOOGLE_DOC_MIME && docsEnabled) {
-                    router.push(`/docs/${encodeURIComponent(file.id)}`);
-                  } else if (file.mimeType === GOOGLE_SHEET_MIME && sheetsEnabled) {
-                    router.push(`/sheets/${encodeURIComponent(file.id)}`);
-                  } else setPreviewFile(file);
+                  else setPreviewFile(file);
                 };
 
                 if (viewMode === "grid") {
@@ -3043,6 +3040,30 @@ export default function DrivePage() {
                 >
                   {titleCase("Open in Drive")}
                 </a>
+              ) : null}
+              {docsEnabled && previewFile.mimeType === GOOGLE_DOC_MIME ? (
+                <button
+                  data-testid="drive-preview-open-in-docs"
+                  type="button"
+                  onClick={() => router.push(`/docs/${encodeURIComponent(previewFile.id)}`)}
+                  className="btn-secondary gap-2"
+                  title={titleCase("Open in our Docs editor")}
+                >
+                  <BookText className="h-4 w-4" />
+                  {titleCase("Open in Docs")}
+                </button>
+              ) : null}
+              {sheetsEnabled && previewFile.mimeType === GOOGLE_SHEET_MIME ? (
+                <button
+                  data-testid="drive-preview-open-sheet"
+                  type="button"
+                  onClick={() => router.push(`/sheets/${encodeURIComponent(previewFile.id)}`)}
+                  className="btn-secondary gap-2"
+                  title={titleCase("Open in our Sheets editor")}
+                >
+                  <Frame className="h-4 w-4" />
+                  {titleCase("Open in Sheets")}
+                </button>
               ) : null}
               {sheetsEnabled && isSheetConvertibleMimeType(previewFile.mimeType, previewFile.name) ? (
                 <button

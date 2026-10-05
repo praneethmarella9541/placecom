@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Loader2 } from "lucide-react";
 import { IconX } from "@/components/Icons";
 import { cn } from "@/lib/utils";
@@ -47,9 +48,15 @@ export function CreateNamePopup({ icon, title, placeholder, creating, error, onS
     onSubmit(t);
   }
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  // Portal to <body> so no ancestor stacking context (the workspace main's
+  // flex layout, the ContentTopbar's backdrop-filter) can trap the overlay.
+  // z-[1000] clears the sidebar (z-40), topbars (z-20/30) and extraction
+  // banner (z-60) without colliding with the compose dock at z-[999].
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in"
       onClick={() => !creating && onClose()}
     >
       <div
@@ -118,6 +125,7 @@ export function CreateNamePopup({ icon, title, placeholder, creating, error, onS
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

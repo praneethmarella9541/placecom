@@ -69,6 +69,12 @@ import {
   type PendingFile,
 } from "@/lib/gmail-compose-types";
 import {
+  readComposePersistedStateForRestore,
+  setComposePersistedState,
+  takeExpandComposeOnReturn,
+  type ComposePersistedState,
+} from "@/lib/compose-persist";
+import {
   mergeInboxUnread,
   readSessionInboxUnread,
   writeSessionInboxUnread,
@@ -1224,9 +1230,29 @@ export default function InboxPage() {
   const newLabelInputRef = useRef<HTMLInputElement>(null);
 
   type ComposeKind = "new" | "forward" | "reply" | "replyAll";
-  const [composeKind, setComposeKind] = useState<ComposeKind>("new");
-  const [composeThreadId, setComposeThreadId] = useState<string | null>(null);
-  const [composeInReplyToId, setComposeInReplyToId] = useState<string | null>(null);
+
+  // Restore a minimized compose that survived route navigation.
+  // getComposePersistedState() is a non-destructive read; the sync effect below
+  // writes `null` once React state has taken over, which also keeps a short
+  // grace cache so a StrictMode double-mount restores correctly.
+  // Captured once via useState lazy init so takeExpandComposeOnReturn only
+  // fires on the very first mount, not on every render.
+  const [_restoredCompose] = useState<ComposePersistedState | null>(() =>
+    typeof window !== "undefined" ? readComposePersistedStateForRestore() : null
+  );
+  const [_restoredExpand] = useState<boolean>(() =>
+    typeof window !== "undefined" ? takeExpandComposeOnReturn() : false
+  );
+
+  const [composeKind, setComposeKind] = useState<ComposeKind>(
+    (_restoredCompose?.kind as ComposeKind | undefined) ?? "new"
+  );
+  const [composeThreadId, setComposeThreadId] = useState<string | null>(
+    _restoredCompose?.threadId ?? null
+  );
+  const [composeInReplyToId, setComposeInReplyToId] = useState<string | null>(
+    _restoredCompose?.inReplyToId ?? null
+  );
 
   // The current user's own Gmail address — used to exclude self from Reply All
   const [myEmail, setMyEmail] = useState("");
@@ -1262,22 +1288,26 @@ export default function InboxPage() {
     }
   }, []);
 
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [composeTo, setComposeTo] = useState("");
-  const [composeCc, setComposeCc] = useState("");
-  const [composeBcc, setComposeBcc] = useState("");
-  const [composeSubject, setComposeSubject] = useState("");
-  const [composeBody, setComposeBody] = useState("");
+  const [composeOpen, setComposeOpen] = useState(_restoredCompose !== null);
+  const [composeTo, setComposeTo] = useState(_restoredCompose?.to ?? "");
+  const [composeCc, setComposeCc] = useState(_restoredCompose?.cc ?? "");
+  const [composeBcc, setComposeBcc] = useState(_restoredCompose?.bcc ?? "");
+  const [composeSubject, setComposeSubject] = useState(_restoredCompose?.subject ?? "");
+  const [composeBody, setComposeBody] = useState(_restoredCompose?.body ?? "");
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
   /** File name → 0–100 while a large attachment uploads (Drive or staged). */
   const [driveUploadProgress, setDriveUploadProgress] = useState<Record<string, number>>({});
   const [uploadProgressKind, setUploadProgressKind] = useState<
     Record<string, "drive" | "attachment">
   >({});
-  const [composeCcBccOpen, setComposeCcBccOpen] = useState(false);
-  const [composeMinimized, setComposeMinimized] = useState(false);
+  const [composeCcBccOpen, setComposeCcBccOpen] = useState(_restoredCompose?.ccBccOpen ?? false);
+  // Restore as minimized if coming back from another tab, unless the user
+  // explicitly clicked "Expand" in the WorkspaceChrome bar (_restoredExpand).
+  const [composeMinimized, setComposeMinimized] = useState(
+    _restoredCompose !== null && !_restoredExpand
+  );
   const [composeFullscreen, setComposeFullscreen] = useState(false);
-  const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+  const [composeDraftId, setComposeDraftId] = useState<string | null>(_restoredCompose?.draftId ?? null);
 
   // ── Mass sending ────────────────────────────────────────────────────────
   // One personalised copy per recipient, addressed individually (never a
@@ -4969,6 +4999,42 @@ export default function InboxPage() {
     if (composeKind === "reply") return titleCase("Reply");
     return composeDraftId ? titleCase("Edit Draft") : titleCase("New Message");
   }, [composeKind, composeDraftId]);
+
+  // Sync minimized compose to the module-level store so WorkspaceChrome can
+  // render the minimized bar when the user navigates to another tab.
+  useEffect(() => {
+    if (composeOpen && composeMinimized) {
+      setComposePersistedState({
+        kind: composeKind,
+        windowTitle: composeWindowTitle,
+        to: composeTo,
+        cc: composeCc,
+        bcc: composeBcc,
+        subject: composeSubject,
+        body: composeBody,
+        ccBccOpen: composeCcBccOpen,
+        draftId: composeDraftId,
+        threadId: composeThreadId,
+        inReplyToId: composeInReplyToId,
+      });
+    } else {
+      setComposePersistedState(null);
+    }
+  }, [
+    composeOpen,
+    composeMinimized,
+    composeKind,
+    composeWindowTitle,
+    composeTo,
+    composeCc,
+    composeBcc,
+    composeSubject,
+    composeBody,
+    composeCcBccOpen,
+    composeDraftId,
+    composeThreadId,
+    composeInReplyToId,
+  ]);
 
   // Folder nav items — shared between left rail (desktop) and mobile tab bar.
   // Inbox badge shows INBOX unread (the server computes it via an is:unread

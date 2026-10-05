@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { FileText, Loader2, Paperclip, Plus, Search, Trash2, X } from "lucide-react";
+import { Braces, FileText, ImageIcon, Loader2, Paperclip, Plus, Search, Trash2, X } from "lucide-react";
 
 import { AttachmentUploadRow } from "@/components/AttachmentUploadRow";
-import { RichTextEditor } from "@/components/RichTextEditor";
-import { SubjectWithVariables } from "@/components/SubjectWithVariables";
+import { COMPOSE_MODAL_SIZE } from "@/lib/compose-modal-size";
+import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
+import { uploadInlineImage } from "@/lib/upload-inline-image";
+import { SubjectWithVariables, type SubjectHandle } from "@/components/SubjectWithVariables";
 import {
   discardPickedUpload,
   uploadPickedFile,
@@ -171,6 +173,15 @@ export function MailTemplatesButton({
     removeAttachment,
   } = useMailTemplates(open);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<RichTextEditorHandle>(null);
+  const subjectRef = useRef<SubjectHandle>(null);
+  /** Which field Variables inserts into — the toolbar click takes focus first. */
+  const lastFocused = useRef<"subject" | "body">("body");
+  /** Photos going into the body ("Insert photo", paste, drop) — one row each. */
+  const [photoUploads, setPhotoUploads] = useState<
+    Array<{ key: string; name: string; percent: number }>
+  >([]);
   const copyingTemplates = useCopyingTemplates();
   /** What Save is doing right now, shown next to the spinner. */
   const [progress, setProgress] = useState<string | null>(null);
@@ -200,7 +211,32 @@ export function MailTemplatesButton({
   /** Latest form, for uploads that finish after the user has moved on. */
   const formRef = useRef(form);
   formRef.current = form;
-  const uploadingCount = form.attachments.filter((a) => a.kind === "new" && !a.upload).length;
+  // Attachments and body photos still uploading — Save waits for both: a photo
+  // reaches the body only once its upload lands.
+  const uploadingCount =
+    form.attachments.filter((a) => a.kind === "new" && !a.upload).length + photoUploads.length;
+
+  /**
+   * Photos into the template body at the caret, like compose's "Insert photo":
+   * uploaded with a progress row, embedded in the mail when it is sent.
+   */
+  async function insertPhotos(files: File[]) {
+    for (const file of files) {
+      const key = `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setPhotoUploads((list) => [...list, { key, name: file.name, percent: 0 }]);
+      try {
+        await bodyRef.current?.insertUploadingImage(file, (f) =>
+          uploadInlineImage(f, (percent) =>
+            setPhotoUploads((list) => list.map((p) => (p.key === key ? { ...p, percent } : p)))
+          )
+        );
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : `"${file.name}" couldn't be inserted.`);
+      } finally {
+        setPhotoUploads((list) => list.filter((p) => p.key !== key));
+      }
+    }
+  }
 
   /** Delete uploads picked in this edit that will now never be saved. */
   const discardUnsaved = useCallback((list: FormAttachment[]) => {
@@ -417,7 +453,7 @@ export function MailTemplatesButton({
       return false;
     }
     if (uploadingCount > 0) {
-      setActionError("Wait for the attachments to finish uploading, then save.");
+      setActionError("Wait for the uploads to finish, then save.");
       return false;
     }
     // Text first, files second: a template has to exist before anything can be
@@ -495,25 +531,20 @@ export function MailTemplatesButton({
 
       {open && typeof document !== "undefined"
         ? createPortal(
+            // Clicking the backdrop does nothing: a stray click beside the
+            // modal shouldn't close what you're writing. Close, Escape and
+            // "Use" are the ways out.
             <div
               className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4"
               role="presentation"
-              onMouseDown={(e) => {
-                if (e.target !== e.currentTarget) return;
-                if (dirty) {
-                  setActionError("Save or discard your changes first.");
-                  return;
-                }
-                close();
-              }}
             >
               <div
                 role="dialog"
                 aria-modal="true"
                 aria-label="Mail templates"
-                onMouseDown={(e) => e.stopPropagation()}
-                className="card flex w-full max-w-[880px] flex-col overflow-hidden p-0 shadow-[var(--shadow-lg)]"
-                style={{ height: "min(640px, calc(100vh - 64px))" }}
+                className="card flex flex-col overflow-hidden p-0 shadow-[var(--shadow-lg)]"
+                // Same size as the compose window it opens from.
+                style={COMPOSE_MODAL_SIZE}
               >
                 <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-5 py-3.5">
                   <div>
@@ -742,40 +773,113 @@ export function MailTemplatesButton({
                               <label className="mb-1 mt-3 block text-[11.5px] font-medium text-[var(--color-text-muted)]">
                                 {titleCase("Subject")}
                               </label>
-                              <SubjectWithVariables
-                                theme="app"
-                                value={form.subject}
-                                onChange={(next) => setForm((f) => ({ ...f, subject: next }))}
-                                variables={variables}
-                                placeholder="e.g. Quick question about {company_name}"
-                              />
+                              <div onFocus={() => { lastFocused.current = "subject"; }}>
+                                <SubjectWithVariables
+                                  ref={subjectRef}
+                                  theme="app"
+                                  value={form.subject}
+                                  onChange={(next) => setForm((f) => ({ ...f, subject: next }))}
+                                  variables={variables}
+                                  placeholder="e.g. Quick question about {company_name}"
+                                />
+                              </div>
                             </>
                           ) : null}
 
                           <label className="mb-1 mt-3 block text-[11.5px] font-medium text-[var(--color-text-muted)]">
                             {titleCase("Body")}
                           </label>
-                          {/* Same editor as the composer, so a template is written
-                              with the formatting and `{` picker it will be used
-                              with. Its variable menu portals at z-[1000] like this
-                              modal and mounts after it, so it paints above. */}
-                          <RichTextEditor
-                            // An explicit writing area: the editor's root is a
-                            // flex column with min-h-0, so in this block-flow
-                            // scroll container an empty body would render as a
-                            // single line under a full formatting toolbar.
-                            className="min-h-[220px] rounded-xl border border-[var(--color-border)] overflow-hidden"
-                            value={form.body}
-                            onChange={(html) => setForm((f) => ({ ...f, body: html }))}
-                            placeholder="Hi {name}, …"
-                            variables={variables}
-                          />
+                          {/* Same editor and the same toolbar row under it as
+                              compose and sequence steps: attach, insert photo,
+                              Variables. Its variable menu portals at z-[1000]
+                              like this modal and mounts after it, so it paints
+                              above. */}
+                          <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+                            <div onFocus={() => { lastFocused.current = "body"; }}>
+                              <RichTextEditor
+                                ref={bodyRef}
+                                // An explicit writing area: the editor's root is a
+                                // flex column with min-h-0, so in this block-flow
+                                // scroll container an empty body would render as a
+                                // single line under a full formatting toolbar.
+                                className="min-h-[220px]"
+                                value={form.body}
+                                onChange={(html) => setForm((f) => ({ ...f, body: html }))}
+                                placeholder="Hi {name}, …"
+                                variables={variables}
+                                onImageFiles={(files) => void insertPhotos(files)}
+                              />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1 border-t border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5">
+                              <input
+                                ref={fileInputRef}
+                                type="file"
+                                multiple
+                                className="hidden"
+                                onChange={(e) => {
+                                  addFiles(e.target.files);
+                                  // Same file picked twice in a row must fire again.
+                                  e.target.value = "";
+                                }}
+                              />
+                              <input
+                                ref={photoInputRef}
+                                type="file"
+                                multiple
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const picked = Array.from(e.target.files ?? []);
+                                  e.target.value = "";
+                                  void insertPhotos(picked);
+                                }}
+                              />
+                              <ToolbarIconBtn
+                                title={`Attach files — over ${formatMb(GMAIL_ATTACHMENT_MAX_BYTES)} they're shared as a Google Drive link, as in compose`}
+                                disabled={busy}
+                                onClick={() => fileInputRef.current?.click()}
+                              >
+                                <Paperclip className="h-[18px] w-[18px]" strokeWidth={2} />
+                              </ToolbarIconBtn>
+                              <ToolbarIconBtn
+                                title="Insert photo — or paste / drop one into the body"
+                                onClick={() => photoInputRef.current?.click()}
+                              >
+                                <ImageIcon className="h-[18px] w-[18px]" strokeWidth={2} />
+                              </ToolbarIconBtn>
+                              <button
+                                type="button"
+                                title="Insert a personalised field like {name}, filled in for each recipient"
+                                onClick={() => {
+                                  if (lastFocused.current === "subject" && canSetSubject) {
+                                    subjectRef.current?.insertVariableTrigger();
+                                  } else {
+                                    bodyRef.current?.insertVariableTrigger();
+                                  }
+                                }}
+                                className="ml-0.5 flex shrink-0 items-center gap-1.5 rounded-full border border-[#dadce0] px-3 py-[6px] text-[13px] font-medium leading-none text-[#3c4043] transition-colors hover:bg-[#e8eaed]"
+                              >
+                                <Braces className="h-4 w-4" strokeWidth={2} />
+                                Variables
+                              </button>
+                            </div>
+                          </div>
+                          {photoUploads.length > 0 ? (
+                            <div className="mt-2 flex flex-col gap-1.5">
+                              {photoUploads.map((p) => (
+                                <AttachmentUploadRow
+                                  key={p.key}
+                                  theme="app"
+                                  kind="photo"
+                                  name={p.name}
+                                  percent={p.percent}
+                                />
+                              ))}
+                            </div>
+                          ) : null}
 
-                          <label className="mb-1 mt-3 block text-[11.5px] font-medium text-[var(--color-text-muted)]">
-                            {titleCase("Attachments")}
-                          </label>
                           {form.attachments.length > 0 ? (
-                            <div className="mb-2 flex flex-wrap gap-1.5">
+                            <div className="mt-2 flex flex-wrap gap-1.5">
                               {form.attachments.map((a) =>
                                 attachmentKey(a) in uploadPct ? (
                                   <div key={attachmentKey(a)} className="w-full">
@@ -838,30 +942,6 @@ export function MailTemplatesButton({
                               )}
                             </div>
                           ) : null}
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            multiple
-                            className="hidden"
-                            onChange={(e) => {
-                              addFiles(e.target.files);
-                              // Same file picked twice in a row must fire again.
-                              e.target.value = "";
-                            }}
-                          />
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => fileInputRef.current?.click()}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-[12.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)] disabled:opacity-50"
-                          >
-                            <Paperclip className="h-3.5 w-3.5" strokeWidth={2} />
-                            {titleCase("Attach files")}
-                          </button>
-                          <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
-                            Files over {formatMb(GMAIL_ATTACHMENT_MAX_BYTES)} are shared as a Google
-                            Drive link, the same as in compose.
-                          </p>
                       </div>
                     )}
 
@@ -1020,7 +1100,7 @@ export function MailTemplatesButton({
                               disabled={busy || !dirty || !form.name.trim() || uploadingCount > 0}
                               title={
                                 uploadingCount > 0
-                                  ? "Wait for the attachments to finish uploading"
+                                  ? "Wait for the uploads to finish"
                                   : undefined
                               }
                               onClick={() => void save()}
@@ -1102,5 +1182,31 @@ export function MailTemplatesButton({
           )
         : null}
     </>
+  );
+}
+
+/** Round icon button in the editor's toolbar row — the compose footer's style. */
+function ToolbarIconBtn({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#e8eaed] disabled:opacity-40 disabled:hover:bg-transparent"
+    >
+      {children}
+    </button>
   );
 }

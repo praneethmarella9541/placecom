@@ -33,12 +33,13 @@ const THEMES = {
   },
 } as const;
 
-export type AttachmentUploadKind = "attachment" | "drive" | "copy";
+export type AttachmentUploadKind = "attachment" | "drive" | "copy" | "photo";
 
 const STATUS: Record<AttachmentUploadKind, string> = {
   attachment: "Uploading attachment…",
   drive: "Uploading to Drive…",
   copy: "Adding from template…",
+  photo: "Inserting photo…",
 };
 
 export function AttachmentUploadRow({

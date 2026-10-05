@@ -31,6 +31,7 @@ import {
 } from "@/components/AttachmentUploadRow";
 import { sendsAsDriveLink } from "@/lib/gmail-draft-limits";
 import { markTemplateCopy } from "@/hooks/useMailTemplates";
+import { uploadInlineImage } from "@/lib/upload-inline-image";
 import { MailTemplatesButton } from "@/components/MailTemplatesModal";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
@@ -438,6 +439,28 @@ function StepComposer({
     ? "Attach files"
     : "Save the sequence first — a new step has nowhere to keep files yet";
 
+  /**
+   * "Insert photo": each photo goes into the step body at the caret, uploading
+   * with a progress row like any attachment, and is embedded in the email when
+   * the step sends (see lib/inline-images).
+   */
+  async function insertPhotos(files: File[]) {
+    setUploadError(null);
+    for (const file of files) {
+      const key = `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setInFlight((list) => [...list, { key, name: file.name, percent: 0, kind: "photo" }]);
+      try {
+        await bodyRef.current?.insertUploadingImage(file, (f) =>
+          uploadInlineImage(f, (percent) => patchInFlight(key, { percent }))
+        );
+      } catch (e) {
+        setUploadError(e instanceof Error ? e.message : `"${file.name}" couldn't be inserted.`);
+      } finally {
+        dropInFlight([key]);
+      }
+    }
+  }
+
   async function upload(list: FileList | null) {
     const files = Array.from(list ?? []);
     if (!files.length || !step.id || !onUploadAttachments) return;
@@ -516,13 +539,14 @@ function StepComposer({
             onChange={(html) => onPatch({ bodyHtml: html })}
             placeholder="Hi {first_name}, …"
             variables={variables}
+            onImageFiles={disabled ? undefined : (files) => void insertPhotos(files)}
           />
         </div>
 
         {/* Compose's footer, under the formatting toolbar: attach, insert
-            photo, insert variable. Same three controls, same order, and the
-            same behaviour behind them — the photo button is the paperclip
-            filtered to images, exactly as GmailComposeDialog wires it. */}
+            photo, insert variable. Same controls, same order, and the same
+            behaviour behind them — the photo button puts photos into the body
+            (like pasting or dropping one), exactly as GmailComposeDialog does. */}
         <div className="flex flex-wrap items-center gap-1 border-t border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5">
           <input
             ref={fileRef}
@@ -541,8 +565,9 @@ function StepComposer({
             accept="image/*"
             className="hidden"
             onChange={(e) => {
-              void upload(e.target.files);
+              const picked = Array.from(e.target.files ?? []);
               e.target.value = "";
+              void insertPhotos(picked);
             }}
           />
 
@@ -557,9 +582,11 @@ function StepComposer({
               <Paperclip className="h-[18px] w-[18px]" strokeWidth={2} />
             )}
           </FooterBtn>
+          {/* Into the body, like Gmail — not an attachment, so it needs no
+              saved step to hang off. */}
           <FooterBtn
-            title={canAttach ? "Insert photo" : attachTitle}
-            disabled={!canAttach || uploading}
+            title="Insert photo"
+            disabled={disabled}
             onClick={() => photoRef.current?.click()}
           >
             <ImageIcon className="h-[18px] w-[18px]" strokeWidth={2} />

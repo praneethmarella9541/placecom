@@ -123,7 +123,7 @@ import {
   startMailListAndBodyPrefetchWarm,
 } from "@/lib/mail-thread-prefetch";
 import { isPrefetchPausedAfterBrowserReload } from "@/lib/login-prefetch-session";
-import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon, Reply, AlertTriangle, Megaphone } from "lucide-react";
+import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon, Reply, AlertTriangle, Megaphone, Search as SearchIcon } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -135,6 +135,9 @@ import {
   IconCalendar,
   IconInfo,
 } from "@/components/Icons";
+
+/** User labels shown in the sidebar before the search box is needed. */
+const SIDEBAR_LABEL_LIMIT = 15;
 
 type Folder = "inbox" | "sent" | "drafts" | "starred" | "important" | "trash" | "spam" | "allmail";
 type BulkAction =
@@ -1144,6 +1147,9 @@ export default function InboxPage() {
 
   // Labels — loaded once, kept in a map by id for O(1) lookup from rows.
   const [allLabels, setAllLabels] = useState<GmailLabel[]>([]);
+  // Sidebar label search: the rail lists the first SIDEBAR_LABEL_LIMIT labels;
+  // typing here searches every user label.
+  const [labelSearch, setLabelSearch] = useState("");
   const labelsById = useMemo(() => {
     const m = new Map<string, GmailLabel>();
     for (const l of allLabels) m.set(l.id, l);
@@ -5329,37 +5335,87 @@ export default function InboxPage() {
             </form>
           )}
 
-          <div className="flex flex-col gap-0.5 px-1">
-            {allLabels
-              .filter((l) => l.type === "user")
-              .slice(0, 15)
-              .map((l) => {
-                const unread = sidebarLabelUnread(l.id);
-                const active = filterLabelId === l.id;
-                const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
-                return (
-                  <LabelSidebarItem
-                    key={l.id}
-                    label={l}
-                    active={active}
-                    unread={unread}
-                    accent={accent}
-                    onSelect={() => {
-                      if (filterLabelId === l.id) return;
-                      setFilterLabelId(l.id);
-                      setFolder("inbox");
-                      setSelectedId(null);
-                      setMessages(null);
-                    }}
-                    onEdit={handleLabelEdit}
-                    onDelete={handleLabelDelete}
-                  />
-                );
-              })}
-            {allLabels.filter((l) => l.type === "user").length === 0 && !showNewLabelForm && (
-              <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No labels yet</p>
-            )}
-          </div>
+          {(() => {
+            const userLabels = allLabels.filter((l) => l.type === "user");
+            const query = labelSearch.trim().toLowerCase();
+            let visible: GmailLabel[];
+            if (query) {
+              visible = userLabels.filter((l) => l.name.toLowerCase().includes(query));
+            } else {
+              visible = userLabels.slice(0, SIDEBAR_LABEL_LIMIT);
+              // A label picked through search stays visible once the box is cleared.
+              const pinned = userLabels.find((l) => l.id === filterLabelId);
+              if (pinned && !visible.some((l) => l.id === pinned.id)) {
+                visible = [pinned, ...visible];
+              }
+            }
+            const hiddenCount = query ? 0 : userLabels.length - visible.length;
+            return (
+              <>
+                {userLabels.length > SIDEBAR_LABEL_LIMIT && (
+                  <div className="mx-2 mb-1.5 flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1">
+                    <SearchIcon className="h-3 w-3 shrink-0 text-[var(--color-text-faint)]" strokeWidth={2.25} />
+                    <input
+                      type="text"
+                      data-testid="label-search-input"
+                      value={labelSearch}
+                      onChange={(e) => setLabelSearch(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Escape") setLabelSearch(""); }}
+                      placeholder="Search labels…"
+                      aria-label="Search labels"
+                      className="min-w-0 flex-1 bg-transparent text-[12px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)]"
+                    />
+                    {labelSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setLabelSearch("")}
+                        aria-label="Clear label search"
+                        className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                      >
+                        <XIcon className="h-3 w-3" strokeWidth={2.25} />
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="flex flex-col gap-0.5 px-1">
+                  {visible.map((l) => {
+                    const unread = sidebarLabelUnread(l.id);
+                    const active = filterLabelId === l.id;
+                    const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
+                    return (
+                      <LabelSidebarItem
+                        key={l.id}
+                        label={l}
+                        active={active}
+                        unread={unread}
+                        accent={accent}
+                        onSelect={() => {
+                          if (filterLabelId === l.id) return;
+                          setFilterLabelId(l.id);
+                          setFolder("inbox");
+                          setSelectedId(null);
+                          setMessages(null);
+                        }}
+                        onEdit={handleLabelEdit}
+                        onDelete={handleLabelDelete}
+                      />
+                    );
+                  })}
+                  {userLabels.length === 0 && !showNewLabelForm && (
+                    <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No labels yet</p>
+                  )}
+                  {query && visible.length === 0 && (
+                    <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No matching labels</p>
+                  )}
+                  {hiddenCount > 0 && (
+                    <p className="px-4 py-1 text-[11px] text-[var(--color-text-faint)]">
+                      {hiddenCount} more — use search
+                    </p>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </>
 
         <PaneResizeHandle onMouseDown={onSidebarResizeStart} />

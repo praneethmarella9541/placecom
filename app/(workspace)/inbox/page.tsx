@@ -5400,6 +5400,7 @@ export default function InboxPage() {
                           setSelectedId(null);
                           setMessages(null);
                         }}
+                        onClear={() => switchMailFolder("inbox")}
                         onEdit={handleLabelEdit}
                         onDelete={handleLabelDelete}
                       />

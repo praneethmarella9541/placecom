@@ -828,53 +828,158 @@ function readStoredWidth(key: string, fallback: number, min: number, max: number
   return Math.min(max, Math.max(min, n));
 }
 
-/** Vertical drag handle between resizable mail panes. */
-function PaneResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+/** Width a collapsed pane keeps so the handle stays reachable. */
+const COLLAPSED_PANE_W = 14;
+
+/**
+ * Vertical drag handle between resizable mail panes, modelled on Trello's:
+ * a visible grip at mid-height, a highlighted line on hover/drag, double-click
+ * to reset the width, and (for collapsible panes) a click on the grip to
+ * collapse or expand. The grip is the only click target; the rest of the
+ * strip only drags.
+ */
+function PaneResizeHandle({
+  onMouseDown,
+  onDoubleClick,
+  collapsed,
+  collapsible,
+}: {
+  onMouseDown: (e: React.MouseEvent) => void;
+  onDoubleClick?: () => void;
+  collapsed?: boolean;
+  collapsible?: boolean;
+}) {
+  const gripTitle = collapsible
+    ? collapsed
+      ? "Click to expand · drag to resize"
+      : "Click to collapse · drag to resize · double-click to reset"
+    : "Drag to resize · double-click to reset";
   return (
     <div
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize pane"
+      data-pane-handle
       onMouseDown={onMouseDown}
-      className="absolute right-0 top-0 z-20 h-full w-1.5 -translate-x-1/2 cursor-col-resize touch-none bg-transparent hover:bg-[var(--color-copper)]/25 active:bg-[var(--color-copper)]/40"
-    />
+      onDoubleClick={onDoubleClick}
+      className="group absolute right-0 top-0 z-20 h-full w-3 cursor-col-resize touch-none"
+    >
+      {/* Edge line — appears on hover and while dragging. */}
+      <span className="pointer-events-none absolute inset-y-0 right-0 w-[3px] bg-transparent transition-colors group-hover:bg-[var(--color-copper)]/50 group-active:bg-[var(--color-copper)]" />
+      {/* Grip */}
+      <span
+        data-pane-grip
+        title={gripTitle}
+        className="absolute right-[1px] top-1/2 flex h-10 w-[9px] -translate-y-1/2 items-center justify-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm transition-colors group-hover:border-[var(--color-copper)] group-active:border-[var(--color-copper)]"
+      >
+        <span className="h-4 w-px rounded-full bg-[var(--color-text-faint)] group-hover:bg-[var(--color-copper)]" />
+      </span>
+    </div>
   );
 }
 
-function useResizablePane(storageKey: string, defaultWidth: number, min: number, max: number) {
+function useResizablePane(
+  storageKey: string,
+  defaultWidth: number,
+  min: number,
+  max: number,
+  opts?: { collapsible?: boolean }
+) {
+  const collapsible = opts?.collapsible ?? false;
+  const collapsedKey = `${storageKey}-collapsed`;
   const [width, setWidth] = useState(defaultWidth);
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     setWidth(readStoredWidth(storageKey, defaultWidth, min, max));
-  }, [storageKey, defaultWidth, min, max]);
+    if (collapsible) {
+      try {
+        setCollapsed(localStorage.getItem(collapsedKey) === "1");
+      } catch {
+        /* storage unavailable — stay expanded */
+      }
+    }
+  }, [storageKey, collapsedKey, collapsible, defaultWidth, min, max]);
+
+  const persistCollapsed = useCallback(
+    (next: boolean) => {
+      setCollapsed(next);
+      try {
+        localStorage.setItem(collapsedKey, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+    },
+    [collapsedKey]
+  );
 
   const onResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startW = width;
+      const startW = collapsed ? 0 : width;
+      const startedOnGrip = Boolean((e.target as HTMLElement).closest("[data-pane-grip]"));
+      // Dragging narrower than this collapses the pane instead of clamping at min.
+      const collapseAt = min * 0.6;
+      let moved = false;
+      let nextCollapsed = collapsed;
+      let nextWidth = width;
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
 
-      function onMove(ev: MouseEvent) {
-        setWidth(Math.min(max, Math.max(min, startW + ev.clientX - startX)));
+      function compute(ev: MouseEvent) {
+        const raw = startW + ev.clientX - startX;
+        if (collapsible && raw < collapseAt) {
+          nextCollapsed = true;
+        } else {
+          nextCollapsed = false;
+          nextWidth = Math.min(max, Math.max(min, raw));
+        }
       }
-      function onUp(ev: MouseEvent) {
-        const finalW = Math.min(max, Math.max(min, startW + ev.clientX - startX));
-        setWidth(finalW);
-        localStorage.setItem(storageKey, String(finalW));
+      function onMove(ev: MouseEvent) {
+        if (Math.abs(ev.clientX - startX) > 3) moved = true;
+        if (!moved) return;
+        compute(ev);
+        setCollapsed(nextCollapsed);
+        if (!nextCollapsed) setWidth(nextWidth);
+      }
+      function onUp() {
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        if (!moved) {
+          // A plain click on the grip toggles collapse; elsewhere it does nothing.
+          if (collapsible && startedOnGrip) persistCollapsed(!collapsed);
+          return;
+        }
+        if (collapsible) persistCollapsed(nextCollapsed);
+        if (!nextCollapsed) {
+          try {
+            localStorage.setItem(storageKey, String(nextWidth));
+          } catch {
+            /* ignore */
+          }
+        }
       }
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [width, storageKey, min, max]
+    [width, collapsed, collapsible, storageKey, min, max, persistCollapsed]
   );
 
-  return { width, onResizeStart };
+  /** Double-click on the handle: back to the default width, expanded. */
+  const reset = useCallback(() => {
+    setWidth(defaultWidth);
+    if (collapsible) persistCollapsed(false);
+    try {
+      localStorage.setItem(storageKey, String(defaultWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [defaultWidth, collapsible, persistCollapsed, storageKey]);
+
+  return { width, collapsed, onResizeStart, reset };
 }
 
 type InboxCategoryKey = "primary" | "promotions" | "social" | "updates" | "forums";
@@ -2738,13 +2843,17 @@ export default function InboxPage() {
     []
   );
 
-  const { width: sidebarWidth, onResizeStart: onSidebarResizeStart } = useResizablePane(
-    STORAGE_SIDEBAR_W,
-    256,
-    180,
-    400
-  );
-  const { width: listPaneWidth, onResizeStart: onListPaneResizeStart } = useResizablePane(
+  const {
+    width: sidebarWidth,
+    collapsed: sidebarCollapsed,
+    onResizeStart: onSidebarResizeStart,
+    reset: resetSidebarWidth,
+  } = useResizablePane(STORAGE_SIDEBAR_W, 256, 180, 400, { collapsible: true });
+  const {
+    width: listPaneWidth,
+    onResizeStart: onListPaneResizeStart,
+    reset: resetListPaneWidth,
+  } = useResizablePane(
     STORAGE_LIST_W,
     420,
     280,
@@ -5217,8 +5326,12 @@ export default function InboxPage() {
 
       {/* ══ LEFT RAIL — desktop only ══ */}
       <aside
-        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] md:flex"
-        style={{ width: sidebarWidth }}
+        className={cn(
+          "relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] md:flex",
+          // Collapsed: hide everything except the handle so it can be dragged or clicked back open.
+          sidebarCollapsed && "overflow-hidden [&>*:not([data-pane-handle])]:hidden"
+        )}
+        style={{ width: sidebarCollapsed ? COLLAPSED_PANE_W : sidebarWidth }}
       >
         {/* Compose + Refresh — Gmail pill compose button */}
         <div className="flex items-center gap-2 px-3 py-2">
@@ -5423,7 +5536,12 @@ export default function InboxPage() {
           })()}
         </>
 
-        <PaneResizeHandle onMouseDown={onSidebarResizeStart} />
+        <PaneResizeHandle
+          onMouseDown={onSidebarResizeStart}
+          onDoubleClick={resetSidebarWidth}
+          collapsed={sidebarCollapsed}
+          collapsible
+        />
       </aside>
 
       {/* ══ RIGHT CONTENT AREA ══ */}
@@ -6080,7 +6198,9 @@ export default function InboxPage() {
                 )}
               </ul>
             )}
-            {selectedId && <PaneResizeHandle onMouseDown={onListPaneResizeStart} />}
+            {selectedId && (
+              <PaneResizeHandle onMouseDown={onListPaneResizeStart} onDoubleClick={resetListPaneWidth} />
+            )}
           </div>
 
         {/* ── THREAD DETAIL view ── */}

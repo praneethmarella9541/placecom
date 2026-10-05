@@ -61,6 +61,7 @@ import {
 import { sendsAsDriveLink } from "@/lib/gmail-draft-limits";
 import { markTemplateCopy } from "@/hooks/useMailTemplates";
 import { creepProgress, type AttachmentUploadKind } from "@/components/AttachmentUploadRow";
+import { uploadInlineImage } from "@/lib/upload-inline-image";
 import { uploadStagedDraftAttachment } from "@/lib/upload-staged-draft-attachment";
 import {
   pendingFileFingerprint,
@@ -1410,9 +1411,16 @@ export default function InboxPage() {
    * draft instead of the one it was meant for.
    */
   const composeFilesGenRef = useRef(0);
+  /**
+   * Gmail labels picked in compose's label menu. Applied to the message once
+   * it is sent (single or every copy of a mass send); cleared with the draft.
+   */
+  const [composeLabelIds, setComposeLabelIds] = useState<string[]>([]);
   const resetComposeFiles = useCallback(() => {
     composeFilesGenRef.current += 1;
     setComposeFiles([]);
+    // Labels belong to the draft being cleared, like its files.
+    setComposeLabelIds([]);
   }, []);
   /** File name → 0–100 while a large attachment uploads (Drive or staged). */
   const [driveUploadProgress, setDriveUploadProgress] = useState<Record<string, number>>({});
@@ -4192,6 +4200,7 @@ export default function InboxPage() {
     (tempId: string, real: GmailLabel) => {
       setAllLabels((prev) => insertLabelSorted(prev.filter((l) => l.id !== tempId), real));
       setThreadLabelIds((cur) => cur.map((id) => (id === tempId ? real.id : id)));
+      setComposeLabelIds((cur) => cur.map((id) => (id === tempId ? real.id : id)));
       mutateThreads((rows) =>
         rows.map((r) => ({
           ...r,
@@ -4241,6 +4250,7 @@ export default function InboxPage() {
     (tempId: string) => {
       setAllLabels((prev) => prev.filter((l) => l.id !== tempId));
       setThreadLabelIds((cur) => cur.filter((id) => id !== tempId));
+      setComposeLabelIds((cur) => cur.filter((id) => id !== tempId));
       applyLabelListUpdate(
         (rows) =>
           rows.map((r) => ({
@@ -4487,6 +4497,60 @@ export default function InboxPage() {
     },
     [selectedId, threads, applyLabelOptimistic, finalizeLabelCreation, setUserLabelCount]
   );
+
+  /**
+   * Create a label from compose's label menu: it appears at once (pending),
+   * is ticked for the mail being written, and is created in Gmail in the
+   * background. replaceLabelId / removePendingLabel keep the compose selection
+   * in step when it lands or fails.
+   */
+  const createComposeLabel = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const pending = makePendingLabel(trimmed);
+      setAllLabels((prev) => insertLabelSorted(prev, pending));
+      setUserLabelCount(pending.id, { total: 0, unread: 0 });
+      setComposeLabelIds((cur) => [...cur, pending.id]);
+      void finalizeLabelCreation(pending.id, trimmed);
+    },
+    [finalizeLabelCreation, setUserLabelCount]
+  );
+
+  const composeLabelSelected = useMemo(() => new Set(composeLabelIds), [composeLabelIds]);
+
+  /**
+   * Upload a photo being inserted into the body ("Insert photo"). Its progress
+   * row sits with the attachment uploads, which also holds Send and draft save
+   * until it lands — before then the body only has a local preview of it.
+   */
+  const uploadComposeInlineImage = useCallback(async (file: File): Promise<string> => {
+    const key = file.name;
+    setUploadProgressKind((prev) => ({ ...prev, [key]: "photo" }));
+    setDriveUploadProgress((prev) => ({ ...prev, [key]: 0 }));
+    try {
+      return await uploadInlineImage(file, (percent) =>
+        setDriveUploadProgress((prev) => ({ ...prev, [key]: percent }))
+      );
+    } catch (e) {
+      setComposeFieldError({
+        title: "Photo not inserted",
+        message: e instanceof Error ? e.message : `"${file.name}" couldn't be inserted.`,
+      });
+      throw e;
+    } finally {
+      setDriveUploadProgress((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setUploadProgressKind((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+  }, []);
 
   /** Create a new label from the left-rail form (no thread to apply it to). */
   function createLabelFromRail() {
@@ -4912,6 +4976,7 @@ export default function InboxPage() {
       body: composeBody,
       files: composeFiles,
       draftId: composeDraftId,
+      labelIds: composeLabelIds,
     };
     // Shared across every recipient in this batch so the campaign report
     // (app/(workspace)/campaigns) can group them — one Send click, one
@@ -4961,6 +5026,7 @@ export default function InboxPage() {
               ...(stagedUploadIds.length > 0
                 ? { stagedUploadIds, keepStagedUploads: i < rows.length - 1 }
                 : {}),
+              ...(snapshot.labelIds.length > 0 ? { labelIds: snapshot.labelIds } : {}),
               campaignId,
               campaignName,
             }),
@@ -5058,6 +5124,7 @@ export default function InboxPage() {
 
     const snapshot = {
       kind: composeKind,
+      labelIds: composeLabelIds,
       to: composeTo.trim(),
       cc: composeCc.trim(),
       bcc: composeBcc.trim(),
@@ -5152,9 +5219,15 @@ export default function InboxPage() {
           inReplyToMessageId: isReply ? snapshot.inReplyToMessageId ?? undefined : undefined,
           attachments: attachments.length ? attachments : undefined,
           stagedUploadIds: stagedUploadIds.length ? stagedUploadIds : undefined,
+          labelIds: snapshot.labelIds.length ? snapshot.labelIds : undefined,
         }),
       });
-      const data = (await res.json()) as { error?: string; id?: string; threadId?: string };
+      const data = (await res.json()) as {
+        error?: string;
+        id?: string;
+        threadId?: string;
+        labelError?: string;
+      };
       if (!res.ok) throw new Error(data.error || "Send failed");
 
       // Delete the draft it was based on (fire-and-forget).
@@ -5231,7 +5304,15 @@ export default function InboxPage() {
       }
       void loadTracking();
 
-      showSendSnack({ phase: "sent" }, 3000);
+      if (snapshot.labelIds.length > 0) scheduleCountRefresh();
+      // The mail went out; only the labelling didn't stick — say so, but as a
+      // sent mail, not a failed one.
+      showSendSnack(
+        data.labelError
+          ? { phase: "error", message: "Sent, but the labels couldn't be applied." }
+          : { phase: "sent" },
+        data.labelError ? 5000 : 3000
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Send failed";
       if (!isReply) {
@@ -6687,6 +6768,22 @@ export default function InboxPage() {
         // list replaces that set with its own columns.
         variables={editorVariables}
         unknownPlaceholders={unknownPlaceholders}
+        uploadInlineImage={uploadComposeInlineImage}
+        // Labels for the mail being written, applied when it is sent.
+        labelsButton={
+          <LabelPicker
+            variant="icon"
+            allLabels={allLabels}
+            selected={composeLabelSelected}
+            onToggle={(labelId, checked) =>
+              setComposeLabelIds((cur) =>
+                checked ? (cur.includes(labelId) ? cur : [...cur, labelId]) : cur.filter((id) => id !== labelId)
+              )
+            }
+            onCreate={createComposeLabel}
+            align="left"
+          />
+        }
         templatesButton={
           templatesEnabled ? (
             <MailTemplatesButton

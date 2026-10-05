@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
+import { addMessageLabels } from "@/lib/gmail-labels";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
@@ -38,6 +39,11 @@ type Body = {
    * release them.
    */
   keepStagedUploads?: boolean;
+  /**
+   * Gmail label ids picked in compose. Applied to the sent message once Gmail
+   * has accepted it; a labelling failure never fails the send.
+   */
+  labelIds?: string[];
   /** Shared across every recipient of one mass/mail-merge send — see app/api/campaigns. */
   campaignId?: string;
   campaignName?: string;
@@ -159,7 +165,23 @@ export async function POST(request: Request) {
       void releaseStagedAttachments(auth.userId, stagedIds).catch(() => {});
     }
 
-    return NextResponse.json(sent);
+    // Label the sent message. The mail is already out, so a failure here is
+    // reported alongside the success rather than as an error.
+    const labelIds = (body.labelIds ?? []).filter(
+      (id): id is string => typeof id === "string" && !!id && !id.startsWith("pending:")
+    );
+    let labelError: string | undefined;
+    if (labelIds.length > 0 && sent.id) {
+      try {
+        await addMessageLabels(auth.accessToken, sent.id, labelIds, {
+          mailboxKey: auth.mailboxOwnerId,
+        });
+      } catch (e) {
+        labelError = e instanceof Error ? e.message : "Could not apply labels";
+      }
+    }
+
+    return NextResponse.json(labelError ? { ...sent, labelError } : sent);
   } catch (e) {
     if (trackRow) {
       await supabase.from("email_tracking").delete().eq("id", trackRow.id);

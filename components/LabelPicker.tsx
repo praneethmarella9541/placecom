@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { labelDisplayName, buildLabelColorMap, type LabelLike } from "@/components/LabelChip";
 
@@ -13,6 +13,25 @@ type Label = LabelLike & {
 
 const MENU_WIDTH = 280;
 const MENU_MAX_HEIGHT = 360;
+/** Labels listed before searching; the rest are a search away. */
+const RECENT_LIMIT = 5;
+
+/**
+ * Newest first. Gmail numbers user labels as they are created ("Label_42"),
+ * so a larger number is a newer label. Compared as strings by length then
+ * value — the numbers can outgrow a JS number.
+ */
+function newestFirst(a: { id: string; name: string }, b: { id: string; name: string }): number {
+  const na = /^Label_(\d+)$/.exec(a.id)?.[1];
+  const nb = /^Label_(\d+)$/.exec(b.id)?.[1];
+  if (na && nb) {
+    if (na.length !== nb.length) return nb.length - na.length;
+    if (na !== nb) return nb < na ? -1 : 1;
+  } else if (na || nb) {
+    return na ? -1 : 1;
+  }
+  return a.name.localeCompare(b.name);
+}
 
 /**
  * Gmail-style "Labels" dropdown: search + user-label checklist + create / edit / delete.
@@ -25,6 +44,7 @@ export function LabelPicker({
   onEdit,
   onDelete,
   align = "right",
+  variant = "button",
 }: {
   allLabels: Label[];
   selected: Set<string>;
@@ -33,6 +53,12 @@ export function LabelPicker({
   onEdit?: (labelId: string, newName: string) => Promise<void> | void;
   onDelete?: (labelId: string) => Promise<void> | void;
   align?: "left" | "right";
+  /**
+   * "button" is the labelled "Labels" button used on threads. "icon" is a round
+   * tag icon sized for the compose footer's icon row, with a count badge once
+   * anything is picked.
+   */
+  variant?: "button" | "icon";
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -40,7 +66,16 @@ export function LabelPicker({
   const [newLabelName, setNewLabelName] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
-  const [menuStyle, setMenuStyle] = useState<{ top: number; left: number } | null>(null);
+  /**
+   * Opening downward pins the menu's top under the button; opening upward pins
+   * its bottom above it. Pinning by the edge nearest the button means the
+   * menu's own height never has to be guessed — guessing it (the old max-height
+   * estimate) put a short menu mid-screen until a later reposition snapped it
+   * down to the button.
+   */
+  const [menuStyle, setMenuStyle] = useState<
+    { top?: number; bottom?: number; left: number; maxHeight: number } | null
+  >(null);
   const [pendingChecks, setPendingChecks] = useState<Map<string, boolean>>(new Map());
   const buttonRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -96,7 +131,9 @@ export function LabelPicker({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  useEffect(() => {
+  // Layout effect: placed before the first paint, so the menu never shows at a
+  // provisional position and then jumps.
+  useLayoutEffect(() => {
     if (!open || !buttonRef.current) return;
 
     function positionMenu() {
@@ -104,13 +141,19 @@ export function LabelPicker({
       let left = align === "right" ? rect.right - MENU_WIDTH : rect.left;
       left = Math.max(8, Math.min(left, window.innerWidth - MENU_WIDTH - 8));
 
-      const menuH = menuRef.current?.offsetHeight ?? MENU_MAX_HEIGHT;
-      let top = rect.bottom + 4;
-      if (top + menuH > window.innerHeight - 8) {
-        top = Math.max(8, rect.top - menuH - 4);
+      const spaceBelow = window.innerHeight - rect.bottom - 12;
+      const spaceAbove = rect.top - 12;
+      // Below when it fits (or has more room than above); otherwise above —
+      // the compose footer sits at the bottom of the screen.
+      if (spaceBelow >= MENU_MAX_HEIGHT || spaceBelow >= spaceAbove) {
+        setMenuStyle({ top: rect.bottom + 4, left, maxHeight: Math.min(MENU_MAX_HEIGHT, spaceBelow) });
+      } else {
+        setMenuStyle({
+          bottom: window.innerHeight - rect.top + 4,
+          left,
+          maxHeight: Math.min(MENU_MAX_HEIGHT, spaceAbove),
+        });
       }
-
-      setMenuStyle({ top, left });
     }
 
     positionMenu();
@@ -122,6 +165,16 @@ export function LabelPicker({
     };
   }, [open, align, query, userLabels.length, createMode, editingId]);
 
+  // Every close (outside click, the button again) starts the next open fresh:
+  // no leftover search, create box or rename in progress.
+  useEffect(() => {
+    if (open) return;
+    setQuery("");
+    setCreateMode(false);
+    setNewLabelName("");
+    setEditingId(null);
+  }, [open]);
+
   useEffect(() => {
     if (createMode) createInputRef.current?.focus();
   }, [createMode]);
@@ -130,11 +183,23 @@ export function LabelPicker({
     if (editingId) editInputRef.current?.focus();
   }, [editingId]);
 
-  const filtered = useMemo(() => {
+  /**
+   * With no search, only the newest RECENT_LIMIT labels are listed — a long
+   * label list is a wall to scroll through — plus anything already ticked, so
+   * a selection never hides. Searching covers every label.
+   */
+  const { filtered, hiddenCount } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return userLabels;
-    return userLabels.filter((l) => labelDisplayName(l).toLowerCase().includes(q));
-  }, [userLabels, query]);
+    if (q) {
+      return {
+        filtered: userLabels.filter((l) => labelDisplayName(l).toLowerCase().includes(q)),
+        hiddenCount: 0,
+      };
+    }
+    const sorted = userLabels.slice().sort(newestFirst);
+    const shown = sorted.filter((l, i) => i < RECENT_LIMIT || effectiveSelected.has(l.id));
+    return { filtered: shown, hiddenCount: userLabels.length - shown.length };
+  }, [userLabels, query, effectiveSelected]);
 
   const showCreateFromSearch =
     query.trim().length > 0 &&
@@ -167,19 +232,32 @@ export function LabelPicker({
     open && menuStyle ? (
       <div
         ref={menuRef}
-        style={{ position: "fixed", top: menuStyle.top, left: menuStyle.left, width: MENU_WIDTH, zIndex: 9999 }}
-        className="overflow-hidden rounded-lg border border-[#dadce0] bg-white shadow-[0_4px_16px_rgba(0,0,0,0.2)]"
+        style={{
+          position: "fixed",
+          top: menuStyle.top,
+          bottom: menuStyle.bottom,
+          left: menuStyle.left,
+          width: MENU_WIDTH,
+          maxHeight: menuStyle.maxHeight,
+          zIndex: 9999,
+        }}
+        className="flex flex-col overflow-hidden rounded-lg border border-[#dadce0] bg-white shadow-[0_4px_16px_rgba(0,0,0,0.2)]"
       >
-        <div className="border-b border-[#e8eaed] p-2">
+        <div className="shrink-0 border-b border-[#e8eaed] p-2">
           <input
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Label as…"
+            placeholder="Search Label"
             className="w-full rounded-md border border-[#dadce0] bg-white px-2 py-1.5 text-[13px] text-[#202124] outline-none focus:border-[#0b57d0] focus:ring-1 focus:ring-[#0b57d0]"
           />
         </div>
-        <div className="max-h-[240px] overflow-y-auto py-1">
+        <div className="min-h-0 flex-1 overflow-y-auto py-1">
+          {hiddenCount > 0 && (
+            <p className="px-3 pb-0.5 pt-1 text-[11px] font-medium uppercase tracking-wide text-[#5f6368]">
+              Latest labels
+            </p>
+          )}
           {filtered.length === 0 && !showCreateFromSearch && (
             <p className="px-3 py-2 text-[12px] text-[#5f6368]">No matching labels.</p>
           )}
@@ -270,9 +348,19 @@ export function LabelPicker({
               </div>
             );
           })}
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              // Focus the search box — that is where the rest are found.
+              onClick={() => menuRef.current?.querySelector("input")?.focus()}
+              className="w-full px-3 py-2 text-left text-[12px] text-[#5f6368] hover:text-[#0b57d0]"
+            >
+              {hiddenCount} more label{hiddenCount === 1 ? "" : "s"} — search to find {hiddenCount === 1 ? "it" : "them"}
+            </button>
+          )}
         </div>
         {showCreateFromSearch && (
-          <div className="border-t border-[#e8eaed]">
+          <div className="shrink-0 border-t border-[#e8eaed]">
             <button
               type="button"
               onClick={() => void submitCreate(query.trim())}
@@ -282,7 +370,7 @@ export function LabelPicker({
             </button>
           </div>
         )}
-        <div className="border-t border-[#e8eaed]">
+        <div className="shrink-0 border-t border-[#e8eaed]">
           {createMode ? (
             <div className="flex items-center gap-1 p-2">
               <input
@@ -327,6 +415,41 @@ export function LabelPicker({
         </div>
       </div>
     ) : null;
+
+  if (variant === "icon") {
+    const count = effectiveSelected.size;
+    const names = userLabels
+      .filter((l) => effectiveSelected.has(l.id))
+      .map((l) => labelDisplayName(l));
+    const title = count > 0 ? `Labels: ${names.join(", ")}` : "Labels";
+    return (
+      <>
+        <button
+          ref={buttonRef}
+          type="button"
+          title={title}
+          aria-label={title}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+          className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[#e8eaed] ${
+            count > 0 ? "text-[#0b57d0]" : "text-[#444746]"
+          }`}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+            <path d="M20.59 13.41 13.41 20.6a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+            <line x1="7" y1="7" x2="7.01" y2="7" />
+          </svg>
+          {count > 0 ? (
+            <span className="absolute right-0.5 top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#0b57d0] px-1 text-[10px] font-semibold leading-none text-white">
+              {count}
+            </span>
+          ) : null}
+        </button>
+        {typeof document !== "undefined" && menu ? createPortal(menu, document.body) : null}
+      </>
+    );
+  }
 
   return (
     <>

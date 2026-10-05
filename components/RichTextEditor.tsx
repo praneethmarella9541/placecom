@@ -15,7 +15,15 @@ import {
   type UnknownPlaceholderMode,
 } from "@/lib/compose-variables";
 
+/** Marks a photo whose upload hasn't finished (see insertUploadingImage). */
+const UPLOADING_IMAGE_ATTR = "data-uploading-image";
+const UPLOADING_IMAGE_RE = /<img\b[^>]*\bdata-uploading-image=[^>]*>(<br>)?/gi;
+/** Fits the photo to the mail's width, as Gmail does with an inserted photo. */
+const INLINE_IMAGE_STYLE = "max-width:100%;height:auto";
+
 export function richTextIsEmpty(html: string): boolean {
+  // A body holding only an inserted photo has content, though no text.
+  if (/<img\b/i.test(html)) return false;
   const stripped = html
     .replace(/<br\s*\/?>/gi, "")
     .replace(/<p[^>]*><\/p>/gi, "")
@@ -40,6 +48,13 @@ export type RichTextEditorHandle = {
   insertVariableTrigger: () => void;
   /** Insert a complete `{key}` token at the caret, picker not involved. */
   insertVariableToken: (key: string) => void;
+  /**
+   * Insert a photo into the body at the caret — Gmail's "Insert photo". It
+   * shows at once (faded, from a local preview) while `upload` runs, then
+   * switches to the URL `upload` resolves to. Rejects, removing the photo, if
+   * the upload fails.
+   */
+  insertUploadingImage: (file: File, upload: (file: File) => Promise<string>) => Promise<void>;
   isFocused: () => boolean;
 };
 
@@ -47,6 +62,13 @@ type Props = {
   value: string;
   onChange: (html: string) => void;
   placeholder?: string;
+  /**
+   * Images pasted or dropped into the body. The host inserts them the same way
+   * as its "Insert photo" button (insertUploadingImage) — the caret is already
+   * at the paste or drop point. Without it, pasting or dropping an image does
+   * nothing special.
+   */
+  onImageFiles?: (files: File[]) => void;
   className?: string;
   autoFocus?: boolean;
   /**
@@ -151,7 +173,7 @@ const EMOJI_GROUPS = [
   { label: "Objects", emojis: ["📎","📏","📐","✂️","🗃️","🗄️","🗑️","🔒","🔓","🔏","🔐","🔑","🗝️","🔨","🪓","⛏️","⚒️","🛠️","🗡️","⚔️","🔫","🪃","🏹","🛡️","🪚","🔧","🪛","🔩","⚙️","🗜️","⚖️","🦯","🔗","⛓️","🪝","🧲","🔮","🪄","🧿","🪬","🧸","🪅","🎭","🖼️","🎨","🧵","🪡","🧶","🪢"] },
 ];
 
-export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function RichTextEditor({ value, onChange, placeholder, className, autoFocus, variables, unknownPlaceholders = "ignore" }: Props, ref) {
+export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function RichTextEditor({ value, onChange, placeholder, className, autoFocus, variables, unknownPlaceholders = "ignore", onImageFiles }: Props, ref) {
   const editorRef = useRef<HTMLDivElement>(null);
   const lastSetValueRef = useRef<string>("");
   const [activeCmds, setActiveCmds] = useState<Record<string, boolean>>({});
@@ -189,6 +211,137 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
 
   // Saved selection for when picker popups steal focus
   const savedRangeRef = useRef<Range | null>(null);
+
+  // ── Inserted photos: select, resize, remove ──────────────────────────────
+  /** The photo clicked in the body, with its box in the scroll container. */
+  const [selectedImg, setSelectedImg] = useState<HTMLImageElement | null>(null);
+  const [imgBox, setImgBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const imgToolsRef = useRef<HTMLDivElement>(null);
+
+  function measureImg(img: HTMLImageElement | null) {
+    if (!img || !img.isConnected) {
+      setSelectedImg(null);
+      setImgBox(null);
+      return;
+    }
+    setImgBox({ left: img.offsetLeft, top: img.offsetTop, width: img.offsetWidth, height: img.offsetHeight });
+  }
+
+  function selectImg(img: HTMLImageElement | null) {
+    setSelectedImg(img);
+    measureImg(img);
+  }
+
+  /**
+   * Size a photo. A pixel width is written both as the `width` attribute
+   * (what Outlook honours) and as CSS; max-width keeps it inside narrow
+   * screens either way. `null` is "best fit": as wide as the mail allows.
+   */
+  function sizeImg(img: HTMLImageElement, width: number | null) {
+    if (width === null) {
+      img.removeAttribute("width");
+      img.style.width = "";
+    } else {
+      const w = Math.max(40, Math.round(width));
+      img.setAttribute("width", String(w));
+      img.style.width = `${w}px`;
+    }
+    img.style.maxWidth = "100%";
+    img.style.height = "auto";
+    img.removeAttribute("height");
+  }
+
+  /** Room for a photo: the editor's content width. */
+  function bodyWidth(): number {
+    const el = editorRef.current;
+    if (!el) return 600;
+    const cs = window.getComputedStyle(el);
+    return el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  }
+
+  function applyPreset(preset: "small" | "medium" | "fit" | "original") {
+    const img = selectedImg;
+    if (!img) return;
+    const w = bodyWidth();
+    if (preset === "small") sizeImg(img, Math.min(img.naturalWidth || w, w * 0.25));
+    else if (preset === "medium") sizeImg(img, Math.min(img.naturalWidth || w, w * 0.5));
+    else if (preset === "fit") sizeImg(img, null);
+    else sizeImg(img, img.naturalWidth || w);
+    emit();
+    requestAnimationFrame(() => measureImg(img));
+  }
+
+  function removeSelectedImg() {
+    const img = selectedImg;
+    if (!img) return;
+    img.remove();
+    selectImg(null);
+    emit();
+  }
+
+  /** Drag the corner handle: width follows the pointer, height keeps the ratio. */
+  function startImgResize(e: React.MouseEvent) {
+    const img = selectedImg;
+    if (!img) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = img.offsetWidth;
+    const maxW = bodyWidth();
+    function onMove(mv: MouseEvent) {
+      sizeImg(img!, Math.min(maxW, startW + (mv.clientX - startX)));
+      measureImg(img!);
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      emit();
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  // Clicking anywhere that isn't the photo or its tools lets go of it.
+  useEffect(() => {
+    if (!selectedImg) return;
+    function onDown(e: MouseEvent) {
+      const t = e.target as Node;
+      if (t === selectedImg || imgToolsRef.current?.contains(t)) return;
+      setSelectedImg(null);
+      setImgBox(null);
+    }
+    function onResize() {
+      measureImg(selectedImg);
+    }
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("resize", onResize);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("resize", onResize);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- measureImg only uses setters
+  }, [selectedImg]);
+
+  /** Pull the image files out of a paste or drop. */
+  function imageFilesFrom(list: FileList | null | undefined): File[] {
+    return Array.from(list ?? []).filter((f) => f.type.startsWith("image/"));
+  }
+
+  /** A `data:` image (pasted from some apps) as a File, to upload like any photo. */
+  function dataUrlToFile(dataUrl: string, index: number): File | null {
+    const m = /^data:(image\/[a-z0-9.+-]+);base64,(.*)$/i.exec(dataUrl);
+    if (!m) return null;
+    try {
+      const bin = atob(m[2]);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const ext = m[1].split("/")[1].replace("jpeg", "jpg").replace(/\+.*/, "");
+      return new File([bytes], `pasted-image-${index + 1}.${ext}`, { type: m[1] });
+    } catch {
+      return null;
+    }
+  }
   // The <a> being edited when the link popover was opened on top of an
   // existing link — lets Apply update it in place instead of nesting a new
   // <a> inside it (which is what happened before: the popover always opened
@@ -206,6 +359,8 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   function restoreSelection() {
     const range = savedRangeRef.current;
     if (!range) return;
+    // A range from another field (the subject) must not steer an insert here.
+    if (!editorRef.current?.contains(range.startContainer)) return;
     const sel = window.getSelection();
     if (sel) {
       sel.removeAllRanges();
@@ -232,6 +387,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
       el.innerHTML = tintEnabled
         ? wrapVariablesInHtml(value, variables, unknownPlaceholders)
         : value;
+      // The selected photo (if any) was just replaced along with everything else.
+      setSelectedImg(null);
+      setImgBox(null);
       // Records the incoming value, not the wrapped markup: the comparison above
       // is against what the parent holds. Storing the wrapped form would make
       // every later external set look like a change and rewrite the DOM on each
@@ -307,7 +465,9 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
   function emit() {
     const el = editorRef.current;
     if (!el) return;
-    const html = el.innerHTML;
+    // A photo still uploading points at a local preview no one else can load;
+    // it reaches the draft only once it has its real URL (insertUploadingImage).
+    const html = el.innerHTML.replace(UPLOADING_IMAGE_RE, "");
     lastSetValueRef.current = html;
     onChange(html);
   }
@@ -665,11 +825,74 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
       emit();
       saveSelection();
     },
+    insertUploadingImage: async (file, upload) => {
+      const el = editorRef.current;
+      if (!el) return;
+      el.focus();
+      const saved = savedRangeRef.current;
+      if (saved && el.contains(saved.startContainer)) {
+        restoreSelection();
+      } else {
+        // Never been in the body: put the photo at the end, not the start.
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+
+      const key = `img-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const preview = URL.createObjectURL(file);
+      const alt = file.name.replace(/[<>"&]/g, "");
+      document.execCommand(
+        "insertHTML",
+        false,
+        `<img src="${preview}" ${UPLOADING_IMAGE_ATTR}="${key}" alt="${alt}" style="${INLINE_IMAGE_STYLE};opacity:0.5" /><br>`
+      );
+      saveSelection();
+      const find = () =>
+        editorRef.current?.querySelector<HTMLImageElement>(`img[${UPLOADING_IMAGE_ATTR}="${key}"]`);
+
+      try {
+        const url = await upload(file);
+        const img = find();
+        // Removed by the user while it uploaded — nothing to finish.
+        if (!img) return;
+        img.src = url;
+        img.removeAttribute(UPLOADING_IMAGE_ATTR);
+        img.setAttribute("style", INLINE_IMAGE_STYLE);
+        emit();
+      } catch (e) {
+        find()?.remove();
+        emit();
+        throw e;
+      } finally {
+        URL.revokeObjectURL(preview);
+      }
+    },
     isFocused: () => !!editorRef.current && document.activeElement === editorRef.current,
   }));
 
   function handlePaste(e: React.ClipboardEvent<HTMLDivElement>) {
     const html = e.clipboardData.getData("text/html");
+    const imageFiles = onImageFiles ? imageFilesFrom(e.clipboardData.files) : [];
+
+    // A screenshot, or an image copied on its own: the clipboard's HTML (if
+    // any) is just an <img> wrapper, so the file itself is what to insert —
+    // uploaded and embedded like "Insert photo".
+    if (imageFiles.length > 0) {
+      const htmlText = html
+        ? (new DOMParser().parseFromString(html, "text/html").body.textContent ?? "").trim()
+        : "";
+      if (!htmlText) {
+        e.preventDefault();
+        saveSelection();
+        onImageFiles!(imageFiles);
+        return;
+      }
+    }
+
     if (html) {
       e.preventDefault();
       // Parse and strip dangerous nodes/attributes before inserting.
@@ -688,7 +911,25 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
         }
         remove.forEach(a => el.removeAttribute(a));
       });
+      // Images embedded as data: in the pasted HTML would reach recipients as
+      // broken images (Gmail won't show them) — take them out and upload them
+      // as photos instead, after the text.
+      const embedded: File[] = [];
+      if (onImageFiles) {
+        doc.body.querySelectorAll("img").forEach((img) => {
+          const src = img.getAttribute("src") ?? "";
+          if (!/^data:image\//i.test(src)) return;
+          const file = dataUrlToFile(src, embedded.length);
+          if (file) embedded.push(file);
+          img.remove();
+        });
+      }
       document.execCommand("insertHTML", false, doc.body.innerHTML);
+      if (embedded.length > 0) {
+        emit();
+        saveSelection();
+        onImageFiles!(embedded);
+      }
       return;
     }
     const text = e.clipboardData.getData("text/plain");
@@ -713,6 +954,7 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
       {/* Caret coordinates are captured once, so a scroll would leave the
           picker floating detached from its anchor — close it instead. */}
       <div
+        ref={surfaceRef}
         className="relative min-h-0 flex-1 overflow-y-auto"
         onScroll={varMenu ? closeVariableMenu : undefined}
       >
@@ -728,6 +970,15 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
           onInput={() => { emit(); syncVariableMenu(); }}
           onBlur={() => { highlightVariablesOnBlur(); emit(); }}
           onKeyDown={(e) => {
+            if (selectedImg) {
+              if (e.key === "Backspace" || e.key === "Delete") {
+                e.preventDefault();
+                removeSelectedImg();
+                return;
+              }
+              // Typing lets go of the photo and carries on as normal.
+              selectImg(null);
+            }
             if (handleVariableDelete(e)) { e.preventDefault(); return; }
             handleVariableKeyDown(e);
           }}
@@ -740,6 +991,12 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
           }}
           onMouseUp={() => { saveSelection(); syncVariableMenu(); }}
           onClick={(e) => {
+            // A photo: select it for resizing (not while still uploading).
+            const target = e.target as HTMLElement;
+            if (target instanceof HTMLImageElement && !target.hasAttribute(UPLOADING_IMAGE_ATTR)) {
+              selectImg(target);
+              return;
+            }
             // Gmail-style: clicking directly on a link shows its "Go to
             // link / Change / Remove" bar immediately — no need to select
             // the text and reach for the toolbar button first.
@@ -751,11 +1008,98 @@ export const RichTextEditor = forwardRef<RichTextEditorHandle, Props>(function R
             }
           }}
           onPaste={handlePaste}
+          onDragOver={(e) => {
+            if (onImageFiles && Array.from(e.dataTransfer.types).includes("Files")) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            const files = onImageFiles ? imageFilesFrom(e.dataTransfer.files) : [];
+            if (files.length === 0) return;
+            e.preventDefault();
+            // Put the caret where the photo was dropped, so it lands there.
+            const doc = document as Document & {
+              caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+            };
+            let range: Range | null = null;
+            if (typeof doc.caretRangeFromPoint === "function") {
+              range = doc.caretRangeFromPoint(e.clientX, e.clientY);
+            } else if (typeof doc.caretPositionFromPoint === "function") {
+              const pos = doc.caretPositionFromPoint(e.clientX, e.clientY);
+              if (pos) {
+                range = document.createRange();
+                range.setStart(pos.offsetNode, pos.offset);
+              }
+            }
+            if (range && editorRef.current?.contains(range.startContainer)) {
+              range.collapse(true);
+              const sel = window.getSelection();
+              sel?.removeAllRanges();
+              sel?.addRange(range);
+              saveSelection();
+            }
+            onImageFiles!(files);
+          }}
           className="min-h-[200px] w-full px-3 py-3 text-[13px] leading-relaxed text-[#202124] outline-none [overflow-wrap:anywhere] [&_.cv-var]:rounded [&_.cv-var]:bg-[#e8f0fe] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[#1967d2] [&_.cv-var.cv-var-unknown]:bg-[#fce8e6] [&_.cv-var.cv-var-unknown]:text-[#c5221f] [&_a]:text-[#1a73e8] [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-[#ccc] [&_blockquote]:pl-3 [&_blockquote]:text-[#666] [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
           role="textbox"
           aria-multiline="true"
           aria-label={placeholder || "Message body"}
         />
+
+        {/* Selected photo: outline, corner handle to drag to any size, and
+            Gmail's size presets. Inside the scroll container, so it scrolls
+            with the photo. */}
+        {selectedImg && imgBox ? (
+          <div ref={imgToolsRef}>
+            <div
+              className="pointer-events-none absolute z-10 outline outline-2 outline-[#1a73e8]"
+              style={{ left: imgBox.left, top: imgBox.top, width: imgBox.width, height: imgBox.height }}
+            >
+              <span
+                role="slider"
+                aria-label="Resize photo"
+                aria-valuenow={imgBox.width}
+                title="Drag to resize"
+                onMouseDown={startImgResize}
+                className="pointer-events-auto absolute -bottom-1.5 -right-1.5 h-3 w-3 cursor-nwse-resize rounded-sm border-2 border-white bg-[#1a73e8] shadow"
+              />
+            </div>
+            <div
+              className="absolute z-10 flex items-center gap-0.5 rounded-md border border-[#dadce0] bg-white p-0.5 text-[12px] text-[#3c4043] shadow-[0_2px_8px_rgba(60,64,67,0.25)]"
+              style={{
+                left: imgBox.left,
+                // Above the photo, or inside its top edge when there's no room.
+                top: imgBox.top >= 36 ? imgBox.top - 34 : imgBox.top + 6,
+              }}
+            >
+              {(
+                [
+                  ["small", "Small"],
+                  ["medium", "Medium"],
+                  ["fit", "Best fit"],
+                  ["original", "Original size"],
+                ] as const
+              ).map(([preset, label]) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => applyPreset(preset)}
+                  className="rounded px-2 py-1 hover:bg-[#f1f3f4]"
+                >
+                  {label}
+                </button>
+              ))}
+              <span className="mx-0.5 h-4 w-px bg-[#dadce0]" aria-hidden />
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={removeSelectedImg}
+                className="rounded px-2 py-1 text-[#c5221f] hover:bg-[#fce8e6]"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/*

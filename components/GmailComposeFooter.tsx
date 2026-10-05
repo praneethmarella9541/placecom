@@ -38,6 +38,8 @@ export type GmailComposeFooterProps = {
    * the dialog's attachmentChips and sidePanel.
    */
   templatesButton?: React.ReactNode;
+  /** Label picker for the mail being written, shown right after the photo icon. */
+  labelsButton?: React.ReactNode;
 };
 
 export function GmailComposeFooter({
@@ -58,6 +60,7 @@ export function GmailComposeFooter({
   sendHidden,
   onInsertVariable,
   templatesButton,
+  labelsButton,
 }: GmailComposeFooterProps) {
   const label = sending ? "Sending…" : sendLabel ?? "Send";
   const showMassToggle = massSending !== undefined && !!onMassSendingChange;
@@ -85,6 +88,8 @@ export function GmailComposeFooter({
                 <PhotoIcon />
               </FooterBtn>
             )}
+
+            {labelsButton}
 
             {/* A labelled pill, like Templates beside it, rather than a bare
                 glyph: "{ }" alone doesn't say "personalise this mail", and the

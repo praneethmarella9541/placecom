@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2, Eye, Mails } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
+import { COMPOSE_MODAL_SIZE } from "@/lib/compose-modal-size";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
@@ -94,6 +95,15 @@ export type GmailComposeDialogProps = {
    * on the review screen along with the rest of the icon row.
    */
   templatesButton?: React.ReactNode;
+  /** Label picker for this mail; its labels are applied when it is sent. */
+  labelsButton?: React.ReactNode;
+  /**
+   * Uploads a photo for the body and resolves to its URL. When given, "Insert
+   * photo" puts photos into the body at the caret, as Gmail does; without it
+   * the photo button attaches them like the paperclip. Shows its own progress
+   * and errors — a rejection here only means "nothing was inserted".
+   */
+  uploadInlineImage?: (file: File) => Promise<string>;
   /** Small notice strip above the footer (outbox delivery hint). */
   footerNotice?: React.ReactNode;
 
@@ -178,6 +188,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     lockedRecipientCount = 0,
     sidePanel,
     templatesButton,
+    labelsButton,
+    uploadInlineImage,
     footerNotice,
     massSending,
     onMassSendingChange,
@@ -192,6 +204,19 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
 
   const centered = placement === "centered";
   const reviewing = !!review;
+
+  /**
+   * Photos into the body at the caret, one after another in the order given —
+   * from "Insert photo", or pasted / dropped into the editor.
+   */
+  function insertPhotos(files: File[]) {
+    if (!uploadInlineImage) return;
+    void (async () => {
+      for (const file of files) {
+        await editorRef.current?.insertUploadingImage(file, uploadInlineImage).catch(() => {});
+      }
+    })();
+  }
 
   // The shared mailbox is what actually sends, so it is the only correct
   // From. Deliberately no fallback to sessionEmail (the signed-in user):
@@ -341,10 +366,12 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             !fullscreen
               ? centered
                 ? {
-                    // Widens to fit the recipient rail without reflowing the editor.
-                    width: resizeW ?? (sidePanel ? 1000 : 720),
-                    maxWidth: "calc(100vw - 48px)",
-                    height: resizeH ?? "min(720px, calc(100vh - 96px))",
+                    // Always the mass-sending width, recipient rail or not, so
+                    // switching mass sending on or off never resizes the window.
+                    // Shared with the templates modal (COMPOSE_MODAL_SIZE).
+                    width: resizeW ?? COMPOSE_MODAL_SIZE.width,
+                    maxWidth: COMPOSE_MODAL_SIZE.maxWidth,
+                    height: resizeH ?? COMPOSE_MODAL_SIZE.height,
                   }
                 : {
                     width: resizeW ?? 560,
@@ -609,6 +636,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                   autoFocus
                   variables={variables}
                   unknownPlaceholders={unknownPlaceholders}
+                  onImageFiles={uploadInlineImage ? insertPhotos : undefined}
                 />
               </div>
             )}
@@ -638,7 +666,16 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             multiple
             accept="image/*"
             className="hidden"
-            onChange={(e) => { onFileChange(e.target.files); e.target.value = ""; }}
+            onChange={(e) => {
+              if (!uploadInlineImage) {
+                onFileChange(e.target.files);
+                e.target.value = "";
+                return;
+              }
+              const picked = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              insertPhotos(picked);
+            }}
           />
           <GmailComposeFooter
             onSend={onSend}
@@ -652,6 +689,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             onMassSendingChange={onMassSendingChange}
             massToggleDisabled={massToggleDisabled}
             templatesButton={templatesButton}
+            labelsButton={labelsButton}
             backLabel={reviewing ? "Back to editor" : undefined}
             onBack={reviewing ? onBackToEditor : undefined}
             onReview={reviewing ? undefined : onReview}

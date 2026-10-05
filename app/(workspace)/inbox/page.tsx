@@ -829,25 +829,30 @@ function readStoredWidth(key: string, fallback: number, min: number, max: number
 }
 
 /** Width a collapsed pane keeps so the handle stays reachable. */
-const COLLAPSED_PANE_W = 14;
+const COLLAPSED_PANE_W = 10;
 
 /**
  * Vertical drag handle between resizable mail panes, modelled on Trello's:
- * a visible grip at mid-height, a highlighted line on hover/drag, double-click
- * to reset the width, and (for collapsible panes) a click on the grip to
- * collapse or expand. The grip is the only click target; the rest of the
- * strip only drags.
+ * a grip pill centred on the divider, a thin accent line on hover/drag,
+ * double-click to reset the width, and (for collapsible panes) a click on the
+ * grip to collapse or expand. The grip is the only click target; the rest of
+ * the strip only drags.
+ *
+ * `className` positions the 12px-wide hit area; the grip and line centre
+ * themselves inside it.
  */
 function PaneResizeHandle({
   onMouseDown,
   onDoubleClick,
   collapsed,
   collapsible,
+  className = "absolute right-0 top-0 h-full",
 }: {
   onMouseDown: (e: React.MouseEvent) => void;
   onDoubleClick?: () => void;
   collapsed?: boolean;
   collapsible?: boolean;
+  className?: string;
 }) {
   const gripTitle = collapsible
     ? collapsed
@@ -862,17 +867,18 @@ function PaneResizeHandle({
       data-pane-handle
       onMouseDown={onMouseDown}
       onDoubleClick={onDoubleClick}
-      className="group absolute right-0 top-0 z-20 h-full w-3 cursor-col-resize touch-none"
+      className={cn("group z-20 w-3 cursor-col-resize touch-none", className)}
     >
-      {/* Edge line — appears on hover and while dragging. */}
-      <span className="pointer-events-none absolute inset-y-0 right-0 w-[3px] bg-transparent transition-colors group-hover:bg-[var(--color-copper)]/50 group-active:bg-[var(--color-copper)]" />
-      {/* Grip */}
+      {/* Divider line — appears on hover and while dragging. */}
+      <span className="pointer-events-none absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-[var(--color-copper)]/60 group-active:bg-[var(--color-copper)]" />
+      {/* Grip pill with two grooves */}
       <span
         data-pane-grip
         title={gripTitle}
-        className="absolute right-[1px] top-1/2 flex h-10 w-[9px] -translate-y-1/2 items-center justify-center rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-sm transition-colors group-hover:border-[var(--color-copper)] group-active:border-[var(--color-copper)]"
+        className="absolute left-1/2 top-1/2 flex h-11 w-[10px] -translate-x-1/2 -translate-y-1/2 items-center justify-center gap-[2px] rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[0_1px_4px_rgba(0,0,0,0.18)] transition-all duration-150 group-hover:scale-110 group-hover:border-[var(--color-copper)] group-hover:bg-[var(--color-copper)] group-active:border-[var(--color-copper)] group-active:bg-[var(--color-copper)]"
       >
-        <span className="h-4 w-px rounded-full bg-[var(--color-text-faint)] group-hover:bg-[var(--color-copper)]" />
+        <span className="h-4 w-px rounded-full bg-[var(--color-text-faint)] transition-colors group-hover:bg-white group-active:bg-white" />
+        <span className="h-4 w-px rounded-full bg-[var(--color-text-faint)] transition-colors group-hover:bg-white group-active:bg-white" />
       </span>
     </div>
   );
@@ -5328,8 +5334,8 @@ export default function InboxPage() {
       <aside
         className={cn(
           "relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] md:flex",
-          // Collapsed: hide everything except the handle so it can be dragged or clicked back open.
-          sidebarCollapsed && "overflow-hidden [&>*:not([data-pane-handle])]:hidden"
+          // Collapsed: hide the contents; the handle (a sibling) stays to drag or click back open.
+          sidebarCollapsed && "overflow-hidden [&>*]:hidden"
         )}
         style={{ width: sidebarCollapsed ? COLLAPSED_PANE_W : sidebarWidth }}
       >
@@ -5536,13 +5542,19 @@ export default function InboxPage() {
           })()}
         </>
 
+        </aside>
+
+      {/* Handle lives outside the aside (which clips overflow) in a zero-width
+          slot, so the grip can straddle the divider instead of hugging inside it. */}
+      <div className="relative z-20 hidden w-0 shrink-0 md:block">
         <PaneResizeHandle
           onMouseDown={onSidebarResizeStart}
           onDoubleClick={resetSidebarWidth}
           collapsed={sidebarCollapsed}
           collapsible
+          className="absolute inset-y-0 left-0 -translate-x-1/2"
         />
-      </aside>
+      </div>
 
       {/* ══ RIGHT CONTENT AREA ══ */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">

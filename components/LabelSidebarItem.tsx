@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { MoreVertical, Tag } from "lucide-react";
+import { MoreVertical, Tag, X } from "lucide-react";
 import { labelAccentStyle, type LabelLike } from "@/components/LabelChip";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,8 @@ type Props = {
   unread: number;
   accent?: ReturnType<typeof labelAccentStyle>;
   onSelect: () => void;
+  /** Clears the label filter; the ✕ is shown only while this label is active. */
+  onClear?: () => void;
   onEdit: (labelId: string, newName: string) => void;
   onDelete: (labelId: string) => void;
 };
@@ -21,6 +23,7 @@ export function LabelSidebarItem({
   unread,
   accent: accentProp,
   onSelect,
+  onClear,
   onEdit,
   onDelete,
 }: Props) {
@@ -127,6 +130,22 @@ export function LabelSidebarItem({
           </span>
         ) : null}
       </button>
+
+      {active && onClear ? (
+        <button
+          type="button"
+          data-testid="label-clear-filter"
+          aria-label={`Clear ${label.name} filter`}
+          title="Clear filter"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClear();
+          }}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[var(--gmail-nav-active-text)] transition-colors hover:bg-[var(--color-surface-offset)]"
+        >
+          <X className="h-3.5 w-3.5" strokeWidth={2.5} />
+        </button>
+      ) : null}
 
       <div ref={menuRef} className="relative shrink-0">
         <button

@@ -123,7 +123,7 @@ import {
   startMailListAndBodyPrefetchWarm,
 } from "@/lib/mail-thread-prefetch";
 import { isPrefetchPausedAfterBrowserReload } from "@/lib/login-prefetch-session";
-import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon, Reply, AlertTriangle, Megaphone } from "lucide-react";
+import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon, Reply, AlertTriangle, Megaphone, Search as SearchIcon } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -135,6 +135,9 @@ import {
   IconCalendar,
   IconInfo,
 } from "@/components/Icons";
+
+/** User labels shown in the sidebar before the search box is needed. */
+const SIDEBAR_LABEL_LIMIT = 15;
 
 type Folder = "inbox" | "sent" | "drafts" | "starred" | "important" | "trash" | "spam" | "allmail";
 type BulkAction =
@@ -825,53 +828,164 @@ function readStoredWidth(key: string, fallback: number, min: number, max: number
   return Math.min(max, Math.max(min, n));
 }
 
-/** Vertical drag handle between resizable mail panes. */
-function PaneResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+/** Width a collapsed pane keeps so the handle stays reachable. */
+const COLLAPSED_PANE_W = 10;
+
+/**
+ * Vertical drag handle between resizable mail panes, modelled on Trello's:
+ * a grip pill centred on the divider, a thin accent line on hover/drag,
+ * double-click to reset the width, and (for collapsible panes) a click on the
+ * grip to collapse or expand. The grip is the only click target; the rest of
+ * the strip only drags.
+ *
+ * `className` positions the 12px-wide hit area; the grip and line centre
+ * themselves inside it.
+ */
+function PaneResizeHandle({
+  onMouseDown,
+  onDoubleClick,
+  collapsed,
+  collapsible,
+  className = "absolute right-0 top-0 h-full",
+}: {
+  onMouseDown: (e: React.MouseEvent) => void;
+  onDoubleClick?: () => void;
+  collapsed?: boolean;
+  collapsible?: boolean;
+  className?: string;
+}) {
+  const gripTitle = collapsible
+    ? collapsed
+      ? "Click to expand · drag to resize"
+      : "Click to collapse · drag to resize · double-click to reset"
+    : "Drag to resize · double-click to reset";
   return (
     <div
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize pane"
+      data-pane-handle
       onMouseDown={onMouseDown}
-      className="absolute right-0 top-0 z-20 h-full w-1.5 -translate-x-1/2 cursor-col-resize touch-none bg-transparent hover:bg-[var(--color-copper)]/25 active:bg-[var(--color-copper)]/40"
-    />
+      onDoubleClick={onDoubleClick}
+      className={cn("group z-20 w-3 cursor-col-resize touch-none", className)}
+    >
+      {/* Divider line — appears on hover and while dragging. */}
+      <span className="pointer-events-none absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-[var(--color-copper)]/60 group-active:bg-[var(--color-copper)]" />
+      {/* Grip pill with two grooves */}
+      <span
+        data-pane-grip
+        title={gripTitle}
+        className="absolute left-1/2 top-1/2 flex h-11 w-[10px] -translate-x-1/2 -translate-y-1/2 items-center justify-center gap-[2px] rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[0_1px_4px_rgba(0,0,0,0.18)] transition-all duration-150 group-hover:scale-110 group-hover:border-[var(--color-copper)] group-hover:bg-[var(--color-copper)] group-active:border-[var(--color-copper)] group-active:bg-[var(--color-copper)]"
+      >
+        <span className="h-4 w-px rounded-full bg-[var(--color-text-faint)] transition-colors group-hover:bg-white group-active:bg-white" />
+        <span className="h-4 w-px rounded-full bg-[var(--color-text-faint)] transition-colors group-hover:bg-white group-active:bg-white" />
+      </span>
+    </div>
   );
 }
 
-function useResizablePane(storageKey: string, defaultWidth: number, min: number, max: number) {
+function useResizablePane(
+  storageKey: string,
+  defaultWidth: number,
+  min: number,
+  max: number,
+  opts?: { collapsible?: boolean }
+) {
+  const collapsible = opts?.collapsible ?? false;
+  const collapsedKey = `${storageKey}-collapsed`;
   const [width, setWidth] = useState(defaultWidth);
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     setWidth(readStoredWidth(storageKey, defaultWidth, min, max));
-  }, [storageKey, defaultWidth, min, max]);
+    if (collapsible) {
+      try {
+        setCollapsed(localStorage.getItem(collapsedKey) === "1");
+      } catch {
+        /* storage unavailable — stay expanded */
+      }
+    }
+  }, [storageKey, collapsedKey, collapsible, defaultWidth, min, max]);
+
+  const persistCollapsed = useCallback(
+    (next: boolean) => {
+      setCollapsed(next);
+      try {
+        localStorage.setItem(collapsedKey, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+    },
+    [collapsedKey]
+  );
 
   const onResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startW = width;
+      const startW = collapsed ? 0 : width;
+      const startedOnGrip = Boolean((e.target as HTMLElement).closest("[data-pane-grip]"));
+      // Dragging narrower than this collapses the pane instead of clamping at min.
+      const collapseAt = min * 0.6;
+      let moved = false;
+      let nextCollapsed = collapsed;
+      let nextWidth = width;
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
 
-      function onMove(ev: MouseEvent) {
-        setWidth(Math.min(max, Math.max(min, startW + ev.clientX - startX)));
+      function compute(ev: MouseEvent) {
+        const raw = startW + ev.clientX - startX;
+        if (collapsible && raw < collapseAt) {
+          nextCollapsed = true;
+        } else {
+          nextCollapsed = false;
+          nextWidth = Math.min(max, Math.max(min, raw));
+        }
       }
-      function onUp(ev: MouseEvent) {
-        const finalW = Math.min(max, Math.max(min, startW + ev.clientX - startX));
-        setWidth(finalW);
-        localStorage.setItem(storageKey, String(finalW));
+      function onMove(ev: MouseEvent) {
+        if (Math.abs(ev.clientX - startX) > 3) moved = true;
+        if (!moved) return;
+        compute(ev);
+        setCollapsed(nextCollapsed);
+        if (!nextCollapsed) setWidth(nextWidth);
+      }
+      function onUp() {
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        if (!moved) {
+          // A plain click on the grip toggles collapse; elsewhere it does nothing.
+          if (collapsible && startedOnGrip) persistCollapsed(!collapsed);
+          return;
+        }
+        if (collapsible) persistCollapsed(nextCollapsed);
+        if (!nextCollapsed) {
+          try {
+            localStorage.setItem(storageKey, String(nextWidth));
+          } catch {
+            /* ignore */
+          }
+        }
       }
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [width, storageKey, min, max]
+    [width, collapsed, collapsible, storageKey, min, max, persistCollapsed]
   );
 
-  return { width, onResizeStart };
+  /** Double-click on the handle: back to the default width, expanded. */
+  const reset = useCallback(() => {
+    setWidth(defaultWidth);
+    if (collapsible) persistCollapsed(false);
+    try {
+      localStorage.setItem(storageKey, String(defaultWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [defaultWidth, collapsible, persistCollapsed, storageKey]);
+
+  return { width, collapsed, onResizeStart, reset };
 }
 
 type InboxCategoryKey = "primary" | "promotions" | "social" | "updates" | "forums";
@@ -1144,6 +1258,9 @@ export default function InboxPage() {
 
   // Labels — loaded once, kept in a map by id for O(1) lookup from rows.
   const [allLabels, setAllLabels] = useState<GmailLabel[]>([]);
+  // Sidebar label search: the rail lists the first SIDEBAR_LABEL_LIMIT labels;
+  // typing here searches every user label.
+  const [labelSearch, setLabelSearch] = useState("");
   const labelsById = useMemo(() => {
     const m = new Map<string, GmailLabel>();
     for (const l of allLabels) m.set(l.id, l);
@@ -2732,13 +2849,17 @@ export default function InboxPage() {
     []
   );
 
-  const { width: sidebarWidth, onResizeStart: onSidebarResizeStart } = useResizablePane(
-    STORAGE_SIDEBAR_W,
-    256,
-    180,
-    400
-  );
-  const { width: listPaneWidth, onResizeStart: onListPaneResizeStart } = useResizablePane(
+  const {
+    width: sidebarWidth,
+    collapsed: sidebarCollapsed,
+    onResizeStart: onSidebarResizeStart,
+    reset: resetSidebarWidth,
+  } = useResizablePane(STORAGE_SIDEBAR_W, 256, 180, 400, { collapsible: true });
+  const {
+    width: listPaneWidth,
+    onResizeStart: onListPaneResizeStart,
+    reset: resetListPaneWidth,
+  } = useResizablePane(
     STORAGE_LIST_W,
     420,
     280,
@@ -5211,8 +5332,12 @@ export default function InboxPage() {
 
       {/* ══ LEFT RAIL — desktop only ══ */}
       <aside
-        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] md:flex"
-        style={{ width: sidebarWidth }}
+        className={cn(
+          "relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] md:flex",
+          // Collapsed: hide the contents; the handle (a sibling) stays to drag or click back open.
+          sidebarCollapsed && "overflow-hidden [&>*]:hidden"
+        )}
+        style={{ width: sidebarCollapsed ? COLLAPSED_PANE_W : sidebarWidth }}
       >
         {/* Compose + Refresh — Gmail pill compose button */}
         <div className="flex items-center gap-2 px-3 py-2">
@@ -5329,41 +5454,107 @@ export default function InboxPage() {
             </form>
           )}
 
-          <div className="flex flex-col gap-0.5 px-1">
-            {allLabels
-              .filter((l) => l.type === "user")
-              .slice(0, 15)
-              .map((l) => {
-                const unread = sidebarLabelUnread(l.id);
-                const active = filterLabelId === l.id;
-                const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
-                return (
-                  <LabelSidebarItem
-                    key={l.id}
-                    label={l}
-                    active={active}
-                    unread={unread}
-                    accent={accent}
-                    onSelect={() => {
-                      if (filterLabelId === l.id) return;
-                      setFilterLabelId(l.id);
-                      setFolder("inbox");
-                      setSelectedId(null);
-                      setMessages(null);
-                    }}
-                    onEdit={handleLabelEdit}
-                    onDelete={handleLabelDelete}
-                  />
-                );
-              })}
-            {allLabels.filter((l) => l.type === "user").length === 0 && !showNewLabelForm && (
-              <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No labels yet</p>
-            )}
-          </div>
+          {(() => {
+            const userLabels = allLabels.filter((l) => l.type === "user");
+            const query = labelSearch.trim().toLowerCase();
+            let visible: GmailLabel[];
+            if (query) {
+              visible = userLabels.filter((l) => l.name.toLowerCase().includes(query));
+            } else {
+              visible = userLabels.slice(0, SIDEBAR_LABEL_LIMIT);
+              // A label picked through search stays visible once the box is cleared.
+              const pinned = userLabels.find((l) => l.id === filterLabelId);
+              if (pinned && !visible.some((l) => l.id === pinned.id)) {
+                visible = [pinned, ...visible];
+              }
+            }
+            const hiddenCount = query ? 0 : userLabels.length - visible.length;
+            return (
+              <>
+                {userLabels.length > SIDEBAR_LABEL_LIMIT && (
+                  <div className="mx-2 mb-1.5 flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1">
+                    <SearchIcon className="h-3 w-3 shrink-0 text-[var(--color-text-faint)]" strokeWidth={2.25} />
+                    <input
+                      type="text"
+                      data-testid="label-search-input"
+                      value={labelSearch}
+                      onChange={(e) => setLabelSearch(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Escape") setLabelSearch(""); }}
+                      placeholder="Search labels…"
+                      aria-label="Search labels"
+                      className="min-w-0 flex-1 bg-transparent text-[12px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)]"
+                    />
+                    {labelSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setLabelSearch("")}
+                        aria-label="Clear label search"
+                        className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                      >
+                        <XIcon className="h-3 w-3" strokeWidth={2.25} />
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="flex flex-col gap-0.5 px-1">
+                  {visible.map((l) => {
+                    const unread = sidebarLabelUnread(l.id);
+                    const active = filterLabelId === l.id;
+                    const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
+                    return (
+                      <LabelSidebarItem
+                        key={l.id}
+                        label={l}
+                        active={active}
+                        unread={unread}
+                        accent={accent}
+                        onSelect={() => {
+                          // Clicking the active label again clears the filter.
+                          if (filterLabelId === l.id) {
+                            switchMailFolder("inbox");
+                            return;
+                          }
+                          setFilterLabelId(l.id);
+                          setFolder("inbox");
+                          setSelectedId(null);
+                          setMessages(null);
+                        }}
+                        onClear={() => switchMailFolder("inbox")}
+                        onEdit={handleLabelEdit}
+                        onDelete={handleLabelDelete}
+                      />
+                    );
+                  })}
+                  {userLabels.length === 0 && !showNewLabelForm && (
+                    <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No labels yet</p>
+                  )}
+                  {query && visible.length === 0 && (
+                    <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No matching labels</p>
+                  )}
+                  {hiddenCount > 0 && (
+                    <p className="px-4 py-1 text-[11px] text-[var(--color-text-faint)]">
+                      {hiddenCount} more — use search
+                    </p>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </>
 
-        <PaneResizeHandle onMouseDown={onSidebarResizeStart} />
-      </aside>
+        </aside>
+
+      {/* Handle lives outside the aside (which clips overflow) in a zero-width
+          slot, so the grip can straddle the divider instead of hugging inside it. */}
+      <div className="relative z-20 hidden w-0 shrink-0 md:block">
+        <PaneResizeHandle
+          onMouseDown={onSidebarResizeStart}
+          onDoubleClick={resetSidebarWidth}
+          collapsed={sidebarCollapsed}
+          collapsible
+          className="absolute inset-y-0 left-0 -translate-x-1/2"
+        />
+      </div>
 
       {/* ══ RIGHT CONTENT AREA ══ */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -6019,7 +6210,9 @@ export default function InboxPage() {
                 )}
               </ul>
             )}
-            {selectedId && <PaneResizeHandle onMouseDown={onListPaneResizeStart} />}
+            {selectedId && (
+              <PaneResizeHandle onMouseDown={onListPaneResizeStart} onDoubleClick={resetListPaneWidth} />
+            )}
           </div>
 
         {/* ── THREAD DETAIL view ── */}

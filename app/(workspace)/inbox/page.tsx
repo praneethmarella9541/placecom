@@ -5390,7 +5390,11 @@ export default function InboxPage() {
                         unread={unread}
                         accent={accent}
                         onSelect={() => {
-                          if (filterLabelId === l.id) return;
+                          // Clicking the active label again clears the filter.
+                          if (filterLabelId === l.id) {
+                            switchMailFolder("inbox");
+                            return;
+                          }
                           setFilterLabelId(l.id);
                           setFolder("inbox");
                           setSelectedId(null);

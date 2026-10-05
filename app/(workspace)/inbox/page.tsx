@@ -4932,10 +4932,18 @@ export default function InboxPage() {
     const failed: string[] = [];
     try {
       const attachments = await resolveAttachmentsForUpload(snapshot.files);
+      // Staged files (every attachment added in compose, and every file copied
+      // in from a template) stay on the server — resolveAttachmentsForUpload
+      // skips them — so each send names them, and all but the last keep them
+      // staged for the next recipient.
+      const stagedUploadIds = snapshot.files
+        .filter((f): f is Extract<PendingFile, { kind: "staged" }> => f.kind === "staged")
+        .map((f) => f.uploadId);
 
       // Sequential, not Promise.all — Gmail rate-limits concurrent sends and a
       // partial failure mid-campaign must not lose the count of what got out.
-      for (const row of rows) {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
         const htmlBody = appendDriveLinksToHtml(
           stripVariableSpans(mergeTemplate(snapshot.body, row.fields)),
           snapshot.files
@@ -4950,6 +4958,9 @@ export default function InboxPage() {
               textBody: "",
               htmlBody,
               attachments: attachments.length ? attachments : undefined,
+              ...(stagedUploadIds.length > 0
+                ? { stagedUploadIds, keepStagedUploads: i < rows.length - 1 }
+                : {}),
               campaignId,
               campaignName,
             }),

@@ -32,6 +32,12 @@ type Body = {
   attachments?: AttachmentPayload[];
   /** Large-file attachments staged via /api/gmail/drafts/attachment-chunk. */
   stagedUploadIds?: string[];
+  /**
+   * Leave the staged uploads in place after this send. A mass send reuses the
+   * same staged files for every recipient, so only its last request may
+   * release them.
+   */
+  keepStagedUploads?: boolean;
   /** Shared across every recipient of one mass/mail-merge send — see app/api/campaigns. */
   campaignId?: string;
   campaignName?: string;
@@ -147,8 +153,9 @@ export async function POST(request: Request) {
         .eq("id", trackRow.id);
     }
 
-    // Clean up staging after a successful send (fire-and-forget).
-    if (stagedIds.length > 0) {
+    // Clean up staging after a successful send (fire-and-forget) — unless a
+    // mass send still needs the same files for the recipients after this one.
+    if (stagedIds.length > 0 && !body.keepStagedUploads) {
       void releaseStagedAttachments(auth.userId, stagedIds).catch(() => {});
     }
 

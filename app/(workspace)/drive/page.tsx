@@ -80,6 +80,10 @@ import {
   Undo2,
 } from "lucide-react";
 
+/** Native Google Docs / Sheets open in our own editors instead of the preview panel. */
+const GOOGLE_DOC_MIME = "application/vnd.google-apps.document";
+const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet";
+
 const DRIVE_SIMPLE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 /** Match Drive-style parallel small-file uploads without tripping user rate limits. */
 const DRIVE_UPLOAD_CONCURRENCY = 6;
@@ -169,6 +173,7 @@ export default function DrivePage() {
   // Converting a CSV/XLSX lands the user in /sheets, so the action is only
   // offered while the Sheets module is on.
   const sheetsEnabled = useModuleVisibility().isVisible("sheets");
+  const docsEnabled = useModuleVisibility().isVisible("docs");
   const allowDelete = useAllowDelete();
   // Multi-select in the Trash view only.
   const [trashSelected, setTrashSelected] = useState<Set<string>>(new Set());
@@ -2647,7 +2652,11 @@ export default function DrivePage() {
                   if (isRenaming) return;
                   if (view === "trash") return;
                   if (isFolder) enterFolder(file.id, file.name);
-                  else setPreviewFile(file);
+                  else if (file.mimeType === GOOGLE_DOC_MIME && docsEnabled) {
+                    router.push(`/docs/${encodeURIComponent(file.id)}`);
+                  } else if (file.mimeType === GOOGLE_SHEET_MIME && sheetsEnabled) {
+                    router.push(`/sheets/${encodeURIComponent(file.id)}`);
+                  } else setPreviewFile(file);
                 };
 
                 if (viewMode === "grid") {

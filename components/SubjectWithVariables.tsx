@@ -4,8 +4,9 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState }
 import {
   filterComposeVariables,
   variableKeyPattern,
-  VARIABLE_SPAN_CLASS,
+  wrapVariablesInHtml,
   type ComposeVariable,
+  type UnknownPlaceholderMode,
 } from "@/lib/compose-variables";
 
 export type SubjectHandle = {
@@ -20,6 +21,8 @@ type Props = {
   placeholder?: string;
   /** When non-empty, `{` opens the picker and known variables are tinted. */
   variables?: ComposeVariable[];
+  /** How placeholders matching none of `variables` are drawn; see UnknownPlaceholderMode. */
+  unknownPlaceholders?: UnknownPlaceholderMode;
   /**
    * Palette. "gmail" is the compose dialog's own borderless header field;
    * "app" is a bordered workspace input that themes with the rest of the page
@@ -35,7 +38,7 @@ const THEMES = {
   gmail: {
     wrap: "relative w-full",
     field:
-      "w-full whitespace-pre-wrap break-words text-[15px] font-normal text-[#202124] outline-none [&_.cv-var]:rounded [&_.cv-var]:bg-[#e8f0fe] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[#1967d2]",
+      "w-full whitespace-pre-wrap break-words text-[15px] font-normal text-[#202124] outline-none [&_.cv-var]:rounded [&_.cv-var]:bg-[#e8f0fe] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[#1967d2] [&_.cv-var.cv-var-unknown]:bg-[#fce8e6] [&_.cv-var.cv-var-unknown]:text-[#c5221f]",
     placeholder: "pointer-events-none absolute left-0 top-0 select-none text-[15px] text-[#70757a]",
     plain:
       "w-full border-0 bg-transparent text-[15px] font-normal text-[#202124] outline-none placeholder:text-[#70757a]",
@@ -51,7 +54,7 @@ const THEMES = {
     // doesn't change the step card's layout.
     wrap: "relative w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] px-4 py-[13px] focus-within:border-[var(--color-copper)] focus-within:bg-[var(--color-surface)]",
     field:
-      "w-full whitespace-pre-wrap break-words text-[14px] leading-[18px] text-[var(--color-text)] outline-none [&_.cv-var]:rounded [&_.cv-var]:bg-[var(--color-copper-tint)] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[var(--color-copper)]",
+      "w-full whitespace-pre-wrap break-words text-[14px] leading-[18px] text-[var(--color-text)] outline-none [&_.cv-var]:rounded [&_.cv-var]:bg-[var(--color-copper-tint)] [&_.cv-var]:px-1 [&_.cv-var]:py-px [&_.cv-var]:font-medium [&_.cv-var]:text-[var(--color-copper)] [&_.cv-var.cv-var-unknown]:bg-[var(--color-danger-light)] [&_.cv-var.cv-var-unknown]:text-[var(--color-danger)]",
     placeholder:
       "pointer-events-none absolute left-4 top-[13px] select-none text-[14px] leading-[18px] text-[var(--color-text-faint)]",
     plain:
@@ -83,15 +86,13 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;");
 }
 
-/** Plain subject text → display HTML with the offered `{variables}` tinted. */
-function renderHtml(text: string, variables: ComposeVariable[]): string {
-  const escaped = escapeHtml(text);
-  const keys = variableKeyPattern(variables);
-  if (!keys) return escaped;
-  return escaped.replace(
-    new RegExp(`\\{(${keys})\\}`, "g"),
-    `<span class="${VARIABLE_SPAN_CLASS}">{$1}</span>`
-  );
+/** Plain subject text → display HTML with `{placeholders}` tinted, same rules as the body. */
+function renderHtml(
+  text: string,
+  variables: ComposeVariable[],
+  unknown: UnknownPlaceholderMode
+): string {
+  return wrapVariablesInHtml(escapeHtml(text), variables, unknown);
 }
 
 /**
@@ -151,11 +152,22 @@ function setCaretOffset(root: HTMLElement, offset: number): void {
  */
 export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
   function SubjectWithVariables(
-    { value, onChange, placeholder, variables, theme = "gmail", disabled, testId },
+    {
+      value,
+      onChange,
+      placeholder,
+      variables,
+      unknownPlaceholders = "ignore",
+      theme = "gmail",
+      disabled,
+      testId,
+    },
     ref,
   ) {
     const vars = useMemo(() => variables ?? [], [variables]);
-    const enabled = vars.length > 0 && !disabled;
+    // Tinting alone is enough to need the contentEditable — an imported-list
+    // draft with no file yet has placeholders to show but nothing to pick.
+    const enabled = (vars.length > 0 || unknownPlaceholders !== "ignore") && !disabled;
     const t = THEMES[theme];
     const elRef = useRef<HTMLDivElement>(null);
     const wrapRef = useRef<HTMLDivElement>(null);
@@ -166,15 +178,18 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
     const [empty, setEmpty] = useState(!value);
 
     // Re-render only when the text genuinely differs — otherwise every parent
-    // render would rebuild the DOM and drop the caret mid-typing.
+    // render would rebuild the DOM and drop the caret mid-typing. A change in
+    // what counts as a variable (a file imported) re-tints too, but only while
+    // the field is not being typed in.
     useEffect(() => {
       const el = elRef.current;
       if (!el) return;
-      if ((el.textContent ?? "") !== value) {
-        el.innerHTML = renderHtml(value, vars);
-      }
+      const html = renderHtml(value, vars, unknownPlaceholders);
+      const stale = (el.textContent ?? "") !== value;
+      const retint = el.innerHTML !== html && document.activeElement !== el;
+      if (stale || retint) el.innerHTML = html;
       setEmpty(!value);
-    }, [value, vars]);
+    }, [value, vars, unknownPlaceholders, enabled]);
 
     useEffect(() => {
       if (!menu) return;
@@ -231,7 +246,7 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
       }
 
       const caret = getCaretOffset(el);
-      const html = renderHtml(plain, vars);
+      const html = renderHtml(plain, vars, unknownPlaceholders);
       if (el.innerHTML !== html) {
         el.innerHTML = html;
         setCaretOffset(el, caret);
@@ -250,7 +265,7 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
       const token = `{${v.key}} `;
       const next = plain.slice(0, trigger.braceIndex) + token + plain.slice(caret);
 
-      el.innerHTML = renderHtml(next, vars);
+      el.innerHTML = renderHtml(next, vars, unknownPlaceholders);
       setCaretOffset(el, trigger.braceIndex + token.length);
       setEmpty(!next);
       onChange(next);
@@ -274,9 +289,11 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
       const sel = window.getSelection();
       if (!sel || !sel.isCollapsed) return false;
 
+      const keys = variableKeyPattern(vars);
+      if (!keys) return false;
       const plain = el.textContent ?? "";
       const caret = getCaretOffset(el);
-      const re = new RegExp(`\\{(${variableKeyPattern(vars)})\\}`, "g");
+      const re = new RegExp(`\\{(${keys})\\}`, "g");
 
       let m: RegExpExecArray | null;
       while ((m = re.exec(plain)) !== null) {
@@ -288,7 +305,7 @@ export const SubjectWithVariables = forwardRef<SubjectHandle, Props>(
         if (!hit) continue;
 
         const next = plain.slice(0, start) + plain.slice(end);
-        el.innerHTML = renderHtml(next, vars);
+        el.innerHTML = renderHtml(next, vars, unknownPlaceholders);
         setCaretOffset(el, start);
         setEmpty(!next);
         onChange(next);

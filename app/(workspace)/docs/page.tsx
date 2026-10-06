@@ -8,6 +8,7 @@ import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
 import { CreateNamePopup } from "@/components/CreateNamePopup";
+import { DeleteListItemButton } from "@/components/DeleteListItemButton";
 import {
   getDocsPrefetchCache,
   setDocsPrefetchCache,
@@ -119,6 +120,18 @@ export default function DocsListPage() {
     }
   }
 
+  /** Drop a just-trashed row from the list and from the prefetch cache so it does not reappear on revisit. */
+  function removeFromList(id: string) {
+    setDocs((prev) => prev.filter((x) => x.id !== id));
+    const cached = getDocsPrefetchCache();
+    if (cached) {
+      setDocsPrefetchCache({
+        docs: cached.docs.filter((x) => x.id !== id),
+        nextPageToken: cached.nextPageToken,
+      });
+    }
+  }
+
   const empty = useMemo(() => !loading && docs.length === 0, [loading, docs.length]);
 
   return (
@@ -216,6 +229,13 @@ export default function DocsListPage() {
                 >
                   {titleCase("Open")}
                 </Link>
+                <DeleteListItemButton
+                  fileId={d.id}
+                  label={d.name?.trim() || "Untitled"}
+                  kind="doc"
+                  onDeleted={() => removeFromList(d.id)}
+                  onError={setError}
+                />
               </li>
             ))}
           </ul>

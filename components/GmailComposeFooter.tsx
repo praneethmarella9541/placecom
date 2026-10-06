@@ -30,6 +30,16 @@ export type GmailComposeFooterProps = {
   sendHidden?: boolean;
   /** Inserts `{` at the caret. Omit to hide — mass sending only. */
   onInsertVariable?: () => void;
+  /**
+   * Templates button + the modal behind it, passed in rather than built here:
+   * it owns its own fetching and CRUD, and the caller is the only one that
+   * knows how a chosen template should land in its particular draft. Omit to
+   * hide — the module can be switched off in /configs. Same node-slot idiom as
+   * the dialog's attachmentChips and sidePanel.
+   */
+  templatesButton?: React.ReactNode;
+  /** Label picker for the mail being written, shown right after the photo icon. */
+  labelsButton?: React.ReactNode;
 };
 
 export function GmailComposeFooter({
@@ -49,6 +59,8 @@ export function GmailComposeFooter({
   reviewDisabled,
   sendHidden,
   onInsertVariable,
+  templatesButton,
+  labelsButton,
 }: GmailComposeFooterProps) {
   const label = sending ? "Sending…" : sendLabel ?? "Send";
   const showMassToggle = massSending !== undefined && !!onMassSendingChange;
@@ -77,11 +89,24 @@ export function GmailComposeFooter({
               </FooterBtn>
             )}
 
+            {labelsButton}
+
+            {/* A labelled pill, like Templates beside it, rather than a bare
+                glyph: "{ }" alone doesn't say "personalise this mail", and the
+                feature went unnoticed. */}
             {onInsertVariable && (
-              <FooterBtn title="Insert variable" onClick={onInsertVariable}>
-                <Braces className="h-[18px] w-[18px]" strokeWidth={2} />
-              </FooterBtn>
+              <button
+                type="button"
+                onClick={onInsertVariable}
+                title="Insert a personalised field like {name}, filled in for each recipient"
+                className="ml-0.5 flex shrink-0 items-center gap-1.5 rounded-full border border-[#dadce0] px-3 py-[6px] text-[13px] font-medium leading-none text-[#3c4043] transition-colors hover:bg-[#e8eaed]"
+              >
+                <Braces className="h-4 w-4" strokeWidth={2} />
+                Variables
+              </button>
             )}
+
+            {templatesButton}
           </>
         )}
 

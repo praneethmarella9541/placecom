@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2, Eye, Mails } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
+import { COMPOSE_MODAL_SIZE } from "@/lib/compose-modal-size";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
@@ -14,8 +15,9 @@ import { GmailAvatar } from "@/components/GmailAvatar";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
 import { IconX } from "@/components/Icons";
 import { GMAIL_COMPOSE_DIALOG_BORDER, GMAIL_COMPOSE_HEADER } from "@/lib/gmail-theme";
+import { pickRandomComposeProTip } from "@/lib/compose-pro-tips";
 import type { ComposeDraftSaveStatus } from "@/lib/gmail-draft-autosave";
-import type { ComposeVariable } from "@/lib/compose-variables";
+import type { ComposeVariable, UnknownPlaceholderMode } from "@/lib/compose-variables";
 import { cn } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 
@@ -52,6 +54,8 @@ export type GmailComposeDialogProps = {
   draftSaveStatus?: ComposeDraftSaveStatus;
   /** Gmail-style recipient validation error — blocks send until dismissed. */
   composeError?: string | null;
+  /** Heading for that error; omit for the generic one. */
+  composeErrorTitle?: string | null;
   onDismissComposeError?: () => void;
 
   /**
@@ -61,6 +65,8 @@ export type GmailComposeDialogProps = {
   placement?: "docked" | "centered";
   /** Merge variables offered by the body editor's `{` picker. */
   variables?: ComposeVariable[];
+  /** How subject/body placeholders outside `variables` are drawn. */
+  unknownPlaceholders?: UnknownPlaceholderMode;
   /**
    * Called when the variable button is used on a draft that has no variables
    * to offer. Supplying it keeps the button visible outside mass sending, so
@@ -82,6 +88,22 @@ export type GmailComposeDialogProps = {
   lockedRecipientCount?: number;
   /** Right-hand rail, rendered inside the dialog next to the editor. */
   sidePanel?: React.ReactNode;
+  /**
+   * Templates button for the footer. A node rather than a callback because the
+   * modal belongs to the caller: only it knows whether a chosen template should
+   * replace this draft, and whether the subject is even editable here. Hidden
+   * on the review screen along with the rest of the icon row.
+   */
+  templatesButton?: React.ReactNode;
+  /** Label picker for this mail; its labels are applied when it is sent. */
+  labelsButton?: React.ReactNode;
+  /**
+   * Uploads a photo for the body and resolves to its URL. When given, "Insert
+   * photo" puts photos into the body at the caret, as Gmail does; without it
+   * the photo button attaches them like the paperclip. Shows its own progress
+   * and errors — a rejection here only means "nothing was inserted".
+   */
+  uploadInlineImage?: (file: File) => Promise<string>;
   /** Small notice strip above the footer (outbox delivery hint). */
   footerNotice?: React.ReactNode;
 
@@ -103,6 +125,13 @@ export type GmailComposeDialogProps = {
     missingKeys?: string[];
     /** No directory card matched — explains why several variables are blank at once. */
     noContactCard?: boolean;
+    /**
+     * Placeholders matching none of an imported list's columns. Every
+     * recipient is missing these, so they get their own line in the banner.
+     */
+    unknownKeys?: string[];
+    /** Name of the imported file, for that line's wording. */
+    unknownSource?: string;
     /** Campaign-wide default per variable key, editable from the warning banner. */
     fallbacks?: Record<string, string>;
     onFallbackChange?: (key: string, value: string) => void;
@@ -149,13 +178,18 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     attachmentChips,
     draftSaveStatus = "idle",
     composeError,
+    composeErrorTitle,
     onDismissComposeError,
     placement = "docked",
     variables,
+    unknownPlaceholders,
     onVariableBlocked,
     recipientsLocked,
     lockedRecipientCount = 0,
     sidePanel,
+    templatesButton,
+    labelsButton,
+    uploadInlineImage,
     footerNotice,
     massSending,
     onMassSendingChange,
@@ -170,6 +204,19 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
 
   const centered = placement === "centered";
   const reviewing = !!review;
+
+  /**
+   * Photos into the body at the caret, one after another in the order given —
+   * from "Insert photo", or pasted / dropped into the editor.
+   */
+  function insertPhotos(files: File[]) {
+    if (!uploadInlineImage) return;
+    void (async () => {
+      for (const file of files) {
+        await editorRef.current?.insertUploadingImage(file, uploadInlineImage).catch(() => {});
+      }
+    })();
+  }
 
   // The shared mailbox is what actually sends, so it is the only correct
   // From. Deliberately no fallback to sessionEmail (the signed-in user):
@@ -190,6 +237,17 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
   const [resizeW, setResizeW] = useState<number | null>(null);
   const [resizeH, setResizeH] = useState<number | null>(null);
   const resizeRef = useRef({ startX: 0, startY: 0, startW: 0, startH: 0, edge: "" });
+
+  // Rotating body placeholder: a new "Pro tip:" is chosen each time the
+  // dialog opens, so writers slowly notice templates, variables, mass
+  // sending and paste shortcuts without an intrusive tour. Stays stable
+  // while open so the hint doesn't shuffle under them mid-draft.
+  const [bodyPlaceholder, setBodyPlaceholder] = useState<string>(() =>
+    pickRandomComposeProTip()
+  );
+  useEffect(() => {
+    if (open) setBodyPlaceholder(pickRandomComposeProTip());
+  }, [open]);
 
   const startResize = useCallback((e: React.MouseEvent, edge: string) => {
     if (fullscreen) return;
@@ -250,9 +308,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
         <div
           data-compose-dialog
           className={cn(
-            "fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border px-2 lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[560px] lg:rounded-t-lg",
-            GMAIL_COMPOSE_HEADER,
-            GMAIL_COMPOSE_DIALOG_BORDER,
+            "fixed bottom-0 left-0 right-0 z-[999] flex h-11 items-center gap-1 border border-[#404040] bg-[#404040] px-2 text-white lg:bottom-6 lg:left-auto lg:right-6 lg:h-10 lg:w-[280px] lg:rounded-t-lg",
             "shadow-[0_-4px_16px_rgba(60,64,67,0.25)] lg:shadow-lg"
           )}
           role="dialog"
@@ -261,7 +317,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           <button
             type="button"
             onClick={onMinimize}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#444746] hover:bg-[#f1f3f4]"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
             title={titleCase("Expand")}
           >
             <Maximize2 className="h-4 w-4" strokeWidth={2} />
@@ -270,7 +326,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             <button
               type="button"
               onClick={onMinimize}
-              className="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-[#202124]"
+              className="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-white"
             >
               {subject.trim() || windowTitle}
             </button>
@@ -279,7 +335,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           <button
             type="button"
             onClick={onClose}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#444746] hover:bg-[#f1f3f4]"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white hover:bg-white/10"
             aria-label={titleCase("Close")}
           >
             <IconX className="h-4 w-4" />
@@ -310,10 +366,12 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             !fullscreen
               ? centered
                 ? {
-                    // Widens to fit the recipient rail without reflowing the editor.
-                    width: resizeW ?? (sidePanel ? 1000 : 720),
-                    maxWidth: "calc(100vw - 48px)",
-                    height: resizeH ?? "min(720px, calc(100vh - 96px))",
+                    // Always the mass-sending width, recipient rail or not, so
+                    // switching mass sending on or off never resizes the window.
+                    // Shared with the templates modal (COMPOSE_MODAL_SIZE).
+                    width: resizeW ?? COMPOSE_MODAL_SIZE.width,
+                    maxWidth: COMPOSE_MODAL_SIZE.maxWidth,
+                    height: resizeH ?? COMPOSE_MODAL_SIZE.height,
                   }
                 : {
                     width: resizeW ?? 560,
@@ -387,7 +445,11 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           </div>
 
           <div className="flex min-h-0 flex-1">
-          <div className="scrollbar-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white">
+          {/* Attachments sit outside the scrolling area, pinned to the bottom of
+              the column — on the review screen the whole mail scrolls above
+              them, and they would otherwise ride along wherever it ends. */}
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+          <div className="scrollbar-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 
             {/* Read-only sender identity. Sends always go from the connected
                 mailbox, so this is information, not a choice. Compose only —
@@ -506,6 +568,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                       onChange={onSubjectChange}
                       placeholder="Subject"
                       variables={variables}
+                      unknownPlaceholders={unknownPlaceholders}
                     />
                   </div>
                 )}
@@ -514,6 +577,25 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
 
             {reviewing ? (
               <>
+                {review.unknownKeys && review.unknownKeys.length > 0 && (
+                  <div className="border-b border-[#f1f3f4] bg-[#fce8e6] px-4 py-2 text-[12px] leading-snug text-[#c5221f]">
+                    <span>
+                      {review.unknownSource ? `Not a column in ${review.unknownSource}` : "Not a column in the imported file"}
+                      , so these would be sent as typed. Hover a field to set a value for every recipient:
+                    </span>
+                    <span className="ml-1 inline-flex flex-wrap items-center gap-1 align-middle">
+                      {review.unknownKeys.map((k) => (
+                        <VariableFallbackChip
+                          key={k}
+                          variableKey={k}
+                          value={review.fallbacks?.[k] ?? ""}
+                          onChange={(v) => review.onFallbackChange?.(k, v)}
+                          hint="No column has this, so the same value goes to every recipient."
+                        />
+                      ))}
+                    </span>
+                  </div>
+                )}
                 {review.missingKeys && review.missingKeys.length > 0 && (
                   <div className="border-b border-[#f1f3f4] bg-[#fef7e0] px-4 py-2 text-[12px] leading-snug text-[#b06000]">
                     <span>
@@ -550,14 +632,21 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                   ref={editorRef}
                   value={body}
                   onChange={onBodyChange}
-                  placeholder="Compose email"
+                  placeholder={bodyPlaceholder}
                   autoFocus
                   variables={variables}
+                  unknownPlaceholders={unknownPlaceholders}
+                  onImageFiles={uploadInlineImage ? insertPhotos : undefined}
                 />
               </div>
             )}
 
-            {attachmentChips}
+          </div>
+            {attachmentChips ? (
+              <div className="scrollbar-thin max-h-[40%] shrink-0 overflow-y-auto">
+                {attachmentChips}
+              </div>
+            ) : null}
           </div>
           {sidePanel}
           </div>
@@ -577,7 +666,16 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             multiple
             accept="image/*"
             className="hidden"
-            onChange={(e) => { onFileChange(e.target.files); e.target.value = ""; }}
+            onChange={(e) => {
+              if (!uploadInlineImage) {
+                onFileChange(e.target.files);
+                e.target.value = "";
+                return;
+              }
+              const picked = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              insertPhotos(picked);
+            }}
           />
           <GmailComposeFooter
             onSend={onSend}
@@ -590,6 +688,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             massSending={massSending}
             onMassSendingChange={onMassSendingChange}
             massToggleDisabled={massToggleDisabled}
+            templatesButton={templatesButton}
+            labelsButton={labelsButton}
             backLabel={reviewing ? "Back to editor" : undefined}
             onBack={reviewing ? onBackToEditor : undefined}
             onReview={reviewing ? undefined : onReview}
@@ -609,7 +709,11 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
         </div>
       )}
       {composeError && onDismissComposeError ? (
-        <GmailComposeErrorDialog message={composeError} onDismiss={onDismissComposeError} />
+        <GmailComposeErrorDialog
+          title={composeErrorTitle ?? undefined}
+          message={composeError}
+          onDismiss={onDismissComposeError}
+        />
       ) : null}
     </>,
     document.body

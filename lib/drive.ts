@@ -99,7 +99,7 @@ function escapeDriveQFragment(s: string): string {
  * Drive top-level views the sidebar exposes — mirrors Google Drive's left
  * nav. "my-drive" is the default; the others map to Drive API query terms.
  */
-export type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
+export type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent" | "trash";
 
 /**
  * Build the Drive `q` query string.
@@ -134,6 +134,11 @@ function buildFilesListQ(
   }
   if (atViewRoot && view === "starred") {
     return "starred = true and trashed = false";
+  }
+  if (atViewRoot && view === "trash") {
+    // Everything the user has trashed. Trashed folders are not browsable here —
+    // restore the folder to see what is inside it.
+    return "trashed = true and 'me' in owners";
   }
   if (atViewRoot && view === "recent") {
     // Mirror Google Drive's Recent: files only, no folders.
@@ -1170,6 +1175,46 @@ export async function copyDriveItem(
   }
   const destParent = await resolveCopyDestinationParent(accessToken, parentId);
   return copyDriveFile(accessToken, fileId, destParent);
+}
+
+async function setDriveFileTrashed(
+  accessToken: string,
+  fileId: string,
+  trashed: boolean,
+): Promise<void> {
+  const params = new URLSearchParams({ fields: "id", supportsAllDrives: "true" });
+  let res: Response;
+  try {
+    res = await fetch(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ trashed }),
+      },
+    );
+  } catch (e) {
+    throw new Error(
+      describeUpstreamFetchError(e, `Google Drive API (${trashed ? "trash" : "restore"})`),
+    );
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwDriveApiError(res.status, text, trashed ? "Drive trash" : "Drive restore");
+  }
+}
+
+/** Move a file or folder to Drive's trash (recoverable there for 30 days). */
+export function trashDriveFile(accessToken: string, fileId: string): Promise<void> {
+  return setDriveFileTrashed(accessToken, fileId, true);
+}
+
+/** Take a file or folder back out of Drive's trash. */
+export function restoreDriveFile(accessToken: string, fileId: string): Promise<void> {
+  return setDriveFileTrashed(accessToken, fileId, false);
 }
 
 export async function renameDriveFile(

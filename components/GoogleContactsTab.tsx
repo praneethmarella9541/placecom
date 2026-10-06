@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { Mail, Search, UserPlus, UserRound } from "lucide-react";
 import { ContactFormModal, emptyContactForm } from "@/components/ContactFormModal";
 import type { DirectoryContactInput } from "@/hooks/useDirectoryContacts";
@@ -52,6 +53,8 @@ function Avatar({ name, photoUrl }: { name: string; photoUrl?: string }) {
 }
 
 export function GoogleContactsTab() {
+  // "Compose email" jumps into the mail client — pointless when Mail is off.
+  const mailEnabled = useModuleVisibility().isVisible("inbox");
   const [data, setData] = useState<ApiResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -197,7 +200,7 @@ export function GoogleContactsTab() {
                     >
                       <UserPlus className="h-4 w-4" />
                     </button>
-                    {email && (
+                    {email && mailEnabled && (
                       <button
                         type="button"
                         className="btn-ghost inline-flex h-9 w-9 items-center justify-center rounded-lg p-0 text-[var(--color-text-muted)]"

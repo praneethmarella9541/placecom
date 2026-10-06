@@ -5,55 +5,46 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createServiceSupabase } from "@/lib/supabase-service";
 import type { SendAttachment } from "@/lib/gmail-inbox";
-import type { SequenceStepAttachment } from "@/lib/sequence-types";
+import {
+  createSignedUpload,
+  ensurePrivateBucket,
+  safeStorageName,
+  storedObjectSize,
+} from "@/lib/storage-signed-upload";
+import { SEQUENCE_ATTACHMENT_BUCKET, type SequenceStepAttachment } from "@/lib/sequence-types";
+
+export { SEQUENCE_ATTACHMENT_BUCKET };
 
 /**
  * Durable storage for sequence step attachments.
  *
  * Private bucket, reached only through the API routes and the cron — nothing
  * here is ever handed to a browser as a URL, so the files can't leak by being
- * guessable.
+ * guessable. Uploads go straight from the browser to the bucket on a signed URL
+ * (lib/storage-signed-upload).
+ *
+ * Same rule as compose and mail templates (sendsAsDriveLink): a file up to
+ * Gmail's 25 MB is stored here and attached; a bigger one is kept as a Drive
+ * link and sent in the body. No per-step total or count cap.
  */
-export const SEQUENCE_ATTACHMENT_BUCKET = "sequence-attachments";
 
-/** Gmail rejects anything over 25MB once base64 inflates it (~33% larger). */
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-export const MAX_STEP_ATTACHMENT_BYTES = 18 * 1024 * 1024;
-export const MAX_ATTACHMENTS_PER_STEP = 10;
-
-let bucketReady: Promise<void> | null = null;
-
-function ensureBucket(): Promise<void> {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    return Promise.resolve();
-  }
-  if (!bucketReady) {
-    bucketReady = (async () => {
-      const supabase = createServiceSupabase();
-      // Private: these are one team's outbound files, and every read goes
-      // through a route that has already checked who is asking.
-      await supabase.storage
-        .createBucket(SEQUENCE_ATTACHMENT_BUCKET, { public: false })
-        .catch(() => {});
-    })();
-  }
-  return bucketReady;
-}
-
-/** Keep the original name readable in storage without letting it shape the path. */
-function safeName(filename: string): string {
-  return filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "file";
-}
+const BUCKET = SEQUENCE_ATTACHMENT_BUCKET;
 
 export type AttachmentRow = {
   id: string;
   step_id: string;
-  storage_path: string;
+  /** Null for a Drive-linked file. */
+  storage_path: string | null;
+  drive_file_id: string | null;
+  web_view_link: string | null;
   filename: string;
   mime_type: string;
   size_bytes: number;
   created_at: string;
 };
+
+export const ATTACHMENT_ROW_COLUMNS =
+  "id, step_id, storage_path, drive_file_id, web_view_link, filename, mime_type, size_bytes, created_at";
 
 export function toAttachmentDto(row: AttachmentRow): SequenceStepAttachment {
   return {
@@ -61,11 +52,45 @@ export function toAttachmentDto(row: AttachmentRow): SequenceStepAttachment {
     stepId: row.step_id,
     filename: row.filename,
     mimeType: row.mime_type,
-    sizeBytes: row.size_bytes,
+    // bigint arrives as a string from PostgREST once it outgrows a JS-safe int.
+    sizeBytes: Number(row.size_bytes),
     createdAt: row.created_at,
+    driveFileId: row.drive_file_id ?? null,
+    webViewLink: row.web_view_link ?? null,
   };
 }
 
+function folderFor(mailboxOwnerId: string, sequenceId: string, stepId: string): string {
+  return `${mailboxOwnerId}/${sequenceId}/${stepId}`;
+}
+
+/** True when `path` sits in this step's folder — it came back from the client. */
+export function stepPathBelongsTo(
+  path: string,
+  mailboxOwnerId: string,
+  sequenceId: string,
+  stepId: string,
+): boolean {
+  const prefix = `${folderFor(mailboxOwnerId, sequenceId, stepId)}/`;
+  return path.startsWith(prefix) && !path.slice(prefix.length).includes("/");
+}
+
+/** A one-shot signed URL the browser uploads one step file to. */
+export function createStepUploadUrl(params: {
+  mailboxOwnerId: string;
+  sequenceId: string;
+  stepId: string;
+  filename: string;
+}): Promise<{ path: string; token: string; signedUrl: string }> {
+  const path = `${folderFor(params.mailboxOwnerId, params.sequenceId, params.stepId)}/${randomUUID()}-${safeStorageName(params.filename)}`;
+  return createSignedUpload(BUCKET, path);
+}
+
+export function stepObjectSize(path: string): Promise<number | null> {
+  return storedObjectSize(BUCKET, path);
+}
+
+/** Server-side upload — used when copying a mail template's files onto a step. */
 export async function uploadStepAttachment(params: {
   mailboxOwnerId: string;
   sequenceId: string;
@@ -74,12 +99,11 @@ export async function uploadStepAttachment(params: {
   filename: string;
   mimeType: string;
 }): Promise<string> {
-  await ensureBucket();
-  const supabase = createServiceSupabase();
-  const objectPath = `${params.mailboxOwnerId}/${params.sequenceId}/${params.stepId}/${randomUUID()}-${safeName(params.filename)}`;
+  await ensurePrivateBucket(BUCKET);
+  const objectPath = `${folderFor(params.mailboxOwnerId, params.sequenceId, params.stepId)}/${randomUUID()}-${safeStorageName(params.filename)}`;
 
-  const { error } = await supabase.storage
-    .from(SEQUENCE_ATTACHMENT_BUCKET)
+  const { error } = await createServiceSupabase()
+    .storage.from(BUCKET)
     .upload(objectPath, params.file, {
       contentType: params.mimeType || "application/octet-stream",
       upsert: false,
@@ -94,7 +118,8 @@ export async function uploadStepAttachment(params: {
  *
  * The DB rows cascade with the step, but storage has no foreign keys — without
  * this, deleting a step would leave its bytes paid for and unreachable. Runs
- * before the delete, while the rows still say where the files are.
+ * before the delete, while the rows still say where the files are. Drive-linked
+ * files stay in the mailbox's Drive, as compose's do.
  */
 export async function purgeAttachmentsForSteps(
   svc: SupabaseClient,
@@ -105,55 +130,88 @@ export async function purgeAttachmentsForSteps(
     .from("sequence_step_attachments")
     .select("storage_path")
     .in("step_id", stepIds);
-  const paths = ((data ?? []) as { storage_path: string }[]).map((r) => r.storage_path);
+  const paths = ((data ?? []) as { storage_path: string | null }[])
+    .map((r) => r.storage_path)
+    .filter((p): p is string => !!p);
   if (paths.length === 0) return;
 
-  await ensureBucket();
-  const supabase = createServiceSupabase();
-  await supabase.storage.from(SEQUENCE_ATTACHMENT_BUCKET).remove(paths).catch(() => {});
+  await ensurePrivateBucket(BUCKET);
+  await createServiceSupabase().storage.from(BUCKET).remove(paths).catch(() => {});
 }
 
-export async function removeStepAttachmentFile(storagePath: string): Promise<void> {
-  await ensureBucket();
-  const supabase = createServiceSupabase();
+export async function removeStepAttachmentFile(storagePath: string | null): Promise<void> {
+  if (!storagePath) return;
+  await ensurePrivateBucket(BUCKET);
   // Best-effort: a stranded object costs storage, a failed delete of the row
   // would leave the file listed in an editor that can no longer remove it.
-  await supabase.storage.from(SEQUENCE_ATTACHMENT_BUCKET).remove([storagePath]).catch(() => {});
+  await createServiceSupabase().storage.from(BUCKET).remove([storagePath]).catch(() => {});
 }
 
+/** A step file sent as a Drive link in the body rather than as an attachment. */
+export type StepDriveLink = {
+  kind: "drive";
+  name: string;
+  mimeType: string;
+  size: number;
+  driveFileId: string;
+  webViewLink: string;
+};
+
+export type StepSendFiles = {
+  /** Base64'd the way sendMailViaGmail wants them. */
+  attachments: SendAttachment[];
+  /** For appendDriveLinksToHtml. */
+  driveLinks: StepDriveLink[];
+};
+
 /**
- * Attachments for one step, base64'd the way sendMailViaGmail wants them.
- *
- * Every recipient of a step gets the same files, so the caller is expected to
- * cache this per run rather than re-downloading per enrollment.
+ * Everything one step sends: stored files as attachments, Drive-linked files
+ * as links. Every recipient of a step gets the same files, so the caller is
+ * expected to cache this per run rather than re-downloading per enrollment.
  */
-export async function loadStepSendAttachments(
-  stepId: string,
-): Promise<SendAttachment[]> {
-  await ensureBucket();
+export async function loadStepSendAttachments(stepId: string): Promise<StepSendFiles> {
+  await ensurePrivateBucket(BUCKET);
   const supabase = createServiceSupabase();
 
   const { data: rows } = await supabase
     .from("sequence_step_attachments")
-    .select("storage_path, filename, mime_type")
+    .select("storage_path, drive_file_id, web_view_link, filename, mime_type, size_bytes")
     .eq("step_id", stepId)
     .order("created_at");
 
-  const list = (rows ?? []) as { storage_path: string; filename: string; mime_type: string }[];
-  const out: SendAttachment[] = [];
+  const list = (rows ?? []) as Array<
+    Pick<
+      AttachmentRow,
+      "storage_path" | "drive_file_id" | "web_view_link" | "filename" | "mime_type" | "size_bytes"
+    >
+  >;
+  const out: StepSendFiles = { attachments: [], driveLinks: [] };
 
   for (const row of list) {
-    const { data, error } = await supabase.storage
-      .from(SEQUENCE_ATTACHMENT_BUCKET)
-      .download(row.storage_path);
+    const mimeType = row.mime_type || "application/octet-stream";
+    if (!row.storage_path) {
+      if (row.drive_file_id && row.web_view_link) {
+        out.driveLinks.push({
+          kind: "drive",
+          name: row.filename,
+          mimeType,
+          size: Number(row.size_bytes),
+          driveFileId: row.drive_file_id,
+          webViewLink: row.web_view_link,
+        });
+      }
+      continue;
+    }
+
+    const { data, error } = await supabase.storage.from(BUCKET).download(row.storage_path);
     // A file that has gone missing must not stop the email: the recipient is
     // better served by the mail arriving without it than by a send that never
     // happens and silently retries forever.
     if (error || !data) continue;
     const buffer = Buffer.from(await data.arrayBuffer());
-    out.push({
+    out.attachments.push({
       filename: row.filename,
-      mimeType: row.mime_type || "application/octet-stream",
+      mimeType,
       base64Data: buffer.toString("base64"),
     });
   }

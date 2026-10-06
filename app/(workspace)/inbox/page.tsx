@@ -9,6 +9,7 @@ import { LabelSidebarItem } from "@/components/LabelSidebarItem";
 import {
   findInvalidRecipient,
   formatRecipientError,
+  recipientErrorTitle,
 } from "@/lib/validate-mail-recipients";
 import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { CalendarInviteOrHtml } from "@/components/CalendarInviteCard";
@@ -27,6 +28,11 @@ import {
   MassSendingToggleDialog,
   type MassToggleDirection,
 } from "@/components/MassSendingToggleDialog";
+import {
+  MailTemplatesButton,
+  type TemplateApplyMode,
+} from "@/components/MailTemplatesModal";
+import type { MailTemplate, MailTemplateAttachment } from "@/lib/mail-template-types";
 import { useDirectoryContacts } from "@/hooks/useDirectoryContacts";
 import { useSyncedContacts } from "@/hooks/useSyncedContacts";
 import type { DirectoryContact } from "@/lib/contact-directory";
@@ -39,8 +45,9 @@ import {
   reportMissingVariables,
   stripVariableSpans,
   syncedContactToMergeFields,
-  templateUsesVariables,
+  templateUsesKnownVariables,
   type ComposeVariable,
+  type UnknownPlaceholderMode,
 } from "@/lib/compose-variables";
 import { listPlaceholdersInTemplate, mergeTemplate, type MailMergeRow } from "@/lib/mail-merge";
 import { GmailInlineReply } from "@/components/GmailInlineReply";
@@ -51,17 +58,25 @@ import {
   DRAFT_AUTOSAVE_DELAY_MS,
   type ComposeDraftSaveStatus,
 } from "@/lib/gmail-draft-autosave";
-import {
-  DRAFT_JSON_INLINE_MAX_BYTES,
-  GMAIL_ATTACHMENT_MAX_BYTES,
-} from "@/lib/gmail-draft-limits";
+import { sendsAsDriveLink } from "@/lib/gmail-draft-limits";
+import { markTemplateCopy } from "@/hooks/useMailTemplates";
+import { creepProgress, type AttachmentUploadKind } from "@/components/AttachmentUploadRow";
+import { uploadInlineImage } from "@/lib/upload-inline-image";
 import { uploadStagedDraftAttachment } from "@/lib/upload-staged-draft-attachment";
 import {
   pendingFileFingerprint,
+  pendingFileName,
+  pendingFileSize,
   pendingFilesFromDraftAttachments,
   type DraftApiAttachment,
   type PendingFile,
 } from "@/lib/gmail-compose-types";
+import {
+  readComposePersistedStateForRestore,
+  setComposePersistedState,
+  takeExpandComposeOnReturn,
+  type ComposePersistedState,
+} from "@/lib/compose-persist";
 import {
   mergeInboxUnread,
   readSessionInboxUnread,
@@ -74,6 +89,8 @@ import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { cn, formatDate, previewLineFromBody, timeAgo } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
+import { useModuleVisibility } from "@/lib/module-visibility";
+import { useAllowDelete } from "@/lib/use-allow-delete";
 import {
   buildDateSearchClauses,
   buildExclusionTokens,
@@ -109,7 +126,7 @@ import {
   startMailListAndBodyPrefetchWarm,
 } from "@/lib/mail-thread-prefetch";
 import { isPrefetchPausedAfterBrowserReload } from "@/lib/login-prefetch-session";
-import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon, Reply, AlertTriangle, Megaphone } from "lucide-react";
+import { ChevronDown, PencilLine, FilePen, Bookmark, Trash2, AlertOctagon, Mail, Maximize2, X as XIcon, Reply, AlertTriangle, Megaphone, Search as SearchIcon } from "lucide-react";
 import {
   IconInbox,
   IconSend,
@@ -121,6 +138,9 @@ import {
   IconCalendar,
   IconInfo,
 } from "@/components/Icons";
+
+/** User labels shown in the sidebar before the search box is needed. */
+const SIDEBAR_LABEL_LIMIT = 15;
 
 type Folder = "inbox" | "sent" | "drafts" | "starred" | "important" | "trash" | "spam" | "allmail";
 type BulkAction =
@@ -505,6 +525,9 @@ function MessageBubble({
   onReplyAll?: () => void;
   onForward?: () => void;
 }) {
+  // The campaign chip deep-links into the Campaigns report; hide it when that
+  // module is off rather than offering a link that redirects away.
+  const campaignsEnabled = useModuleVisibility().isVisible("campaigns");
   const [expanded, setExpanded] = useState(isLast);
   const [fullscreen, setFullscreen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -643,7 +666,7 @@ function MessageBubble({
                     {titleCase("Replied")}
                   </span>
                 )}
-                {trackingRow?.campaign_id && (
+                {trackingRow?.campaign_id && campaignsEnabled && (
                   <Link
                     href={`/campaigns/${encodeURIComponent(trackingRow.campaign_id)}`}
                     onClick={(e) => e.stopPropagation()}
@@ -785,19 +808,6 @@ function MessageBubble({
   );
 }
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(",")[1] || "";
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 const STORAGE_SIDEBAR_W = "placecom-inbox-sidebar-w";
 const STORAGE_LIST_W = "placecom-inbox-list-w";
 
@@ -808,53 +818,164 @@ function readStoredWidth(key: string, fallback: number, min: number, max: number
   return Math.min(max, Math.max(min, n));
 }
 
-/** Vertical drag handle between resizable mail panes. */
-function PaneResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+/** Width a collapsed pane keeps so the handle stays reachable. */
+const COLLAPSED_PANE_W = 10;
+
+/**
+ * Vertical drag handle between resizable mail panes, modelled on Trello's:
+ * a grip pill centred on the divider, a thin accent line on hover/drag,
+ * double-click to reset the width, and (for collapsible panes) a click on the
+ * grip to collapse or expand. The grip is the only click target; the rest of
+ * the strip only drags.
+ *
+ * `className` positions the 12px-wide hit area; the grip and line centre
+ * themselves inside it.
+ */
+function PaneResizeHandle({
+  onMouseDown,
+  onDoubleClick,
+  collapsed,
+  collapsible,
+  className = "absolute right-0 top-0 h-full",
+}: {
+  onMouseDown: (e: React.MouseEvent) => void;
+  onDoubleClick?: () => void;
+  collapsed?: boolean;
+  collapsible?: boolean;
+  className?: string;
+}) {
+  const gripTitle = collapsible
+    ? collapsed
+      ? "Click to expand · drag to resize"
+      : "Click to collapse · drag to resize · double-click to reset"
+    : "Drag to resize · double-click to reset";
   return (
     <div
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize pane"
+      data-pane-handle
       onMouseDown={onMouseDown}
-      className="absolute right-0 top-0 z-20 h-full w-1.5 -translate-x-1/2 cursor-col-resize touch-none bg-transparent hover:bg-[var(--color-copper)]/25 active:bg-[var(--color-copper)]/40"
-    />
+      onDoubleClick={onDoubleClick}
+      className={cn("group z-20 w-3 cursor-col-resize touch-none", className)}
+    >
+      {/* Divider line — appears on hover and while dragging. */}
+      <span className="pointer-events-none absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-[var(--color-copper)]/60 group-active:bg-[var(--color-copper)]" />
+      {/* Grip pill with two grooves */}
+      <span
+        data-pane-grip
+        title={gripTitle}
+        className="absolute left-1/2 top-1/2 flex h-11 w-[10px] -translate-x-1/2 -translate-y-1/2 items-center justify-center gap-[2px] rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] shadow-[0_1px_4px_rgba(0,0,0,0.18)] transition-all duration-150 group-hover:scale-110 group-hover:border-[var(--color-copper)] group-hover:bg-[var(--color-copper)] group-active:border-[var(--color-copper)] group-active:bg-[var(--color-copper)]"
+      >
+        <span className="h-4 w-px rounded-full bg-[var(--color-text-faint)] transition-colors group-hover:bg-white group-active:bg-white" />
+        <span className="h-4 w-px rounded-full bg-[var(--color-text-faint)] transition-colors group-hover:bg-white group-active:bg-white" />
+      </span>
+    </div>
   );
 }
 
-function useResizablePane(storageKey: string, defaultWidth: number, min: number, max: number) {
+function useResizablePane(
+  storageKey: string,
+  defaultWidth: number,
+  min: number,
+  max: number,
+  opts?: { collapsible?: boolean }
+) {
+  const collapsible = opts?.collapsible ?? false;
+  const collapsedKey = `${storageKey}-collapsed`;
   const [width, setWidth] = useState(defaultWidth);
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     setWidth(readStoredWidth(storageKey, defaultWidth, min, max));
-  }, [storageKey, defaultWidth, min, max]);
+    if (collapsible) {
+      try {
+        setCollapsed(localStorage.getItem(collapsedKey) === "1");
+      } catch {
+        /* storage unavailable — stay expanded */
+      }
+    }
+  }, [storageKey, collapsedKey, collapsible, defaultWidth, min, max]);
+
+  const persistCollapsed = useCallback(
+    (next: boolean) => {
+      setCollapsed(next);
+      try {
+        localStorage.setItem(collapsedKey, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+    },
+    [collapsedKey]
+  );
 
   const onResizeStart = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startW = width;
+      const startW = collapsed ? 0 : width;
+      const startedOnGrip = Boolean((e.target as HTMLElement).closest("[data-pane-grip]"));
+      // Dragging narrower than this collapses the pane instead of clamping at min.
+      const collapseAt = min * 0.6;
+      let moved = false;
+      let nextCollapsed = collapsed;
+      let nextWidth = width;
       document.body.style.cursor = "col-resize";
       document.body.style.userSelect = "none";
 
-      function onMove(ev: MouseEvent) {
-        setWidth(Math.min(max, Math.max(min, startW + ev.clientX - startX)));
+      function compute(ev: MouseEvent) {
+        const raw = startW + ev.clientX - startX;
+        if (collapsible && raw < collapseAt) {
+          nextCollapsed = true;
+        } else {
+          nextCollapsed = false;
+          nextWidth = Math.min(max, Math.max(min, raw));
+        }
       }
-      function onUp(ev: MouseEvent) {
-        const finalW = Math.min(max, Math.max(min, startW + ev.clientX - startX));
-        setWidth(finalW);
-        localStorage.setItem(storageKey, String(finalW));
+      function onMove(ev: MouseEvent) {
+        if (Math.abs(ev.clientX - startX) > 3) moved = true;
+        if (!moved) return;
+        compute(ev);
+        setCollapsed(nextCollapsed);
+        if (!nextCollapsed) setWidth(nextWidth);
+      }
+      function onUp() {
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
+        if (!moved) {
+          // A plain click on the grip toggles collapse; elsewhere it does nothing.
+          if (collapsible && startedOnGrip) persistCollapsed(!collapsed);
+          return;
+        }
+        if (collapsible) persistCollapsed(nextCollapsed);
+        if (!nextCollapsed) {
+          try {
+            localStorage.setItem(storageKey, String(nextWidth));
+          } catch {
+            /* ignore */
+          }
+        }
       }
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [width, storageKey, min, max]
+    [width, collapsed, collapsible, storageKey, min, max, persistCollapsed]
   );
 
-  return { width, onResizeStart };
+  /** Double-click on the handle: back to the default width, expanded. */
+  const reset = useCallback(() => {
+    setWidth(defaultWidth);
+    if (collapsible) persistCollapsed(false);
+    try {
+      localStorage.setItem(storageKey, String(defaultWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [defaultWidth, collapsible, persistCollapsed, storageKey]);
+
+  return { width, collapsed, onResizeStart, reset };
 }
 
 type InboxCategoryKey = "primary" | "promotions" | "social" | "updates" | "forums";
@@ -868,6 +989,13 @@ const INBOX_CATEGORY_LABEL: Record<InboxCategoryKey, string> = {
 };
 
 export default function InboxPage() {
+  // Recruiter suggestions in the composer come from the Extraction module.
+  const extractionEnabled = useModuleVisibility().isVisible("dashboard");
+  // Saved templates are a /configs module of their own, with no page to hide —
+  // this flag is the only thing standing between the operator's switch and the
+  // Templates button in the composer footer.
+  const templatesEnabled = useModuleVisibility().isVisible("mailTemplates");
+  const allowDelete = useAllowDelete();
   const topbarActionsNode = useWorkspaceTopbarActionsNode();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
@@ -1120,6 +1248,9 @@ export default function InboxPage() {
 
   // Labels — loaded once, kept in a map by id for O(1) lookup from rows.
   const [allLabels, setAllLabels] = useState<GmailLabel[]>([]);
+  // Sidebar label search: the rail lists the first SIDEBAR_LABEL_LIMIT labels;
+  // typing here searches every user label.
+  const [labelSearch, setLabelSearch] = useState("");
   const labelsById = useMemo(() => {
     const m = new Map<string, GmailLabel>();
     for (const l of allLabels) m.set(l.id, l);
@@ -1208,9 +1339,29 @@ export default function InboxPage() {
   const newLabelInputRef = useRef<HTMLInputElement>(null);
 
   type ComposeKind = "new" | "forward" | "reply" | "replyAll";
-  const [composeKind, setComposeKind] = useState<ComposeKind>("new");
-  const [composeThreadId, setComposeThreadId] = useState<string | null>(null);
-  const [composeInReplyToId, setComposeInReplyToId] = useState<string | null>(null);
+
+  // Restore a minimized compose that survived route navigation.
+  // getComposePersistedState() is a non-destructive read; the sync effect below
+  // writes `null` once React state has taken over, which also keeps a short
+  // grace cache so a StrictMode double-mount restores correctly.
+  // Captured once via useState lazy init so takeExpandComposeOnReturn only
+  // fires on the very first mount, not on every render.
+  const [_restoredCompose] = useState<ComposePersistedState | null>(() =>
+    typeof window !== "undefined" ? readComposePersistedStateForRestore() : null
+  );
+  const [_restoredExpand] = useState<boolean>(() =>
+    typeof window !== "undefined" ? takeExpandComposeOnReturn() : false
+  );
+
+  const [composeKind, setComposeKind] = useState<ComposeKind>(
+    (_restoredCompose?.kind as ComposeKind | undefined) ?? "new"
+  );
+  const [composeThreadId, setComposeThreadId] = useState<string | null>(
+    _restoredCompose?.threadId ?? null
+  );
+  const [composeInReplyToId, setComposeInReplyToId] = useState<string | null>(
+    _restoredCompose?.inReplyToId ?? null
+  );
 
   // The current user's own Gmail address — used to exclude self from Reply All
   const [myEmail, setMyEmail] = useState("");
@@ -1228,7 +1379,14 @@ export default function InboxPage() {
     | { phase: "error"; message: string; retry?: () => void };
   const [sendSnack, setSendSnack] = useState<SendSnackState | null>(null);
   const sendSnackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [composeFieldError, setComposeFieldError] = useState<string | null>(null);
+  /**
+   * Blocking pre-send problem, heading and all. Held together rather than as a
+   * bare string so the dialog can name the specific problem instead of saying
+   * "Error" over every one of them.
+   */
+  const [composeFieldError, setComposeFieldError] = useState<
+    { title: string; message: string } | null
+  >(null);
 
   /** Show the snackbar and auto-dismiss it after `ms` milliseconds. */
   const showSendSnack = useCallback((state: SendSnackState, autoDismissMs?: number) => {
@@ -1239,22 +1397,44 @@ export default function InboxPage() {
     }
   }, []);
 
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [composeTo, setComposeTo] = useState("");
-  const [composeCc, setComposeCc] = useState("");
-  const [composeBcc, setComposeBcc] = useState("");
-  const [composeSubject, setComposeSubject] = useState("");
-  const [composeBody, setComposeBody] = useState("");
+  const [composeOpen, setComposeOpen] = useState(_restoredCompose !== null);
+  const [composeTo, setComposeTo] = useState(_restoredCompose?.to ?? "");
+  const [composeCc, setComposeCc] = useState(_restoredCompose?.cc ?? "");
+  const [composeBcc, setComposeBcc] = useState(_restoredCompose?.bcc ?? "");
+  const [composeSubject, setComposeSubject] = useState(_restoredCompose?.subject ?? "");
+  const [composeBody, setComposeBody] = useState(_restoredCompose?.body ?? "");
   const [composeFiles, setComposeFiles] = useState<PendingFile[]>([]);
+  /**
+   * Bumped whenever the draft's files are cleared (sent, discarded, closed, a
+   * new compose). Work that finishes later — a template's attachments being
+   * copied in the background — checks it so a file never lands in the next
+   * draft instead of the one it was meant for.
+   */
+  const composeFilesGenRef = useRef(0);
+  /**
+   * Gmail labels picked in compose's label menu. Applied to the message once
+   * it is sent (single or every copy of a mass send); cleared with the draft.
+   */
+  const [composeLabelIds, setComposeLabelIds] = useState<string[]>([]);
+  const resetComposeFiles = useCallback(() => {
+    composeFilesGenRef.current += 1;
+    setComposeFiles([]);
+    // Labels belong to the draft being cleared, like its files.
+    setComposeLabelIds([]);
+  }, []);
   /** File name → 0–100 while a large attachment uploads (Drive or staged). */
   const [driveUploadProgress, setDriveUploadProgress] = useState<Record<string, number>>({});
   const [uploadProgressKind, setUploadProgressKind] = useState<
-    Record<string, "drive" | "attachment">
+    Record<string, AttachmentUploadKind>
   >({});
-  const [composeCcBccOpen, setComposeCcBccOpen] = useState(false);
-  const [composeMinimized, setComposeMinimized] = useState(false);
+  const [composeCcBccOpen, setComposeCcBccOpen] = useState(_restoredCompose?.ccBccOpen ?? false);
+  // Restore as minimized if coming back from another tab, unless the user
+  // explicitly clicked "Expand" in the WorkspaceChrome bar (_restoredExpand).
+  const [composeMinimized, setComposeMinimized] = useState(
+    _restoredCompose !== null && !_restoredExpand
+  );
   const [composeFullscreen, setComposeFullscreen] = useState(false);
-  const [composeDraftId, setComposeDraftId] = useState<string | null>(null);
+  const [composeDraftId, setComposeDraftId] = useState<string | null>(_restoredCompose?.draftId ?? null);
 
   // ── Mass sending ────────────────────────────────────────────────────────
   // One personalised copy per recipient, addressed individually (never a
@@ -1275,6 +1455,8 @@ export default function InboxPage() {
       })
     | null
   >(null);
+  const massImportRef = useRef(massImport);
+  massImportRef.current = massImport;
   const [massImportBusy, setMassImportBusy] = useState(false);
   const [massImportError, setMassImportError] = useState<string | null>(null);
   /** Pending mass-sending toggle awaiting confirmation; null when none. */
@@ -1288,11 +1470,36 @@ export default function InboxPage() {
    * be unusable.
    */
   const [variableFallbacks, setVariableFallbacks] = useState<Record<string, string>>({});
+  /**
+   * Every address typed into To. Drives the single-recipient merge, so it is
+   * derived here rather than inside the send path — the `{` picker and the
+   * review gate both need to know how many people the draft is going to before
+   * anything is sent.
+   */
+  const composeToEmails = useMemo(() => extractAllEmailsFromText(composeTo), [composeTo]);
+
+  /**
+   * Whether the draft uses a placeholder a contact card can fill. Gates the
+   * single-recipient merge and the contact lookups that feed it.
+   *
+   * Strict on purpose (templateUsesKnownVariables, not templateUsesVariables):
+   * an ordinary mail containing "{TBD}" or a pasted code snippet must not be
+   * treated as a merge draft and held behind the review gate.
+   */
+  const draftUsesVariables = useMemo(
+    () => templateUsesKnownVariables(composeSubject, composeBody),
+    [composeSubject, composeBody]
+  );
+
   const { contacts: directoryContacts } = useDirectoryContacts();
-  // Loaded only once mass sending is switched on — see useSyncedContacts.
-  // An imported list merges from its own columns, so the sync is dead weight.
+  /**
+   * Fetched for a campaign audience, and for a normal compose only once the
+   * draft actually uses a variable — most single mails never do, and the sync
+   * is a large payload to pull for a menu nobody opened. An imported list
+   * merges from its own columns, so the sync is dead weight there.
+   */
   const { contacts: syncedContacts } = useSyncedContacts(
-    massSending && massSource === "contacts"
+    massSending ? massSource === "contacts" : draftUsesVariables
   );
 
   /**
@@ -1324,6 +1531,58 @@ export default function InboxPage() {
   );
 
   /**
+   * Placeholders the audience can't fill. Before a file is chosen there are no
+   * columns to judge against, so every `{token}` is tinted — they are written
+   * for the file about to arrive. Once it has, a token matching no column is
+   * flagged: it would go out as literal braces.
+   */
+  const unknownPlaceholders: UnknownPlaceholderMode =
+    massSending && massSource === "import" ? (massImport ? "flag" : "tint") : "ignore";
+
+  /**
+   * Placeholders in an imported-list draft that match none of its columns.
+   * Without a fallback they go out as literal braces, so the review screen
+   * offers one for each — the same chip a blank cell gets, applied to every
+   * recipient since no row has a value to prefer.
+   */
+  const draftUnknownKeys = useMemo(
+    () =>
+      massSending && massSource === "import" && massImport
+        ? reportMissingVariables(composeSubject, composeBody, [], massVariables).unknownKeys
+        : [],
+    [massSending, massSource, massImport, composeSubject, composeBody, massVariables]
+  );
+
+  /**
+   * What the editor tints and offers. A not-a-column placeholder that has been
+   * given a fallback will be filled, so it stops showing red and joins the
+   * picker — the red tint means "this will be sent as typed".
+   */
+  const editorVariables = useMemo<ComposeVariable[]>(() => {
+    if (!massSending) return COMPOSE_VARIABLES;
+    const covered = draftUnknownKeys
+      .filter((k) => variableFallbacks[k]?.trim())
+      .map((k) => ({ key: k, label: k, hint: "Fallback value, same for every recipient" }));
+    return covered.length ? [...massVariables, ...covered] : massVariables;
+  }, [massSending, massVariables, draftUnknownKeys, variableFallbacks]);
+
+  /**
+   * Whether the draft uses a placeholder the *live audience* can fill — the
+   * review gate. Differs from draftUsesVariables only for an imported list,
+   * whose vocabulary is its own columns rather than the contact-card set.
+   */
+  const draftUsesMergeVariables = useMemo(
+    () =>
+      massSending
+        ? // A not-a-column placeholder also needs the review screen — it is
+          // the only place its fallback can be set.
+          templateUsesKnownVariables(composeSubject, composeBody, massVariables) ||
+          draftUnknownKeys.length > 0
+        : draftUsesVariables,
+    [massSending, composeSubject, composeBody, massVariables, draftUsesVariables, draftUnknownKeys]
+  );
+
+  /**
    * Email → ISO date of the newest thread exchanged with them, fetched only
    * for the campaign audience and only when the draft actually uses
    * {last_mail_interaction}. This is the same Gmail search the contact's
@@ -1335,17 +1594,25 @@ export default function InboxPage() {
   const lastMailFetchingRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Imported rows merge from their own columns, so there is no contact to
-    // look mail up for.
-    if (!massSending || massSource !== "contacts") return;
     const used = new Set([
       ...listPlaceholdersInTemplate(composeSubject),
       ...listPlaceholdersInTemplate(composeBody),
     ]);
     if (!used.has("last_mail_interaction")) return;
 
-    const wanted = massAudience
-      .map((r) => r.email.toLowerCase())
+    // Imported rows merge from their own columns, so there is no contact to
+    // look mail up for. A normal compose looks up its one recipient — with two
+    // or more there is no single person to merge against anyway.
+    const targets = massSending
+      ? massSource === "contacts"
+        ? massAudience.map((r) => r.email)
+        : []
+      : composeToEmails.length === 1
+        ? composeToEmails
+        : [];
+
+    const wanted = targets
+      .map((e) => e.toLowerCase())
       .filter((e) => !(e in lastMailByEmail) && !lastMailFetchingRef.current.has(e));
     if (wanted.length === 0) return;
 
@@ -1372,7 +1639,15 @@ export default function InboxPage() {
         for (const e of wanted) lastMailFetchingRef.current.delete(e);
       }
     })();
-  }, [massSending, massSource, massAudience, composeSubject, composeBody, lastMailByEmail]);
+  }, [
+    massSending,
+    massSource,
+    massAudience,
+    composeToEmails,
+    composeSubject,
+    composeBody,
+    lastMailByEmail,
+  ]);
 
   // The rail owns the audience while mass sending is on; the To field is a
   // read-only mirror of it. Kept in sync here so the draft that gets autosaved
@@ -1441,35 +1716,166 @@ export default function InboxPage() {
       setComposeBcc("");
       setComposeCcBccOpen(false);
     } else {
+      const wasImport = massSource === "import";
       setMassRecipients([]);
       setMassSource("contacts");
       setMassImport(null);
       setMassImportError(null);
+      // Campaign-wide defaults were typed against that audience's variable set,
+      // which an imported list does not share with a contact card.
       setVariableFallbacks({});
       // The To field is only a mirror of the rail while mass sending is on,
       // and the effect that maintains it stops here — so it has to be cleared
       // explicitly, or the audience survives as a plain address list.
       setComposeTo("");
-      // The draft goes with the audience it was written for — its variables
-      // would otherwise send as literal `{name}` text to a single recipient.
-      setComposeSubject("");
-      setComposeBody("");
+      // Only an imported campaign's draft has to go. Its `{column}` tokens have
+      // nothing behind them once the file is gone, so the text cannot be saved.
+      // A contact-card draft survives: its variables merge against a single
+      // recipient's card just as well as against a list of them.
+      if (wasImport) {
+        setComposeSubject("");
+        setComposeBody("");
+      }
     }
-  }, []);
+  }, [massSource]);
 
   /**
-   * Parse a CSV/Excel file into merge rows. Reuses the broadcast mail-merge
-   * parser endpoint — same header detection, email-column resolution and row
-   * cap, so an import behaves identically in both places.
+   * Pull a saved template into the open draft.
+   *
+   * "append" puts the template after what is already written rather than at the
+   * caret: the editor's caret is owned by RichTextEditor and the menu steals
+   * focus to open, so "where the cursor was" is not reliably recoverable here —
+   * and quietly inserting in the wrong place is worse than always inserting at
+   * the end, which is at least predictable.
    */
-  const importMassFile = useCallback(async (file: File) => {
-    setMassImportBusy(true);
-    setMassImportError(null);
-    try {
-      const fd = new FormData();
-      fd.set("file", file);
-      const res = await fetch("/api/broadcast/parse-mail-merge", { method: "POST", body: fd });
-      const data = (await res.json()) as {
+  /**
+   * Copy one stored template file into compose's attachment staging, in the
+   * background. It shows as an "Uploading attachment…" row where the draft's
+   * attachments live, and Send / draft save wait for it like any upload.
+   */
+  const stageTemplateAttachment = useCallback(
+    async (templateId: string, attachment: MailTemplateAttachment) => {
+      const key = attachment.filename;
+      const gen = composeFilesGenRef.current;
+      setUploadProgressKind((prev) => ({ ...prev, [key]: "copy" }));
+      // The copy happens server-side, so there are no bytes to count: creep
+      // toward 90% on a timer and finish on the response.
+      const stopCreep = creepProgress((percent) =>
+        setDriveUploadProgress((prev) => ({ ...prev, [key]: Math.round(percent) }))
+      );
+
+      try {
+        const res = await fetch(`/api/mail-templates/${templateId}/attachments/stage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ attachmentIds: [attachment.id] }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          files?: PendingFile[];
+          error?: string;
+        };
+        if (!res.ok || !data.files) {
+          throw new Error(data.error || "the copy failed");
+        }
+        // The draft was sent, discarded or replaced while this ran.
+        if (composeFilesGenRef.current !== gen) return;
+        const added = data.files;
+        setComposeFiles((prev) => [...prev, ...added]);
+      } catch (e) {
+        if (composeFilesGenRef.current !== gen) return;
+        setComposeFieldError({
+          title: "Attachment not added",
+          message: `"${attachment.filename}" from the template couldn't be attached (${
+            e instanceof Error ? e.message : "network error"
+          }). Attach it again with the paperclip.`,
+        });
+      } finally {
+        stopCreep();
+        setDriveUploadProgress((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        setUploadProgressKind((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      }
+    },
+    []
+  );
+
+  const applyMailTemplate = useCallback(
+    (template: MailTemplate, mode: TemplateApplyMode) => {
+      // Text goes in at once and the modal closes; the template's files follow
+      // in the compose window's own attachment area rather than holding the
+      // modal open on a spinner.
+      if (mode === "replace") {
+        // A template saved from a reply has no subject of its own. "Replace"
+        // then means replace the body — clearing a subject the user typed on
+        // the strength of a template that never had one would be a loss, not a
+        // replacement.
+        setComposeSubject((prev) =>
+          template.subjectTemplate.trim() ? template.subjectTemplate : prev
+        );
+        setComposeBody(template.bodyHtml);
+      } else {
+        // Appending must not silently drop the template's subject when the
+        // draft has none — but it must not overwrite one the user typed either.
+        setComposeSubject((prev) => (prev.trim() ? prev : template.subjectTemplate));
+        setComposeBody((prev) =>
+          richTextIsEmpty(prev) ? template.bodyHtml : `${prev}<br>${template.bodyHtml}`
+        );
+      }
+
+      if (template.attachments.length === 0) return;
+      const inDraft = new Set(
+        composeFiles.map((f) => `${pendingFileName(f)}:${pendingFileSize(f)}`)
+      );
+      // Using the same template twice shouldn't attach its files twice.
+      const adding = template.attachments.filter(
+        (a) => !inDraft.has(`${a.filename}:${a.sizeBytes}`)
+      );
+
+      // Drive-linked files are only links — nothing to copy, so they appear now.
+      const links: PendingFile[] = adding.flatMap((a) =>
+        a.driveFileId && a.webViewLink
+          ? [
+              {
+                kind: "drive" as const,
+                name: a.filename,
+                mimeType: a.mimeType,
+                size: a.sizeBytes,
+                driveFileId: a.driveFileId,
+                webViewLink: a.webViewLink,
+              },
+            ]
+          : []
+      );
+      if (links.length > 0) setComposeFiles((prev) => [...prev, ...links]);
+
+      const toCopy = adding.filter((a) => !a.driveFileId);
+      if (toCopy.length === 0) return;
+      // "Use" stays off for this template until every file has landed (or
+      // failed), so a second click can't attach the same files twice.
+      const done = markTemplateCopy(template.id);
+      void Promise.allSettled(toCopy.map((a) => stageTemplateAttachment(template.id, a))).then(
+        done
+      );
+    },
+    [composeFiles, stageTemplateAttachment]
+  );
+
+  /**
+   * Shared tail of every mass-import path (file or Google Sheet): validates the
+   * parser response and swaps it in as the campaign audience. Throws with a
+   * user-facing message on failure.
+   */
+  const applyParsedImport = useCallback(
+    (
+      res: Response,
+      data: {
         error?: string;
         headersFound?: string;
         detectedHeaders?: string[];
@@ -1479,7 +1885,12 @@ export default function InboxPage() {
         skipped?: number;
         truncated?: boolean;
         maxRows?: number;
-      };
+        fileName?: string;
+        tabs?: string[];
+        tab?: string;
+      },
+      opts: { fileName: string; sheetId?: string; keepFallbacks?: boolean }
+    ) => {
       if (!res.ok) {
         const headers = data.headersFound || data.detectedHeaders?.join(", ");
         throw new Error(
@@ -1490,25 +1901,86 @@ export default function InboxPage() {
       if (rows.length === 0) throw new Error("No rows with a valid email address in that file.");
 
       const headerLabels = data.headerLabels ?? data.detectedHeaders ?? [];
+      const columns = data.columns ?? [];
+      // A refresh of the same sheet keeps its typed fallbacks only if the
+      // columns didn't change underneath them.
+      const prev = massImportRef.current;
+      const sameColumns =
+        !!opts.keepFallbacks &&
+        !!prev &&
+        prev.variables.map((v) => v.key).join("|") === columns.join("|");
+      if (!sameColumns) setVariableFallbacks({});
       setMassImport({
-        fileName: file.name,
+        fileName: opts.fileName,
         rows,
         count: rows.length,
         skipped: data.skipped,
         truncated: data.truncated,
         maxRows: data.maxRows,
-        variables: columnsToComposeVariables(data.columns ?? [], headerLabels),
+        variables: columnsToComposeVariables(columns, headerLabels),
+        ...(opts.sheetId && data.tab && data.tabs
+          ? { sheet: { id: opts.sheetId, tab: data.tab, tabs: data.tabs } }
+          : {}),
       });
-      // A new file means new columns — any fallback typed against the old
-      // ones is meaningless, and the review screen must be re-entered.
+      // Rows may have changed, so the review screen must be re-entered.
       setReviewEmail(null);
-      setVariableFallbacks({});
-    } catch (e) {
-      setMassImportError(e instanceof Error ? e.message : "Import failed");
-    } finally {
-      setMassImportBusy(false);
-    }
-  }, []);
+    },
+    []
+  );
+
+  /**
+   * Parse a CSV/Excel file into merge rows. Reuses the broadcast mail-merge
+   * parser endpoint — same header detection, email-column resolution and row
+   * cap, so an import behaves identically in both places.
+   */
+  const importMassFile = useCallback(
+    async (file: File) => {
+      setMassImportBusy(true);
+      setMassImportError(null);
+      try {
+        const fd = new FormData();
+        fd.set("file", file);
+        const res = await fetch("/api/broadcast/parse-mail-merge", { method: "POST", body: fd });
+        const data = await res.json();
+        applyParsedImport(res, data, { fileName: file.name });
+      } catch (e) {
+        setMassImportError(e instanceof Error ? e.message : "Import failed");
+      } finally {
+        setMassImportBusy(false);
+      }
+    },
+    [applyParsedImport]
+  );
+
+  /**
+   * Read a tab of an existing Google Sheet into merge rows. A snapshot, like a
+   * file import — "Refresh" in the panel simply calls this again for the same
+   * sheet and tab. Fallbacks survive a refresh when the columns are unchanged.
+   */
+  const importMassSheet = useCallback(
+    async (sheet: { id: string; name: string }, tab?: string) => {
+      setMassImportBusy(true);
+      setMassImportError(null);
+      try {
+        const res = await fetch("/api/broadcast/parse-mail-merge-sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ spreadsheetId: sheet.id, tab }),
+        });
+        const data = await res.json().catch(() => ({}));
+        applyParsedImport(res, data, {
+          fileName: data.fileName || sheet.name,
+          sheetId: sheet.id,
+          keepFallbacks: true,
+        });
+      } catch (e) {
+        setMassImportError(e instanceof Error ? e.message : "Could not read that sheet");
+      } finally {
+        setMassImportBusy(false);
+      }
+    },
+    [applyParsedImport]
+  );
 
   // In-flight guard for openDraft. A ref (vs state) keeps the useCallback
   // identity stable so click handlers don't rebind on every flip.
@@ -1672,12 +2144,29 @@ export default function InboxPage() {
   );
 
   /** After a draft save, Gmail rotates messageId/attachmentId — rehydrate from server. */
-  const syncComposeFilesFromDraft = useCallback(async (draftId: string) => {
+  /**
+   * `sentFiles` is the file list (fingerprinted) the save sent. Gmail's copy
+   * only replaces the local list if the user hasn't touched it since: a file
+   * removed while the save was in flight would otherwise come straight back
+   * from Gmail, and be marked as saved so nothing ever dropped it again. When
+   * the list has moved on, it is left alone and the next autosave rewrites the
+   * Gmail draft to match it.
+   */
+  const syncComposeFilesFromDraft = useCallback(async (draftId: string, sentFiles: string[]) => {
     const res = await fetch(`/api/gmail/drafts?draftId=${encodeURIComponent(draftId)}`, {
       cache: "no-store",
     });
     if (!res.ok) return;
     const data = (await res.json()) as { attachments?: DraftApiAttachment[] };
+    const current = composeStateRef.current;
+    // Another draft is open now (this one was sent, discarded or closed), or
+    // the user added/removed a file meanwhile — Gmail's list is stale for it.
+    if (current.draftId !== draftId) return;
+    if (
+      JSON.stringify(current.files.map(pendingFileFingerprint)) !== JSON.stringify(sentFiles)
+    ) {
+      return;
+    }
     const serverFiles = pendingFilesFromDraftAttachments(data.attachments ?? []);
     const driveFiles = composeStateRef.current.files.filter((f) => f.kind === "drive");
     const merged = [...serverFiles, ...driveFiles];
@@ -1823,7 +2312,7 @@ export default function InboxPage() {
       if (preserveAttachments) {
         draftLastSavedRef.current = snapshot;
       } else if (draftId && attachmentPayloadSent) {
-        await syncComposeFilesFromDraft(draftId);
+        await syncComposeFilesFromDraft(draftId, fileFingerprints);
       } else {
         draftLastSavedRef.current = snapshot;
       }
@@ -1832,7 +2321,7 @@ export default function InboxPage() {
       const wasNewDraft = !s.draftId && !!data.draftId;
       onDraftCountChangeRef.current(wasNewDraft);
       if (draftId && preserveAttachments) {
-        void syncComposeFilesFromDraft(draftId).catch(() => {});
+        void syncComposeFilesFromDraft(draftId, fileFingerprints).catch(() => {});
       }
       return draftId ?? null;
     } catch {
@@ -1876,7 +2365,7 @@ export default function InboxPage() {
       setComposeBcc("");
       setComposeSubject("");
       setComposeBody("");
-      setComposeFiles([]);
+      resetComposeFiles();
       // Mass state lives outside the compose fields, so discarding or closing
       // the window would otherwise leave the campaign standing — and the To
       // mirror would refill the "cleared" field from it on reopen.
@@ -1889,7 +2378,7 @@ export default function InboxPage() {
     if (composeCc.trim() || composeBcc.trim()) {
       setComposeCcBccOpen(true);
     }
-  }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer, resetMassState]);
+  }, [composeOpen, composeCc, composeBcc, clearDraftSaveStatusTimer, resetMassState, resetComposeFiles]);
 
   // Auto-open compose when navigated here with ?composeTo=email (e.g. from Google Contacts).
   // Must be registered AFTER the reset effect above so this runs last and wins.
@@ -1905,7 +2394,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject("");
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     setComposeCcBccOpen(false);
     setComposeMinimized(false);
@@ -2047,81 +2536,86 @@ export default function InboxPage() {
     return results.filter((r): r is NonNullable<typeof r> => r !== null);
   }
 
+  /**
+   * Attach picked files. Every file uploads with a progress row in the
+   * attachment area — the same row sequences and templates show — and its chip
+   * appears the moment it lands, not when the whole batch has finished. Up to
+   * Gmail's 25 MB a file is staged as an attachment; past that it goes to Drive
+   * and is sent as a link (sendsAsDriveLink, shared with templates and
+   * sequences). Send and draft save wait while any row is showing.
+   */
   async function handleFileSelect(files: FileList | null) {
     if (!files) return;
-    const newFiles: PendingFile[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.size <= DRAFT_JSON_INLINE_MAX_BYTES) {
-        const base64 = await fileToBase64(file);
-        newFiles.push({ kind: "new", file, base64 });
-      } else if (file.size <= GMAIL_ATTACHMENT_MAX_BYTES) {
-        setUploadProgressKind((prev) => ({ ...prev, [file.name]: "attachment" }));
-        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
-        try {
-          const staged = await uploadStagedDraftAttachment(file, (percent) => {
-            setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
-          });
-          newFiles.push({
+    const picked = Array.from(files);
+    const gen = composeFilesGenRef.current;
+
+    // Every row appears at once, queued at 0%, so a batch shows what's coming.
+    setUploadProgressKind((prev) => ({
+      ...prev,
+      ...Object.fromEntries(
+        picked.map((f) => [f.name, sendsAsDriveLink(f.size) ? "drive" : "attachment"])
+      ),
+    }));
+    setDriveUploadProgress((prev) => ({
+      ...prev,
+      ...Object.fromEntries(picked.map((f) => [f.name, 0])),
+    }));
+
+    for (const file of picked) {
+      const onProgress = (percent: number) =>
+        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
+      try {
+        let added: PendingFile;
+        if (!sendsAsDriveLink(file.size)) {
+          const staged = await uploadStagedDraftAttachment(file, onProgress);
+          added = {
             kind: "staged",
             uploadId: staged.uploadId,
             name: staged.name,
             mimeType: staged.mimeType,
             size: staged.size,
-          });
-        } catch (e) {
-          alert(
-            `Failed to upload ${file.name}: ${e instanceof Error ? e.message : "network error"}. Please try again.`
-          );
-        } finally {
-          setDriveUploadProgress((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
-          });
-          setUploadProgressKind((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
-          });
-        }
-      } else {
-        // Exceeds Gmail's 25 MB limit — upload to Drive in 4 MB chunks via our API
-        // (browser cannot PUT to googleapis.com directly due to CORS).
-        setUploadProgressKind((prev) => ({ ...prev, [file.name]: "drive" }));
-        setDriveUploadProgress((prev) => ({ ...prev, [file.name]: 0 }));
-        try {
-          const driveFile = await uploadLargeFileToDrive(file, (percent) => {
-            setDriveUploadProgress((prev) => ({ ...prev, [file.name]: percent }));
-          });
-          newFiles.push({
+          };
+        } else {
+          // Over Gmail's 25 MB — upload to Drive in 4 MB chunks via our API
+          // (the browser cannot PUT to googleapis.com directly due to CORS).
+          const driveFile = await uploadLargeFileToDrive(file, onProgress);
+          added = {
             kind: "drive",
             name: driveFile.name,
             mimeType: driveFile.mimeType,
             size: driveFile.size ? parseInt(driveFile.size, 10) : file.size,
             driveFileId: driveFile.id,
             webViewLink: driveFile.webViewLink,
-          });
-        } catch (e) {
-          alert(
-            `Failed to upload ${file.name} to Drive: ${e instanceof Error ? e.message : "network error"}. Please try again.`
-          );
-        } finally {
-          setDriveUploadProgress((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
-          });
-          setUploadProgressKind((prev) => {
-            const next = { ...prev };
-            delete next[file.name];
-            return next;
+          };
+        }
+        // The draft was sent, discarded or replaced while this uploaded.
+        if (composeFilesGenRef.current === gen) {
+          setComposeFiles((prev) => [...prev, added]);
+        }
+      } catch (e) {
+        if (composeFilesGenRef.current === gen) {
+          setComposeFieldError({
+            title: "Attachment not added",
+            message: `"${file.name}" couldn't be ${
+              sendsAsDriveLink(file.size) ? "uploaded to Drive" : "uploaded"
+            } (${e instanceof Error ? e.message : "network error"}). Please try again.`,
           });
         }
+      } finally {
+        setDriveUploadProgress((prev) => {
+          const next = { ...prev };
+          delete next[file.name];
+          return next;
+        });
+        setUploadProgressKind((prev) => {
+          const next = { ...prev };
+          delete next[file.name];
+          return next;
+        });
       }
     }
-    setComposeFiles((prev) => [...prev, ...newFiles]);
   }
+
 
   useEffect(() => {
     const trimmed = mailSearchInput.trim();
@@ -2520,13 +3014,17 @@ export default function InboxPage() {
     []
   );
 
-  const { width: sidebarWidth, onResizeStart: onSidebarResizeStart } = useResizablePane(
-    STORAGE_SIDEBAR_W,
-    256,
-    180,
-    400
-  );
-  const { width: listPaneWidth, onResizeStart: onListPaneResizeStart } = useResizablePane(
+  const {
+    width: sidebarWidth,
+    collapsed: sidebarCollapsed,
+    onResizeStart: onSidebarResizeStart,
+    reset: resetSidebarWidth,
+  } = useResizablePane(STORAGE_SIDEBAR_W, 256, 180, 400, { collapsible: true });
+  const {
+    width: listPaneWidth,
+    onResizeStart: onListPaneResizeStart,
+    reset: resetListPaneWidth,
+  } = useResizablePane(
     STORAGE_LIST_W,
     420,
     280,
@@ -2860,7 +3358,11 @@ export default function InboxPage() {
     let cancelled = false;
     setContactsHint(null);
     void Promise.all([
-      fetch("/api/recruiters").then((r) => (r.ok ? r.json() : null)),
+      // Recruiter suggestions come from Extraction; skip that half when the
+      // module is off so the composer still gets Google contacts.
+      extractionEnabled
+        ? fetch("/api/recruiters").then((r) => (r.ok ? r.json() : null))
+        : Promise.resolve(null),
       fetch("/api/gmail/contacts").then((r) => (r.ok ? r.json() : null)),
     ])
       .then(([recruitersJson, contactsJson]) => {
@@ -2887,7 +3389,7 @@ export default function InboxPage() {
     return () => {
       cancelled = true;
     };
-  }, [composeOpen, filterOpen]);
+  }, [composeOpen, filterOpen, extractionEnabled]);
 
   const openDraft = useCallback(async (draftId: string) => {
     if (draftLoadingRef.current) return;
@@ -3698,6 +4200,7 @@ export default function InboxPage() {
     (tempId: string, real: GmailLabel) => {
       setAllLabels((prev) => insertLabelSorted(prev.filter((l) => l.id !== tempId), real));
       setThreadLabelIds((cur) => cur.map((id) => (id === tempId ? real.id : id)));
+      setComposeLabelIds((cur) => cur.map((id) => (id === tempId ? real.id : id)));
       mutateThreads((rows) =>
         rows.map((r) => ({
           ...r,
@@ -3747,6 +4250,7 @@ export default function InboxPage() {
     (tempId: string) => {
       setAllLabels((prev) => prev.filter((l) => l.id !== tempId));
       setThreadLabelIds((cur) => cur.filter((id) => id !== tempId));
+      setComposeLabelIds((cur) => cur.filter((id) => id !== tempId));
       applyLabelListUpdate(
         (rows) =>
           rows.map((r) => ({
@@ -3994,6 +4498,60 @@ export default function InboxPage() {
     [selectedId, threads, applyLabelOptimistic, finalizeLabelCreation, setUserLabelCount]
   );
 
+  /**
+   * Create a label from compose's label menu: it appears at once (pending),
+   * is ticked for the mail being written, and is created in Gmail in the
+   * background. replaceLabelId / removePendingLabel keep the compose selection
+   * in step when it lands or fails.
+   */
+  const createComposeLabel = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const pending = makePendingLabel(trimmed);
+      setAllLabels((prev) => insertLabelSorted(prev, pending));
+      setUserLabelCount(pending.id, { total: 0, unread: 0 });
+      setComposeLabelIds((cur) => [...cur, pending.id]);
+      void finalizeLabelCreation(pending.id, trimmed);
+    },
+    [finalizeLabelCreation, setUserLabelCount]
+  );
+
+  const composeLabelSelected = useMemo(() => new Set(composeLabelIds), [composeLabelIds]);
+
+  /**
+   * Upload a photo being inserted into the body ("Insert photo"). Its progress
+   * row sits with the attachment uploads, which also holds Send and draft save
+   * until it lands — before then the body only has a local preview of it.
+   */
+  const uploadComposeInlineImage = useCallback(async (file: File): Promise<string> => {
+    const key = file.name;
+    setUploadProgressKind((prev) => ({ ...prev, [key]: "photo" }));
+    setDriveUploadProgress((prev) => ({ ...prev, [key]: 0 }));
+    try {
+      return await uploadInlineImage(file, (percent) =>
+        setDriveUploadProgress((prev) => ({ ...prev, [key]: percent }))
+      );
+    } catch (e) {
+      setComposeFieldError({
+        title: "Photo not inserted",
+        message: e instanceof Error ? e.message : `"${file.name}" couldn't be inserted.`,
+      });
+      throw e;
+    } finally {
+      setDriveUploadProgress((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+      setUploadProgressKind((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+  }, []);
+
   /** Create a new label from the left-rail form (no thread to apply it to). */
   function createLabelFromRail() {
     const name = newLabelInput.trim();
@@ -4134,7 +4692,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject("");
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     setComposeCcBccOpen(false);
     setComposeMinimized(false);
@@ -4160,7 +4718,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject(replySubject(last.subject || ""));
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     setComposeCcBccOpen(mode === "replyAll" && !!cc.trim());
     setComposeMinimized(false);
@@ -4218,7 +4776,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject(fwdSubject);
     setComposeBody(quotedHtml);
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     setComposeCcBccOpen(false);
     setComposeMinimized(false);
@@ -4234,36 +4792,16 @@ export default function InboxPage() {
    * An imported list skips the card lookup entirely — the spreadsheet row is
    * the only source of truth for those recipients.
    */
-  const massMergeRows = useMemo(() => {
-    if (massSource === "import") {
-      const seen = new Set<string>();
-      const rows: Array<{
-        email: string;
-        name: string;
-        baseFields: Record<string, string>;
-        fields: Record<string, string>;
-        hasCard: boolean;
-      }> = [];
-      for (const row of massImport?.rows ?? []) {
-        const email = row.email.trim().toLowerCase();
-        if (!email || seen.has(email)) continue;
-        seen.add(email);
-        const baseFields: Record<string, string> = { ...row.fields, email };
-        rows.push({
-          email,
-          name: baseFields.name?.trim() || email,
-          baseFields,
-          // Fallbacks fill columns the row left blank, exactly as they do for
-          // contact-card recipients.
-          fields: mergeFieldSources(baseFields, variableFallbacks),
-          // No card is expected here, so the review banner should not claim
-          // one is missing — a blank cell is a blank cell.
-          hasCard: true,
-        });
-      }
-      return rows;
-    }
-
+  /**
+   * Resolves one contact-card recipient into the merge-field bag
+   * mergeTemplate() consumes.
+   *
+   * Shared by mass sending and the single-recipient composer on purpose: both
+   * answer "where does {company_name} come from for this address?", and two
+   * copies of that answer would drift. Returns a function rather than rows so
+   * the single-send path can call it for one address without building a list.
+   */
+  const buildContactMergeRow = useMemo(() => {
     const cardByEmail = new Map<string, DirectoryContact>();
     const cardByName = new Map<string, DirectoryContact>();
     for (const c of directoryContacts) {
@@ -4281,7 +4819,7 @@ export default function InboxPage() {
         .map((s) => [s.email.trim().toLowerCase(), s])
     );
 
-    return massRecipients.map((r) => {
+    return (r: MassRecipient) => {
       const key = r.email.toLowerCase();
       // Email is the reliable key; the display name is a fallback for people
       // whose card was filed under a different (or missing) address.
@@ -4318,33 +4856,65 @@ export default function InboxPage() {
         fields,
         hasCard: !!card || !!synced,
       };
-    });
-  }, [
-    massSource,
-    massImport,
-    massRecipients,
-    directoryContacts,
-    syncedContacts,
-    lastMailByEmail,
-    variableFallbacks,
-  ]);
+    };
+  }, [directoryContacts, syncedContacts, lastMailByEmail, variableFallbacks]);
 
   /**
-   * Missing variables measured against the *real* data only, ignoring
-   * fallbacks — so the banner keeps listing a field after you give it a
-   * fallback, letting you edit or clear it instead of having the control
-   * vanish the moment it's used.
+   * The one recipient a normal (non-mass) compose merges against.
+   *
+   * Null unless exactly one address is in To: a normal compose sends a single
+   * mail to everyone addressed, so with two recipients there is no one person
+   * {name} could mean — see the guard in sendCompose, which says so rather than
+   * silently merging the first.
+   *
+   * The display name has to be looked up rather than read off the field. Mass
+   * sending gets it for free because its rail stores {email, name} together,
+   * but the To field keeps only the address (serializeRecipientValue drops the
+   * label) — so without this, {name} would fill for a campaign and come out
+   * blank for the very same person in a single mail, and the directory's
+   * by-name card fallback could never fire either.
    */
-  const massMissing = useMemo(
-    () =>
-      reportMissingVariables(
-        composeSubject,
-        composeBody,
-        massMergeRows.map((r) => ({ email: r.email, fields: r.baseFields })),
-        massVariables
-      ),
-    [composeSubject, composeBody, massMergeRows, massVariables]
-  );
+  const singleMergeRow = useMemo(() => {
+    if (massSending || composeToEmails.length !== 1) return null;
+    const email = composeToEmails[0];
+    const suggested = composeRecipientSuggestions.find(
+      (s) => s.email.trim().toLowerCase() === email
+    )?.displayName;
+    return buildContactMergeRow({ email, name: suggested?.trim() || "" });
+  }, [massSending, composeToEmails, composeRecipientSuggestions, buildContactMergeRow]);
+
+  const massMergeRows = useMemo(() => {
+    if (massSource === "import") {
+      const seen = new Set<string>();
+      const rows: Array<{
+        email: string;
+        name: string;
+        baseFields: Record<string, string>;
+        fields: Record<string, string>;
+        hasCard: boolean;
+      }> = [];
+      for (const row of massImport?.rows ?? []) {
+        const email = row.email.trim().toLowerCase();
+        if (!email || seen.has(email)) continue;
+        seen.add(email);
+        const baseFields: Record<string, string> = { ...row.fields, email };
+        rows.push({
+          email,
+          name: baseFields.name?.trim() || email,
+          baseFields,
+          // Fallbacks fill columns the row left blank, exactly as they do for
+          // contact-card recipients.
+          fields: mergeFieldSources(baseFields, variableFallbacks),
+          // No card is expected here, so the review banner should not claim
+          // one is missing — a blank cell is a blank cell.
+          hasCard: true,
+        });
+      }
+      return rows;
+    }
+
+    return massRecipients.map(buildContactMergeRow);
+  }, [massSource, massImport, massRecipients, buildContactMergeRow, variableFallbacks]);
 
   /**
    * What is *still* missing once fallbacks are applied — the recipient rail's
@@ -4352,28 +4922,50 @@ export default function InboxPage() {
    * ones so typing a fallback clears the badge for everyone it covers, which
    * is the whole point of the badge being there.
    */
-  const massUnresolved = useMemo(
-    () =>
-      reportMissingVariables(
-        composeSubject,
-        composeBody,
-        massMergeRows.map((r) => ({ email: r.email, fields: r.fields })),
-        massVariables
-      ).byRecipient,
-    [composeSubject, composeBody, massMergeRows, massVariables]
-  );
-
-  /** Only a variable-bearing draft needs the review gate before sending. */
-  const massTemplateHasVariables = useMemo(
-    () => templateUsesVariables(composeSubject, composeBody),
-    [composeSubject, composeBody]
-  );
+  const massUnresolved = useMemo(() => {
+    const byRecipient = reportMissingVariables(
+      composeSubject,
+      composeBody,
+      massMergeRows.map((r) => ({ email: r.email, fields: r.fields })),
+      massVariables
+    ).byRecipient;
+    // A not-a-column placeholder is unresolved for every row until its
+    // fallback is set.
+    const uncovered = draftUnknownKeys.filter((k) => !variableFallbacks[k]?.trim());
+    if (uncovered.length === 0) return byRecipient;
+    for (const r of massMergeRows) {
+      byRecipient.set(r.email, [...(byRecipient.get(r.email) ?? []), ...uncovered]);
+    }
+    return byRecipient;
+  }, [composeSubject, composeBody, massMergeRows, massVariables, draftUnknownKeys, variableFallbacks]);
 
   /** The row currently being previewed on the review screen. */
   const reviewRow = useMemo(() => {
     if (!reviewEmail) return null;
-    return massMergeRows.find((r) => r.email.toLowerCase() === reviewEmail.toLowerCase()) ?? null;
-  }, [reviewEmail, massMergeRows]);
+    const key = reviewEmail.toLowerCase();
+    // A normal compose has exactly one candidate rather than a list to search.
+    if (!massSending) {
+      return singleMergeRow && singleMergeRow.email.toLowerCase() === key
+        ? singleMergeRow
+        : null;
+    }
+    return massMergeRows.find((r) => r.email.toLowerCase() === key) ?? null;
+  }, [reviewEmail, massSending, singleMergeRow, massMergeRows]);
+
+  /**
+   * Variables that resolve to nothing for the row on screen, measured against
+   * real data only so the review banner keeps offering a fallback after one is
+   * typed. Single and mass share the report; only the row set differs.
+   */
+  const reviewMissing = useMemo(() => {
+    if (!reviewRow) return undefined;
+    return reportMissingVariables(
+      composeSubject,
+      composeBody,
+      [{ email: reviewRow.email, fields: reviewRow.baseFields }],
+      massSending ? massVariables : COMPOSE_VARIABLES
+    ).byRecipient.get(reviewRow.email);
+  }, [reviewRow, composeSubject, composeBody, massSending, massVariables]);
 
   async function sendMassCampaign() {
     const rows = massMergeRows;
@@ -4384,6 +4976,7 @@ export default function InboxPage() {
       body: composeBody,
       files: composeFiles,
       draftId: composeDraftId,
+      labelIds: composeLabelIds,
     };
     // Shared across every recipient in this batch so the campaign report
     // (app/(workspace)/campaigns) can group them — one Send click, one
@@ -4404,10 +4997,18 @@ export default function InboxPage() {
     const failed: string[] = [];
     try {
       const attachments = await resolveAttachmentsForUpload(snapshot.files);
+      // Staged files (every attachment added in compose, and every file copied
+      // in from a template) stay on the server — resolveAttachmentsForUpload
+      // skips them — so each send names them, and all but the last keep them
+      // staged for the next recipient.
+      const stagedUploadIds = snapshot.files
+        .filter((f): f is Extract<PendingFile, { kind: "staged" }> => f.kind === "staged")
+        .map((f) => f.uploadId);
 
       // Sequential, not Promise.all — Gmail rate-limits concurrent sends and a
       // partial failure mid-campaign must not lose the count of what got out.
-      for (const row of rows) {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
         const htmlBody = appendDriveLinksToHtml(
           stripVariableSpans(mergeTemplate(snapshot.body, row.fields)),
           snapshot.files
@@ -4422,6 +5023,10 @@ export default function InboxPage() {
               textBody: "",
               htmlBody,
               attachments: attachments.length ? attachments : undefined,
+              ...(stagedUploadIds.length > 0
+                ? { stagedUploadIds, keepStagedUploads: i < rows.length - 1 }
+                : {}),
+              ...(snapshot.labelIds.length > 0 ? { labelIds: snapshot.labelIds } : {}),
               campaignId,
               campaignName,
             }),
@@ -4467,7 +5072,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject("");
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     setComposeDraftId(null);
     resetMassState();
   }
@@ -4479,18 +5084,56 @@ export default function InboxPage() {
       bcc: composeBcc,
     });
     if (invalid) {
-      setComposeFieldError(formatRecipientError(invalid));
+      setComposeFieldError({
+        title: recipientErrorTitle(invalid),
+        message: formatRecipientError(invalid),
+      });
       return;
     }
+
+    /**
+     * Fields to substitute into this one mail, or null when it sends verbatim.
+     *
+     * A normal compose sends one message to everyone addressed, so `{name}` only
+     * has a single meaning when there is a single recipient. With none or
+     * several, refuse rather than merge somebody arbitrary — the alternative is
+     * a recruiter opening a mail addressed to a colleague.
+     */
+    let mergeFields: Record<string, string> | null = null;
+    if (draftUsesVariables) {
+      if (composeToEmails.length !== 1) {
+        setComposeFieldError(
+          composeToEmails.length === 0
+            ? {
+                title: "Can't read that address",
+                message:
+                  "This draft uses variables like {name}, which are filled in from the recipient's contact card — but no usable address could be read from the To field. Check it and try again.",
+              }
+            : {
+                title: "Variables need a single recipient",
+                message:
+                  "This draft uses variables like {name}, which are filled in per person. A normal email goes to everyone at once, so there is no one person to fill them from. Send it to one recipient, or switch on mass sending to give each of them their own personalised copy.",
+              }
+        );
+        return;
+      }
+      mergeFields = singleMergeRow?.fields ?? null;
+    }
+
     setComposeFieldError(null);
 
     const snapshot = {
       kind: composeKind,
+      labelIds: composeLabelIds,
       to: composeTo.trim(),
       cc: composeCc.trim(),
       bcc: composeBcc.trim(),
-      subject: composeSubject.trim(),
-      htmlBody: composeBody,
+      // Merged here, not in the editor: the draft that stays autosaved keeps its
+      // `{variable}` form, so reopening it still shows the template. Spans are
+      // stripped further down, after the substitution — same order the review
+      // screen renders in, so what was previewed is what gets sent.
+      subject: mergeFields ? mergeTemplate(composeSubject.trim(), mergeFields) : composeSubject.trim(),
+      htmlBody: mergeFields ? mergeTemplate(composeBody, mergeFields) : composeBody,
       // Read files/draftId from the ref rather than React state: an in-flight
       // autosave (syncComposeFilesFromDraft) may have just promoted staged files
       // to "saved" and updated the ref before the state flush. Staged files that
@@ -4513,7 +5156,7 @@ export default function InboxPage() {
     setComposeBcc("");
     setComposeSubject("");
     setComposeBody("");
-    setComposeFiles([]);
+    resetComposeFiles();
     showSendSnack({ phase: "sending" });
 
     const isReply = snapshot.kind === "reply" || snapshot.kind === "replyAll";
@@ -4576,9 +5219,15 @@ export default function InboxPage() {
           inReplyToMessageId: isReply ? snapshot.inReplyToMessageId ?? undefined : undefined,
           attachments: attachments.length ? attachments : undefined,
           stagedUploadIds: stagedUploadIds.length ? stagedUploadIds : undefined,
+          labelIds: snapshot.labelIds.length ? snapshot.labelIds : undefined,
         }),
       });
-      const data = (await res.json()) as { error?: string; id?: string; threadId?: string };
+      const data = (await res.json()) as {
+        error?: string;
+        id?: string;
+        threadId?: string;
+        labelError?: string;
+      };
       if (!res.ok) throw new Error(data.error || "Send failed");
 
       // Delete the draft it was based on (fire-and-forget).
@@ -4655,7 +5304,15 @@ export default function InboxPage() {
       }
       void loadTracking();
 
-      showSendSnack({ phase: "sent" }, 3000);
+      if (snapshot.labelIds.length > 0) scheduleCountRefresh();
+      // The mail went out; only the labelling didn't stick — say so, but as a
+      // sent mail, not a failed one.
+      showSendSnack(
+        data.labelError
+          ? { phase: "error", message: "Sent, but the labels couldn't be applied." }
+          : { phase: "sent" },
+        data.labelError ? 5000 : 3000
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Send failed";
       if (!isReply) {
@@ -4720,6 +5377,42 @@ export default function InboxPage() {
     if (composeKind === "reply") return titleCase("Reply");
     return composeDraftId ? titleCase("Edit Draft") : titleCase("New Message");
   }, [composeKind, composeDraftId]);
+
+  // Sync minimized compose to the module-level store so WorkspaceChrome can
+  // render the minimized bar when the user navigates to another tab.
+  useEffect(() => {
+    if (composeOpen && composeMinimized) {
+      setComposePersistedState({
+        kind: composeKind,
+        windowTitle: composeWindowTitle,
+        to: composeTo,
+        cc: composeCc,
+        bcc: composeBcc,
+        subject: composeSubject,
+        body: composeBody,
+        ccBccOpen: composeCcBccOpen,
+        draftId: composeDraftId,
+        threadId: composeThreadId,
+        inReplyToId: composeInReplyToId,
+      });
+    } else {
+      setComposePersistedState(null);
+    }
+  }, [
+    composeOpen,
+    composeMinimized,
+    composeKind,
+    composeWindowTitle,
+    composeTo,
+    composeCc,
+    composeBcc,
+    composeSubject,
+    composeBody,
+    composeCcBccOpen,
+    composeDraftId,
+    composeThreadId,
+    composeInReplyToId,
+  ]);
 
   // Folder nav items — shared between left rail (desktop) and mobile tab bar.
   // Inbox badge shows INBOX unread (the server computes it via an is:unread
@@ -4894,8 +5587,12 @@ export default function InboxPage() {
 
       {/* ══ LEFT RAIL — desktop only ══ */}
       <aside
-        className="relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] md:flex"
-        style={{ width: sidebarWidth }}
+        className={cn(
+          "relative hidden shrink-0 flex-col overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg)] md:flex",
+          // Collapsed: hide the contents; the handle (a sibling) stays to drag or click back open.
+          sidebarCollapsed && "overflow-hidden [&>*]:hidden"
+        )}
+        style={{ width: sidebarCollapsed ? COLLAPSED_PANE_W : sidebarWidth }}
       >
         {/* Compose + Refresh — Gmail pill compose button */}
         <div className="flex items-center gap-2 px-3 py-2">
@@ -5012,41 +5709,107 @@ export default function InboxPage() {
             </form>
           )}
 
-          <div className="flex flex-col gap-0.5 px-1">
-            {allLabels
-              .filter((l) => l.type === "user")
-              .slice(0, 15)
-              .map((l) => {
-                const unread = sidebarLabelUnread(l.id);
-                const active = filterLabelId === l.id;
-                const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
-                return (
-                  <LabelSidebarItem
-                    key={l.id}
-                    label={l}
-                    active={active}
-                    unread={unread}
-                    accent={accent}
-                    onSelect={() => {
-                      if (filterLabelId === l.id) return;
-                      setFilterLabelId(l.id);
-                      setFolder("inbox");
-                      setSelectedId(null);
-                      setMessages(null);
-                    }}
-                    onEdit={handleLabelEdit}
-                    onDelete={handleLabelDelete}
-                  />
-                );
-              })}
-            {allLabels.filter((l) => l.type === "user").length === 0 && !showNewLabelForm && (
-              <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No labels yet</p>
-            )}
-          </div>
+          {(() => {
+            const userLabels = allLabels.filter((l) => l.type === "user");
+            const query = labelSearch.trim().toLowerCase();
+            let visible: GmailLabel[];
+            if (query) {
+              visible = userLabels.filter((l) => l.name.toLowerCase().includes(query));
+            } else {
+              visible = userLabels.slice(0, SIDEBAR_LABEL_LIMIT);
+              // A label picked through search stays visible once the box is cleared.
+              const pinned = userLabels.find((l) => l.id === filterLabelId);
+              if (pinned && !visible.some((l) => l.id === pinned.id)) {
+                visible = [pinned, ...visible];
+              }
+            }
+            const hiddenCount = query ? 0 : userLabels.length - visible.length;
+            return (
+              <>
+                {userLabels.length > SIDEBAR_LABEL_LIMIT && (
+                  <div className="mx-2 mb-1.5 flex items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-2 py-1">
+                    <SearchIcon className="h-3 w-3 shrink-0 text-[var(--color-text-faint)]" strokeWidth={2.25} />
+                    <input
+                      type="text"
+                      data-testid="label-search-input"
+                      value={labelSearch}
+                      onChange={(e) => setLabelSearch(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Escape") setLabelSearch(""); }}
+                      placeholder="Search labels…"
+                      aria-label="Search labels"
+                      className="min-w-0 flex-1 bg-transparent text-[12px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)]"
+                    />
+                    {labelSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setLabelSearch("")}
+                        aria-label="Clear label search"
+                        className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-text)]"
+                      >
+                        <XIcon className="h-3 w-3" strokeWidth={2.25} />
+                      </button>
+                    )}
+                  </div>
+                )}
+                <div className="flex flex-col gap-0.5 px-1">
+                  {visible.map((l) => {
+                    const unread = sidebarLabelUnread(l.id);
+                    const active = filterLabelId === l.id;
+                    const accent = labelColorMap.get(l.id) ?? labelAccentStyle(l);
+                    return (
+                      <LabelSidebarItem
+                        key={l.id}
+                        label={l}
+                        active={active}
+                        unread={unread}
+                        accent={accent}
+                        onSelect={() => {
+                          // Clicking the active label again clears the filter.
+                          if (filterLabelId === l.id) {
+                            switchMailFolder("inbox");
+                            return;
+                          }
+                          setFilterLabelId(l.id);
+                          setFolder("inbox");
+                          setSelectedId(null);
+                          setMessages(null);
+                        }}
+                        onClear={() => switchMailFolder("inbox")}
+                        onEdit={handleLabelEdit}
+                        onDelete={handleLabelDelete}
+                      />
+                    );
+                  })}
+                  {userLabels.length === 0 && !showNewLabelForm && (
+                    <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No labels yet</p>
+                  )}
+                  {query && visible.length === 0 && (
+                    <p className="px-4 py-1 text-[12px] text-[var(--color-text-faint)]">No matching labels</p>
+                  )}
+                  {hiddenCount > 0 && (
+                    <p className="px-4 py-1 text-[11px] text-[var(--color-text-faint)]">
+                      {hiddenCount} more — use search
+                    </p>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </>
 
-        <PaneResizeHandle onMouseDown={onSidebarResizeStart} />
-      </aside>
+        </aside>
+
+      {/* Handle lives outside the aside (which clips overflow) in a zero-width
+          slot, so the grip can straddle the divider instead of hugging inside it. */}
+      <div className="relative z-20 hidden w-0 shrink-0 md:block">
+        <PaneResizeHandle
+          onMouseDown={onSidebarResizeStart}
+          onDoubleClick={resetSidebarWidth}
+          collapsed={sidebarCollapsed}
+          collapsible
+          className="absolute inset-y-0 left-0 -translate-x-1/2"
+        />
+      </div>
 
       {/* ══ RIGHT CONTENT AREA ══ */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -5311,6 +6074,22 @@ export default function InboxPage() {
                           </RowAction>
                         );
                       })()}
+                      {allowDelete && (
+                        <RowAction
+                          title={folder === "trash" ? "Delete forever" : "Move to trash"}
+                          onClick={() => {
+                            if (
+                              folder === "trash" &&
+                              !window.confirm("Delete the selected conversations forever? This cannot be undone.")
+                            ) {
+                              return;
+                            }
+                            void performBulkAction(folder === "trash" ? "deleteForever" : "trash");
+                          }}
+                        >
+                          <Trash2 className="h-[15px] w-[15px]" />
+                        </RowAction>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -5686,7 +6465,9 @@ export default function InboxPage() {
                 )}
               </ul>
             )}
-            {selectedId && <PaneResizeHandle onMouseDown={onListPaneResizeStart} />}
+            {selectedId && (
+              <PaneResizeHandle onMouseDown={onListPaneResizeStart} onDoubleClick={resetListPaneWidth} />
+            )}
           </div>
 
         {/* ── THREAD DETAIL view ── */}
@@ -5956,7 +6737,8 @@ export default function InboxPage() {
           Object.keys(driveUploadProgress).length > 0 ||
           (massSending ? massMergeRows.length === 0 : !composeTo.trim())
         }
-        composeError={composeFieldError}
+        composeError={composeFieldError?.message ?? null}
+        composeErrorTitle={composeFieldError?.title ?? null}
         onDismissComposeError={() => setComposeFieldError(null)}
         onMinimize={() => setComposeMinimized((m) => !m)}
         onToggleFullscreen={() => setComposeFullscreen((v) => !v)}
@@ -5965,20 +6747,52 @@ export default function InboxPage() {
           if (!massSending) return void sendCompose();
           void sendMassCampaign();
         }}
+        // Any draft with variables gets reviewed once before it can go out —
+        // mass or not. Deliberately not offered when there is nothing to merge
+        // against (no recipient yet, or several): GmailComposeDialog hides Send
+        // whenever Review exists, so offering an impossible review would leave
+        // the draft with no way forward. sendCompose explains those cases.
         onReview={
-          massSending && massTemplateHasVariables
-            ? () => setReviewEmail(massMergeRows[0]?.email ?? null)
+          draftUsesMergeVariables && (massSending ? massMergeRows.length > 0 : !!singleMergeRow)
+            ? () =>
+                setReviewEmail(
+                  massSending ? massMergeRows[0]?.email ?? null : singleMergeRow?.email ?? null
+                )
             : undefined
         }
-        reviewDisabled={massMergeRows.length === 0}
+        reviewDisabled={massSending ? massMergeRows.length === 0 : !singleMergeRow}
         onDiscard={discardComposeDraft}
         placement="centered"
-        variables={massSending ? massVariables : undefined}
-        // A normal compose has no variables to offer, but hiding the button
-        // makes that look like a missing feature — it stays and explains,
-        // with a one-click way to get what the user was reaching for.
-        onVariableBlocked={
-          !massSending ? () => setMassToggleConfirm("blocked") : undefined
+        // Normal compose merges against its one recipient's contact card, so it
+        // offers the same card-backed set a campaign does. Only an imported
+        // list replaces that set with its own columns.
+        variables={editorVariables}
+        unknownPlaceholders={unknownPlaceholders}
+        uploadInlineImage={uploadComposeInlineImage}
+        // Labels for the mail being written, applied when it is sent.
+        labelsButton={
+          <LabelPicker
+            variant="icon"
+            allLabels={allLabels}
+            selected={composeLabelSelected}
+            onToggle={(labelId, checked) =>
+              setComposeLabelIds((cur) =>
+                checked ? (cur.includes(labelId) ? cur : [...cur, labelId]) : cur.filter((id) => id !== labelId)
+              )
+            }
+            onCreate={createComposeLabel}
+            align="left"
+          />
+        }
+        templatesButton={
+          templatesEnabled ? (
+            <MailTemplatesButton
+              subject={composeSubject}
+              bodyHtml={composeBody}
+              draftIsEmpty={!composeSubject.trim() && richTextIsEmpty(composeBody)}
+              onApply={applyMailTemplate}
+            />
+          ) : undefined
         }
         recipientsLocked={massSending}
         lockedRecipientCount={massAudience.length}
@@ -5986,13 +6800,12 @@ export default function InboxPage() {
         onMassSendingChange={(on) => {
           // Confirm only when the flip actually destroys something: To
           // addresses survive the conversion, so going in only costs Cc/Bcc,
-          // while coming out clears the audience and the draft written for it.
+          // while coming out clears the audience (and, for an imported list,
+          // the draft written against its columns). A contact-card draft is no
+          // longer at risk either way, so it no longer forces a prompt.
           const losesWork = on
             ? !!(composeCc.trim() || composeBcc.trim())
-            : massAudience.length > 0 ||
-              !!massImport ||
-              !!composeSubject.trim() ||
-              !richTextIsEmpty(composeBody);
+            : massAudience.length > 0 || !!massImport;
           if (losesWork) {
             setMassToggleConfirm(on ? "on" : "off");
             return;
@@ -6008,7 +6821,9 @@ export default function InboxPage() {
                 // Tinting is an editor affordance — the review screen shows
                 // the mail exactly as the recipient will receive it.
                 bodyHtml: stripVariableSpans(mergeTemplate(composeBody, reviewRow.fields)),
-                missingKeys: massMissing.byRecipient.get(reviewRow.email),
+                missingKeys: reviewMissing,
+                unknownKeys: massSending ? draftUnknownKeys : undefined,
+                unknownSource: massImport?.fileName,
                 noContactCard: !reviewRow.hasCard,
                 fallbacks: variableFallbacks,
                 onFallbackChange: (key, value) =>
@@ -6057,6 +6872,7 @@ export default function InboxPage() {
               }}
               imported={massImport}
               onImportFile={(file) => void importMassFile(file)}
+              onImportSheet={(sheet, tab) => void importMassSheet(sheet, tab)}
               onClearImport={clearMassImport}
               importBusy={massImportBusy}
               importError={massImportError}

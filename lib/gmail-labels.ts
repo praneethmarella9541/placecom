@@ -338,3 +338,44 @@ export async function modifyThreadLabels(
   }
   return { labelIds: Array.from(allLabels) };
 }
+
+/**
+ * Add labels to one message — used to label a mail as it is sent from compose.
+ * Message-level rather than thread-level: a reply labelled in compose should
+ * not relabel every earlier message in the conversation.
+ */
+export async function addMessageLabels(
+  accessToken: string,
+  messageId: string,
+  labelIds: string[],
+  opts?: LabelCallOpts
+): Promise<void> {
+  if (labelIds.length === 0) return;
+  let res: Response;
+  try {
+    res = await fetchGmail(
+      `${GMAIL_API}/messages/${encodeURIComponent(messageId)}/modify`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ addLabelIds: labelIds }),
+      },
+      { mailboxKey: opts?.mailboxKey, cost: GMAIL_COST.messagesModify }
+    );
+  } catch (e) {
+    throw new Error(describeUpstreamFetchError(e, "Gmail API (label sent message)"));
+  }
+  if (res.status === 401) {
+    const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+    err.code = "UNAUTHORIZED";
+    throw err;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throwIfGmailInsufficientScope(res.status, text);
+    throw new Error(`Gmail label sent message ${res.status}: ${text}`);
+  }
+}

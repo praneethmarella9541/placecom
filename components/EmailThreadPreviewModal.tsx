@@ -8,12 +8,19 @@ import { GmailAttachmentPreviews } from "@/components/GmailAttachmentPreviews";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconX } from "@/components/Icons";
 import { GmailComposeDialog } from "@/components/GmailComposeDialog";
+import { MailTemplatesButton } from "@/components/MailTemplatesModal";
 import type { RecipientSuggestion } from "@/components/RecipientField";
 import { titleCase } from "@/lib/title-case";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { previewLineFromBody } from "@/lib/utils";
+import { richTextIsEmpty } from "@/components/RichTextEditor";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
-import { findInvalidRecipient, formatRecipientError } from "@/lib/validate-mail-recipients";
+import {
+  findInvalidRecipient,
+  formatRecipientError,
+  recipientErrorTitle,
+} from "@/lib/validate-mail-recipients";
 import { DRAFT_JSON_INLINE_MAX_BYTES } from "@/lib/gmail-draft-limits";
 import { isInlinePartReferencedInHtml } from "@/lib/email-html-inline-images";
 import type { ThreadMessageView } from "@/lib/gmail-inbox";
@@ -69,12 +76,21 @@ type ComposeKind = "reply" | "replyAll" | "forward";
  * page's full pipeline, which is a lot of machinery to replicate for what's
  * meant to be a lightweight popup.
  */
+/**
+ * Surfaced from Contacts and CRM, but it reads and replies to mail through
+ * /api/gmail — so it is gated here rather than at each of its four call sites.
+ * With Mail off the request would 403 and the reply actions would go nowhere,
+ * so the modal renders nothing at all.
+ */
 export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: string; onClose: () => void }) {
+  const mailEnabled = useModuleVisibility().isVisible("inbox");
+  const templatesEnabled = useModuleVisibility().isVisible("mailTemplates");
   const [thread, setThread] = useState<ThreadMessageView[] | "loading" | "error">("loading");
   /** Which messages are open. Gmail's rule: the newest starts expanded, the rest collapsed. */
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!mailEnabled) return;
     let cancelled = false;
     setThread("loading");
     setExpandedIds(new Set());
@@ -96,7 +112,7 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
     return () => {
       cancelled = true;
     };
-  }, [threadId]);
+  }, [threadId, mailEnabled]);
 
   // Reply/Reply All/Forward act on the newest message, as they did when this
   // popup rendered only that one — replying to a thread means replying to its
@@ -127,7 +143,8 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
   const [ccBccOpen, setCcBccOpen] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
+  /** Blocking problem plus its heading — see GmailComposeErrorDialog. */
+  const [sendError, setSendError] = useState<{ title: string; message: string } | null>(null);
   const [sentJustNow, setSentJustNow] = useState(false);
   const [suggestions, setSuggestions] = useState<RecipientSuggestion[]>([]);
   const [myEmail, setMyEmail] = useState<string | null>(null);
@@ -188,7 +205,10 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
   async function handleSend() {
     const invalid = findInvalidRecipient({ to, cc, bcc });
     if (invalid) {
-      setSendError(formatRecipientError(invalid));
+      setSendError({
+        title: recipientErrorTitle(invalid),
+        message: formatRecipientError(invalid),
+      });
       return;
     }
     setSending(true);
@@ -231,7 +251,12 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
       setComposeOpen(false);
       setSentJustNow(true);
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Send failed");
+      setSendError({
+        // A failure from the send call itself, not something the draft got
+        // wrong — the heading should not imply the user mistyped something.
+        title: "Couldn't send this reply",
+        message: e instanceof Error ? e.message : "Send failed",
+      });
     } finally {
       setSending(false);
     }
@@ -242,6 +267,7 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
     setFiles((prev) => [...prev, ...Array.from(fileList)]);
   }
 
+  if (!mailEnabled) return null;
   if (typeof document === "undefined") return null;
 
   // Portal straight to <body>, same as GmailComposeDialog below — this is
@@ -433,6 +459,29 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
         ccBccOpen={ccBccOpen}
         onCcBccOpenChange={setCcBccOpen}
         suggestions={suggestions}
+        // Replies here keep the thread's subject, so a template only fills the
+        // body — canSetSubject=false also drops the subject from the picker's
+        // preview lines, which would otherwise advertise something it won't use.
+        templatesButton={
+          templatesEnabled ? (
+            <MailTemplatesButton
+              subject={subject}
+              bodyHtml={body}
+              canSetSubject={false}
+              // This reply window only takes small inline files, so a
+              // template's attachments stay behind (the modal says so).
+              attachmentsSupported={false}
+              draftIsEmpty={richTextIsEmpty(body)}
+              onApply={(template, mode) =>
+                setBody((prev) =>
+                  mode === "replace" || richTextIsEmpty(prev)
+                    ? template.bodyHtml
+                    : `${prev}<br>${template.bodyHtml}`
+                )
+              }
+            />
+          ) : undefined
+        }
         sendDisabled={sending || !to.trim()}
         onMinimize={() => setComposeMinimized((v) => !v)}
         onToggleFullscreen={() => setComposeFullscreen((v) => !v)}
@@ -464,7 +513,8 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
             </div>
           ) : undefined
         }
-        composeError={sendError}
+        composeError={sendError?.message ?? null}
+        composeErrorTitle={sendError?.title ?? null}
         onDismissComposeError={() => setSendError(null)}
       />
     </div>,

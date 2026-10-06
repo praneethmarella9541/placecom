@@ -17,6 +17,8 @@ import {
   IconX,
 } from "@/components/Icons";
 import { supportsInAppPreview, isOfficeMimeType, isSheetConvertibleMimeType } from "@/lib/drive-file-proxy";
+import { useModuleVisibility } from "@/lib/module-visibility";
+import { useAllowDelete } from "@/lib/use-allow-delete";
 import { DriveShareModal } from "@/components/DriveShareModal";
 import { DriveMoveModal } from "@/components/DriveMoveModal";
 import { DriveDetailsPanel } from "@/components/DriveDetailsPanel";
@@ -74,7 +76,14 @@ import {
   Menu,
   Filter,
   Frame,
+  BookText,
+  Trash2,
+  Undo2,
 } from "lucide-react";
+
+/** Native Google Docs / Sheets get an "Open in Docs/Sheets" button in the preview panel. */
+const GOOGLE_DOC_MIME = "application/vnd.google-apps.document";
+const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet";
 
 const DRIVE_SIMPLE_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
 /** Match Drive-style parallel small-file uploads without tripping user rate limits. */
@@ -89,7 +98,7 @@ const UPLOAD_OVERRIDE_TTL_MS = 5 * 60_000;
 // row is kept centred as background refreshes reorder the list.
 const UPLOAD_HIGHLIGHT_MS = 4_000;
 
-type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent";
+type DriveView = "my-drive" | "shared-with-me" | "starred" | "recent" | "trash";
 type SharedDrive = { id: string; name: string };
 type MimeFilter =
   | "all"
@@ -162,6 +171,14 @@ type SortKey = "name" | "modifiedTime" | "size";
 
 export default function DrivePage() {
   const router = useRouter();
+  // Converting a CSV/XLSX lands the user in /sheets, so the action is only
+  // offered while the Sheets module is on.
+  const sheetsEnabled = useModuleVisibility().isVisible("sheets");
+  const docsEnabled = useModuleVisibility().isVisible("docs");
+  const allowDelete = useAllowDelete();
+  // Multi-select in the Trash view only.
+  const [trashSelected, setTrashSelected] = useState<Set<string>>(new Set());
+  const [restoringTrash, setRestoringTrash] = useState(false);
   const topbarActionsNode = useWorkspaceTopbarActionsNode();
   /** Top-level sidebar selection. "shared-drive" is internal — the actual
    *  drive id is held separately in currentSharedDrive. */
@@ -783,7 +800,7 @@ export default function DrivePage() {
       if (
         !driveSearch &&
         pathDepth === 0 &&
-        (view === "shared-with-me" || view === "starred" || view === "recent")
+        (view === "shared-with-me" || view === "starred" || view === "recent" || view === "trash")
       ) {
         params.set("view", view);
       }
@@ -1061,6 +1078,11 @@ export default function DrivePage() {
     applyUploadOverrides,
     currentParentId,
   ]);
+
+  // Selection never outlives the Trash view it was made in.
+  useEffect(() => {
+    if (view !== "trash") setTrashSelected(new Set());
+  }, [view]);
 
   /**
    * First file id in each Recent date bucket → the bucket label, so a group
@@ -1637,6 +1659,82 @@ export default function DrivePage() {
     }
   }
 
+  /** Move to Drive's trash (config-gated); the row leaves the list immediately. */
+  async function deleteItem(file: DriveFileRow) {
+    setMenuOpenId(null);
+    setContextMenu(null);
+    const what = file.mimeType === "application/vnd.google-apps.folder" ? "folder" : "file";
+    if (!window.confirm(`Move ${what} "${file.name}" to trash?`)) return;
+    try {
+      const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}`, {
+        method: "DELETE",
+      });
+      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(driveApiErrorMessage(j, "Delete failed"));
+      bumpDriveListMutationEpoch();
+      // Starred / Recent / Trash cached lists predate this delete.
+      clearDriveListSessionCache();
+      syncDriveListCache((rows) => rows.filter((r) => r.id !== file.id));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Delete failed");
+    }
+  }
+
+  /**
+   * Take trashed items back out of Drive's trash. Restores run a few at a time;
+   * rows that succeed leave the Trash list even if others fail, and failures
+   * are reported together once at the end.
+   */
+  async function restoreMany(files: DriveFileRow[]) {
+    setMenuOpenId(null);
+    setContextMenu(null);
+    if (files.length === 0 || restoringTrash) return;
+    setRestoringTrash(true);
+    const restored = new Set<string>();
+    const failures: string[] = [];
+    let cursor = 0;
+    async function worker() {
+      while (cursor < files.length) {
+        const file = files[cursor++];
+        try {
+          const res = await fetch(`/api/drive/file/${encodeURIComponent(file.id)}/restore`, {
+            method: "POST",
+          });
+          const j = (await res.json().catch(() => ({}))) as { error?: string };
+          if (!res.ok) throw new Error(driveApiErrorMessage(j, "Restore failed"));
+          restored.add(file.id);
+        } catch (e) {
+          failures.push(`${file.name}: ${e instanceof Error ? e.message : "Restore failed"}`);
+        }
+      }
+    }
+    try {
+      await Promise.all(Array.from({ length: Math.min(4, files.length) }, worker));
+    } finally {
+      if (restored.size > 0) {
+        bumpDriveListMutationEpoch();
+        // Other views cached the list without these items; drop them so they reappear.
+        clearDriveListSessionCache();
+        syncDriveListCache((rows) => rows.filter((r) => !restored.has(r.id)));
+        setTrashSelected((prev) => {
+          const next = new Set(prev);
+          restored.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+      setRestoringTrash(false);
+    }
+    if (failures.length > 0) {
+      const shown = failures.slice(0, 5).join("\n");
+      const more = failures.length > 5 ? `\n…and ${failures.length - 5} more` : "";
+      alert(`Could not restore ${failures.length} of ${files.length}:\n${shown}${more}`);
+    }
+  }
+
+  function restoreItem(file: DriveFileRow) {
+    return restoreMany([file]);
+  }
+
   async function toggleStar(file: DriveFileRow) {
     const next = !file.starred;
     const prevStarred = !!file.starred;
@@ -1879,6 +1977,7 @@ export default function DrivePage() {
   // view we're in.
   const canUploadHere =
     view !== "recent" &&
+    view !== "trash" &&
     (view === "my-drive" || view === "shared-drive" || pathStack.length > 0);
 
   const viewRootLabel =
@@ -1890,7 +1989,9 @@ export default function DrivePage() {
           ? "Starred"
           : view === "recent"
             ? "Recent"
-            : currentSharedDrive?.name || "Shared drive";
+            : view === "trash"
+              ? "Trash"
+              : currentSharedDrive?.name || "Shared drive";
 
   function fmtBytes(bytes: number): string {
     if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`;
@@ -1962,6 +2063,13 @@ export default function DrivePage() {
           active={view === "starred"}
           onClick={() => { switchView("starred"); setMobileNavOpen(false); }}
         />
+        {allowDelete && (
+          <SidebarItem
+            label="Trash"
+            active={view === "trash"}
+            onClick={() => { switchView("trash"); setMobileNavOpen(false); }}
+          />
+        )}
 
         {sharedDrives.length > 0 && (
           <>
@@ -2287,6 +2395,36 @@ export default function DrivePage() {
         ) : (
           <div className={cn("flex min-h-0 flex-1 overflow-hidden p-3", refreshingDrive && "opacity-70")}>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[20px] border border-[var(--color-border)] bg-[var(--color-surface)]">
+            {view === "trash" && (
+              <div
+                data-testid="drive-trash-bar"
+                className="flex shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-5 py-2.5"
+              >
+                <input
+                  type="checkbox"
+                  data-testid="drive-trash-select-all"
+                  aria-label="Select all trashed items"
+                  className="h-4 w-4 cursor-pointer accent-[var(--color-copper)]"
+                  checked={displayFiles.length > 0 && displayFiles.every((f) => trashSelected.has(f.id))}
+                  onChange={(e) =>
+                    setTrashSelected(e.target.checked ? new Set(displayFiles.map((f) => f.id)) : new Set())
+                  }
+                />
+                <span className="text-[13px] text-[var(--color-text-muted)]">
+                  {trashSelected.size > 0 ? `${trashSelected.size} selected` : "Select all"}
+                </span>
+                <button
+                  type="button"
+                  data-testid="drive-trash-restore-selected"
+                  disabled={trashSelected.size === 0 || restoringTrash}
+                  onClick={() => void restoreMany(displayFiles.filter((f) => trashSelected.has(f.id)))}
+                  className="btn-primary ml-auto inline-flex h-8 items-center gap-1.5 px-3 text-[13px] disabled:opacity-45"
+                >
+                  {restoringTrash ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Undo2 className="h-3.5 w-3.5" />}
+                  {restoringTrash ? "Restoring…" : `Restore${trashSelected.size > 0 ? ` (${trashSelected.size})` : ""}`}
+                </button>
+              </div>
+            )}
             {/* Column headers — frozen above the scrolling file list (list view only). */}
             {viewMode === "list" && (
             <div className="flex shrink-0 items-center gap-3.5 border-b border-[var(--color-border)] px-5 py-3.5">
@@ -2369,7 +2507,13 @@ export default function DrivePage() {
                 const isRenaming = renameTargetId === file.id;
                 const isUploadHighlighted = file.id === uploadHighlightId;
 
-                const rowMenuActions = (
+                const rowMenuActions = view === "trash" ? (
+                  <RowMenuItem
+                    icon={<Undo2 className="h-3.5 w-3.5" />}
+                    label="Restore"
+                    onClick={() => void restoreItem(file)}
+                  />
+                ) : (
                   <>
                         <RowMenuItem
                           icon={<Share2 className="h-3.5 w-3.5" />}
@@ -2422,6 +2566,13 @@ export default function DrivePage() {
                             : isFolder ? "Download (.zip)" : "Download"}
                           onClick={() => { setMenuOpenId(null); void downloadItem(file); }}
                         />
+                        {allowDelete ? (
+                          <RowMenuItem
+                            icon={<Trash2 className="h-3.5 w-3.5" />}
+                            label="Delete"
+                            onClick={() => void deleteItem(file)}
+                          />
+                        ) : null}
                   </>
                 );
 
@@ -2480,8 +2631,27 @@ export default function DrivePage() {
                   </span>
                 );
 
+                const TrashCheckbox = view === "trash" ? (
+  <input
+    type="checkbox"
+    data-testid={`drive-trash-select-${file.id}`}
+    aria-label={`Select ${file.name}`}
+    className="h-4 w-4 shrink-0 cursor-pointer accent-[var(--color-copper)]"
+    checked={trashSelected.has(file.id)}
+    onClick={(e) => e.stopPropagation()}
+    onChange={() =>
+      setTrashSelected((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(file.id)) next.add(file.id);
+        return next;
+      })
+    }
+  />
+) : null;
+
                 const rowOnClick = () => {
                   if (isRenaming) return;
+                  if (view === "trash") return;
                   if (isFolder) enterFolder(file.id, file.name);
                   else setPreviewFile(file);
                 };
@@ -2503,6 +2673,7 @@ export default function DrivePage() {
                     >
                       {/* Kebab — top-right corner */}
                       <div className="absolute right-2 top-2 z-10">{RowMenu}</div>
+                      {TrashCheckbox && <div className="absolute left-3 top-3 z-10">{TrashCheckbox}</div>}
 
                       <button
                         type="button"
@@ -2583,6 +2754,7 @@ export default function DrivePage() {
                   >
                     {/* Name column */}
                     <div className="flex min-w-0 flex-1 items-center gap-3">
+                      {TrashCheckbox}
                       <DriveMimeIcon
                         mimeType={file.mimeType}
                         name={file.name}
@@ -2710,6 +2882,15 @@ export default function DrivePage() {
           {(() => {
             const file = contextMenu.file;
             const isFolder = file.mimeType === "application/vnd.google-apps.folder";
+            if (view === "trash") {
+              return (
+                <RowMenuItem
+                  icon={<Undo2 className="h-3.5 w-3.5" />}
+                  label="Restore"
+                  onClick={() => void restoreItem(file)}
+                />
+              );
+            }
             return (
               <>
                 <RowMenuItem
@@ -2759,6 +2940,13 @@ export default function DrivePage() {
                   label={isFolder ? "Download (.zip)" : "Download"}
                   onClick={() => { setContextMenu(null); void downloadItem(file); }}
                 />
+                {allowDelete ? (
+                  <RowMenuItem
+                    icon={<Trash2 className="h-3.5 w-3.5" />}
+                    label="Delete"
+                    onClick={() => void deleteItem(file)}
+                  />
+                ) : null}
               </>
             );
           })()}
@@ -2853,7 +3041,31 @@ export default function DrivePage() {
                   {titleCase("Open in Drive")}
                 </a>
               ) : null}
-              {isSheetConvertibleMimeType(previewFile.mimeType, previewFile.name) ? (
+              {docsEnabled && previewFile.mimeType === GOOGLE_DOC_MIME ? (
+                <button
+                  data-testid="drive-preview-open-in-docs"
+                  type="button"
+                  onClick={() => router.push(`/docs/${encodeURIComponent(previewFile.id)}`)}
+                  className="btn-secondary gap-2"
+                  title={titleCase("Open in our Docs editor")}
+                >
+                  <BookText className="h-4 w-4" />
+                  {titleCase("Open in Docs")}
+                </button>
+              ) : null}
+              {sheetsEnabled && previewFile.mimeType === GOOGLE_SHEET_MIME ? (
+                <button
+                  data-testid="drive-preview-open-sheet"
+                  type="button"
+                  onClick={() => router.push(`/sheets/${encodeURIComponent(previewFile.id)}`)}
+                  className="btn-secondary gap-2"
+                  title={titleCase("Open in our Sheets editor")}
+                >
+                  <Frame className="h-4 w-4" />
+                  {titleCase("Open in Sheets")}
+                </button>
+              ) : null}
+              {sheetsEnabled && isSheetConvertibleMimeType(previewFile.mimeType, previewFile.name) ? (
                 <button
                   data-testid="drive-preview-open-in-sheets"
                   type="button"

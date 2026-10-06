@@ -11,6 +11,7 @@ import interactionPlugin from "@fullcalendar/interaction";
 import type { DateSelectArg, EventClickArg, EventDropArg } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { formatCalendarDateTime } from "@/lib/utils";
 import {
   IconChevronLeft,
@@ -156,6 +157,26 @@ export default function CalendarPage() {
 
   // View state
   const [currentView, setCurrentView] = useState<ViewType>("timeGridWeek");
+  /**
+   * False during SSR and the first client render. USER_TZ is read from
+   * Intl at module scope, and Node resolves IST to the legacy alias
+   * "Asia/Calcutta" while browsers return the canonical "Asia/Kolkata" — so
+   * rendering it straight away makes the server and client disagree on a text
+   * node and React throws a hydration error. The server's value is wrong for
+   * the viewer anyway, so render it only once we are in the browser.
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  /**
+   * This page leans on two other modules for conveniences: Mail supplies
+   * attendee autocomplete and the "notify guests" note, Extraction supplies the
+   * recruiter list. Both degrade to manual entry rather than disappearing, but
+   * their requests must not fire when the module is off — middleware 403s them.
+   */
+  const { isVisible } = useModuleVisibility();
+  const mailEnabled = isVisible("inbox");
+  const extractionEnabled = isVisible("dashboard");
   const [viewTitle, setViewTitle] = useState("");
   const [rangeStartIso, setRangeStartIso] = useState<string | null>(null);
   const [rangeEndIso, setRangeEndIso] = useState<string | null>(null);
@@ -204,6 +225,11 @@ export default function CalendarPage() {
       setLoadingRecruiters(true);
     }
     try {
+      if (!extractionEnabled) {
+        setRecruiters([]);
+        setLoadingRecruiters(false);
+        return;
+      }
       const res = await fetch("/api/recruiters");
       const json = (await res.json()) as { recruiters?: RecruiterRow[]; error?: string };
       if (!res.ok) throw new Error(json.error || "Failed to load recruiters");
@@ -215,7 +241,7 @@ export default function CalendarPage() {
     } finally {
       setLoadingRecruiters(false);
     }
-  }, []);
+  }, [extractionEnabled]);
 
   const loadEvents = useCallback(async (timeMin?: string, timeMax?: string) => {
     const defaults = defaultCalendarRangeIso();
@@ -311,6 +337,7 @@ export default function CalendarPage() {
     if (cached?.googleContacts.length) {
       setGoogleContacts(cached.googleContacts as RecipientSuggestion[]);
     }
+    if (!mailEnabled) return;
     let cancelled = false;
     fetch("/api/gmail/contacts")
       .then((r) => (r.ok ? r.json() : null))
@@ -324,7 +351,7 @@ export default function CalendarPage() {
       })
       .catch(() => {/* non-fatal — recruiters still work */});
     return () => { cancelled = true; };
-  }, []);
+  }, [mailEnabled]);
 
   // Merge recruiters + Google contacts into the suggestion list shape that
   // RecipientField expects. Email is the dedup key; the first encountered
@@ -565,6 +592,10 @@ export default function CalendarPage() {
     note: string,
     kind: "cancelled" | "updated"
   ): Promise<void> {
+    // Google Calendar already e-mails attendees about the change itself; this
+    // extra organizer note goes out through our own mailbox, so it is skipped
+    // with Mail off rather than failing silently on a 403.
+    if (!mailEnabled) return;
     const recipients = (ev.attendees ?? [])
       .map((a) => a.email)
       .filter((e): e is string => !!e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
@@ -1250,7 +1281,7 @@ export default function CalendarPage() {
                 return (
                   <div className="flex flex-col items-center gap-0.5 py-2">
                     <span className="text-[10px] font-medium uppercase tracking-widest text-[var(--color-text-faint)]">
-                      {arg.date.toLocaleDateString([], { weekday: "short" })}
+                      {arg.date.toLocaleDateString("en-US", { weekday: "short" })}
                     </span>
                     <span
                       className={[
@@ -1342,7 +1373,9 @@ export default function CalendarPage() {
                     {mins === 60 ? "1 hr" : `${mins} min`}
                   </button>
                 ))}
-                <span className="self-center text-[10px] text-[var(--color-text-faint)]">{USER_TZ}</span>
+                <span className="self-center text-[10px] text-[var(--color-text-faint)]">
+                  {mounted ? USER_TZ : ""}
+                </span>
               </div>
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Repeat</span>

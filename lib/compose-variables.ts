@@ -9,7 +9,11 @@
  */
 
 import type { DirectoryContact } from "@/lib/contact-directory";
-import { listPlaceholdersInTemplate, normalizeMergeFieldKey } from "@/lib/mail-merge";
+import {
+  listPlaceholdersInTemplate,
+  mergeKeyCandidates,
+  normalizeMergeFieldKey,
+} from "@/lib/mail-merge";
 
 export type ComposeVariable = {
   /** Merge key as it appears between braces, e.g. {company_name}. */
@@ -200,23 +204,62 @@ export function stripVariableSpans(html: string): string {
 }
 
 /**
- * Wrap bare `{known_variable}` tokens in the tinting span.
+ * Added alongside VARIABLE_SPAN_CLASS on a placeholder that nothing in the
+ * audience can fill. Keeping the base class means the strip regex and the
+ * send-path cleanup already handle it.
+ */
+export const UNKNOWN_VARIABLE_CLASS = "cv-var-unknown";
+
+/**
+ * How a `{placeholder}` outside the offered variables is drawn.
  *
- * Only runs over text outside tags — the negative lookahead on `<` keeps it
- * from matching inside an attribute — and only for keys we actually offer, so
- * stray braces in prose or code are left alone. Existing wrappers are removed
- * first to keep repeated passes idempotent.
+ * - "ignore": left as plain text. Ordinary compose, where `{TBD}` is prose.
+ * - "tint": tinted like a variable. An imported-list draft before the file is
+ *   chosen — there is no column list yet to judge it against, and leaving it
+ *   bare makes the editor look like it has stopped recognising variables.
+ * - "flag": tinted red. An imported list is in place and this
+ *   placeholder matches none of its columns, so it would go out as typed.
+ */
+export type UnknownPlaceholderMode = "ignore" | "tint" | "flag";
+
+// Same shapes mail-merge substitutes — `{{key}}` first so its inner `{key}` is
+// not matched on its own. The lookahead skips matches inside a tag's attributes.
+const PLACEHOLDER_RE = /(?:\{\{\s*([a-zA-Z0-9_]+)\s*\}\}|\{\s*([a-zA-Z0-9_]+)\s*\})(?![^<]*>)/g;
+
+/**
+ * Wrap `{placeholder}` tokens in the tinting span.
+ *
+ * A token counts as known when it would actually merge: its normalized key, or
+ * one of mail-merge's aliases for it, is an offered variable. Unknown tokens
+ * follow `unknown` (see UnknownPlaceholderMode). Works on HTML and on escaped
+ * plain text alike. Existing wrappers are removed first so repeated passes are
+ * idempotent.
  */
 export function wrapVariablesInHtml(
   html: string,
-  variables: ComposeVariable[] = COMPOSE_VARIABLES
+  variables: ComposeVariable[] = COMPOSE_VARIABLES,
+  unknown: UnknownPlaceholderMode = "ignore"
 ): string {
   const bare = stripVariableSpans(html);
-  const keys = variableKeyPattern(variables);
-  if (!keys) return bare;
+  const offered = new Set(variables.map((v) => v.key));
+  if (offered.size === 0 && unknown === "ignore") return bare;
 
-  const re = new RegExp(`\\{(${keys})\\}(?![^<]*>)`, "g");
-  return bare.replace(re, `<span class="${VARIABLE_SPAN_CLASS}">{$1}</span>`);
+  return bare.replace(PLACEHOLDER_RE, (token: string, dbl?: string, sgl?: string) => {
+    const raw = dbl ?? sgl ?? "";
+    // {email} addresses the mail and is always in a merge row, though it is
+    // never offered in a picker — only worth tinting once braces are expected.
+    const known =
+      mergeKeyCandidates(raw).some((k) => offered.has(k)) ||
+      (unknown !== "ignore" && normalizeMergeFieldKey(raw) === "email");
+
+    if (known || unknown === "tint") {
+      return `<span class="${VARIABLE_SPAN_CLASS}">${token}</span>`;
+    }
+    if (unknown === "flag") {
+      return `<span class="${VARIABLE_SPAN_CLASS} ${UNKNOWN_VARIABLE_CLASS}" title="No matching column in the imported file. This will be sent as typed.">${token}</span>`;
+    }
+    return token;
+  });
 }
 
 export type MissingVariableReport = {
@@ -245,12 +288,17 @@ export function reportMissingVariables(
     ])
   );
 
-  const unknownKeys = used.filter((k) => k !== "email" && !variableKeys.has(k));
-  const known = used.filter((k) => k !== "email" && variableKeys.has(k));
+  // Alias-aware on both sides, matching what mergeTemplate() will actually
+  // fill: {name} against a "Full Name" column is known, and filled from it.
+  const isKnown = (k: string) => mergeKeyCandidates(k).some((c) => variableKeys.has(c));
+  const unknownKeys = used.filter((k) => k !== "email" && !isKnown(k));
+  const known = used.filter((k) => k !== "email" && isKnown(k));
 
   const byRecipient = new Map<string, string[]>();
   for (const r of recipients) {
-    const missing = known.filter((k) => !(r.fields[k] ?? "").trim());
+    const missing = known.filter(
+      (k) => !mergeKeyCandidates(k).some((c) => (r.fields[c] ?? "").trim())
+    );
     if (missing.length > 0) byRecipient.set(r.email, missing);
   }
 
@@ -263,4 +311,26 @@ export function templateUsesVariables(subjectTemplate: string, bodyTemplate: str
     listPlaceholdersInTemplate(subjectTemplate).length > 0 ||
     listPlaceholdersInTemplate(bodyTemplate).length > 0
   );
+}
+
+/**
+ * True when the template uses at least one placeholder that can actually be
+ * filled from `variables`.
+ *
+ * Deliberately stricter than templateUsesVariables, which counts any `{token}`.
+ * Prose like "the {TBD} slot" or a pasted code snippet is not a merge field,
+ * and treating it as one would put an ordinary mail behind the merge review
+ * gate and refuse to send it until a recipient was picked.
+ */
+export function templateUsesKnownVariables(
+  subjectTemplate: string,
+  bodyTemplate: string,
+  variables: ComposeVariable[] = COMPOSE_VARIABLES
+): boolean {
+  const known = new Set(variables.map((v) => v.key));
+  if (known.size === 0) return false;
+  return [
+    ...listPlaceholdersInTemplate(subjectTemplate),
+    ...listPlaceholdersInTemplate(bodyTemplate),
+  ].some((k) => mergeKeyCandidates(k).some((c) => known.has(c)));
 }

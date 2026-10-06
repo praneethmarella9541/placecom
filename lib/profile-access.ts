@@ -10,7 +10,15 @@ export type GroupAccessRow = {
   restricted_features?: unknown;
 } | null;
 
-/** Merge blocked features from profile (legacy committee) and assigned group. */
+/**
+ * Merge blocked features from profile (legacy committee) and assigned group.
+ *
+ * "campaigns" used to be part of "inbox" — /campaigns and /api/campaigns both
+ * mapped to the inbox feature key, so every group row written before the split
+ * expressed "no campaigns" by blocking inbox alone. Cascading inbox → campaigns
+ * keeps those existing rows meaning what their author intended; blocking
+ * campaigns on its own is the new, finer option.
+ */
 export function mergeRestrictedFeatures(
   profile: ProfileAccessRow,
   group?: GroupAccessRow
@@ -19,6 +27,7 @@ export function mergeRestrictedFeatures(
   const fromProfile = normalizeRestrictedFeatures(profile.restricted_features);
   const fromGroup = group ? normalizeRestrictedFeatures(group.restricted_features) : [];
   const merged = new Set<FeatureKey>([...fromProfile, ...fromGroup]);
+  if (merged.has("inbox")) merged.add("campaigns");
   return Array.from(merged);
 }
 

@@ -1,0 +1,1212 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Braces, FileText, ImageIcon, Loader2, Paperclip, Plus, Search, Trash2, X } from "lucide-react";
+
+import { AttachmentUploadRow } from "@/components/AttachmentUploadRow";
+import { COMPOSE_MODAL_SIZE } from "@/lib/compose-modal-size";
+import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
+import { uploadInlineImage } from "@/lib/upload-inline-image";
+import { SubjectWithVariables, type SubjectHandle } from "@/components/SubjectWithVariables";
+import {
+  discardPickedUpload,
+  uploadPickedFile,
+  useCopyingTemplates,
+  useMailTemplates,
+  type PickedUpload,
+} from "@/hooks/useMailTemplates";
+import { formatBytes } from "@/lib/gmail-compose-types";
+import { GMAIL_ATTACHMENT_MAX_BYTES, sendsAsDriveLink } from "@/lib/gmail-draft-limits";
+import {
+  formatMb,
+  MAIL_TEMPLATE_NAME_MAX,
+  suggestedTemplateName,
+  validateMailTemplateInput,
+  type MailTemplate,
+  type MailTemplateAttachment,
+} from "@/lib/mail-template-types";
+import { COMPOSE_VARIABLES, type ComposeVariable } from "@/lib/compose-variables";
+import { cleanMailSnippet, cn } from "@/lib/utils";
+import { titleCase } from "@/lib/title-case";
+
+/**
+ * Templates button + the modal behind it, for the compose footer and the
+ * sequence step editor.
+ *
+ * This modal is the feature's *entire* surface — browsing, writing, editing,
+ * renaming and deleting all happen here. There is deliberately no /templates
+ * page: a template only ever matters next to the draft it is going into, and a
+ * separate page would mean leaving a half-written mail to go manage one.
+ *
+ * A modal rather than a footer popover because a template's body is edited with
+ * the same RichTextEditor the composer uses, toolbar and all. That does not fit
+ * in a dropdown, and "edit the name but not the content" is not a template
+ * manager.
+ *
+ * Styled with workspace tokens even though it opens over the Gmail-chrome
+ * compose window — same call MassSendingToggleDialog makes, and for the same
+ * reason: this is a decision about your saved library, not part of the mail.
+ */
+
+export type TemplateApplyMode = "replace" | "append";
+
+type Props = {
+  /** Current draft subject — seeds "new from this draft", and the replace target. */
+  subject: string;
+  /** Current draft body HTML. */
+  bodyHtml: string;
+  /**
+   * False in a reply composer, where the subject belongs to the thread. A
+   * template's own subject is then neither applied nor captured.
+   */
+  canSetSubject?: boolean;
+  /** Nothing written yet, so applying a template cannot destroy anything. */
+  draftIsEmpty: boolean;
+  /**
+   * Put the template into the host's draft. Hosts apply the text immediately
+   * and copy the template's files in the background, showing progress where
+   * their attachments live. May throw for a problem known up front (a step
+   * with nowhere to keep files yet): the modal shows it and stays open.
+   */
+  onApply: (template: MailTemplate, mode: TemplateApplyMode) => void | Promise<void>;
+  /**
+   * False where the host cannot take the template's files (a thread reply).
+   * Using a template with files there asks first, then applies the text only.
+   */
+  attachmentsSupported?: boolean;
+  /**
+   * Vocabulary offered by the `{` picker while writing a template. Defaults to
+   * the composer's set; the sequence editor passes its own wider one.
+   */
+  variables?: ComposeVariable[];
+  disabled?: boolean;
+};
+
+/** Right-pane subject: an existing template being edited, or a new one. */
+type Selection =
+  | { kind: "existing"; id: string }
+  | { kind: "new" }
+  | null;
+
+/**
+ * A file in the editor: already on the template, or picked in this edit. A
+ * picked file starts uploading at once (like compose); `upload` is null while
+ * that runs and set once the bytes are in place, ready for Save to record.
+ */
+type FormAttachment =
+  | { kind: "saved"; attachment: MailTemplateAttachment }
+  | {
+      kind: "new";
+      key: string;
+      file: File;
+      /** Over Gmail's 25 MB, so it goes to Drive and travels as a link. */
+      viaDrive: boolean;
+      upload: PickedUpload | null;
+    };
+
+type Form = { name: string; subject: string; body: string; attachments: FormAttachment[] };
+
+const EMPTY_FORM: Form = { name: "", subject: "", body: "", attachments: [] };
+
+/** Templates below this count read fine unsorted; above it, searching helps. */
+const SEARCH_THRESHOLD = 5;
+
+function formFromTemplate(t: MailTemplate): Form {
+  return {
+    name: t.name,
+    subject: t.subjectTemplate,
+    body: t.bodyHtml,
+    attachments: t.attachments.map((attachment) => ({ kind: "saved", attachment })),
+  };
+}
+
+function attachmentKey(a: FormAttachment): string {
+  return a.kind === "saved" ? a.attachment.id : a.key;
+}
+
+function attachmentName(a: FormAttachment): string {
+  return a.kind === "saved" ? a.attachment.filename : a.file.name;
+}
+
+function attachmentSize(a: FormAttachment): number {
+  return a.kind === "saved" ? a.attachment.sizeBytes : a.file.size;
+}
+
+function attachmentViaDrive(a: FormAttachment): boolean {
+  return a.kind === "saved" ? !!a.attachment.driveFileId : a.viaDrive;
+}
+
+
+function sameForm(a: Form, b: Form): boolean {
+  return (
+    a.name === b.name &&
+    a.subject === b.subject &&
+    a.body === b.body &&
+    a.attachments.length === b.attachments.length &&
+    a.attachments.every((x, i) => attachmentKey(x) === attachmentKey(b.attachments[i]))
+  );
+}
+
+export function MailTemplatesButton({
+  subject,
+  bodyHtml,
+  canSetSubject = true,
+  draftIsEmpty,
+  onApply,
+  attachmentsSupported = true,
+  variables = COMPOSE_VARIABLES,
+  disabled,
+}: Props) {
+  const [open, setOpen] = useState(false);
+  // The list is only fetched once the modal has been opened — see useMailTemplates.
+  const {
+    templates,
+    loading,
+    error,
+    configured,
+    create,
+    update,
+    remove,
+    touch,
+    recordUpload,
+    removeAttachment,
+  } = useMailTemplates(open);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const bodyRef = useRef<RichTextEditorHandle>(null);
+  const subjectRef = useRef<SubjectHandle>(null);
+  /** Which field Variables inserts into — the toolbar click takes focus first. */
+  const lastFocused = useRef<"subject" | "body">("body");
+  /** Photos going into the body ("Insert photo", paste, drop) — one row each. */
+  const [photoUploads, setPhotoUploads] = useState<
+    Array<{ key: string; name: string; percent: number }>
+  >([]);
+  const copyingTemplates = useCopyingTemplates();
+  /** What Save is doing right now, shown next to the spinner. */
+  const [progress, setProgress] = useState<string | null>(null);
+  /** Form attachment key → upload percent, for picked files still uploading. */
+  const [uploadPct, setUploadPct] = useState<Record<string, number>>({});
+  /** Neutral heads-up (a file going to Drive) — not an error. */
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const [query, setQuery] = useState("");
+  const [selection, setSelection] = useState<Selection>(null);
+  const [form, setForm] = useState<Form>(EMPTY_FORM);
+  /** The form as last loaded or saved, for dirty detection. */
+  const [baseline, setBaseline] = useState<Form>(EMPTY_FORM);
+  /**
+   * Selection the user asked for while holding unsaved edits. Wrapped, because
+   * `null` is itself a valid Selection — the bare value could not tell
+   * "switch to nothing" apart from "nothing pending".
+   */
+  const [pendingSelection, setPendingSelection] = useState<{ next: Selection } | null>(null);
+  /** Row awaiting a replace/append choice, when the draft already has content. */
+  const [applying, setApplying] = useState<MailTemplate | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const dirty = !sameForm(form, baseline);
+  /** Latest form, for uploads that finish after the user has moved on. */
+  const formRef = useRef(form);
+  formRef.current = form;
+  // Attachments and body photos still uploading — Save waits for both: a photo
+  // reaches the body only once its upload lands.
+  const uploadingCount =
+    form.attachments.filter((a) => a.kind === "new" && !a.upload).length + photoUploads.length;
+
+  /**
+   * Photos into the template body at the caret, like compose's "Insert photo":
+   * uploaded with a progress row, embedded in the mail when it is sent.
+   */
+  async function insertPhotos(files: File[]) {
+    for (const file of files) {
+      const key = `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setPhotoUploads((list) => [...list, { key, name: file.name, percent: 0 }]);
+      try {
+        await bodyRef.current?.insertUploadingImage(file, (f) =>
+          uploadInlineImage(f, (percent) =>
+            setPhotoUploads((list) => list.map((p) => (p.key === key ? { ...p, percent } : p)))
+          )
+        );
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : `"${file.name}" couldn't be inserted.`);
+      } finally {
+        setPhotoUploads((list) => list.filter((p) => p.key !== key));
+      }
+    }
+  }
+
+  /** Delete uploads picked in this edit that will now never be saved. */
+  const discardUnsaved = useCallback((list: FormAttachment[]) => {
+    for (const a of list) if (a.kind === "new" && a.upload) discardPickedUpload(a.upload);
+  }, []);
+
+  /**
+   * What gets stored as a template's subject when captured from the draft.
+   * Empty in a reply composer: the subject there belongs to the thread
+   * ("Re: Campus drive — final list"), so capturing it would bake one
+   * conversation's subject into a template that can never apply it anyway.
+   */
+  const draftSubject = canSetSubject ? subject : "";
+
+  const loadSelection = useCallback(
+    (next: Selection, seed?: Form) => {
+      // Leaving this edit: anything picked but not saved is dropped. (After a
+      // save every picked file is already "saved", so nothing is lost.)
+      discardUnsaved(formRef.current.attachments);
+      setSelection(next);
+      setConfirmDelete(false);
+      setActionError(null);
+      setNotice(null);
+      const nextForm =
+        seed ??
+        (next?.kind === "existing"
+          ? (() => {
+              const found = templates.find((x) => x.id === next.id);
+              return found ? formFromTemplate(found) : EMPTY_FORM;
+            })()
+          : EMPTY_FORM);
+      setForm(nextForm);
+      setBaseline(nextForm);
+    },
+    [templates, discardUnsaved]
+  );
+
+  /** Guarded selection change — unsaved edits get a say first. */
+  const requestSelection = useCallback(
+    (next: Selection, seed?: Form) => {
+      if (dirty) {
+        setPendingSelection({ next });
+        // The seed only matters for "new from draft", which is never the target
+        // of a guarded switch — it always starts from a clean form.
+        return;
+      }
+      loadSelection(next, seed);
+    },
+    [dirty, loadSelection]
+  );
+
+  const close = useCallback(() => {
+    discardUnsaved(formRef.current.attachments);
+    setOpen(false);
+    setSelection(null);
+    setForm(EMPTY_FORM);
+    setBaseline(EMPTY_FORM);
+    setPendingSelection(null);
+    setApplying(null);
+    setConfirmDelete(false);
+    setActionError(null);
+    setNotice(null);
+    setQuery("");
+  }, [discardUnsaved]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      // Stops the inbox's own Escape handler closing the open thread behind
+      // this modal. Unsaved edits keep the modal open rather than vanishing.
+      e.stopPropagation();
+      if (dirty) {
+        setPendingSelection(null);
+        setActionError("Save or discard your changes first.");
+        return;
+      }
+      close();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, close, dirty]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return templates;
+    return templates.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        item.subjectTemplate.toLowerCase().includes(q)
+    );
+  }, [templates, query]);
+
+  async function runAction(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await fn();
+      return true;
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Something went wrong");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * The shared attachment rule (sendsAsDriveLink): a file up to Gmail's 25 MB is
+   * attached, a bigger one goes to Google Drive and travels as a link — the
+   * same as in compose. Uploading starts the moment files are picked, one at a
+   * time, each with its own progress row; Save then only records them.
+   */
+  function addFiles(list: FileList | null) {
+    const files = Array.from(list ?? []);
+    if (files.length === 0) return;
+    const added = files.map((file) => ({
+      kind: "new" as const,
+      key: `new-${Math.random().toString(36).slice(2)}`,
+      file,
+      viaDrive: sendsAsDriveLink(file.size),
+      upload: null,
+    }));
+
+    const toDrive = files.filter((f) => sendsAsDriveLink(f.size)).map((f) => f.name);
+    setActionError(null);
+    setNotice(
+      toDrive.length === 0
+        ? null
+        : `${toDrive.length === 1 ? `"${toDrive[0]}" is` : `${toDrive.length} files are`} over Gmail's ${formatMb(GMAIL_ATTACHMENT_MAX_BYTES)} attachment limit, so ${toDrive.length === 1 ? "it goes" : "they go"} to Google Drive and will be sent as a link — the same way compose handles large files.`
+    );
+    setUploadPct((p) => ({ ...p, ...Object.fromEntries(added.map((a) => [a.key, 0])) }));
+    setForm((f) => ({ ...f, attachments: [...f.attachments, ...added] }));
+    void uploadInOrder(added);
+  }
+
+  async function uploadInOrder(entries: Array<{ key: string; file: File }>) {
+    for (const entry of entries) {
+      let upload: PickedUpload | null = null;
+      try {
+        upload = await uploadPickedFile(entry.file, (pct) =>
+          setUploadPct((p) => (entry.key in p ? { ...p, [entry.key]: pct } : p))
+        );
+      } catch (e) {
+        setActionError(e instanceof Error ? e.message : `Could not attach "${entry.file.name}"`);
+      }
+      setUploadPct((p) => {
+        const next = { ...p };
+        delete next[entry.key];
+        return next;
+      });
+
+      // The user may have discarded the edit or moved to another template
+      // while this ran; then the upload has nowhere to go.
+      const stillWanted = formRef.current.attachments.some(
+        (a) => a.kind === "new" && a.key === entry.key
+      );
+      if (upload && !stillWanted) {
+        discardPickedUpload(upload);
+        continue;
+      }
+      const done = upload;
+      setForm((f) => ({
+        ...f,
+        attachments: done
+          ? f.attachments.map((a) =>
+              a.kind === "new" && a.key === entry.key ? { ...a, upload: done } : a
+            )
+          : f.attachments.filter((a) => !(a.kind === "new" && a.key === entry.key)),
+      }));
+    }
+  }
+
+  /**
+   * Bring the template's files in line with the form: removals first, then
+   * record each picked file — already uploaded, so this is quick. The baseline
+   * moves with each one, so if one fails part-way the form still shows exactly
+   * what is left to save.
+   */
+  async function syncAttachments(templateId: string, wanted: FormAttachment[]) {
+    const keep = new Set(
+      wanted.filter((a) => a.kind === "saved").map((a) => attachmentKey(a))
+    );
+    for (const a of baseline.attachments) {
+      if (a.kind !== "saved" || keep.has(a.attachment.id)) continue;
+      setProgress(`Removing ${a.attachment.filename}…`);
+      await removeAttachment(templateId, a.attachment.id);
+      setBaseline((b) => ({
+        ...b,
+        attachments: b.attachments.filter((x) => attachmentKey(x) !== a.attachment.id),
+      }));
+    }
+    for (const a of wanted) {
+      if (a.kind !== "new" || !a.upload) continue;
+      setProgress(`Saving ${a.file.name}…`);
+      const stored = await recordUpload(templateId, a.upload);
+      const saved: FormAttachment = { kind: "saved", attachment: stored };
+      const swap = (list: FormAttachment[]) =>
+        list.map((x) => (attachmentKey(x) === a.key ? saved : x));
+      setForm((f) => ({ ...f, attachments: swap(f.attachments) }));
+      setBaseline((b) => ({ ...b, attachments: [...b.attachments, saved] }));
+    }
+  }
+
+  async function save() {
+    const input = {
+      name: form.name.trim(),
+      subjectTemplate: form.subject,
+      bodyHtml: form.body,
+    };
+    const invalid = validateMailTemplateInput(input);
+    if (invalid) {
+      setActionError(invalid);
+      return false;
+    }
+    if (uploadingCount > 0) {
+      setActionError("Wait for the uploads to finish, then save.");
+      return false;
+    }
+    // Text first, files second: a template has to exist before anything can be
+    // stored against it, and the text should not be lost to a failed upload.
+    const snapshot = form;
+    const textSaved = (b: Form): Form => ({ ...snapshot, attachments: b.attachments });
+    let templateId: string | null = selection?.kind === "existing" ? selection.id : null;
+    const ok = await runAction(async () => {
+      try {
+        if (templateId) {
+          await update(templateId, input);
+        } else {
+          const created = await create(input);
+          templateId = created.id;
+          // Stay on what was just written, now as a saved template, so a
+          // second edit does not create a duplicate.
+          setSelection({ kind: "existing", id: created.id });
+        }
+        setBaseline(textSaved);
+        await syncAttachments(templateId, snapshot.attachments);
+      } finally {
+        setProgress(null);
+      }
+    });
+    return ok;
+  }
+
+  async function apply(template: MailTemplate, mode: TemplateApplyMode) {
+    // Hosts apply the text at once and bring the files in behind it, in their
+    // own attachment area, so the modal can close straight away.
+    const ok = await runAction(async () => {
+      await onApply(template, mode);
+    });
+    if (!ok) return;
+    touch(template.id);
+    close();
+  }
+
+  /** Files that would be dropped because this host cannot take them. */
+  const dropsFiles = (template: MailTemplate) =>
+    !attachmentsSupported && template.attachments.length > 0;
+
+  /** Shown on a disabled "Use" while that template's files are still copying. */
+  const COPYING_TITLE = "Still adding this template's attachments — available again when that finishes";
+
+  function requestApply(template: MailTemplate) {
+    if (copyingTemplates.has(template.id)) return;
+    // An empty draft has nothing to lose, so the click is the whole gesture —
+    // unless the template's files can't come along, which is worth a word first.
+    if (draftIsEmpty && !dropsFiles(template)) return void apply(template, "replace");
+    setApplying(template);
+  }
+
+  const selected =
+    selection?.kind === "existing"
+      ? templates.find((x) => x.id === selection.id) ?? null
+      : null;
+
+  return (
+    <>
+      {/* A labelled control, not a bare icon: nothing about a glyph in a row of
+          glyphs says "your saved emails live here". Shaped like the footer's
+          other labelled action (Review mail) rather than its icon buttons. */}
+      <button
+        type="button"
+        disabled={disabled}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen(true)}
+        className="ml-0.5 flex shrink-0 items-center gap-1.5 rounded-full border border-[#dadce0] px-3 py-[6px] text-[13px] font-medium leading-none text-[#3c4043] transition-colors hover:bg-[#e8eaed] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <FileText className="h-4 w-4" strokeWidth={2} />
+        Templates
+      </button>
+
+      {open && typeof document !== "undefined"
+        ? createPortal(
+            // Clicking the backdrop does nothing: a stray click beside the
+            // modal shouldn't close what you're writing. Close, Escape and
+            // "Use" are the ways out.
+            <div
+              className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4"
+              role="presentation"
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Mail templates"
+                className="card flex flex-col overflow-hidden p-0 shadow-[var(--shadow-lg)]"
+                // Same size as the compose window it opens from.
+                style={COMPOSE_MODAL_SIZE}
+              >
+                <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-5 py-3.5">
+                  <div>
+                    <h2 className="text-[15px] font-semibold text-[var(--color-text)]">
+                      {titleCase("Mail templates")}
+                    </h2>
+                    <p className="mt-0.5 text-[12px] text-[var(--color-text-faint)]">
+                      Only you can see these. Use one in the draft you have open, or write a new
+                      one here.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (dirty) {
+                        setActionError("Save or discard your changes first.");
+                        return;
+                      }
+                      close();
+                    }}
+                    className="btn-ghost shrink-0"
+                  >
+                    Close
+                  </button>
+                </div>
+
+                <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+                  {/* ── Library ─────────────────────────────────────────── */}
+                  <div className="flex min-h-0 shrink-0 flex-col border-b border-[var(--color-border)] sm:w-[260px] sm:border-b-0 sm:border-r">
+                    <div className="shrink-0 space-y-2 px-3 py-2.5">
+                      <button
+                        type="button"
+                        onClick={() => requestSelection({ kind: "new" })}
+                        className="flex w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] px-2.5 py-1.5 text-[12.5px] font-medium text-[var(--color-text)] hover:bg-[var(--color-surface-offset)]"
+                      >
+                        <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                        {titleCase("New template")}
+                      </button>
+                      {/* Captures the mail already on screen, which is how most
+                          templates actually come about — written once for a real
+                          recipient, then wanted again. */}
+                      <button
+                        type="button"
+                        disabled={draftIsEmpty}
+                        title={
+                          draftIsEmpty
+                            ? "Write a subject or body in the draft first"
+                            : undefined
+                        }
+                        onClick={() =>
+                          requestSelection(
+                            { kind: "new" },
+                            {
+                              name: suggestedTemplateName(draftSubject),
+                              subject: draftSubject,
+                              body: bodyHtml,
+                              // The draft's own files are not carried over —
+                              // attach them here, where the limit is checked.
+                              attachments: [],
+                            }
+                          )
+                        }
+                        className="w-full rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {titleCase("New from current draft")}
+                      </button>
+                    </div>
+
+                    {templates.length > SEARCH_THRESHOLD ? (
+                      <div className="flex shrink-0 items-center gap-2 border-y border-[var(--color-border)] px-3 py-2">
+                        <Search className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-faint)]" />
+                        <input
+                          value={query}
+                          onChange={(e) => setQuery(e.target.value)}
+                          placeholder="Search templates"
+                          className="w-full bg-transparent text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)]"
+                        />
+                      </div>
+                    ) : null}
+
+                    <div className="min-h-0 flex-1 overflow-y-auto">
+                      {loading ? (
+                        <p className="flex items-center gap-2 px-3 py-4 text-[12px] text-[var(--color-text-muted)]">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Loading…
+                        </p>
+                      ) : !configured ? (
+                        <p className="px-3 py-4 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                          Templates need migration 0067_mail_templates.sql to be applied.
+                        </p>
+                      ) : error ? (
+                        <p className="px-3 py-4 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                          {error}
+                        </p>
+                      ) : filtered.length === 0 ? (
+                        <p className="px-3 py-4 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                          {templates.length === 0
+                            ? "No templates yet."
+                            : "No template matches that search."}
+                        </p>
+                      ) : (
+                        <ul className="pb-2">
+                          {filtered.map((item) => {
+                            const active =
+                              selection?.kind === "existing" && selection.id === item.id;
+                            return (
+                              <li key={item.id}>
+                                {/* Two actions per row, not one: opening a
+                                    template to read or edit it and dropping it
+                                    into the draft are different intents, and
+                                    making the common one (use it) wait behind a
+                                    select-then-confirm would be a step backwards
+                                    from a plain picker. */}
+                                <div
+                                  className={cn(
+                                    "group flex items-center border-l-2 transition-colors",
+                                    active
+                                      ? "border-[var(--color-copper)] bg-[var(--color-surface-offset)]"
+                                      : "border-transparent hover:bg-[var(--color-surface-offset)]"
+                                  )}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      requestSelection({ kind: "existing", id: item.id })
+                                    }
+                                    className="min-w-0 flex-1 px-3 py-2 text-left"
+                                  >
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="truncate text-[13px] font-medium text-[var(--color-text)]">
+                                        {item.name}
+                                      </span>
+                                      {item.attachments.length > 0 ? (
+                                        <span
+                                          className="flex shrink-0 items-center gap-0.5 text-[11px] text-[var(--color-text-faint)]"
+                                          title={`${item.attachments.length} attachment${item.attachments.length === 1 ? "" : "s"}`}
+                                        >
+                                          <Paperclip className="h-3 w-3" strokeWidth={2} />
+                                          {item.attachments.length}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-[11px] text-[var(--color-text-faint)]">
+                                      {(canSetSubject && item.subjectTemplate.trim()) ||
+                                        cleanMailSnippet(item.bodyHtml) ||
+                                        "Empty"}
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={copyingTemplates.has(item.id)}
+                                    title={
+                                      copyingTemplates.has(item.id)
+                                        ? COPYING_TITLE
+                                        : `Use ${item.name} in the draft`
+                                    }
+                                    onClick={() => {
+                                      // Unsaved edits to another template are not
+                                      // this template's problem, but leaving the
+                                      // modal would strand them — so ask first.
+                                      if (dirty) {
+                                        setActionError("Save or discard your changes first.");
+                                        return;
+                                      }
+                                      requestApply(item);
+                                    }}
+                                    // Always visible, not hover-revealed: there
+                                    // is no hover on a touch screen, and an
+                                    // invisible-but-tappable control is worse
+                                    // than a quiet one.
+                                    className="mr-2 inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--color-border)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+                                  >
+                                    {copyingTemplates.has(item.id) ? (
+                                      <Loader2 className="h-3 w-3 animate-spin" />
+                                    ) : null}
+                                    Use
+                                  </button>
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* ── Editor ──────────────────────────────────────────── */}
+                  <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                    {selection === null ? (
+                      <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+                        <FileText
+                          className="h-7 w-7 text-[var(--color-text-faint)]"
+                          strokeWidth={1.5}
+                        />
+                        <p className="mt-3 text-[13px] font-medium text-[var(--color-text)]">
+                          {templates.length === 0
+                            ? "Write your first template"
+                            : "Pick a template to use or edit"}
+                        </p>
+                        <p className="mt-1 max-w-[320px] text-[12px] leading-snug text-[var(--color-text-faint)]">
+                          Templates hold a subject, a body and any attachments. Placeholders like{" "}
+                          <code className="rounded bg-[var(--color-surface-2)] px-1">
+                            {"{name}"}
+                          </code>{" "}
+                          are filled in per recipient when the draft merges them.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                          <label className="mb-1 block text-[11.5px] font-medium text-[var(--color-text-muted)]">
+                            {titleCase("Template name")}
+                          </label>
+                          <input
+                            value={form.name}
+                            maxLength={MAIL_TEMPLATE_NAME_MAX}
+                            placeholder="e.g. Recruiter intro"
+                            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                            className="h-11 w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] px-4 text-[14px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
+                          />
+
+                          {/* Hidden where the host can't apply a subject: a field
+                              that saves a value nothing will ever use is worse
+                              than no field. */}
+                          {canSetSubject ? (
+                            <>
+                              <label className="mb-1 mt-3 block text-[11.5px] font-medium text-[var(--color-text-muted)]">
+                                {titleCase("Subject")}
+                              </label>
+                              <div onFocus={() => { lastFocused.current = "subject"; }}>
+                                <SubjectWithVariables
+                                  ref={subjectRef}
+                                  theme="app"
+                                  value={form.subject}
+                                  onChange={(next) => setForm((f) => ({ ...f, subject: next }))}
+                                  variables={variables}
+                                  placeholder="e.g. Quick question about {company_name}"
+                                />
+                              </div>
+                            </>
+                          ) : null}
+
+                          <label className="mb-1 mt-3 block text-[11.5px] font-medium text-[var(--color-text-muted)]">
+                            {titleCase("Body")}
+                          </label>
+                          {/* Same editor and the same toolbar row under it as
+                              compose and sequence steps: attach, insert photo,
+                              Variables. Its variable menu portals at z-[1000]
+                              like this modal and mounts after it, so it paints
+                              above. */}
+                          <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+                            <div onFocus={() => { lastFocused.current = "body"; }}>
+                              <RichTextEditor
+                                ref={bodyRef}
+                                // An explicit writing area: the editor's root is a
+                                // flex column with min-h-0, so in this block-flow
+                                // scroll container an empty body would render as a
+                                // single line under a full formatting toolbar.
+                                className="min-h-[220px]"
+                                value={form.body}
+                                onChange={(html) => setForm((f) => ({ ...f, body: html }))}
+                                placeholder="Hi {name}, …"
+                                variables={variables}
+                                onImageFiles={(files) => void insertPhotos(files)}
+                              />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1 border-t border-[#e8eaed] bg-[#f8f9fa] px-2 py-1.5">
+                              <input
+                                ref={fileInputRef}
+                                type="file"
+                                multiple
+                                className="hidden"
+                                onChange={(e) => {
+                                  addFiles(e.target.files);
+                                  // Same file picked twice in a row must fire again.
+                                  e.target.value = "";
+                                }}
+                              />
+                              <input
+                                ref={photoInputRef}
+                                type="file"
+                                multiple
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const picked = Array.from(e.target.files ?? []);
+                                  e.target.value = "";
+                                  void insertPhotos(picked);
+                                }}
+                              />
+                              <ToolbarIconBtn
+                                title={`Attach files — over ${formatMb(GMAIL_ATTACHMENT_MAX_BYTES)} they're shared as a Google Drive link, as in compose`}
+                                disabled={busy}
+                                onClick={() => fileInputRef.current?.click()}
+                              >
+                                <Paperclip className="h-[18px] w-[18px]" strokeWidth={2} />
+                              </ToolbarIconBtn>
+                              <ToolbarIconBtn
+                                title="Insert photo — or paste / drop one into the body"
+                                onClick={() => photoInputRef.current?.click()}
+                              >
+                                <ImageIcon className="h-[18px] w-[18px]" strokeWidth={2} />
+                              </ToolbarIconBtn>
+                              <button
+                                type="button"
+                                title="Insert a personalised field like {name}, filled in for each recipient"
+                                onClick={() => {
+                                  if (lastFocused.current === "subject" && canSetSubject) {
+                                    subjectRef.current?.insertVariableTrigger();
+                                  } else {
+                                    bodyRef.current?.insertVariableTrigger();
+                                  }
+                                }}
+                                className="ml-0.5 flex shrink-0 items-center gap-1.5 rounded-full border border-[#dadce0] px-3 py-[6px] text-[13px] font-medium leading-none text-[#3c4043] transition-colors hover:bg-[#e8eaed]"
+                              >
+                                <Braces className="h-4 w-4" strokeWidth={2} />
+                                Variables
+                              </button>
+                            </div>
+                          </div>
+                          {photoUploads.length > 0 ? (
+                            <div className="mt-2 flex flex-col gap-1.5">
+                              {photoUploads.map((p) => (
+                                <AttachmentUploadRow
+                                  key={p.key}
+                                  theme="app"
+                                  kind="photo"
+                                  name={p.name}
+                                  percent={p.percent}
+                                />
+                              ))}
+                            </div>
+                          ) : null}
+
+                          {form.attachments.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {form.attachments.map((a) =>
+                                attachmentKey(a) in uploadPct ? (
+                                  <div key={attachmentKey(a)} className="w-full">
+                                    <AttachmentUploadRow
+                                      theme="app"
+                                      name={attachmentName(a)}
+                                      percent={uploadPct[attachmentKey(a)]}
+                                      kind={attachmentViaDrive(a) ? "drive" : "attachment"}
+                                    />
+                                  </div>
+                                ) : (
+                                <span
+                                  key={attachmentKey(a)}
+                                  className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] py-1 pl-2.5 pr-1.5 text-[12px] text-[var(--color-text)]"
+                                >
+                                  <Paperclip
+                                    className="h-3 w-3 shrink-0 text-[var(--color-text-faint)]"
+                                    strokeWidth={2}
+                                  />
+                                  <span className="truncate">{attachmentName(a)}</span>
+                                  <span className="shrink-0 font-mono text-[10.5px] text-[var(--color-text-faint)]">
+                                    {formatBytes(attachmentSize(a))}
+                                  </span>
+                                  {attachmentViaDrive(a) ? (
+                                    <span
+                                      className="shrink-0 rounded bg-[var(--color-surface-offset)] px-1 text-[10.5px] text-[var(--color-text-muted)]"
+                                      title="Over Gmail's 25 MB per file — sent as a Google Drive link"
+                                    >
+                                      Drive link
+                                    </span>
+                                  ) : null}
+                                  {a.kind === "new" ? (
+                                    <span className="shrink-0 text-[10.5px] text-[var(--color-text-faint)]">
+                                      not saved
+                                    </span>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => {
+                                      // Picked in this edit and never saved —
+                                      // its upload has nowhere to go now.
+                                      if (a.kind === "new" && a.upload) {
+                                        discardPickedUpload(a.upload);
+                                      }
+                                      setForm((f) => ({
+                                        ...f,
+                                        attachments: f.attachments.filter(
+                                          (x) => attachmentKey(x) !== attachmentKey(a)
+                                        ),
+                                      }));
+                                    }}
+                                    aria-label={`Remove ${attachmentName(a)}`}
+                                    className="shrink-0 rounded p-0.5 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-danger)]"
+                                  >
+                                    <X className="h-3 w-3" strokeWidth={2.5} />
+                                  </button>
+                                </span>
+                                )
+                              )}
+                            </div>
+                          ) : null}
+                      </div>
+                    )}
+
+                    {notice && !progress ? (
+                      <p className="shrink-0 border-t border-[var(--color-border)] px-4 py-2 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                        {notice}
+                      </p>
+                    ) : null}
+
+                    {progress ? (
+                      <p className="flex shrink-0 items-center gap-2 border-t border-[var(--color-border)] px-4 py-2 text-[12px] text-[var(--color-text-muted)]">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {progress}
+                      </p>
+                    ) : null}
+
+                    {actionError ? (
+                          <p className="shrink-0 border-t border-[var(--color-border)] px-4 py-2 text-[12px] leading-snug text-[var(--color-danger)]">
+                            {actionError}
+                          </p>
+                        ) : null}
+
+                        {/* Replace/append is asked here rather than on click,
+                            because overwriting a written draft is the one
+                            destructive thing this modal can do. */}
+                        {applying ? (
+                          <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3">
+                            {dropsFiles(applying) ? (
+                              <p className="mb-1.5 text-[12px] leading-snug text-[var(--color-text-muted)]">
+                                “{applying.name}” has {applying.attachments.length} attachment
+                                {applying.attachments.length === 1 ? "" : "s"}, which can’t be added
+                                here. Only its text will be used — attach the files from the main
+                                compose window instead.
+                              </p>
+                            ) : null}
+                            {draftIsEmpty ? null : (
+                              <p className="text-[12px] leading-snug text-[var(--color-text-muted)]">
+                                Your draft already has content. Replace it, or add “{applying.name}”
+                                below what you have written?
+                              </p>
+                            )}
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              {draftIsEmpty ? (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void apply(applying, "replace")}
+                                  className="btn-primary-copper"
+                                >
+                                  Use text only
+                                </button>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void apply(applying, "replace")}
+                                    className="btn-primary-copper"
+                                  >
+                                    Replace draft
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => void apply(applying, "append")}
+                                    className="btn-ghost border border-[var(--color-border)]"
+                                  >
+                                    Add below
+                                  </button>
+                                </>
+                              )}
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => setApplying(null)}
+                                className="btn-ghost"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : confirmDelete && selected ? (
+                          <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3">
+                            <p className="text-[12px] text-[var(--color-text-muted)]">
+                              Delete “{selected.name}”? This cannot be undone.
+                            </p>
+                            <div className="mt-2 flex gap-2">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void runAction(() => remove(selected.id)).then((ok) => {
+                                    if (!ok) return;
+                                    setConfirmDelete(false);
+                                    loadSelection(null);
+                                  })
+                                }
+                                className="btn-ghost font-medium text-[var(--color-danger)]"
+                              >
+                                Delete template
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDelete(false)}
+                                className="btn-ghost"
+                              >
+                                Keep
+                              </button>
+                            </div>
+                          </div>
+                        ) : pendingSelection ? (
+                          <div className="shrink-0 border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3">
+                            <p className="text-[12px] text-[var(--color-text-muted)]">
+                              You have unsaved changes to this template.
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  void save().then((ok) => {
+                                    if (!ok) return;
+                                    const { next } = pendingSelection;
+                                    setPendingSelection(null);
+                                    loadSelection(next);
+                                  })
+                                }
+                                className="btn-primary-copper"
+                              >
+                                Save and switch
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const { next } = pendingSelection;
+                                  setPendingSelection(null);
+                                  loadSelection(next);
+                                }}
+                                className="btn-ghost border border-[var(--color-border)]"
+                              >
+                                Discard changes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setPendingSelection(null)}
+                                className="btn-ghost"
+                              >
+                                Keep editing
+                              </button>
+                            </div>
+                          </div>
+                        ) : selection !== null ? (
+                          <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--color-border)] px-4 py-3">
+                            <button
+                              type="button"
+                              disabled={busy || !dirty || !form.name.trim() || uploadingCount > 0}
+                              title={
+                                uploadingCount > 0
+                                  ? "Wait for the uploads to finish"
+                                  : undefined
+                              }
+                              onClick={() => void save()}
+                              className="btn-primary-copper inline-flex items-center gap-1.5 disabled:pointer-events-none disabled:opacity-50"
+                            >
+                              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                              {selection.kind === "new" ? "Save template" : "Save changes"}
+                            </button>
+
+                            {/* Reverting shouldn't require navigating away and
+                                back through the unsaved-changes prompt. */}
+                            {dirty ? (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => {
+                                  discardUnsaved(form.attachments);
+                                  setForm(baseline);
+                                  setActionError(null);
+                                  setNotice(null);
+                                }}
+                                className="btn-ghost"
+                              >
+                                Discard
+                              </button>
+                            ) : null}
+
+                            {/* Only an already-saved template can go into the
+                                draft — "use" on unsaved edits would insert
+                                something the library does not contain. */}
+                            {selected ? (
+                              <button
+                                type="button"
+                                disabled={dirty || copyingTemplates.has(selected.id)}
+                                title={
+                                  dirty
+                                    ? "Save your changes before using this template"
+                                    : copyingTemplates.has(selected.id)
+                                      ? COPYING_TITLE
+                                      : undefined
+                                }
+                                onClick={() => requestApply(selected)}
+                                className="btn-ghost border border-[var(--color-border)] font-medium disabled:pointer-events-none disabled:opacity-50"
+                              >
+                                Use in draft
+                              </button>
+                            ) : null}
+
+                            <span className="flex-1" />
+
+                            {uploadingCount > 0 ? (
+                              <span className="text-[11.5px] text-[var(--color-text-faint)]">
+                                Uploading {uploadingCount} file{uploadingCount === 1 ? "" : "s"}…
+                              </span>
+                            ) : dirty ? (
+                              <span className="text-[11.5px] text-[var(--color-text-faint)]">
+                                Unsaved changes
+                              </span>
+                            ) : null}
+
+                            {selected ? (
+                              <button
+                                type="button"
+                                aria-label={`Delete ${selected.name}`}
+                                title="Delete template"
+                                onClick={() => setConfirmDelete(true)}
+                                className="rounded-lg p-1.5 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-danger)]"
+                              >
+                                <Trash2 className="h-4 w-4" strokeWidth={2} />
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  );
+}
+
+/** Round icon button in the editor's toolbar row — the compose footer's style. */
+function ToolbarIconBtn({
+  title,
+  onClick,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="flex h-9 w-9 items-center justify-center rounded-full text-[#444746] transition-colors hover:bg-[#e8eaed] disabled:opacity-40 disabled:hover:bg-transparent"
+    >
+      {children}
+    </button>
+  );
+}

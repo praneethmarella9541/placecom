@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { deleteForbiddenResponse } from "@/lib/delete-access";
 import { modifyThreadLabels } from "@/lib/gmail-labels";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 
@@ -39,6 +40,13 @@ export async function POST(request: Request) {
   );
   const add = Array.isArray(body.add) ? body.add.filter((s) => typeof s === "string") : [];
   const remove = Array.isArray(body.remove) ? body.remove.filter((s) => typeof s === "string") : [];
+
+  // Moving to Trash is a delete; everything else here (archive, read, star,
+  // labels) is not gated.
+  if (add.includes("TRASH")) {
+    const forbidden = await deleteForbiddenResponse();
+    if (forbidden) return forbidden;
+  }
 
   if (threadIds.length === 0) {
     return NextResponse.json({ error: "Pass at least one threadId" }, { status: 400 });

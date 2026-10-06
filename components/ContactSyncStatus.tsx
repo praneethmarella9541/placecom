@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { Pause, RefreshCw } from "lucide-react";
 import { IconX } from "@/components/Icons";
 import {
@@ -63,7 +64,7 @@ function applyStateRow(row: ContactSyncStateRow | null) {
     // request claims the lock, which is after its Gmail token refresh. A poll
     // landing in that gap used to reset the snapshot to idle, which hid the pill
     // for the entire ~250s batch — liveProgressTick only polls while "running"
-    // and slowTick skips while this tab is driving, so nothing ever polled again
+    // and the visibility refresh skips while this tab is driving, so nothing ever polled again
     // to correct it, and the sync looked like it had never started until the page
     // was reloaded. A just-clicked intent outranks an absent row for the same
     // reason it outranks a stale one below.
@@ -149,6 +150,9 @@ async function refreshStatus() {
  * is open. Drives the resumable batch loop against /api/directory-contacts/sync.
  */
 export function ContactSyncStatus() {
+  // Mounted globally in AppShell, but it drives the Contacts directory sync —
+  // with Contacts off there is nothing to sync and every poll would 403.
+  const contactsEnabled = useModuleVisibility().isVisible("contacts");
   const snapshot = useContactSyncSnapshot();
   const loopActiveRef = useRef(false);
   /** Epoch ms before which driveLoop won't re-POST after a 409 — see driveLoop. */
@@ -172,10 +176,12 @@ export function ContactSyncStatus() {
   }, [snapshot.status]);
 
   useEffect(() => {
+    if (!contactsEnabled) return;
     void refreshStatus();
-  }, []);
+  }, [contactsEnabled]);
 
   useEffect(() => {
+    if (!contactsEnabled) return;
     async function driveLoop() {
       if (loopActiveRef.current) return;
       const wantsRun = consumeContactSyncRunRequest();
@@ -313,11 +319,19 @@ export function ContactSyncStatus() {
       dispatchStopIfRequested();
       void driveLoop();
     }, 1500);
-    // Catches a run started by another tab/user — skip while this tab is actively driving one
-    // (that case is covered by liveProgressTick below, which polls even mid-batch).
-    const slowTick = window.setInterval(() => {
-      if (!loopActiveRef.current) void refreshStatus();
-    }, 20_000);
+    // A run started by another tab/user or by cron is picked up when this tab
+    // comes back into view, not by a standing timer: an idle poll would cost a
+    // Supabase read per open tab forever for a state that almost never changes.
+    // Skipped while this tab is driving a run — liveProgressTick below already
+    // covers that case. Even if a stale tab misses this, clicking Sync is safe:
+    // the server lock answers 409 and driveLoop re-reads the real status.
+    function refreshWhenVisible() {
+      if (document.visibilityState === "visible" && !loopActiveRef.current) {
+        void refreshStatus();
+      }
+    }
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("focus", refreshWhenVisible);
     // The active driving call blocks server-side for up to ~250s per batch (see
     // BATCH_TIME_BUDGET_MS) — without this, the pill would sit frozen the whole
     // time and jump in one big chunk when the call finally returns. The server
@@ -330,15 +344,17 @@ export function ContactSyncStatus() {
     return () => {
       unsubscribe();
       window.clearInterval(fastTick);
-      window.clearInterval(slowTick);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("focus", refreshWhenVisible);
       window.clearInterval(liveProgressTick);
     };
-  }, []);
+  }, [contactsEnabled]);
 
   // Paused keeps the pill up rather than hiding it: an unfinished sync is state
   // the user needs to know persists across sessions, and this is where they get
   // to act on it. It stays until they resume or the run completes.
   const paused = snapshot.status === "paused";
+  if (!contactsEnabled) return null;
   if ((snapshot.status !== "running" && !paused) || dismissed) return null;
 
   return (

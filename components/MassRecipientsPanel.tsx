@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
-import { AlertTriangle, FileSpreadsheet, Plus, Search, Upload, X } from "lucide-react";
+import { AlertTriangle, FileSpreadsheet, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
 import type { RecipientSuggestion } from "@/components/RecipientField";
 import { recipientMatchesQuery } from "@/lib/email-recipients";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import type { ComposeVariable } from "@/lib/compose-variables";
+import { SheetPickerModal, type PickedSheet } from "@/components/SheetPickerModal";
 
 export type MassRecipient = {
   /** Lowercased address — the identity of a recipient throughout the flow. */
@@ -33,6 +34,8 @@ export type MassImport = {
   maxRows?: number;
   /** Column headers offered as `{variables}` in the editor. */
   variables: ComposeVariable[];
+  /** Set when the rows came from an existing Google Sheet rather than a file. */
+  sheet?: { id: string; tab: string; tabs: string[] };
 };
 
 type Props = {
@@ -77,6 +80,8 @@ type Props = {
   /** Result of the last successful import; null until a file is loaded. */
   imported: MassImport | null;
   onImportFile: (file: File) => void;
+  /** Import a tab of an existing Google Sheet; omit `tab` for the first one. */
+  onImportSheet?: (sheet: PickedSheet, tab?: string) => void;
   onClearImport: () => void;
   importBusy?: boolean;
   importError?: string | null;
@@ -110,11 +115,13 @@ export function MassRecipientsPanel({
   onSourceChange,
   imported,
   onImportFile,
+  onImportSheet,
   onClearImport,
   importBusy,
   importError,
 }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [sheetPickerOpen, setSheetPickerOpen] = useState(false);
   const [query, setQuery] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -248,6 +255,17 @@ export function MassRecipientsPanel({
                 <Upload className="h-4 w-4" strokeWidth={2} />
                 {importBusy ? "Reading…" : imported ? "Replace file" : "Import CSV / Excel"}
               </button>
+              {onImportSheet ? (
+                <button
+                  type="button"
+                  disabled={importBusy}
+                  onClick={() => setSheetPickerOpen(true)}
+                  className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-[#dadce0] px-3 py-2.5 text-[13px] font-medium text-[#3c4043] hover:bg-[#f1f3f4] disabled:opacity-60"
+                >
+                  <FileSpreadsheet className="h-4 w-4 text-[#137333]" strokeWidth={2} />
+                  {imported?.sheet ? "Choose another sheet" : "Attach a Google Sheet"}
+                </button>
+              ) : null}
 
               {importError ? (
                 <p className="mt-2 rounded-md bg-[#fce8e6] px-2 py-1.5 text-[11px] leading-snug text-[#c5221f]">
@@ -278,6 +296,50 @@ export function MassRecipientsPanel({
                     </button>
                   </div>
 
+                  {imported.sheet && onImportSheet ? (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      {imported.sheet.tabs.length > 1 ? (
+                        <select
+                          value={imported.sheet.tab}
+                          disabled={importBusy}
+                          onChange={(e) =>
+                            onImportSheet(
+                              { id: imported.sheet!.id, name: imported.fileName },
+                              e.target.value
+                            )
+                          }
+                          aria-label="Sheet tab"
+                          className="min-w-0 flex-1 rounded-md border border-[#dadce0] bg-white px-1.5 py-1 text-[12px] text-[#202124] disabled:opacity-60"
+                        >
+                          {imported.sheet.tabs.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate text-[11px] text-[#5f6368]">
+                          Tab: {imported.sheet.tab}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        disabled={importBusy}
+                        onClick={() =>
+                          onImportSheet(
+                            { id: imported.sheet!.id, name: imported.fileName },
+                            imported.sheet!.tab
+                          )
+                        }
+                        title="Re-read this tab from Google Sheets"
+                        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[#dadce0] px-2 py-1 text-[12px] font-medium text-[#3c4043] hover:bg-[#f1f3f4] disabled:opacity-60"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${importBusy ? "animate-spin" : ""}`} strokeWidth={2} />
+                        Refresh
+                      </button>
+                    </div>
+                  ) : null}
+
                   {imported.truncated ? (
                     <p className="mt-1.5 text-[11px] leading-snug text-[#b06000]">
                       Only the first {imported.maxRows} rows were kept.
@@ -306,7 +368,8 @@ export function MassRecipientsPanel({
               ) : (
                 <p className="mt-2 text-[11px] leading-snug text-[#5f6368]">
                   Row 1 must be column headers, with one column holding email addresses. Every other
-                  column becomes a {"{variable}"} you can insert in the subject or body.
+                  column becomes a {"{variable}"} you can insert in the subject or body. Pick a file,
+                  or attach a Google Sheet.
                 </p>
               )}
             </>
@@ -405,7 +468,7 @@ export function MassRecipientsPanel({
           <p className="px-1 py-2 text-[12px] leading-snug text-[#5f6368]">
             {contactsMode
               ? "No recipients yet. Add contacts to send this as a campaign."
-              : "No recipients yet. Import a CSV or Excel file to send this as a campaign."}
+              : "No recipients yet. Import a file or attach a Google Sheet to send this as a campaign."}
           </p>
         ) : (
           selected.map((r) => {
@@ -474,6 +537,15 @@ export function MassRecipientsPanel({
           })
         )}
       </div>
+      {sheetPickerOpen && onImportSheet ? (
+        <SheetPickerModal
+          onClose={() => setSheetPickerOpen(false)}
+          onPick={(sheet) => {
+            setSheetPickerOpen(false);
+            onImportSheet(sheet);
+          }}
+        />
+      ) : null}
     </aside>
   );
 }

@@ -11,6 +11,11 @@ import {
   type SyncedContactFields,
 } from "@/lib/sequence-variables";
 import { createServiceSupabase } from "@/lib/supabase-service";
+import {
+  ATTACHMENT_ROW_COLUMNS,
+  toAttachmentDto,
+  type AttachmentRow,
+} from "@/lib/sequence-attachments";
 import type {
   EnrollmentCounts,
   EnrollmentStatus,
@@ -151,35 +156,19 @@ export async function withStepAttachments(
 
   const { data } = await ctx.svc
     .from("sequence_step_attachments")
-    .select("id, step_id, filename, mime_type, size_bytes, created_at")
+    .select(ATTACHMENT_ROW_COLUMNS)
     .in("step_id", stepIds)
     .order("created_at");
 
   const byStep = new Map<string, SequenceStepAttachment[]>();
-  for (const row of (data ?? []) as AttachmentRecord[]) {
+  for (const row of (data ?? []) as AttachmentRow[]) {
     const list = byStep.get(row.step_id) ?? [];
-    list.push({
-      id: row.id,
-      stepId: row.step_id,
-      filename: row.filename,
-      mimeType: row.mime_type,
-      sizeBytes: row.size_bytes,
-      createdAt: row.created_at,
-    });
+    list.push(toAttachmentDto(row));
     byStep.set(row.step_id, list);
   }
 
   return steps.map((s) => ({ ...s, attachments: byStep.get(s.id) ?? [] }));
 }
-
-type AttachmentRecord = {
-  id: string;
-  step_id: string;
-  filename: string;
-  mime_type: string;
-  size_bytes: number;
-  created_at: string;
-};
 
 type EnrollmentRecord = {
   id: string;

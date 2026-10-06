@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SyncedContactRow } from "@/app/api/synced-contacts/route";
+import { useModuleVisibility } from "@/lib/module-visibility";
 
 /**
  * People auto-derived from the shared mailbox (the "auto-synced from mail"
@@ -10,12 +11,16 @@ import type { SyncedContactRow } from "@/app/api/synced-contacts/route";
  * page load for a feature most sessions never open.
  */
 export function useSyncedContacts(enabled: boolean) {
+  // /api/synced-contacts belongs to the Contacts module. Mail's composer reads
+  // this list too, so without this the suggestion fetch would 403 on every
+  // session whose Contacts access is off.
+  const contactsEnabled = useModuleVisibility().isVisible("contacts");
   const [contacts, setContacts] = useState<SyncedContactRow[]>([]);
   const [loading, setLoading] = useState(false);
   const loadedRef = useRef(false);
 
   useEffect(() => {
-    if (!enabled || loadedRef.current) return;
+    if (!enabled || !contactsEnabled || loadedRef.current) return;
     loadedRef.current = true;
 
     let cancelled = false;
@@ -40,7 +45,7 @@ export function useSyncedContacts(enabled: boolean) {
     return () => {
       cancelled = true;
     };
-  }, [enabled]);
+  }, [enabled, contactsEnabled]);
 
   return { contacts, loading };
 }

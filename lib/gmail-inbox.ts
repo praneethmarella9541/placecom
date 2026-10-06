@@ -1,4 +1,5 @@
 import { isCalendarInviteThread } from "@/lib/calendar-invite-email";
+import { inlineImageUrlPrefix, isInlineImageUrl } from "@/lib/inline-images";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
 import { cleanMailSnippet } from "@/lib/utils";
 import {
@@ -840,6 +841,108 @@ function escapeHtml(s: string): string {
 
 const MIME_ALT_BOUNDARY = "----=_PlaceAlt_001";
 const MIME_MIXED_BOUNDARY = "----=_PlaceMixed_001";
+const MIME_RELATED_BOUNDARY = "----=_PlaceRelated_001";
+
+/** A photo embedded in the HTML body, referenced from it as `cid:<cid>`. */
+type InlineImagePart = { cid: string; mimeType: string; filename: string; base64Data: string };
+
+/**
+ * Inserted photos by URL → bytes. A mass send or a sequence run sends the same
+ * photo to every recipient, so it is fetched once per process, not per mail.
+ * Bounded so a long-lived process can't grow it without limit.
+ */
+const inlineImageCache = new Map<string, { mimeType: string; base64Data: string }>();
+const INLINE_IMAGE_CACHE_MAX = 50;
+
+async function fetchInlineImage(
+  url: string
+): Promise<{ mimeType: string; base64Data: string } | null> {
+  const hit = inlineImageCache.get(url);
+  if (hit) return hit;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const mimeType = (res.headers.get("content-type") || "image/png").split(";")[0].trim();
+    if (!mimeType.startsWith("image/")) return null;
+    const entry = { mimeType, base64Data: Buffer.from(await res.arrayBuffer()).toString("base64") };
+    if (inlineImageCache.size >= INLINE_IMAGE_CACHE_MAX) {
+      const oldest = inlineImageCache.keys().next().value;
+      if (oldest !== undefined) inlineImageCache.delete(oldest);
+    }
+    inlineImageCache.set(url, entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Embed the photos inserted in compose (lib/inline-images): each `<img>` whose
+ * src is one of our inline-image URLs becomes a `cid:` reference to a MIME part
+ * carried inside the mail — how Gmail sends an inserted photo, and what clients
+ * that hold back remote images (Outlook) show without a click. Only our own
+ * bucket's URLs are fetched; anything else, and any photo that can't be
+ * fetched, stays a plain linked image.
+ */
+async function embedInlineImages(
+  html: string
+): Promise<{ html: string; parts: InlineImagePart[] }> {
+  const prefix = inlineImageUrlPrefix();
+  if (!html || !html.includes(prefix)) return { html, parts: [] };
+
+  const parts: InlineImagePart[] = [];
+  const cidByUrl = new Map<string, string>();
+  const srcRe = /(<img\b[^>]*\bsrc=)(["'])([^"']+)\2/gi;
+  const urls = new Set<string>();
+  for (const m of Array.from(html.matchAll(srcRe))) {
+    if (isInlineImageUrl(m[3])) urls.add(m[3]);
+  }
+
+  for (const url of Array.from(urls)) {
+    const image = await fetchInlineImage(url);
+    if (!image) continue;
+    const cid = `placecom-img-${parts.length + 1}-${Date.now().toString(36)}@placecom`;
+    const filename =
+      decodeURIComponent(url.split("/").pop() || "image").replace(/^[0-9a-f-]{36}-/, "") || "image";
+    parts.push({ cid, mimeType: image.mimeType, filename, base64Data: image.base64Data });
+    cidByUrl.set(url, cid);
+  }
+
+  if (parts.length === 0) return { html, parts };
+  return {
+    html: html.replace(srcRe, (whole, head: string, quote: string, src: string) => {
+      const cid = cidByUrl.get(src);
+      return cid ? `${head}${quote}cid:${cid}${quote}` : whole;
+    }),
+    parts,
+  };
+}
+
+/**
+ * multipart/related: the alternative (text + HTML) part plus the photos its
+ * HTML references by `cid:`.
+ */
+function buildRelatedPart(altPart: string, images: InlineImagePart[]): string {
+  const lines = [
+    `--${MIME_RELATED_BOUNDARY}`,
+    `Content-Type: multipart/alternative; boundary="${MIME_ALT_BOUNDARY}"`,
+    "",
+    altPart,
+  ];
+  for (const img of images) {
+    lines.push(
+      `--${MIME_RELATED_BOUNDARY}`,
+      `Content-Type: ${img.mimeType}; name="${img.filename}"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-ID: <${img.cid}>`,
+      `Content-Disposition: inline; filename="${img.filename}"`,
+      "",
+      img.base64Data
+    );
+  }
+  lines.push(`--${MIME_RELATED_BOUNDARY}--`);
+  return lines.join("\r\n");
+}
 
 export type SendAttachment = {
   filename: string;
@@ -907,22 +1010,26 @@ function buildMimeBody(
   plainText: string,
   trackingPixelUrl?: string,
   attachments?: SendAttachment[],
-  htmlBody?: string
+  htmlBody?: string,
+  inlineImages: InlineImagePart[] = []
 ): { contentType: string; body: string } {
   const altPart = buildAlternativePart(plainText, trackingPixelUrl, htmlBody);
+  const hasInline = inlineImages.length > 0;
+  // The body as one part: plain alternative, or wrapped with its photos.
+  const bodyType = hasInline
+    ? `multipart/related; boundary="${MIME_RELATED_BOUNDARY}"`
+    : `multipart/alternative; boundary="${MIME_ALT_BOUNDARY}"`;
+  const bodyPart = hasInline ? buildRelatedPart(altPart, inlineImages) : altPart;
 
   if (!attachments || attachments.length === 0) {
-    return {
-      contentType: `multipart/alternative; boundary="${MIME_ALT_BOUNDARY}"`,
-      body: altPart,
-    };
+    return { contentType: bodyType, body: bodyPart };
   }
 
   const parts: string[] = [
     `--${MIME_MIXED_BOUNDARY}`,
-    `Content-Type: multipart/alternative; boundary="${MIME_ALT_BOUNDARY}"`,
+    `Content-Type: ${bodyType}`,
     "",
-    altPart,
+    bodyPart,
   ];
 
   for (const att of attachments) {
@@ -999,11 +1106,15 @@ export async function sendMailViaGmail(
   }
 
   const subj = (subject || "").trim() || "(no subject)";
+  const embedded = options.htmlBody
+    ? await embedInlineImages(options.htmlBody)
+    : { html: options.htmlBody, parts: [] as InlineImagePart[] };
   const { contentType, body: mimeBody } = buildMimeBody(
     options.textBody,
     options.trackingPixelUrl,
     options.attachments,
-    options.htmlBody
+    embedded.html,
+    embedded.parts
   );
 
   const rawLines = [

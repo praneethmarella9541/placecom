@@ -12,7 +12,8 @@ import {
   clearAdminTeamPrefetchCache,
   type AdminTeamMember,
 } from "@/lib/admin-team-prefetch";
-import { GROUP_MANAGEABLE_FEATURES, type FeatureKey } from "@/lib/feature-access";
+import { GROUP_MANAGEABLE_FEATURES, getAllowedFeatures, type FeatureKey } from "@/lib/feature-access";
+import { useMeMailbox } from "@/lib/use-me-mailbox";
 import { titleCase } from "@/lib/title-case";
 import { exotelNumbersForSelect, filterAvailableExotelNumbers } from "@/lib/admin-exotel-select";
 
@@ -31,6 +32,7 @@ function initialFromCache() {
 
 export default function AdminTeamPage() {
   const boot = initialFromCache();
+  const { me } = useMeMailbox();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newDisplayUsername, setNewDisplayUsername] = useState("");
@@ -64,6 +66,11 @@ export default function AdminTeamPage() {
     [configuredExotelNumbers, assignedExotelNumbers],
   );
 
+  /**
+   * The deployment's own feature cap. Beyond narrowing the group checklist this
+   * also doubles as "is this a subdomain portal?", which is why the OpenAI,
+   * mobile, and Exotel fields below key off it — keep it env-only.
+   */
   const allowedFeatures = useMemo<FeatureKey[] | undefined>(() => {
     const val = process.env.NEXT_PUBLIC_ALLOWED_FEATURES;
     if (!val?.trim()) return undefined;
@@ -72,6 +79,21 @@ export default function AdminTeamPage() {
       .map((s) => s.trim())
       .filter((s) => GROUP_MANAGEABLE_FEATURES.includes(s as FeatureKey)) as FeatureKey[];
   }, []);
+
+  /**
+   * What an admin may actually hand out: the manageable set minus the
+   * deployment cap minus anything switched off platform-wide in /configs.
+   * Without the last term the checklist would offer modules that /configs has
+   * removed, and granting one would appear to work while middleware kept
+   * blocking it.
+   */
+  const manageableFeatures = useMemo<FeatureKey[]>(() => {
+    const envAllowed = getAllowedFeatures();
+    const platformDisabled = new Set(me?.disabledModules ?? []);
+    return GROUP_MANAGEABLE_FEATURES.filter(
+      (f) => !platformDisabled.has(f) && (!envAllowed || envAllowed.has(f))
+    );
+  }, [me?.disabledModules]);
 
   const revalidate = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -214,7 +236,7 @@ export default function AdminTeamPage() {
         groupsLoading={loadingMembers}
         onRefresh={() => revalidate({ silent: true })}
         onToast={showToast}
-        allowedFeatures={allowedFeatures}
+        allowedFeatures={manageableFeatures}
       />
 
       <div>

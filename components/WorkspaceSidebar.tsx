@@ -17,6 +17,11 @@ import {
   LogOut,
   Mail,
   Megaphone,
+  MessageCircle,
+  MessageSquare,
+  Radio,
+  ScanText,
+  SlidersHorizontal,
   UserRound,
   Users,
   Workflow,
@@ -25,6 +30,7 @@ import { createClient } from "@/lib/supabase";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { clearSecondaryFeaturePrefetchCache } from "@/lib/workspace-feature-prefetch";
 import { pathToFeature } from "@/lib/feature-access";
+import { hiddenFeatureSet } from "@/lib/module-visibility";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo, PlacecomMark } from "@/components/PlacecomLogo";
@@ -34,11 +40,17 @@ import { GmailAvatar } from "@/components/GmailAvatar";
 import { formatPhone } from "@/lib/phone-contacts-display";
 
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
+const configsLink = { href: "/configs", label: "Configs", Icon: SlidersHorizontal } as const;
 
 const commsNav = [
   { href: "/inbox", label: "Mail", Icon: Mail },
   { href: "/sequences", label: "Sequences", Icon: Workflow },
   { href: "/campaigns", label: "Campaigns", Icon: Megaphone },
+  // Broadcasting renders only the WhatsApp broadcast panel, so it maps to the
+  // whatsapp feature and appears and disappears with it.
+  { href: "/broadcasting", label: "Broadcasting", Icon: Radio },
+  { href: "/sms", label: "SMS", Icon: MessageSquare },
+  { href: "/whatsapp", label: "WhatsApp", Icon: MessageCircle },
   { href: "/contacts", label: "Contacts", Icon: UserRound },
 ] as const;
 
@@ -54,11 +66,21 @@ const opsNav = [
   { href: "/docs", label: "Docs", Icon: BookText },
 ] as const;
 
-/** Sidebar nav regrouped into Comms / Pipeline / Ops — also used by WorkspaceChrome for the breadcrumb. */
+const dataNav = [{ href: "/dashboard", label: "Extraction", Icon: ScanText }] as const;
+
+/**
+ * Sidebar nav grouped the same way /configs groups its toggles — also used by
+ * WorkspaceChrome for the breadcrumb.
+ *
+ * SMS and Extraction are listed here but ship switched off in /configs, which
+ * is how they were already invisible before this nav existed. They appear the
+ * moment someone turns them on, rather than needing a code change.
+ */
 export const workspaceNavGroups = [
   { label: "Comms", items: commsNav },
   { label: "Pipeline", items: pipelineNav },
   { label: "Ops", items: opsNav },
+  { label: "Data", items: dataNav },
 ] as const;
 
 function isNavActive(href: string, pathname: string): boolean {
@@ -270,6 +292,7 @@ type NavGroupLinks = { label: string; items: { href: string; label: string; Icon
 
 const SidebarPanel = memo(function SidebarPanel({
   groups,
+  systemItems,
   pathname,
   pendingHref,
   displayName,
@@ -284,6 +307,7 @@ const SidebarPanel = memo(function SidebarPanel({
   onNavigateStart,
 }: {
   groups: NavGroupLinks[];
+  systemItems: NavGroupLinks["items"];
   pathname: string;
   pendingHref: string | null;
   displayName: string;
@@ -363,6 +387,31 @@ const SidebarPanel = memo(function SidebarPanel({
           ) : null,
         )}
 
+        {systemItems.length ? (
+          <div>
+            {!collapsed && (
+              <p className="font-mono mb-1.5 ml-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--sidebar-text-whisper)]">
+                System
+              </p>
+            )}
+            <div className="flex flex-col gap-0.5">
+              {systemItems.map(({ href, label, Icon }) => (
+                <NavItem
+                  key={href}
+                  href={href}
+                  label={label}
+                  Icon={Icon}
+                  selected={navItemSelected(href, pathname, pendingHref)}
+                  collapsed={collapsed}
+                  onClick={onClick}
+                  onMouseEnter={href === adminLink.href ? onAdminHover : undefined}
+                  onNavigateStart={onNavigateStart}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="flex-1" />
       </nav>
       )}
@@ -392,12 +441,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
   useEffect(() => {
-    for (const { href } of [...commsNav, ...pipelineNav, ...opsNav, adminLink]) {
-      router.prefetch(href);
-    }
-  }, [router]);
-
-  useEffect(() => {
     setPendingHref(null);
   }, [pathname]);
 
@@ -405,28 +448,42 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     onCloseMobile?.();
   }, [pathname, onCloseMobile]);
 
+  // Hides anything switched off in /configs, capped out by
+  // NEXT_PUBLIC_ALLOWED_FEATURES, or restricted for this user's group — the
+  // same union middleware.ts enforces.
   const groups = useMemo<NavGroupLinks[]>(() => {
-    const restricted = new Set(me?.restrictedFeatures ?? []);
-    const allowedEnv = process.env.NEXT_PUBLIC_ALLOWED_FEATURES;
-    const allowed = allowedEnv?.trim()
-      ? new Set(allowedEnv.split(",").map((s) => s.trim()))
-      : null;
+    const hidden = hiddenFeatureSet(me);
     const filter = (arr: readonly { href: string; label: string; Icon: React.ElementType }[]) =>
       arr.filter((l) => {
         const feature = pathToFeature(l.href);
-        if (!feature) return true;
-        if (allowed && !allowed.has(feature)) return false;
-        return !restricted.has(feature);
+        return !feature || !hidden.has(feature);
       });
-    const result = workspaceNavGroups.map((group) => ({
+    return workspaceNavGroups.map((group) => ({
       label: group.label,
       items: filter(group.items),
     }));
-    if (me?.role === "admin") {
-      result[result.length - 1].items = [...result[result.length - 1].items, adminLink];
+  }, [me]);
+
+  /**
+   * Team and Configs are not product modules, so no toggle hides them and they
+   * live in their own section — appending them to the last product group (as
+   * this used to) made them vanish whenever every module in that group was
+   * hidden.
+   */
+  const systemItems = useMemo<NavGroupLinks["items"]>(() => {
+    const items: NavGroupLinks["items"] = [];
+    if (me?.role === "admin") items.push({ ...adminLink });
+    if (me?.isConfigsAdmin) items.push({ ...configsLink });
+    return items;
+  }, [me?.role, me?.isConfigsAdmin]);
+
+  useEffect(() => {
+    // Only reachable routes — prefetching a hidden module just buys a redirect.
+    for (const group of groups) {
+      for (const { href } of group.items) router.prefetch(href);
     }
-    return result;
-  }, [me?.role, me?.restrictedFeatures]);
+    for (const { href } of systemItems) router.prefetch(href);
+  }, [router, groups, systemItems]);
 
   const signOut = useCallback(async () => {
     clearSecondaryFeaturePrefetchCache();
@@ -455,6 +512,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   return (
     <SidebarPanel
       groups={groups}
+      systemItems={systemItems}
       pathname={pathname}
       pendingHref={pendingHref}
       displayName={displayName}

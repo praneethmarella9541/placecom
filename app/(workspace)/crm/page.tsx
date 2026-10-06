@@ -8,6 +8,7 @@ import { CRM_MODELS, DEFAULT_CRM_SETTINGS, type CrmSettings } from "@/lib/crm-se
 import type { CrmStage } from "@/lib/crm-stages-types";
 import { CrmStageManager } from "@/components/CrmStageManager";
 import { CrmImportContactsModal } from "@/components/CrmImportContactsModal";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { CrmLeadModal, type CrmLead } from "@/components/CrmLeadModal";
 import { GmailDatePicker } from "@/components/GmailDatePicker";
 
@@ -35,6 +36,9 @@ export default function CRMPage() {
   const [error, setError] = useState<string | null>(null);
   const [managerOpen, setManagerOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  // Importing leads reads the contact book through /api/directory-contacts, so
+  // with Contacts switched off the picker would only ever show an empty list.
+  const contactsEnabled = useModuleVisibility().isVisible("contacts");
   const [classifying, setClassifying] = useState(false);
   const [lastRun, setLastRun] = useState<RunSummary | null>(null);
   const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
@@ -278,14 +282,16 @@ export default function CRMPage() {
               className="input-field h-9 w-[180px] pl-8 text-[12.5px]"
             />
           </div>
-          <button
-            type="button"
-            onClick={() => setImportOpen(true)}
-            className="btn-primary-copper h-9 gap-1.5 px-3 text-[12.5px]"
-          >
-            <UserPlus className="h-4 w-4" />
-            {titleCase("Import from contacts")}
-          </button>
+          {contactsEnabled && (
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="btn-primary-copper h-9 gap-1.5 px-3 text-[12.5px]"
+            >
+              <UserPlus className="h-4 w-4" />
+              {titleCase("Import from contacts")}
+            </button>
+          )}
           <button
             type="button"
             disabled={classifying || leads.length === 0}
@@ -365,17 +371,21 @@ export default function CRMPage() {
           </p>
           <p className="max-w-sm text-[13px] leading-relaxed text-[var(--color-text-muted)]">
             {titleCase(
-              "Pick people from your contact book — the classifier reads your mail with them and files each one into a column."
+              contactsEnabled
+                ? "Pick people from your contact book — the classifier reads your mail with them and files each one into a column."
+                : "Both ways of adding a lead read the contact book, so turn the Contacts module back on in /configs to populate this board."
             )}
           </p>
-          <button
-            type="button"
-            onClick={() => setImportOpen(true)}
-            className="btn-primary-copper mt-1 h-9 gap-1.5 px-4 text-[12.5px]"
-          >
-            <UserPlus className="h-4 w-4" />
-            {titleCase("Import from contacts")}
-          </button>
+          {contactsEnabled && (
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="btn-primary-copper mt-1 h-9 gap-1.5 px-4 text-[12.5px]"
+            >
+              <UserPlus className="h-4 w-4" />
+              {titleCase("Import from contacts")}
+            </button>
+          )}
         </div>
       )}
 
@@ -550,7 +560,7 @@ export default function CRMPage() {
         />
       )}
 
-      {importOpen && (
+      {importOpen && contactsEnabled && (
         <CrmImportContactsModal
           existingContactIds={existingContactIds}
           existingEmails={existingLeadEmails}

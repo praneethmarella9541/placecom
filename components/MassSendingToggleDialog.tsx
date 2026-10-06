@@ -2,13 +2,10 @@
 
 import { createPortal } from "react-dom";
 
-export type MassToggleDirection = "on" | "off" | "blocked";
+export type MassToggleDirection = "on" | "off";
 
 type Props = {
-  /**
-   * "on" = entering mass sending, "off" = leaving it, "blocked" = a variable
-   * was requested in a draft that cannot merge one yet.
-   */
+  /** "on" = entering mass sending, "off" = leaving it. */
   direction: MassToggleDirection;
   onCancel: () => void;
   onConfirm: () => void;
@@ -23,15 +20,10 @@ const COPY: Record<
     body: "Cc and Bcc recipients will be cleared.",
     confirm: "Convert to Mass send",
   },
-  blocked: {
-    title: "You can't add a variable here",
-    body:
-      "To send emails with variables, you either need to send to one recipient or enter mass sending mode.",
-    confirm: "Convert to Mass send",
-  },
   off: {
     title: "Turn off mass sending?",
-    body: "Your recipient list, subject and body will be removed, and variables can't be used.",
+    body:
+      "Your recipient list will be cleared. The draft stays — its variables fill in from whoever you send it to — unless it was written against an imported file, which goes with the list.",
     confirm: "Turn off",
   },
 };

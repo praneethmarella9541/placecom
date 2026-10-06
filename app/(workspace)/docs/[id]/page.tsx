@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, ExternalLink, Loader2, Share2 } from "lucide-react";
 import { titleCase } from "@/lib/title-case";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { DriveShareModal } from "@/components/DriveShareModal";
 
 type GrantState = { granted: boolean; alreadyShared: boolean; permissionId?: string };
@@ -27,6 +28,13 @@ type GrantState = { granted: boolean; alreadyShared: boolean; permissionId?: str
  * notices.
  */
 export default function DocPage() {
+  /**
+   * This page reaches into the Drive module twice, and neither is essential:
+   * the filename below is cosmetic, and the read-only preview is a fallback
+   * branch (the normal editor embeds Google directly). So Drive being off
+   * degrades those two things rather than disabling docs altogether.
+   */
+  const driveEnabled = useModuleVisibility().isVisible("drive");
   const params = useParams();
   const documentId = typeof params.id === "string" ? params.id : "";
 
@@ -88,17 +96,19 @@ export default function DocPage() {
 
     // Best-effort — only used for the Share modal's header text, so a
     // failure here shouldn't block opening the doc itself.
-    void fetch(`/api/drive/file/${encodeURIComponent(documentId)}?details=1`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { file?: { name?: string } } | null) => {
-        if (!cancelled && data?.file?.name) setFileName(data.file.name);
-      })
-      .catch(() => {});
+    if (driveEnabled) {
+      void fetch(`/api/drive/file/${encodeURIComponent(documentId)}?details=1`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data: { file?: { name?: string } } | null) => {
+          if (!cancelled && data?.file?.name) setFileName(data.file.name);
+        })
+        .catch(() => {});
+    }
 
     return () => {
       cancelled = true;
     };
-  }, [documentId]);
+  }, [documentId, driveEnabled]);
 
   // Revoke on leaving — see the two signals detailed in the effect below.
   useEffect(() => {
@@ -156,18 +166,20 @@ export default function DocPage() {
           {titleCase("Docs")}
         </p>
         <div className="flex-1" />
-        <button
-          type="button"
-          data-testid="doc-share-btn"
-          onClick={() => setShareOpen(true)}
-          className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[var(--color-border)] px-3.5 text-[13px] font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
-        >
-          <Share2 className="h-3.5 w-3.5" strokeWidth={2} />
-          {titleCase("Share")}
-        </button>
+        {driveEnabled && (
+          <button
+            type="button"
+            data-testid="doc-share-btn"
+            onClick={() => setShareOpen(true)}
+            className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-[var(--color-border)] px-3.5 text-[13px] font-medium text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+          >
+            <Share2 className="h-3.5 w-3.5" strokeWidth={2} />
+            {titleCase("Share")}
+          </button>
+        )}
       </div>
 
-      {shareOpen ? (
+      {shareOpen && driveEnabled ? (
         <DriveShareModal
           fileId={documentId}
           fileName={fileName || titleCase("this doc")}
@@ -201,12 +213,20 @@ export default function DocPage() {
           <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-2.5 text-[12.5px] text-[var(--color-text-muted)]">
             {titleCase("Read-only")} — {readOnlyNotice}
           </div>
-          <iframe
-            data-testid="doc-frame-readonly"
-            src={`/api/drive/file/${encodeURIComponent(documentId)}?mode=preview`}
-            className="flex-1 rounded-2xl border border-[var(--color-border)] bg-white"
-            title={titleCase("Google Docs (read-only preview)")}
-          />
+          {driveEnabled ? (
+            <iframe
+              data-testid="doc-frame-readonly"
+              src={`/api/drive/file/${encodeURIComponent(documentId)}?mode=preview`}
+              className="flex-1 rounded-2xl border border-[var(--color-border)] bg-white"
+              title={titleCase("Google Docs (read-only preview)")}
+            />
+          ) : (
+            <div className="flex flex-1 items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-8 text-center text-[13px] text-[var(--color-text-muted)]">
+              {titleCase(
+                "The read-only preview is served through Drive, which is switched off for this workspace. Ask an admin to enable Drive, or open the file in Google directly.",
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <iframe

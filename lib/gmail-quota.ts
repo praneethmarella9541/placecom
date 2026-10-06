@@ -48,6 +48,7 @@ export const GMAIL_COST = {
   threadsModify: 10,
   messagesList: 5,
   messagesGet: 5,
+  messagesModify: 5,
   messagesSend: 100,
   attachmentsGet: 5,
   draftsList: 5,

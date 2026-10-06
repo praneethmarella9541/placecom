@@ -6863,12 +6863,13 @@ export default function InboxPage() {
                 setMassImportError(null);
                 setReviewEmail(null);
                 // Variables differ per source, so fallbacks typed against the
-                // old set would silently attach to unrelated keys — and any
-                // draft written with them would carry tokens the new source
-                // cannot fill. Both start clean.
+                // old set would silently attach to unrelated keys and start
+                // clean. The subject and body are kept: what the user typed is
+                // theirs, and a `{token}` the new source cannot fill is already
+                // handled — tinted until a file arrives, flagged red once it
+                // has, and offered a fallback on review (see
+                // unknownPlaceholders) — while in contact mode it is prose.
                 setVariableFallbacks({});
-                setComposeSubject("");
-                setComposeBody("");
               }}
               imported={massImport}
               onImportFile={(file) => void importMassFile(file)}

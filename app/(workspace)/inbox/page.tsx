@@ -1716,7 +1716,6 @@ export default function InboxPage() {
       setComposeBcc("");
       setComposeCcBccOpen(false);
     } else {
-      const wasImport = massSource === "import";
       setMassRecipients([]);
       setMassSource("contacts");
       setMassImport(null);
@@ -1728,16 +1727,12 @@ export default function InboxPage() {
       // and the effect that maintains it stops here — so it has to be cleared
       // explicitly, or the audience survives as a plain address list.
       setComposeTo("");
-      // Only an imported campaign's draft has to go. Its `{column}` tokens have
-      // nothing behind them once the file is gone, so the text cannot be saved.
-      // A contact-card draft survives: its variables merge against a single
-      // recipient's card just as well as against a list of them.
-      if (wasImport) {
-        setComposeSubject("");
-        setComposeBody("");
-      }
+      // The subject and body are kept, imported campaign or not: what the user
+      // typed is theirs, and in ordinary compose a leftover `{column}` token is
+      // just prose (unknownPlaceholders is "ignore" there), so nothing is
+      // stranded without a source.
     }
-  }, [massSource]);
+  }, []);
 
   /**
    * Pull a saved template into the open draft.

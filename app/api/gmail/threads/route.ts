@@ -37,6 +37,46 @@ export async function GET(request: Request) {
     Math.max(5, parseInt(searchParams.get("maxResults") || "25", 10) || 25)
   );
 
+  // Search only: send the list as soon as Gmail returns it, then each row as its
+  // header resolves, instead of holding the response for every per-row fetch.
+  if (searchParams.get("stream") === "1" && folder !== "drafts") {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      async start(controller) {
+        const send = (obj: unknown) =>
+          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        try {
+          const page = await listThreadsPage(auth.accessToken, {
+            folder,
+            maxResults,
+            pageToken,
+            searchQuery,
+            labelId,
+            mailboxKey: auth.mailboxOwnerId,
+            onSkeleton: (p) => send({ type: "list", ...p }),
+            onRow: (row) => send({ type: "row", row }),
+          });
+          // Final, date-sorted order — the client swaps it in once everything has arrived.
+          send({ type: "done", threads: page.threads, nextPageToken: page.nextPageToken });
+        } catch (e) {
+          const err = e as Error & { code?: string };
+          send({
+            type: "error",
+            error:
+              err.code === "UNAUTHORIZED"
+                ? "Google token expired. Sign in again."
+                : err.message || "Failed to list threads",
+          });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(body, {
+      headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" },
+    });
+  }
+
   try {
     const page =
       folder === "drafts"

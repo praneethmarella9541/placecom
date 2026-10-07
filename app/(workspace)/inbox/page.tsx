@@ -168,7 +168,61 @@ type ThreadRow = {
   hasAttachments?: boolean;
   hasCalendarInvite?: boolean;
   historyId?: string;
+  /** Streamed search row whose subject/from/date are still being fetched. */
+  pending?: boolean;
 };
+
+/**
+ * Reads the NDJSON search stream from /api/gmail/threads?stream=1: a `list` line
+ * (skeleton rows), a `row` line per resolved row, then `done` with the final
+ * date-sorted page. `onProgress` gets the list as it fills in; the return value
+ * is the final page.
+ */
+async function readThreadStream(
+  res: Response,
+  onProgress: (rows: ThreadRow[]) => void
+): Promise<{ threads: ThreadRow[]; nextPageToken?: string }> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("Failed to load inbox");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let rows: ThreadRow[] = [];
+  let final: { threads: ThreadRow[]; nextPageToken?: string } | null = null;
+
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    const msg = JSON.parse(line) as
+      | { type: "list"; threads: ThreadRow[] }
+      | { type: "row"; row: ThreadRow }
+      | { type: "done"; threads: ThreadRow[]; nextPageToken?: string }
+      | { type: "error"; error: string };
+    if (msg.type === "list") {
+      rows = msg.threads;
+      onProgress(rows);
+    } else if (msg.type === "row") {
+      rows = rows.map((r) => (r.id === msg.row.id ? msg.row : r));
+      onProgress(rows);
+    } else if (msg.type === "done") {
+      final = { threads: msg.threads, nextPageToken: msg.nextPageToken };
+    } else if (msg.type === "error") {
+      throw new Error(msg.error);
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      handle(buffer.slice(0, nl));
+      buffer = buffer.slice(nl + 1);
+    }
+    if (done) break;
+  }
+  handle(buffer);
+  if (!final) throw new Error("Failed to load inbox");
+  return final;
+}
 
 function threadIdsForPrefetch(rows: ThreadRow[]): string[] {
   return rows.filter((t) => !t.draftId).map((t) => t.id);
@@ -1173,6 +1227,10 @@ export default function InboxPage() {
 
   const prefetchBodiesForRows = useCallback(
     (rows: ThreadRow[], opts?: { forceRefresh?: boolean; append?: boolean }) => {
+      // Search results are one-off lists the user is scanning, not a folder they
+      // will click through — full-body fetches (10 units each) would only queue
+      // behind, and slow, the search's own per-row metadata calls.
+      if (mailSearch.trim()) return;
       const ids = threadIdsForPrefetch(rows);
       if (!ids.length || MAIL_THREAD_PREFETCH_DISABLED) return;
       void prefetchMailThreadBodies(ids, {
@@ -1183,7 +1241,7 @@ export default function InboxPage() {
         landing: true,
       });
     },
-    []
+    [mailSearch]
   );
 
   const warmBodiesFromListCacheKey = useCallback(
@@ -2672,9 +2730,12 @@ export default function InboxPage() {
               : folder === "allmail"
                 ? "allmail"
                 : folder;
-      const params = new URLSearchParams({ folder: apiFolder, maxResults: mailSearch ? "100" : "25" });
+      const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
+      // First page of a search streams its rows in as they resolve.
+      const streaming = Boolean(mailSearch) && !opts.append;
+      if (streaming) params.set("stream", "1");
       // When a search query is active, drop the category/label filter so results
       // match all mail — exactly like Gmail's own search bar behaviour.
       if (effectiveLabelId && !mailSearch) params.set("labelId", effectiveLabelId);
@@ -2730,7 +2791,17 @@ export default function InboxPage() {
           cache: "no-store",
           signal: fetchSignal,
         });
-        const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
+        const data = (
+          streaming && res.ok
+            ? await readThreadStream(res, (rows) => {
+                // Only when nothing was on screen already — over cached rows this
+                // would swap real rows for placeholders.
+                if (listWasVisible || !isActiveListView()) return;
+                setLoadingList(false);
+                setThreads(rows);
+              })
+            : await res.json()
+        ) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
         if (!res.ok) throw new Error(data.error || "Failed to load inbox");
         const incoming = data.threads || [];
 
@@ -6242,9 +6313,9 @@ export default function InboxPage() {
                         <p className="min-w-0 truncate pl-5 text-[13px] text-[var(--color-text-muted)]">
                           <span className={isUnread ? "font-semibold text-[var(--color-text)]" : undefined}>
                             {searchHighlight.length > 0 ? (
-                              <SearchHighlight text={t.subject || "(no subject)"} terms={searchHighlight} />
+                              <SearchHighlight text={t.pending ? "Loading…" : t.subject || "(no subject)"} terms={searchHighlight} />
                             ) : (
-                              t.subject || "(no subject)"
+                              t.pending ? "Loading…" : t.subject || "(no subject)"
                             )}
                           </span>
                           {t.snippet ? (
@@ -6330,9 +6401,9 @@ export default function InboxPage() {
                             <span className="min-w-0 flex-1 truncate text-[12.5px]">
                               <span className={cn(isUnread ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]")}>
                                 {searchHighlight.length > 0 ? (
-                                  <SearchHighlight text={t.subject || "(no subject)"} terms={searchHighlight} />
+                                  <SearchHighlight text={t.pending ? "Loading…" : t.subject || "(no subject)"} terms={searchHighlight} />
                                 ) : (
-                                  t.subject || "(no subject)"
+                                  t.pending ? "Loading…" : t.subject || "(no subject)"
                                 )}
                               </span>
                               {t.snippet ? (

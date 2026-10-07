@@ -22,6 +22,8 @@ export type MailThreadListItem = {
 export type MailListCacheSnapshot = {
   threads: MailThreadListItem[];
   nextPageToken?: string;
+  /** When this list was fetched (ms epoch) — lets a tab switch skip a redundant refetch. */
+  fetchedAt?: number;
 };
 
 const STORAGE_KEY = "placecom:mail-list-views";
@@ -82,7 +84,11 @@ export function hydrateMailListSessionCache(): Map<string, MailListCacheSnapshot
       changed = true;
       continue;
     }
-    out.set(key, { threads: entry.threads, nextPageToken: entry.nextPageToken });
+    out.set(key, {
+      threads: entry.threads,
+      nextPageToken: entry.nextPageToken,
+      fetchedAt: entry.fetchedAt,
+    });
   }
 
   if (changed) writeStore(store);

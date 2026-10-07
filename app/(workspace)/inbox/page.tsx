@@ -106,12 +106,14 @@ import {
   formatMessageRecipientsLine,
 } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
+import { mailPerfBegin, mailPerfFirstPaint, mailPerfComplete } from "@/lib/mail-perf";
 import {
   buildMailListCacheKey,
   clearMailListSessionCache,
   getMailListSessionCache,
   prefetchMailListViewIfMissing,
   prefetchMailListViews,
+  isMailListFresh,
   setMailListCache,
 } from "@/lib/inbox-list-prefetch";
 import {
@@ -171,6 +173,11 @@ type ThreadRow = {
   /** Streamed search row whose subject/from/date are still being fetched. */
   pending?: boolean;
 };
+
+/** Rows whose bodies are prefetched when a folder/tab is landed on. */
+const LANDING_BODY_PREFETCH_MAX = 6;
+/** How long the user must stay on a view before its bodies are prefetched. */
+const LANDING_BODY_PREFETCH_DELAY_MS = 600;
 
 /**
  * Reads the NDJSON search stream from /api/gmail/threads?stream=1: a `list` line
@@ -1225,14 +1232,33 @@ export default function InboxPage() {
     setFilterOpen(false);
   }, [clearFilter]);
 
+  const landingPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const prefetchBodiesForRows = useCallback(
     (rows: ThreadRow[], opts?: { forceRefresh?: boolean; append?: boolean }) => {
       // Search results are one-off lists the user is scanning, not a folder they
       // will click through — full-body fetches (10 units each) would only queue
       // behind, and slow, the search's own per-row metadata calls.
       if (mailSearch.trim()) return;
-      const ids = threadIdsForPrefetch(rows);
-      if (!ids.length || MAIL_THREAD_PREFETCH_DISABLED) return;
+      const allIds = threadIdsForPrefetch(rows);
+      if (!allIds.length || MAIL_THREAD_PREFETCH_DISABLED) return;
+      if (!opts?.append) {
+        // A folder/tab landing: only the top rows (the ones opened first), and
+        // only once the user has stayed — clicking through tabs quickly cancels
+        // the previous tab's prefetch instead of queuing it ahead of the next
+        // tab's own list fetch. Other rows load on hover/click.
+        if (landingPrefetchTimerRef.current) clearTimeout(landingPrefetchTimerRef.current);
+        const ids = allIds.slice(0, LANDING_BODY_PREFETCH_MAX);
+        landingPrefetchTimerRef.current = setTimeout(() => {
+          landingPrefetchTimerRef.current = null;
+          void prefetchMailThreadBodies(ids, {
+            forceRefresh: opts?.forceRefresh,
+            landing: true,
+          });
+        }, LANDING_BODY_PREFETCH_DELAY_MS);
+        return;
+      }
+      const ids = allIds;
       void prefetchMailThreadBodies(ids, {
         // Left to prefetchMailThreadBodies' own cap — passing 12 here was what
         // overrode it and put a folder switch's whole first screen in flight.
@@ -2733,8 +2759,9 @@ export default function InboxPage() {
       const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
-      // First page of a search streams its rows in as they resolve.
-      const streaming = Boolean(mailSearch) && !opts.append;
+      // First page of any list (search or folder/tab) streams its rows in as they
+      // resolve. Drafts come from a different Gmail call and aren't streamed.
+      const streaming = !opts.append && apiFolder !== "drafts";
       if (streaming) params.set("stream", "1");
       // When a search query is active, drop the category/label filter so results
       // match all mail — exactly like Gmail's own search bar behaviour.
@@ -2748,7 +2775,9 @@ export default function InboxPage() {
       let listWasVisible = false;
 
       let loadGen = listLoadGenRef.current;
+      let perfId = 0;
       if (!opts.append) {
+        perfId = mailPerfBegin(mailSearch ? "search" : "tab", mailSearch ? "search" : cacheKey);
         loadGen = ++listLoadGenRef.current;
         activeListCacheKeyRef.current = cacheKey;
         listFetchAbortRef.current?.abort();
@@ -2771,11 +2800,16 @@ export default function InboxPage() {
           bumpHistoryAnchorFromThreads(latestHistoryIdRef, cached.threads);
           setLoadingList(false);
           listWasVisible = true;
+          mailPerfFirstPaint(perfId, "cache");
           void prefetchBodiesForRows(cached.threads, {
             forceRefresh: opts.forceRefresh,
           });
           const sinceMutation = Date.now() - lastMutationAtRef.current;
-          if (!opts.forceRefresh && sinceMutation < MUTATION_COOLDOWN_MS) {
+          // A list fetched under a minute ago is already current (new mail is
+          // picked up by the history poll) — re-fetching it on every tab switch
+          // just spends ~260 quota units to swap in identical rows.
+          if (!opts.forceRefresh && (sinceMutation < MUTATION_COOLDOWN_MS || isMailListFresh(cached))) {
+            mailPerfComplete(perfId, cached.threads.length);
             return;
           }
         } else if (opts.forceRefresh) {
@@ -2797,6 +2831,7 @@ export default function InboxPage() {
                 // Only when nothing was on screen already — over cached rows this
                 // would swap real rows for placeholders.
                 if (listWasVisible || !isActiveListView()) return;
+                mailPerfFirstPaint(perfId, "network");
                 setLoadingList(false);
                 setThreads(rows);
               })
@@ -2844,6 +2879,10 @@ export default function InboxPage() {
         }
         if (isActiveListView()) {
           setNextPageToken(data.nextPageToken);
+        }
+        if (!opts.append) {
+          mailPerfFirstPaint(perfId, "network");
+          mailPerfComplete(perfId, incoming.length);
         }
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;

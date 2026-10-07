@@ -31,6 +31,13 @@ export const MAIL_THREAD_PREFETCH_DISABLED =
 const BODY_PREFETCH_CONCURRENCY = 2;
 const MAIL_LIST_PAGE_SIZE = 25;
 /**
+ * Bodies pre-fetched per warmed view at login. Each is a 10-unit threads.get, so
+ * the whole first page (25) per view spent hundreds of units before the user
+ * clicked anything; the top rows are the ones opened first, and any other row
+ * is fetched on hover/click.
+ */
+const BULK_BODY_WARM_PER_CATEGORY = 10;
+/**
  * A full-body prefetch is `threads.get?format=full` — 10 quota units each.
  * At 12 the lead batch alone spent 120 units the instant a folder changed, and
  * it ran *alongside* the rest batch, so a single tab click could put 18 calls
@@ -251,7 +258,7 @@ export async function prefetchMailBodiesForWarmedCategories(opts?: {
   if (!beginMailBodyPrefetchWarm({ force: opts?.force })) return;
 
   try {
-    const threadIds = collectThreadIdsFromWarmedMailLists(opts?.perCategory ?? MAIL_LIST_PAGE_SIZE);
+    const threadIds = collectThreadIdsFromWarmedMailLists(opts?.perCategory ?? BULK_BODY_WARM_PER_CATEGORY);
     if (!threadIds.length) return;
 
     const concurrency = opts?.concurrency ?? BODY_PREFETCH_CONCURRENCY;

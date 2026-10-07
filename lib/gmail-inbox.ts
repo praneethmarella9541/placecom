@@ -533,13 +533,12 @@ export async function listThreadsPage(
     options.priority,
     options.onRow
   );
-  if (isSearch) {
-    // Splits a slow search into "Gmail list call" vs "per-row header fetches" (which
-    // includes time queued in the quota bucket) — the two have different fixes.
-    console.log(
-      `[mail-search] list=${listMs}ms rows=${Date.now() - startedAt - listMs}ms n=${rawThreads.length}`
-    );
-  }
+  // Splits a slow load into "Gmail list call" vs "per-row header fetches" (which
+  // includes time queued in the quota bucket) — the two have different fixes.
+  console.log(
+    `[${isSearch ? "mail-search" : "mail-list"}] ${options.folder}${options.labelId ? `/${options.labelId}` : ""} ` +
+      `list=${listMs}ms rows=${Date.now() - startedAt - listMs}ms n=${rawThreads.length}`
+  );
 
   // Gmail's own order (from data.threads above) ranks a thread by when it last
   // touched the requested label — for the Inbox tab, that's "last INBOX

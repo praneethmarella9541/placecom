@@ -8,6 +8,10 @@ import { Skeleton } from "@/components/Skeleton";
 import { PasswordInput } from "@/components/PasswordInput";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { titleCase } from "@/lib/title-case";
+import { NOT_IN_TEAM_MESSAGE } from "@/lib/team-membership";
+
+/** name@domain.tld — stricter than "has an @", so "a@b" can't enable Send Link. */
+const MAGIC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/;
 import { IconMail } from "@/components/Icons";
 
 export default function HomePage() {
@@ -18,6 +22,9 @@ export default function HomePage() {
   const [roleLoading, setRoleLoading] = useState(false);
   const [authErrorBanner, setAuthErrorBanner] = useState<string | null>(null);
   const [staffEmail, setStaffEmail] = useState("");
+  // The magic-link panel has its own field: sharing staffEmail made whatever
+  // was typed there also appear in the password form above it.
+  const [magicEmail, setMagicEmail] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
   const [staffMsg, setStaffMsg] = useState<string | null>(null);
   const [staffMsgIsError, setStaffMsgIsError] = useState(false);
@@ -68,7 +75,14 @@ export default function HomePage() {
     let cancelled = false;
     setRoleLoading(true);
     void fetch("/api/me/mailbox")
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        // Signed in, but no admin has added this email to a team.
+        if (r.status === 403) {
+          window.location.replace("/no-access");
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
       .then((j: { role?: string } | null) => {
         if (cancelled) return;
         const nextRole = j?.role ?? null;
@@ -115,7 +129,7 @@ export default function HomePage() {
   }
 
   async function signInStaffEmail() {
-    const email = staffEmail.trim().toLowerCase();
+    const email = magicEmail.trim().toLowerCase();
     if (!email) {
       setStaffMsg("Enter your work email.");
       setStaffMsgIsError(true);
@@ -126,11 +140,17 @@ export default function HomePage() {
     const origin = window.location.origin;
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${origin}/auth/callback` },
+      // Only emails an admin has already added can get a link; an unknown
+      // address must not quietly become a new account.
+      options: { emailRedirectTo: `${origin}/auth/callback`, shouldCreateUser: false },
     });
     setStaffBusy(false);
     if (error) {
-      setStaffMsg(error.message);
+      setStaffMsg(
+        /signups? not allowed|not allowed for otp|user not found/i.test(error.message)
+          ? NOT_IN_TEAM_MESSAGE
+          : error.message
+      );
       setStaffMsgIsError(true);
       return;
     }
@@ -395,15 +415,15 @@ export default function HomePage() {
                     data-testid="auth-magic-email-input"
                     type="email"
                     autoComplete="email"
-                    value={staffEmail}
-                    onChange={(e) => setStaffEmail(e.target.value)}
+                    value={magicEmail}
+                    onChange={(e) => setMagicEmail(e.target.value)}
                     placeholder="you@company.com"
                     className="input-field landing-input bg-[var(--color-surface)]"
                   />
                   <button
                     data-testid="auth-magic-send-btn"
                     type="button"
-                    disabled={staffBusy}
+                    disabled={staffBusy || !MAGIC_EMAIL_RE.test(magicEmail.trim())}
                     onClick={() => void signInStaffEmail()}
                     className="btn-secondary mt-3 h-[42px] w-full"
                   >

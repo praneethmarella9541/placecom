@@ -4,12 +4,13 @@ import Link from "next/link";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Plus, Search, Trash2, UserRound } from "lucide-react";
+import { ChevronDown, Plus, Search, Trash2, Upload, UserRound } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconLinkedin, IconWhatsAppLogo } from "@/components/Icons";
 import { SyncedContactsSection } from "@/components/SyncedContactsSection";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
+import { ContactImportModal } from "@/components/ContactImportModal";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { armSyncedContactsInvalidation, warmSyncedContacts } from "@/lib/synced-contacts-prefetch";
 import { useModuleVisibility } from "@/lib/module-visibility";
@@ -22,8 +23,20 @@ type SortKey = "last_contacted" | "name" | "company";
 type Toast = { kind: "success" | "error"; text: string };
 const ALL = "All";
 
-/** Rows rendered per "load more" step — see the `visible` memo. */
-const PAGE_SIZE = 100;
+/** Rows per page of the directory table. */
+const PAGE_SIZE = 10;
+
+/** Page numbers to show: first, last and the current page's neighbours, with null marking a gap. */
+function pageWindow(current: number, total: number): (number | null)[] {
+  const pages = new Set([1, total, current - 1, current, current + 1]);
+  const sortedPages = Array.from(pages).filter((n) => n >= 1 && n <= total).sort((a, b) => a - b);
+  const out: (number | null)[] = [];
+  sortedPages.forEach((n, i) => {
+    if (i > 0 && n - sortedPages[i - 1] > 1) out.push(null);
+    out.push(n);
+  });
+  return out;
+}
 
 /** Remembers whether the auto-synced section was left open, per browser. */
 const SYNCED_OPEN_KEY = "contacts:synced-open";
@@ -49,6 +62,55 @@ function statusStyle(c: DirectoryContact): React.CSSProperties | undefined {
   return { backgroundColor: `${c.lead_stage_color}1A`, color: c.lead_stage_color };
 }
 
+/** Previous / numbered / Next controls, shown in the strip above the table. */
+function Pager({ current, total, onChange }: { current: number; total: number; onChange: (page: number) => void }) {
+  return (
+    <nav className="flex items-center gap-1" aria-label="Directory pages">
+      <button
+        type="button"
+        data-testid="directory-page-prev"
+        disabled={current === 1}
+        onClick={() => onChange(current - 1)}
+        className="btn-secondary h-8 px-3 text-[12.5px] disabled:opacity-50"
+      >
+        Previous
+      </button>
+      {pageWindow(current, total).map((n, i) =>
+        n === null ? (
+          <span key={`gap-${i}`} className="px-1 text-[12px] text-[var(--color-text-faint)]">
+            …
+          </span>
+        ) : (
+          <button
+            key={n}
+            type="button"
+            data-testid={`directory-page-${n}`}
+            aria-current={n === current ? "page" : undefined}
+            onClick={() => onChange(n)}
+            className={cn(
+              "h-8 min-w-8 rounded-lg px-2 text-[12.5px] font-semibold transition-colors",
+              n === current
+                ? "bg-[var(--color-copper)] text-white"
+                : "text-[var(--color-text-muted)] hover:bg-[var(--color-surface-offset)]"
+            )}
+          >
+            {n}
+          </button>
+        )
+      )}
+      <button
+        type="button"
+        data-testid="directory-page-next"
+        disabled={current === total}
+        onClick={() => onChange(current + 1)}
+        className="btn-secondary h-8 px-3 text-[12.5px] disabled:opacity-50"
+      >
+        Next
+      </button>
+    </nav>
+  );
+}
+
 /** Org-wide contact directory — filterable/sortable table, shared across every signed-in user/admin. */
 export function ContactDirectory() {
   // Row action deep-links into the WhatsApp thread for this number; the module
@@ -64,11 +126,11 @@ export function ContactDirectory() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingContact, setEditingContact] = useState<DirectoryContact | null>(null);
   const [formPrefill, setFormPrefill] = useState<DirectoryContactInput>(emptyContactForm);
-  const [busy, setBusy] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   /** Contact awaiting delete confirmation. */
   const [pendingDelete, setPendingDelete] = useState<DirectoryContact | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [page, setPage] = useState(1);
   // Starts closed so opening Contacts doesn't pay for the synced list's own
   // fetches and rows. Read from storage in an effect, not a useState
   // initializer, so the server and first client render agree.
@@ -162,18 +224,19 @@ export function ContactDirectory() {
   }, [filtered, sortKey]);
 
   /**
-   * The table used to render every row. A directory in the thousands meant
-   * thousands of <tr>s — each with an avatar component and its own effect —
-   * built on first paint before anything was interactive. Render a page at a
-   * time instead; filtering and sorting still run over the whole set, so
-   * search results aren't limited to what happens to be on screen.
+   * One page of rows at a time. Search, filters and sort still run over the
+   * whole directory (it's all loaded), so a search finds a contact on any
+   * page — paging only limits what is drawn. The page is clamped so deleting
+   * the last row of the last page lands on the new last page, not an empty one.
    */
-  const visible = useMemo(() => sorted.slice(0, visibleCount), [sorted, visibleCount]);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const visible = useMemo(() => sorted.slice(pageStart, pageStart + PAGE_SIZE), [sorted, pageStart]);
 
-  // Narrowing the result set should show the top of it, not wherever "load
-  // more" had been clicked to for the previous query.
+  // A new query starts at its first page, not wherever the last one was left.
   useEffect(() => {
-    setVisibleCount(PAGE_SIZE);
+    setPage(1);
   }, [search, companyFilter, designationFilter, tagFilter, sortKey]);
 
   function openAdd() {
@@ -199,18 +262,18 @@ export function ContactDirectory() {
     void reload();
   }
 
-  async function handleDelete(c: DirectoryContact) {
-    setBusy(true);
-    try {
-      await deleteContact(c.id);
-      setPendingDelete(null);
-    } catch (err) {
+  /**
+   * Closes the dialog at once — deleteContact already drops the row from the
+   * table optimistically, so waiting on the server (auth check, delete, lead
+   * cascade) only made the dialog sit on "Removing…". A failure puts the row
+   * back by reloading and says why.
+   */
+  function handleDelete(c: DirectoryContact) {
+    setPendingDelete(null);
+    deleteContact(c.id).catch((err) => {
       showToast({ kind: "error", text: err instanceof Error ? err.message : "Could not delete contact" });
-      // Close so the toast isn't stranded behind the dialog.
-      setPendingDelete(null);
-    } finally {
-      setBusy(false);
-    }
+      void reload();
+    });
   }
 
   return (
@@ -227,15 +290,26 @@ export function ContactDirectory() {
             className="input-field w-full pl-9 text-[13px]"
           />
         </div>
-        <button
-          data-testid="directory-add-btn"
-          type="button"
-          className="btn-primary-copper inline-flex items-center gap-2 px-4"
-          onClick={openAdd}
-        >
-          <Plus className="h-4 w-4" />
-          {titleCase("Add contact")}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            data-testid="directory-import-btn"
+            type="button"
+            className="btn-secondary inline-flex items-center gap-2 px-4"
+            onClick={() => setImportOpen(true)}
+          >
+            <Upload className="h-4 w-4" />
+            {titleCase("Import")}
+          </button>
+          <button
+            data-testid="directory-add-btn"
+            type="button"
+            className="btn-primary-copper inline-flex items-center gap-2 px-4"
+            onClick={openAdd}
+          >
+            <Plus className="h-4 w-4" />
+            {titleCase("Add contact")}
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -303,10 +377,20 @@ export function ContactDirectory() {
             <p className="mt-1 max-w-sm text-[13px] text-[var(--color-text-muted)]">
               Add a contact card and it will be visible to every teammate and admin.
             </p>
-            <button type="button" className="btn-primary-copper mt-5 inline-flex items-center gap-2" onClick={openAdd}>
-              <Plus className="h-4 w-4" />
-              {titleCase("Add your first contact")}
-            </button>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <button type="button" className="btn-primary-copper inline-flex items-center gap-2" onClick={openAdd}>
+                <Plus className="h-4 w-4" />
+                {titleCase("Add your first contact")}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-2"
+                onClick={() => setImportOpen(true)}
+              >
+                <Upload className="h-4 w-4" />
+                {titleCase("Import from CSV / Excel")}
+              </button>
+            </div>
           </div>
         ) : sorted.length === 0 ? (
           <p className="p-8 text-center text-[13px] text-[var(--color-text-muted)]">
@@ -314,6 +398,14 @@ export function ContactDirectory() {
           </p>
         ) : (
           <div className="overflow-x-auto">
+            {sorted.length > PAGE_SIZE && (
+              <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 py-2">
+                <span className="text-[12px] text-[var(--color-text-muted)]">
+                  {pageStart + 1}–{pageStart + visible.length} of {sorted.length.toLocaleString()}
+                </span>
+                <Pager current={currentPage} total={totalPages} onChange={setPage} />
+              </div>
+            )}
             <table className="w-full text-left text-[13px]">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
@@ -322,7 +414,7 @@ export function ContactDirectory() {
                   <th className="px-4 py-3">{titleCase("Designation")}</th>
                   <th className="px-4 py-3">{titleCase("Email")}</th>
                   <th className="px-4 py-3">{titleCase("Status")}</th>
-                  <th className="px-4 py-3">{titleCase("Last contacted")}</th>
+                  {/* "Last contacted" column hidden for now; the data and sort option remain. */}
                   <th className="px-4 py-3">{titleCase("Links")}</th>
                   <th className="px-4 py-3" />
                 </tr>
@@ -369,9 +461,6 @@ export function ContactDirectory() {
                         {statusLabel(c)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">
-                      {new Date(c.last_contacted_at ?? c.updated_at).toLocaleDateString()}
-                    </td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <a
@@ -398,7 +487,6 @@ export function ContactDirectory() {
                       <button
                         data-testid={`directory-delete-${c.id}`}
                         type="button"
-                        disabled={busy}
                         className="btn-ghost inline-flex h-8 w-8 items-center justify-center rounded-lg p-0 text-[var(--color-danger)]"
                         title={titleCase("Delete")}
                         onClick={(e) => {
@@ -414,21 +502,6 @@ export function ContactDirectory() {
               </tbody>
             </table>
 
-            {visible.length < sorted.length && (
-              <div className="flex items-center justify-center gap-3 border-t border-[var(--color-border)] px-4 py-3">
-                <span className="text-[12px] text-[var(--color-text-muted)]">
-                  {titleCase(`Showing ${visible.length} of ${sorted.length}`)}
-                </span>
-                <button
-                  type="button"
-                  data-testid="directory-load-more"
-                  onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
-                  className="btn-secondary h-8 px-3 text-[12.5px]"
-                >
-                  {titleCase("Load more")}
-                </button>
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -474,6 +547,11 @@ export function ContactDirectory() {
         />
       )}
 
+      {importOpen && (
+        // The dialog reports the outcome itself; the table just needs the new rows.
+        <ContactImportModal existing={contacts} onClose={() => setImportOpen(false)} onImported={() => void reload()} />
+      )}
+
       {toast && (
         <div
           className={cn(
@@ -491,12 +569,11 @@ export function ContactDirectory() {
       {pendingDelete ? (
         <ConfirmDialog
           tone="danger"
-          busy={busy}
           title="Remove this contact?"
           body={`${pendingDelete.name} will be removed from the team directory.`}
-          confirmLabel={busy ? "Removing…" : "Remove contact"}
+          confirmLabel="Remove contact"
           cancelLabel="Keep it"
-          onConfirm={() => void handleDelete(pendingDelete)}
+          onConfirm={() => handleDelete(pendingDelete)}
           onCancel={() => setPendingDelete(null)}
         />
       ) : null}

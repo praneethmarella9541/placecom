@@ -38,6 +38,12 @@ export type DirectoryContact = {
   source_company?: string | null;
 };
 
+/** The saved contact a new or edited card would duplicate — enough to show it inline without leaving the form. */
+export type DuplicateContact = Pick<
+  DirectoryContact,
+  "id" | "name" | "email" | "phone" | "company" | "title" | "location" | "linkedin_url" | "tags"
+>;
+
 /** Any http(s) URL is accepted, but we nudge users toward an actual LinkedIn link. */
 export function isValidUrl(input: string): boolean {
   try {
@@ -62,7 +68,7 @@ export function normalizeLinkedInUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (/^linkedin\.com/i.test(trimmed)) return `https://${trimmed}`;
+  if (/^([a-z]{2,3}\.)?linkedin\.com/i.test(trimmed)) return `https://${trimmed}`;
   if (/^in\//i.test(trimmed)) return `https://linkedin.com/${trimmed}`;
   return trimmed;
 }

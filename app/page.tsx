@@ -137,6 +137,28 @@ export default function HomePage() {
     }
     setStaffMsg(null);
     setStaffBusy(true);
+
+    // Team members only — admins sign in with Google and get no link.
+    try {
+      const check = await fetch("/api/auth/forgot-password/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!check.ok) {
+        const j = (await check.json().catch(() => ({}))) as { error?: string };
+        setStaffBusy(false);
+        setStaffMsg(j.error || "Couldn't check that email. Try again.");
+        setStaffMsgIsError(true);
+        return;
+      }
+    } catch {
+      setStaffBusy(false);
+      setStaffMsg("Couldn't check that email. Try again.");
+      setStaffMsgIsError(true);
+      return;
+    }
+
     const origin = window.location.origin;
     const { error } = await supabase.auth.signInWithOtp({
       email,

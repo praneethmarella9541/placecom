@@ -24,3 +24,7 @@ export function mustSetPassword(user: { app_metadata?: unknown } | null | undefi
   const meta = user?.app_metadata as Record<string, unknown> | undefined;
   return meta?.[MUST_SET_PASSWORD_KEY] === true;
 }
+
+/** Shown when an admin account asks for a link — admins sign in with Google, the link is for team members. */
+export const ADMIN_USES_GOOGLE_MESSAGE =
+  "Admin accounts sign in with Google. Use Continue with Google instead.";

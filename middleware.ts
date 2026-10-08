@@ -16,6 +16,11 @@ import { isConfigsEmailAllowed, isConfigsEnabled, isConfigsPath } from "@/lib/co
 import { disabledFeaturesFromConfig } from "@/lib/module-config";
 import { NOT_IN_TEAM_MESSAGE, NO_ACCESS_PATH, isTeamMember } from "@/lib/team-membership";
 import {
+  SET_PASSWORD_API_PATH,
+  SET_PASSWORD_PATH,
+  mustSetPassword,
+} from "@/lib/password-setup";
+import {
   MODULE_CONFIG_STALE_COOKIE,
   loadModuleConfig,
 } from "@/lib/module-config-store";
@@ -89,6 +94,30 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const pathname = request.nextUrl.pathname;
+
+  // An account the "Forgot password?" link just signed in must choose a password
+  // before anything else — this is what makes the set-password page mandatory
+  // rather than something a signed-in person can walk past by typing /inbox.
+  // Only the page itself, its save endpoint and the auth callbacks stay open
+  // (plus static files, which carry no data).
+  if (user?.id && mustSetPassword(user)) {
+    const open =
+      pathname === SET_PASSWORD_PATH ||
+      pathname === SET_PASSWORD_API_PATH ||
+      pathname.startsWith("/auth/") ||
+      /\.[a-z0-9]+$/i.test(pathname);
+    if (open) return supabaseResponse;
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { error: "Choose a new password to continue.", code: "password_required" },
+        { status: 403 }
+      );
+    }
+    const url = request.nextUrl.clone();
+    url.pathname = SET_PASSWORD_PATH;
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
 
   // /configs is gated on the CONFIGS_ALLOWED_EMAILS allowlist alone — it is not
   // a product module, so it never runs through the feature checks below. This

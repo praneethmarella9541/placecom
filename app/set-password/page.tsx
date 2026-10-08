@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { PasswordInput } from "@/components/PasswordInput";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { createClient } from "@/lib/supabase";
-import { MIN_PASSWORD_LENGTH } from "@/lib/password-setup";
+import { MIN_PASSWORD_LENGTH, mustSetPassword } from "@/lib/password-setup";
 import { titleCase } from "@/lib/title-case";
 
 /**
@@ -30,7 +30,8 @@ export default function SetPasswordPage() {
         window.location.replace("/");
         return;
       }
-      if ((user.app_metadata as { provider?: string } | undefined)?.provider === "google") {
+      // Nothing to set: not signed in through a reset link (or already done).
+      if (!mustSetPassword(user)) {
         window.location.replace("/inbox");
         return;
       }
@@ -51,14 +52,24 @@ export default function SetPasswordPage() {
       return;
     }
     setBusy(true);
-    const { error: updateErr } = await supabase.auth.updateUser({ password });
-    if (updateErr) {
+    const res = await fetch("/api/me/set-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ newPassword: password }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) {
       setBusy(false);
-      setError(updateErr.message);
+      setError(data.error || "Couldn't save your password. Try again.");
       return;
     }
     setDone(true);
     window.setTimeout(() => window.location.replace("/inbox"), 1200);
+  }
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    window.location.replace("/");
   }
 
   if (!ready) return <main className="min-h-screen bg-[var(--color-bg)]" />;
@@ -79,7 +90,7 @@ export default function SetPasswordPage() {
               password to use the next time you sign in.
             </>
           ) : (
-            "Choose a password to use the next time you sign in."
+            "Choose a password to continue. You'll use it the next time you sign in."
           )}
         </p>
 
@@ -125,13 +136,14 @@ export default function SetPasswordPage() {
             >
               {busy ? titleCase("Saving…") : titleCase("Save password")}
             </button>
-            <a
-              href="/inbox"
-              data-testid="set-password-skip"
-              className="block text-center text-[13px] font-medium text-[#9a4510] hover:underline"
+            <button
+              type="button"
+              data-testid="set-password-signout"
+              onClick={() => void signOut()}
+              className="block w-full text-center text-[13px] font-medium text-[var(--color-text-muted)] hover:underline"
             >
-              Skip for now
-            </a>
+              Sign out
+            </button>
           </form>
         )}
       </div>

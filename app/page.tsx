@@ -8,6 +8,10 @@ import { Skeleton } from "@/components/Skeleton";
 import { PasswordInput } from "@/components/PasswordInput";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { titleCase } from "@/lib/title-case";
+import { NOT_IN_TEAM_MESSAGE } from "@/lib/team-membership";
+
+/** name@domain.tld — stricter than "has an @", so "a@b" can't enable Send Link. */
+const MAGIC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/;
 import { IconMail } from "@/components/Icons";
 
 export default function HomePage() {
@@ -18,6 +22,9 @@ export default function HomePage() {
   const [roleLoading, setRoleLoading] = useState(false);
   const [authErrorBanner, setAuthErrorBanner] = useState<string | null>(null);
   const [staffEmail, setStaffEmail] = useState("");
+  // The magic-link panel has its own field: sharing staffEmail made whatever
+  // was typed there also appear in the password form above it.
+  const [magicEmail, setMagicEmail] = useState("");
   const [staffPassword, setStaffPassword] = useState("");
   const [staffMsg, setStaffMsg] = useState<string | null>(null);
   const [staffMsgIsError, setStaffMsgIsError] = useState(false);
@@ -68,7 +75,14 @@ export default function HomePage() {
     let cancelled = false;
     setRoleLoading(true);
     void fetch("/api/me/mailbox")
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        // Signed in, but no admin has added this email to a team.
+        if (r.status === 403) {
+          window.location.replace("/no-access");
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
       .then((j: { role?: string } | null) => {
         if (cancelled) return;
         const nextRole = j?.role ?? null;
@@ -115,7 +129,7 @@ export default function HomePage() {
   }
 
   async function signInStaffEmail() {
-    const email = staffEmail.trim().toLowerCase();
+    const email = magicEmail.trim().toLowerCase();
     if (!email) {
       setStaffMsg("Enter your work email.");
       setStaffMsgIsError(true);
@@ -123,20 +137,48 @@ export default function HomePage() {
     }
     setStaffMsg(null);
     setStaffBusy(true);
+
+    // Team members only — admins sign in with Google and get no link.
+    try {
+      const check = await fetch("/api/auth/forgot-password/check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!check.ok) {
+        const j = (await check.json().catch(() => ({}))) as { error?: string };
+        setStaffBusy(false);
+        setStaffMsg(j.error || "Couldn't check that email. Try again.");
+        setStaffMsgIsError(true);
+        return;
+      }
+    } catch {
+      setStaffBusy(false);
+      setStaffMsg("Couldn't check that email. Try again.");
+      setStaffMsgIsError(true);
+      return;
+    }
+
     const origin = window.location.origin;
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${origin}/auth/callback` },
+      // Only emails an admin has already added can get a link; an unknown
+      // address must not quietly become a new account.
+      options: { emailRedirectTo: `${origin}/auth/callback`, shouldCreateUser: false },
     });
     setStaffBusy(false);
     if (error) {
-      setStaffMsg(error.message);
+      setStaffMsg(
+        /signups? not allowed|not allowed for otp|user not found/i.test(error.message)
+          ? NOT_IN_TEAM_MESSAGE
+          : error.message
+      );
       setStaffMsgIsError(true);
       return;
     }
     setStaffMsgIsError(false);
     setStaffMsg(
-      `${titleCase("Check your email for the sign-in link.")} Open it in this same browser, or copy the link from the email and paste it into this browser. Each new request sends a new link; old links can expire.`
+      `${titleCase("Check your email for the link.")} After you open it, you'll be asked to choose a new password. Open it in this same browser, or copy the link from the email and paste it into this browser. Each new request sends a new link; old links can expire.`
     );
   }
 
@@ -367,12 +409,26 @@ export default function HomePage() {
                 wrapperClassName="mt-3"
                 className="landing-input"
               />
+              <div className="mt-2 flex justify-end">
+                <button
+                  data-testid="auth-forgot-btn"
+                  type="button"
+                  onClick={() => {
+                    setMagicOpen(true);
+                    setMagicEmail((m) => staffEmail.trim() || m);
+                    setStaffMsg(null);
+                  }}
+                  className="text-[12.5px] font-medium text-[#9a4510] hover:underline"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <button
                 data-testid="auth-signin-btn"
                 type="button"
                 disabled={staffPwdBusy}
                 onClick={() => void signInStaffPassword()}
-                className="landing-btn-primary mt-4"
+                className="landing-btn-primary mt-3"
               >
                 {staffPwdBusy ? titleCase("Signing in…") : titleCase("Sign In")}
               </button>
@@ -380,34 +436,29 @@ export default function HomePage() {
                 Your admin creates this account for you.
               </p>
 
-              <button
-                data-testid="auth-magic-toggle"
-                type="button"
-                onClick={() => setMagicOpen((v) => !v)}
-                className="mt-4 w-full text-center text-[13px] font-medium text-[#9a4510] hover:underline"
-              >
-                Use magic link instead
-              </button>
-
               {magicOpen ? (
                 <div data-testid="auth-magic-panel" className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+                  <p className="mb-3 text-[13px] text-[var(--color-text-muted)]">
+                    Enter your work email. We&apos;ll email you a link, and you&apos;ll choose a new password after
+                    you open it.
+                  </p>
                   <input
                     data-testid="auth-magic-email-input"
                     type="email"
                     autoComplete="email"
-                    value={staffEmail}
-                    onChange={(e) => setStaffEmail(e.target.value)}
+                    value={magicEmail}
+                    onChange={(e) => setMagicEmail(e.target.value)}
                     placeholder="you@company.com"
                     className="input-field landing-input bg-[var(--color-surface)]"
                   />
                   <button
                     data-testid="auth-magic-send-btn"
                     type="button"
-                    disabled={staffBusy}
+                    disabled={staffBusy || !MAGIC_EMAIL_RE.test(magicEmail.trim())}
                     onClick={() => void signInStaffEmail()}
                     className="btn-secondary mt-3 h-[42px] w-full"
                   >
-                    {staffBusy ? titleCase("Sending…") : titleCase("Send Link")}
+                    {staffBusy ? titleCase("Sending…") : titleCase("Send Reset Link")}
                   </button>
                 </div>
               ) : null}

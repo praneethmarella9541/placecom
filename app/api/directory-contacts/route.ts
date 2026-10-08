@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { isValidE164, normalizePhone, phoneLookupVariants } from "@/lib/phone";
-import { isValidUrl, normalizeLinkedInUrl } from "@/lib/contact-directory";
+import { isLikelyLinkedInUrl, normalizeLinkedInUrl } from "@/lib/contact-directory";
 import type { DirectoryContact } from "@/lib/contact-directory";
 import { buildLeadMatchMaps } from "@/lib/lead-contact-match";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
+import { findDuplicateContact } from "@/lib/directory-duplicate";
 
 export const runtime = "nodejs";
 
@@ -19,6 +20,8 @@ type ContactInput = {
   location?: string;
   tags?: string[];
   notes?: string;
+  /** The user saw the duplicate warning and chose to save anyway. */
+  allowDuplicate?: boolean;
 };
 
 type ValidationResult =
@@ -60,7 +63,9 @@ function validateFields(body: ContactInput): ValidationResult {
     const linkedinRaw = body.linkedin_url.trim();
     if (linkedinRaw) {
       const normalized = normalizeLinkedInUrl(linkedinRaw);
-      if (!isValidUrl(normalized)) return { ok: false, error: "Enter a valid LinkedIn URL" };
+      if (!isLikelyLinkedInUrl(normalized)) {
+        return { ok: false, error: "This isn't a LinkedIn link. Use linkedin.com/in/…" };
+      }
       clean.linkedin_url = normalized;
     } else {
       clean.linkedin_url = null;
@@ -202,6 +207,19 @@ export async function POST(request: Request) {
 
   const validated = validateFields(body);
   if (!validated.ok) return NextResponse.json({ error: validated.error }, { status: 400 });
+
+  if (!body.allowDuplicate) {
+    const duplicate = await findDuplicateContact(supabase, {
+      email: validated.clean.email ?? null,
+      phone: validated.clean.phone ?? null,
+    });
+    if (duplicate) {
+      return NextResponse.json(
+        { error: "This contact is already in the directory", duplicate },
+        { status: 409 }
+      );
+    }
+  }
 
   const { data: profile, error: profileErr } = await supabase
     .from("profiles")

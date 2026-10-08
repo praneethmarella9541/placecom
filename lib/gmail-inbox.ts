@@ -46,6 +46,8 @@ export type ThreadListItem = {
    *  through the labels list to render chips. Excludes folder-state labels
    *  (INBOX/SENT/DRAFT/etc.) AND STARRED (which has its own icon). */
   labelIds?: string[];
+  /** Streamed skeleton row: id/snippet only, header fields still being fetched. */
+  pending?: boolean;
 };
 
 export type ThreadListPage = {
@@ -361,26 +363,29 @@ async function mapThreadsWithMeta(
   accessToken: string,
   rawThreads: { id: string; snippet?: string; historyId?: string }[],
   mailboxKey: string | undefined,
-  priority: GmailPriority | undefined
+  priority: GmailPriority | undefined,
+  /** Called as each row resolves, so a streaming caller can send it without waiting for the rest. */
+  onRow?: (row: ThreadListItem) => void
 ): Promise<ThreadListItem[]> {
   return Promise.all(
     rawThreads.map(async (t): Promise<ThreadListItem> => {
       const snippet = cleanMailSnippet(t.snippet || "");
       const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority);
-      if (!meta) {
-        return { id: t.id, snippet, subject: "", from: "", date: "", historyId: t.historyId };
-      }
-      return {
-        id: t.id,
-        snippet,
-        historyId: t.historyId,
-        ...meta,
-        hasCalendarInvite: isCalendarInviteThread({
-          subject: meta.subject,
-          from: meta.from,
-          snippet,
-        }),
-      };
+      const row: ThreadListItem = meta
+        ? {
+            id: t.id,
+            snippet,
+            historyId: t.historyId,
+            ...meta,
+            hasCalendarInvite: isCalendarInviteThread({
+              subject: meta.subject,
+              from: meta.from,
+              snippet,
+            }),
+          }
+        : { id: t.id, snippet, subject: "", from: "", date: "", historyId: t.historyId };
+      onRow?.(row);
+      return row;
     })
   );
 }
@@ -403,8 +408,13 @@ export async function listThreadsPage(
     mailboxKey?: string;
     /** "batch" lets background scans yield the reserve to interactive traffic. */
     priority?: GmailPriority;
+    /** Streaming callers: the list as soon as `threads.list` returns, rows still `pending`. */
+    onSkeleton?: (page: ThreadListPage) => void;
+    /** Streaming callers: each row as its header fetch resolves. */
+    onRow?: (row: ThreadListItem) => void;
   }
 ): Promise<ThreadListPage> {
+  const startedAt = Date.now();
   const rawUserQ = normalizeGmailSearchQuery(options.searchQuery || "");
   const userQ = rawUserQ;
   const isSearch = userQ.length > 0;
@@ -502,11 +512,32 @@ export async function listThreadsPage(
     rawThreads = merged.slice(0, requestedMax);
   }
 
+  const listMs = Date.now() - startedAt;
+  options.onSkeleton?.({
+    threads: rawThreads.map((t) => ({
+      id: t.id,
+      snippet: cleanMailSnippet(t.snippet || ""),
+      subject: "",
+      from: "",
+      date: "",
+      historyId: t.historyId,
+      pending: true,
+    })),
+    nextPageToken: nextPageTokenFromApi,
+  });
+
   const threads: ThreadListItem[] = await mapThreadsWithMeta(
     accessToken,
     rawThreads,
     options.mailboxKey,
-    options.priority
+    options.priority,
+    options.onRow
+  );
+  // Splits a slow load into "Gmail list call" vs "per-row header fetches" (which
+  // includes time queued in the quota bucket) — the two have different fixes.
+  console.log(
+    `[${isSearch ? "mail-search" : "mail-list"}] ${options.folder}${options.labelId ? `/${options.labelId}` : ""} ` +
+      `list=${listMs}ms rows=${Date.now() - startedAt - listMs}ms n=${rawThreads.length}`
   );
 
   // Gmail's own order (from data.threads above) ranks a thread by when it last

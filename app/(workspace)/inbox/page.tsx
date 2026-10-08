@@ -106,12 +106,14 @@ import {
   formatMessageRecipientsLine,
 } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
+import { mailPerfBegin, mailPerfFirstPaint, mailPerfComplete } from "@/lib/mail-perf";
 import {
   buildMailListCacheKey,
   clearMailListSessionCache,
   getMailListSessionCache,
   prefetchMailListViewIfMissing,
   prefetchMailListViews,
+  isMailListFresh,
   setMailListCache,
 } from "@/lib/inbox-list-prefetch";
 import {
@@ -138,6 +140,7 @@ import {
   IconCalendar,
   IconInfo,
 } from "@/components/Icons";
+import { allRecipients } from "@/lib/email-message-classify";
 
 /** User labels shown in the sidebar before the search box is needed. */
 const SIDEBAR_LABEL_LIMIT = 15;
@@ -168,7 +171,66 @@ type ThreadRow = {
   hasAttachments?: boolean;
   hasCalendarInvite?: boolean;
   historyId?: string;
+  /** Streamed search row whose subject/from/date are still being fetched. */
+  pending?: boolean;
 };
+
+/** Rows whose bodies are prefetched when a folder/tab is landed on. */
+const LANDING_BODY_PREFETCH_MAX = 6;
+/** How long the user must stay on a view before its bodies are prefetched. */
+const LANDING_BODY_PREFETCH_DELAY_MS = 600;
+
+/**
+ * Reads the NDJSON search stream from /api/gmail/threads?stream=1: a `list` line
+ * (skeleton rows), a `row` line per resolved row, then `done` with the final
+ * date-sorted page. `onProgress` gets the list as it fills in; the return value
+ * is the final page.
+ */
+async function readThreadStream(
+  res: Response,
+  onProgress: (rows: ThreadRow[]) => void
+): Promise<{ threads: ThreadRow[]; nextPageToken?: string }> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error("Failed to load inbox");
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let rows: ThreadRow[] = [];
+  let final: { threads: ThreadRow[]; nextPageToken?: string } | null = null;
+
+  const handle = (line: string) => {
+    if (!line.trim()) return;
+    const msg = JSON.parse(line) as
+      | { type: "list"; threads: ThreadRow[] }
+      | { type: "row"; row: ThreadRow }
+      | { type: "done"; threads: ThreadRow[]; nextPageToken?: string }
+      | { type: "error"; error: string };
+    if (msg.type === "list") {
+      rows = msg.threads;
+      onProgress(rows);
+    } else if (msg.type === "row") {
+      rows = rows.map((r) => (r.id === msg.row.id ? msg.row : r));
+      onProgress(rows);
+    } else if (msg.type === "done") {
+      final = { threads: msg.threads, nextPageToken: msg.nextPageToken };
+    } else if (msg.type === "error") {
+      throw new Error(msg.error);
+    }
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      handle(buffer.slice(0, nl));
+      buffer = buffer.slice(nl + 1);
+    }
+    if (done) break;
+  }
+  handle(buffer);
+  if (!final) throw new Error("Failed to load inbox");
+  return final;
+}
 
 function threadIdsForPrefetch(rows: ThreadRow[]): string[] {
   return rows.filter((t) => !t.draftId).map((t) => t.id);
@@ -347,6 +409,11 @@ type TrackingRow = {
   campaign_name: string | null;
   replied: boolean;
   bounced: boolean;
+  /** 0071: everyone it went to, and the addresses a delivery-failure notice named. */
+  to_address?: string | null;
+  cc_address?: string | null;
+  bcc_address?: string | null;
+  bounced_recipients?: string[] | null;
 };
 
 /**
@@ -635,13 +702,21 @@ function MessageBubble({
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                 {trackingRow && !isSelfSentEmail(m.from, m.to, m.cc, myEmail) && (
                   trackingRow.bounced ? (
-                    <span
-                      className="inline-flex items-center gap-1 rounded-full bg-[var(--color-danger-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-danger)]"
-                      title="Delivery failed"
-                    >
-                      <AlertTriangle className="h-3 w-3" />
-                      {titleCase("Bounced")}
-                    </span>
+                    (() => {
+                      // "Partly bounced" when only some recipients (To/CC/BCC) failed.
+                      const failed = trackingRow.bounced_recipients ?? [];
+                      const total = allRecipients(trackingRow).length;
+                      const partly = failed.length > 0 && total > failed.length;
+                      return (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-[var(--color-danger-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-danger)]"
+                          title={failed.length > 0 ? `Not delivered to ${failed.join(", ")}` : "Delivery failed"}
+                        >
+                          <AlertTriangle className="h-3 w-3" />
+                          {partly ? `${titleCase("Partly bounced")} · ${failed.length} of ${total}` : titleCase("Bounced")}
+                        </span>
+                      );
+                    })()
                   ) : trackingRow.opened ? (
                     <span
                       className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"
@@ -1171,10 +1246,33 @@ export default function InboxPage() {
     setFilterOpen(false);
   }, [clearFilter]);
 
+  const landingPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const prefetchBodiesForRows = useCallback(
     (rows: ThreadRow[], opts?: { forceRefresh?: boolean; append?: boolean }) => {
-      const ids = threadIdsForPrefetch(rows);
-      if (!ids.length || MAIL_THREAD_PREFETCH_DISABLED) return;
+      // Search results are one-off lists the user is scanning, not a folder they
+      // will click through — full-body fetches (10 units each) would only queue
+      // behind, and slow, the search's own per-row metadata calls.
+      if (mailSearch.trim()) return;
+      const allIds = threadIdsForPrefetch(rows);
+      if (!allIds.length || MAIL_THREAD_PREFETCH_DISABLED) return;
+      if (!opts?.append) {
+        // A folder/tab landing: only the top rows (the ones opened first), and
+        // only once the user has stayed — clicking through tabs quickly cancels
+        // the previous tab's prefetch instead of queuing it ahead of the next
+        // tab's own list fetch. Other rows load on hover/click.
+        if (landingPrefetchTimerRef.current) clearTimeout(landingPrefetchTimerRef.current);
+        const ids = allIds.slice(0, LANDING_BODY_PREFETCH_MAX);
+        landingPrefetchTimerRef.current = setTimeout(() => {
+          landingPrefetchTimerRef.current = null;
+          void prefetchMailThreadBodies(ids, {
+            forceRefresh: opts?.forceRefresh,
+            landing: true,
+          });
+        }, LANDING_BODY_PREFETCH_DELAY_MS);
+        return;
+      }
+      const ids = allIds;
       void prefetchMailThreadBodies(ids, {
         // Left to prefetchMailThreadBodies' own cap — passing 12 here was what
         // overrode it and put a folder switch's whole first screen in flight.
@@ -1183,7 +1281,7 @@ export default function InboxPage() {
         landing: true,
       });
     },
-    []
+    [mailSearch]
   );
 
   const warmBodiesFromListCacheKey = useCallback(
@@ -2672,9 +2770,13 @@ export default function InboxPage() {
               : folder === "allmail"
                 ? "allmail"
                 : folder;
-      const params = new URLSearchParams({ folder: apiFolder, maxResults: mailSearch ? "100" : "25" });
+      const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
       if (opts.pageToken) params.set("pageToken", opts.pageToken);
       if (mailSearch) params.set("search", mailSearch);
+      // First page of any list (search or folder/tab) streams its rows in as they
+      // resolve. Drafts come from a different Gmail call and aren't streamed.
+      const streaming = !opts.append && apiFolder !== "drafts";
+      if (streaming) params.set("stream", "1");
       // When a search query is active, drop the category/label filter so results
       // match all mail — exactly like Gmail's own search bar behaviour.
       if (effectiveLabelId && !mailSearch) params.set("labelId", effectiveLabelId);
@@ -2687,7 +2789,9 @@ export default function InboxPage() {
       let listWasVisible = false;
 
       let loadGen = listLoadGenRef.current;
+      let perfId = 0;
       if (!opts.append) {
+        perfId = mailPerfBegin(mailSearch ? "search" : "tab", mailSearch ? "search" : cacheKey);
         loadGen = ++listLoadGenRef.current;
         activeListCacheKeyRef.current = cacheKey;
         listFetchAbortRef.current?.abort();
@@ -2710,11 +2814,16 @@ export default function InboxPage() {
           bumpHistoryAnchorFromThreads(latestHistoryIdRef, cached.threads);
           setLoadingList(false);
           listWasVisible = true;
+          mailPerfFirstPaint(perfId, "cache");
           void prefetchBodiesForRows(cached.threads, {
             forceRefresh: opts.forceRefresh,
           });
           const sinceMutation = Date.now() - lastMutationAtRef.current;
-          if (!opts.forceRefresh && sinceMutation < MUTATION_COOLDOWN_MS) {
+          // A list fetched under a minute ago is already current (new mail is
+          // picked up by the history poll) — re-fetching it on every tab switch
+          // just spends ~260 quota units to swap in identical rows.
+          if (!opts.forceRefresh && (sinceMutation < MUTATION_COOLDOWN_MS || isMailListFresh(cached))) {
+            mailPerfComplete(perfId, cached.threads.length);
             return;
           }
         } else if (opts.forceRefresh) {
@@ -2730,7 +2839,18 @@ export default function InboxPage() {
           cache: "no-store",
           signal: fetchSignal,
         });
-        const data = (await res.json()) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
+        const data = (
+          streaming && res.ok
+            ? await readThreadStream(res, (rows) => {
+                // Only when nothing was on screen already — over cached rows this
+                // would swap real rows for placeholders.
+                if (listWasVisible || !isActiveListView()) return;
+                mailPerfFirstPaint(perfId, "network");
+                setLoadingList(false);
+                setThreads(rows);
+              })
+            : await res.json()
+        ) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
         if (!res.ok) throw new Error(data.error || "Failed to load inbox");
         const incoming = data.threads || [];
 
@@ -2773,6 +2893,10 @@ export default function InboxPage() {
         }
         if (isActiveListView()) {
           setNextPageToken(data.nextPageToken);
+        }
+        if (!opts.append) {
+          mailPerfFirstPaint(perfId, "network");
+          mailPerfComplete(perfId, incoming.length);
         }
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;
@@ -6242,9 +6366,9 @@ export default function InboxPage() {
                         <p className="min-w-0 truncate pl-5 text-[13px] text-[var(--color-text-muted)]">
                           <span className={isUnread ? "font-semibold text-[var(--color-text)]" : undefined}>
                             {searchHighlight.length > 0 ? (
-                              <SearchHighlight text={t.subject || "(no subject)"} terms={searchHighlight} />
+                              <SearchHighlight text={t.pending ? "Loading…" : t.subject || "(no subject)"} terms={searchHighlight} />
                             ) : (
-                              t.subject || "(no subject)"
+                              t.pending ? "Loading…" : t.subject || "(no subject)"
                             )}
                           </span>
                           {t.snippet ? (
@@ -6330,9 +6454,9 @@ export default function InboxPage() {
                             <span className="min-w-0 flex-1 truncate text-[12.5px]">
                               <span className={cn(isUnread ? "font-semibold text-[var(--color-text)]" : "text-[var(--color-text-muted)]")}>
                                 {searchHighlight.length > 0 ? (
-                                  <SearchHighlight text={t.subject || "(no subject)"} terms={searchHighlight} />
+                                  <SearchHighlight text={t.pending ? "Loading…" : t.subject || "(no subject)"} terms={searchHighlight} />
                                 ) : (
-                                  t.subject || "(no subject)"
+                                  t.pending ? "Loading…" : t.subject || "(no subject)"
                                 )}
                               </span>
                               {t.snippet ? (

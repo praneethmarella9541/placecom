@@ -14,6 +14,12 @@ import {
 } from "@/lib/middleware-access-cache";
 import { isConfigsEmailAllowed, isConfigsEnabled, isConfigsPath } from "@/lib/configs-access";
 import { disabledFeaturesFromConfig } from "@/lib/module-config";
+import { NOT_IN_TEAM_MESSAGE, NO_ACCESS_PATH, isTeamMember } from "@/lib/team-membership";
+import {
+  SET_PASSWORD_API_PATH,
+  SET_PASSWORD_PATH,
+  mustSetPassword,
+} from "@/lib/password-setup";
 import {
   MODULE_CONFIG_STALE_COOKIE,
   loadModuleConfig,
@@ -89,6 +95,30 @@ export async function middleware(request: NextRequest) {
 
   const pathname = request.nextUrl.pathname;
 
+  // An account the "Forgot password?" link just signed in must choose a password
+  // before anything else — this is what makes the set-password page mandatory
+  // rather than something a signed-in person can walk past by typing /inbox.
+  // Only the page itself, its save endpoint and the auth callbacks stay open
+  // (plus static files, which carry no data).
+  if (user?.id && mustSetPassword(user)) {
+    const open =
+      pathname === SET_PASSWORD_PATH ||
+      pathname === SET_PASSWORD_API_PATH ||
+      pathname.startsWith("/auth/") ||
+      /\.[a-z0-9]+$/i.test(pathname);
+    if (open) return supabaseResponse;
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        { error: "Choose a new password to continue.", code: "password_required" },
+        { status: 403 }
+      );
+    }
+    const url = request.nextUrl.clone();
+    url.pathname = SET_PASSWORD_PATH;
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+
   // /configs is gated on the CONFIGS_ALLOWED_EMAILS allowlist alone — it is not
   // a product module, so it never runs through the feature checks below. This
   // sits ahead of the signed-out early return on purpose: otherwise an
@@ -115,6 +145,13 @@ export async function middleware(request: NextRequest) {
   }
 
   if (!user?.id) return supabaseResponse;
+
+  // The sign-in page, auth callbacks and the no-access page itself must stay
+  // reachable for an account that isn't on a team, or it could never see why
+  // it was turned away (or sign out).
+  if (pathname === "/" || pathname === NO_ACCESS_PATH || pathname.startsWith("/auth/")) {
+    return supabaseResponse;
+  }
 
   const allowed = getAllowedFeatures();
 
@@ -155,20 +192,35 @@ export async function middleware(request: NextRequest) {
   if (!cached) {
     let { data: profile, error: profileErr } = await supabase
       .from("profiles")
-      .select("role, restricted_features, group_id")
+      .select("role, restricted_features, group_id, mailbox_owner_id")
       .eq("id", user.id)
       .maybeSingle();
 
     if (profileErr && /restricted_features|group_id/i.test(profileErr.message ?? "")) {
       const fallback = await supabase
         .from("profiles")
-        .select("role, restricted_features")
+        .select("role, restricted_features, mailbox_owner_id")
         .eq("id", user.id)
         .maybeSingle();
       profile = fallback.data as typeof profile;
       profileErr = fallback.error;
     }
-    if (profileErr || !profile) return supabaseResponse;
+    // A failed lookup says nothing about membership, so don't lock anyone out
+    // over it; a *missing* profile or team does.
+    if (profileErr) return supabaseResponse;
+    if (!isTeamMember(profile)) {
+      if (pathname.startsWith("/api/")) {
+        return NextResponse.json(
+          { error: NOT_IN_TEAM_MESSAGE, code: "not_in_team" },
+          { status: 403 }
+        );
+      }
+      const url = request.nextUrl.clone();
+      url.pathname = NO_ACCESS_PATH;
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+    if (!profile) return supabaseResponse;
 
     role = profile.role as string;
     groupId = (profile.group_id as string | null) ?? null;

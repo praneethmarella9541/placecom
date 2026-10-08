@@ -1,5 +1,4 @@
 import "server-only";
-import { Redis } from "@upstash/redis";
 
 /**
  * Shared Gmail quota governor.
@@ -7,39 +6,19 @@ import { Redis } from "@upstash/redis";
  * Gmail bills *quota units*, not requests, against a per-user "units per
  * minute" ceiling (the 403 `rateLimitExceeded` / `Total Query Cost` error).
  * Before this module every subsystem enforced its own private concurrency
- * constant — 12 in the inbox body prefetch, 8 in folder-counts, 5 in
- * last-mail-interaction, 4 in crm-evidence, 12 in the contact sync — with
- * nothing tracking the *sum*. Concurrency is the wrong knob anyway: eight
- * `threads.get` (10 units each) cost four times eight `labels.get` (1 unit).
+ * constant with nothing tracking the *sum*. Concurrency is the wrong knob
+ * anyway: eight `threads.get` (10 units each) cost four times eight
+ * `labels.get` (1 unit).
  *
  * So callers spend units through a token bucket keyed by mailbox, and the
  * bucket — not a per-caller constant — is what the quota sees.
  *
- * The bucket lives in Upstash Redis, not process memory. Reproduced twice
- * against real Gmail before this existed: two independent buckets (two
- * concurrent server instances, or just two separate script runs seconds
- * apart) each reasoned correctly about *their own* traffic and still drove
- * the account past its real ceiling, because neither could see what the
- * other — or the account's own very recent history — had already spent. A
- * single shared bucket in Redis is what makes "how much has this mailbox
- * spent recently" an actual fact instead of a per-process guess. Falls back
- * to an in-memory bucket (the old behavior, same blind spot) when
- * UPSTASH_REDIS_REST_URL/_TOKEN aren't set, so local dev works without Redis.
+ * The bucket lives in process memory. It used to live in Upstash Redis so
+ * several server instances shared one view of a mailbox's spend; that cost a
+ * network round trip on every Gmail call and was dropped. The trade-off: N warm
+ * instances serving the same mailbox each hold their own bucket, which is why
+ * the budget below stays well under the real ceiling.
  */
-
-function getRedis(): Redis | null {
-  // Vercel's own "KV" storage integration provisions Upstash under the hood
-  // but injects it as KV_REST_API_URL/_TOKEN, not the raw Upstash names — this
-  // project uses that path, so it's checked first; a directly-created Upstash
-  // database (not through Vercel) would use the plain UPSTASH_* names instead.
-  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  return new Redis({ url, token });
-}
-
-/** Built once — the client itself is a stateless REST wrapper, safe to reuse. */
-const redis = getRedis();
 
 /** Published unit costs of the Gmail methods this app calls. */
 export const GMAIL_COST = {
@@ -62,7 +41,12 @@ export const GMAIL_COST = {
 } as const;
 
 /**
- * Confirmed via Google Cloud Console → APIs & Services → Gmail API → Quotas
+ * Restored from 6,000 back to 15,000 units/min (reported by the project owner;
+ * re-check Console if unsure). PEAK_UNITS_PER_SEC below was raised 45 -> 80 so a
+ * 25-row search isn't spaced out at ~222ms per threads.get; earlier throttling
+ * happened at 90 and 200, so if 403s return, lower GMAIL_PEAK_UNITS_PER_SEC.
+ *
+ * Originally: confirmed via Google Cloud Console → APIs & Services → Gmail API → Quotas
  * (not the generic 250/sec figure Gmail's docs describe — this project's own
  * enforced number, which is what actually matters). This project's real
  * per-user ceiling was 15,000 units/min; it has since been reduced by Google
@@ -73,7 +57,7 @@ export const GMAIL_COST = {
  * real, lasting headroom. If this constant is out of date, re-check Console;
  * don't assume the generic Gmail docs number.
  */
-const GMAIL_ACCOUNT_UNITS_PER_MIN = 6000;
+const GMAIL_ACCOUNT_UNITS_PER_MIN = 15000;
 
 /**
  * Was 200, then 90, then 45 units/sec — each still produced real
@@ -87,7 +71,10 @@ const GMAIL_ACCOUNT_UNITS_PER_MIN = 6000;
  * much as this number. Kept at 45 as the sustained target; see BURST_SECONDS
  * below for the tightened burst-side change made alongside this.
  */
-const PEAK_UNITS_PER_SEC = 45;
+const PEAK_UNITS_PER_SEC = (() => {
+  const n = parseInt(process.env.GMAIL_PEAK_UNITS_PER_SEC || "", 10);
+  return Number.isFinite(n) && n >= 10 ? n : 80;
+})();
 
 /**
  * A bulk background job (the contact sync's mailbox backfill) has no one
@@ -264,105 +251,8 @@ function minGapMs(cost: number, priority: GmailPriority): number {
 }
 
 /**
- * Runs the whole check-refill-spend-with-pacing decision as one atomic Redis
- * operation. Doing this as a Lua script rather than separate GET/SET calls is
- * what makes it safe under real concurrency: two instances calling at the
- * same instant must not both read "tokens: 50, spend 40" and each decrement
- * from the same starting point — Redis runs one script to completion before
- * starting the next, so the read-modify-write is indivisible no matter how
- * many callers arrive together.
- *
- * Returns `{granted: true}` having already spent the tokens, or
- * `{granted: false, waitMs}` — the caller sleeps that long and calls again.
- * Mirrors the in-memory fallback's logic below field-for-field; keep both in
- * sync if the pacing/burst model ever changes.
- */
-const SPEND_SCRIPT = `
-local key = KEYS[1]
-local now = tonumber(ARGV[1])
-local want = tonumber(ARGV[2])
-local burst = tonumber(ARGV[3])
-local budget = tonumber(ARGV[4])
-local window = tonumber(ARGV[5])
-local minGap = tonumber(ARGV[6])
-local ttlSeconds = tonumber(ARGV[7])
-
-local data = redis.call('HMGET', key, 'tokens', 'lastRefillAt', 'lastGrantAt')
-local tokens = tonumber(data[1])
-local lastRefillAt = tonumber(data[2])
-local lastGrantAt = tonumber(data[3])
-
-if tokens == nil then
-  tokens = burst
-  lastRefillAt = now
-  lastGrantAt = 0
-end
-
-local elapsed = now - lastRefillAt
-if elapsed > 0 then
-  tokens = math.min(burst, tokens + (elapsed * budget) / window)
-  lastRefillAt = now
-end
-
-local sinceLastGrant = now - lastGrantAt
-
-if tokens >= want and sinceLastGrant >= minGap then
-  tokens = tokens - want
-  lastGrantAt = now
-  redis.call('HMSET', key, 'tokens', tostring(tokens), 'lastRefillAt', tostring(lastRefillAt), 'lastGrantAt', tostring(lastGrantAt))
-  redis.call('EXPIRE', key, ttlSeconds)
-  return {1, 0}
-end
-
-local waitForTokens = 0
-if tokens < want then
-  waitForTokens = math.ceil(((want - tokens) * window) / budget)
-end
-local waitForGap = 0
-if sinceLastGrant < minGap then
-  waitForGap = minGap - sinceLastGrant
-end
-
-redis.call('HMSET', key, 'tokens', tostring(tokens), 'lastRefillAt', tostring(lastRefillAt), 'lastGrantAt', tostring(lastGrantAt))
-redis.call('EXPIRE', key, ttlSeconds)
-return {0, math.max(waitForTokens, waitForGap)}
-`;
-
-/** Idle keys expire rather than persisting forever — a mailbox that goes quiet just cold-starts next time, same as the in-memory fallback would. */
-const BUCKET_TTL_SECONDS = 300;
-
-/**
- * Batch gets its own key, not just its own rate — a shared key would mean an
- * idle interactive lane still lets batch's tokens refill at interactive's
- * faster rate (they'd be reading/writing the same banked total), silently
- * undoing the slower pace. Separate keys means the two lanes' worst case is
- * additive (interactive's peak + batch's peak) rather than reserved from one
- * shared pool — deliberately, since batch's target is small enough that even
- * both lanes maxed out at once stays well under Gmail's documented ceiling.
- */
-function redisKeyFor(key: string, priority: GmailPriority): string {
-  return `gmail-quota:bucket:${key}:${priority}`;
-}
-
-async function spendViaRedis(client: Redis, key: string, want: number, priority: GmailPriority): Promise<void> {
-  const gapNeeded = minGapMs(want, priority);
-  for (;;) {
-    const [granted, waitMs] = (await client.eval(
-      SPEND_SCRIPT,
-      [redisKeyFor(key, priority)],
-      [Date.now(), want, burstCapacity(priority), budgetPerMinute(priority), REFILL_WINDOW_MS, gapNeeded, BUCKET_TTL_SECONDS]
-    )) as [number, number];
-    if (granted === 1) return;
-    await new Promise((r) => setTimeout(r, Math.max(1, Math.ceil(waitMs))));
-  }
-}
-
-/**
- * In-memory bucket path — used both as the local-dev fallback (no Redis
- * configured) and as the resilience fallback when Redis itself is down or
- * over its own plan limit (see redisDown below). Same cross-instance/
- * cold-start blind spot Redis was added to close, but a degraded governor
- * that still paces THIS process is far better than every Gmail call 500ing.
+ * Waits until `want` units are available for `key` and spends them, spacing grants
+ * at least `minGapMs` apart so the real instantaneous rate stays bounded.
  */
 function spendViaMemory(key: string, want: number, priority: GmailPriority): Promise<void> {
   const queuedAt = Date.now();
@@ -397,17 +287,6 @@ function spendViaMemory(key: string, want: number, priority: GmailPriority): Pro
 }
 
 /**
- * Once Redis errors (plan limit hit, network blip, outage), every call would
- * otherwise retry it and fail again immediately — paying Redis's round-trip
- * latency for a request we already know will fail, on the hot path of every
- * single Gmail call. Back off from Redis entirely for a cooldown window and
- * run on the in-memory bucket instead; re-probe after it elapses in case the
- * plan limit reset (Upstash's is monthly) or the outage cleared.
- */
-const REDIS_DOWN_COOLDOWN_MS = 60_000;
-let redisDownUntil = 0;
-
-/**
  * Block until `cost` units are available for `key`, then spend them.
  *
  * A cost larger than the whole budget would otherwise wait forever, so it is
@@ -423,28 +302,6 @@ export async function spendGmailQuota(
   priority: GmailPriority = "interactive"
 ): Promise<void> {
   const want = Math.min(Math.max(cost, 0), burstCapacity(priority));
-
-  if (redis && Date.now() >= redisDownUntil) {
-    try {
-      const queuedAt = Date.now();
-      await spendViaRedis(redis, key, want, priority);
-      const s = statsFor(key);
-      s.calls += 1;
-      s.waitMs += Date.now() - queuedAt;
-      return;
-    } catch (e) {
-      // Redis itself failed (plan limit, network, outage) — this must not
-      // surface as a 500 to every Gmail caller. Fall through to the
-      // in-memory bucket for this call, and skip Redis for a while so the
-      // rest of this burst doesn't pay for the same failure one call at a time.
-      redisDownUntil = Date.now() + REDIS_DOWN_COOLDOWN_MS;
-      console.warn(
-        `[gmail-quota] Redis unavailable, falling back to in-memory pacing for ${REDIS_DOWN_COOLDOWN_MS}ms: ${
-          e instanceof Error ? e.message : e
-        }`
-      );
-    }
-  }
 
   await spendViaMemory(key, want, priority);
 }
@@ -519,20 +376,12 @@ export async function fetchGmail(
 
     // We were throttled despite the bucket — the account's real usage ran
     // ahead of what this bucket knew about (another instance, another app, or
-    // simply Gmail's own moving-average window still being hot from very
-    // recent traffic). Draining now propagates to every instance sharing this
-    // Redis key, not just siblings in this process — the whole reason this
-    // moved out of local memory.
+    // Gmail's own moving-average window still hot from recent traffic). Drain
+    // it so the next calls wait instead of walking straight back into the wall.
     if (key) {
-      if (redis) {
-        await redis
-          .hset(redisKeyFor(key, priority), { tokens: "0", lastRefillAt: String(Date.now()) })
-          .catch(() => {});
-      } else {
-        const b = bucketFor(`${key}:${priority}`, priority);
-        refill(b, priority);
-        b.tokens = 0;
-      }
+      const b = bucketFor(`${key}:${priority}`, priority);
+      refill(b, priority);
+      b.tokens = 0;
     }
 
     const retryAfterHeader = res.headers.get("Retry-After");

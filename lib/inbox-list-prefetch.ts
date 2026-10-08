@@ -21,11 +21,11 @@ export type MailListPrefetchSpec = {
 /**
  * Views to warm after sign-in (empty search — matches inbox default).
  *
- * Kept deliberately short. Each spec is a `threads.list` PLUS one
+ * Kept deliberately short (Primary + Sent, the two most-used views). Each spec is a `threads.list` PLUS one
  * `threads.get` per row it returns, so a spec costs ~260 quota units at the
  * default page size — warming all twelve folder/category views spent the whole
  * per-minute budget before the user had clicked anything, and eleven of the
- * twelve were views they would probably never open. Primary and All Mail cover
+ * twelve were views they would probably never open. Primary and Sent cover
  * the overwhelming majority of first interactions; every other tab warms on
  * demand the moment it is selected, which is fast enough because the thread
  * metadata cache makes the overlapping rows free by then.
@@ -35,7 +35,7 @@ export type MailListPrefetchSpec = {
 const CORE_PREFETCH_SPECS: readonly MailListPrefetchSpec[] = [
   /** Default Primary tab on first paint after login. */
   { apiFolder: "inbox", labelId: "CATEGORY_PERSONAL" },
-  { apiFolder: "allmail" },
+  { apiFolder: "sent" },
 ];
 
 const WIDE_PREFETCH_SPECS: readonly MailListPrefetchSpec[] = [
@@ -74,8 +74,16 @@ export function getMailListSessionCache(): Map<string, MailListCacheSnapshot> {
 }
 
 export function setMailListCache(cacheKey: string, snapshot: MailListCacheSnapshot): void {
-  SESSION_CACHE.set(cacheKey, snapshot);
-  persistMailListSessionCache(cacheKey, snapshot);
+  const stamped = { ...snapshot, fetchedAt: Date.now() };
+  SESSION_CACHE.set(cacheKey, stamped);
+  persistMailListSessionCache(cacheKey, stamped);
+}
+
+/** A cached list younger than this is shown as-is on a tab switch, with no background refetch. */
+export const MAIL_LIST_FRESH_MS = 60_000;
+
+export function isMailListFresh(snapshot: MailListCacheSnapshot | undefined): boolean {
+  return Boolean(snapshot?.fetchedAt && Date.now() - snapshot.fetchedAt < MAIL_LIST_FRESH_MS);
 }
 
 /** Clear session list cache and cancel in-flight prefetches (manual refresh). */

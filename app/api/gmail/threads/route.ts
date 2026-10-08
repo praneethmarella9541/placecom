@@ -6,6 +6,9 @@ import {
   type MailFolder,
 } from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
+import { sweepBounceNotices } from "@/lib/bounce-detection";
+import { createServiceSupabase } from "@/lib/supabase-service";
+import type { ThreadListItem } from "@/lib/gmail-inbox";
 
 export const runtime = "nodejs";
 
@@ -37,6 +40,61 @@ export async function GET(request: Request) {
     Math.max(5, parseInt(searchParams.get("maxResults") || "25", 10) || 25)
   );
 
+  // Delivery-failure notices land in the inbox as their own threads; spotting
+  // them in the list being loaded anyway flags the email that bounced without
+  // anyone opening the notice (lib/bounce-detection.ts). First page of the
+  // inbox, all mail or sent (a notice Gmail threads into the original
+  // conversation shows there), never a search. Fire-and-forget.
+  const sweepNotices = (threads: ThreadListItem[]) => {
+    if (pageToken || searchQuery || (folder !== "inbox" && folder !== "allmail" && folder !== "sent")) return;
+    void sweepBounceNotices(createServiceSupabase(), {
+      accessToken: auth.accessToken,
+      mailboxOwnerId: auth.mailboxOwnerId,
+      threads,
+    });
+  };
+
+  // Search only: send the list as soon as Gmail returns it, then each row as its
+  // header resolves, instead of holding the response for every per-row fetch.
+  if (searchParams.get("stream") === "1" && folder !== "drafts") {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream({
+      async start(controller) {
+        const send = (obj: unknown) =>
+          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        try {
+          const page = await listThreadsPage(auth.accessToken, {
+            folder,
+            maxResults,
+            pageToken,
+            searchQuery,
+            labelId,
+            mailboxKey: auth.mailboxOwnerId,
+            onSkeleton: (p) => send({ type: "list", ...p }),
+            onRow: (row) => send({ type: "row", row }),
+          });
+          // Final, date-sorted order — the client swaps it in once everything has arrived.
+          send({ type: "done", threads: page.threads, nextPageToken: page.nextPageToken });
+          sweepNotices(page.threads);
+        } catch (e) {
+          const err = e as Error & { code?: string };
+          send({
+            type: "error",
+            error:
+              err.code === "UNAUTHORIZED"
+                ? "Google token expired. Sign in again."
+                : err.message || "Failed to list threads",
+          });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(body, {
+      headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" },
+    });
+  }
+
   try {
     const page =
       folder === "drafts"
@@ -54,6 +112,7 @@ export async function GET(request: Request) {
             labelId,
             mailboxKey: auth.mailboxOwnerId,
           });
+    if (folder !== "drafts") sweepNotices(page.threads);
     return NextResponse.json(
       { folder, threads: page.threads, nextPageToken: page.nextPageToken },
       { headers: { "Cache-Control": "no-store" } }

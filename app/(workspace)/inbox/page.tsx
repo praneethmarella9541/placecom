@@ -138,6 +138,7 @@ import {
   IconCalendar,
   IconInfo,
 } from "@/components/Icons";
+import { allRecipients } from "@/lib/email-message-classify";
 
 /** User labels shown in the sidebar before the search box is needed. */
 const SIDEBAR_LABEL_LIMIT = 15;
@@ -401,6 +402,11 @@ type TrackingRow = {
   campaign_name: string | null;
   replied: boolean;
   bounced: boolean;
+  /** 0071: everyone it went to, and the addresses a delivery-failure notice named. */
+  to_address?: string | null;
+  cc_address?: string | null;
+  bcc_address?: string | null;
+  bounced_recipients?: string[] | null;
 };
 
 /**
@@ -689,13 +695,21 @@ function MessageBubble({
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                 {trackingRow && !isSelfSentEmail(m.from, m.to, m.cc, myEmail) && (
                   trackingRow.bounced ? (
-                    <span
-                      className="inline-flex items-center gap-1 rounded-full bg-[var(--color-danger-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-danger)]"
-                      title="Delivery failed"
-                    >
-                      <AlertTriangle className="h-3 w-3" />
-                      {titleCase("Bounced")}
-                    </span>
+                    (() => {
+                      // "Partly bounced" when only some recipients (To/CC/BCC) failed.
+                      const failed = trackingRow.bounced_recipients ?? [];
+                      const total = allRecipients(trackingRow).length;
+                      const partly = failed.length > 0 && total > failed.length;
+                      return (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-full bg-[var(--color-danger-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-danger)]"
+                          title={failed.length > 0 ? `Not delivered to ${failed.join(", ")}` : "Delivery failed"}
+                        >
+                          <AlertTriangle className="h-3 w-3" />
+                          {partly ? `${titleCase("Partly bounced")} · ${failed.length} of ${total}` : titleCase("Bounced")}
+                        </span>
+                      );
+                    })()
                   ) : trackingRow.opened ? (
                     <span
                       className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-light)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]"

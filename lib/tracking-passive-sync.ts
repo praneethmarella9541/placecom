@@ -2,7 +2,9 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ThreadMessageView } from "@/lib/gmail-inbox";
-import { evaluateMessagesForOutcome, findBounceMatchInMessages } from "@/lib/email-thread-outcome";
+import { evaluateMessagesForOutcome } from "@/lib/email-thread-outcome";
+import { mailboxTeamUserIds, markBounceFromNotice } from "@/lib/bounce-detection";
+import { recordThreadResponses } from "@/lib/email-responses";
 
 /**
  * Updates email_tracking's replied/bounced status from a thread's messages
@@ -41,11 +43,22 @@ export async function syncTrackingFromOpenedThread(
   userId: string,
   mailboxAddress: string | undefined,
   threadId: string,
-  messages: ThreadMessageView[]
+  messages: ThreadMessageView[],
+  /** The shared mailbox's owner: emails from anyone on that team are matched, not just the viewer's. */
+  mailboxOwnerId?: string
 ): Promise<void> {
   if (messages.length === 0) return;
 
+  // Every recipient reply in this conversation, for the "Responded" count. Not
+  // tied to the viewer — whoever opens the thread, the reply is credited to the
+  // member who sent the email it answered.
+  await recordThreadResponses(supabase, { threadId, messages, mailboxAddress, source: "inbox" });
+
   try {
+    // In a shared mailbox the person opening a thread is often not the one who
+    // sent the email in it, so match against the whole team.
+    const team = mailboxOwnerId ? await mailboxTeamUserIds(supabase, mailboxOwnerId) : [userId];
+
     // Case 1: this is (or might be) the thread we sent from this campaign/sequence.
     // .limit(1) rather than .maybeSingle(): a duplicate thread id would be a
     // real anomaly, but one shouldn't turn passive bookkeeping into a thrown
@@ -53,7 +66,7 @@ export async function syncTrackingFromOpenedThread(
     const { data: ownRows } = await supabase
       .from("email_tracking")
       .select("id, sent_at")
-      .eq("user_id", userId)
+      .in("user_id", team)
       .eq("gmail_thread_id", threadId)
       .eq("replied", false)
       .eq("bounced", false)
@@ -66,14 +79,21 @@ export async function syncTrackingFromOpenedThread(
         mailboxAddress,
         firstSentAt: Date.parse(ownRow.sent_at as string) || 0,
       });
-      if (outcome) {
-        const now = new Date().toISOString();
+      if (outcome === "replied") {
         await supabase
           .from("email_tracking")
-          .update(
-            outcome === "replied" ? { replied: true, replied_at: now } : { bounced: true, bounced_at: now }
-          )
+          .update({ replied: true, replied_at: new Date().toISOString() })
           .eq("id", ownRow.id);
+      } else if (outcome === "bounced") {
+        // Record which address failed; only if the notice doesn't say, mark the
+        // email as bounced as a whole.
+        const recorded = await markBounceFromNotice(supabase, team, messages);
+        if (!recorded) {
+          await supabase
+            .from("email_tracking")
+            .update({ bounced: true, bounced_at: new Date().toISOString() })
+            .eq("id", ownRow.id);
+        }
       }
     }
 
@@ -81,34 +101,7 @@ export async function syncTrackingFromOpenedThread(
     // only worth the extra lookup when something here actually looks like one.
     const looksLikeBounceThread = messages.some((m) => /mailer-daemon|postmaster/i.test(m.from));
     if (!looksLikeBounceThread) return;
-
-    const { data: pendingRows } = await supabase
-      .from("email_tracking")
-      .select("id, to_address, sent_at")
-      .eq("user_id", userId)
-      .eq("replied", false)
-      .eq("bounced", false)
-      .not("gmail_thread_id", "is", null);
-
-    if (!pendingRows || pendingRows.length === 0) return;
-
-    const oldestSentMs = Math.min(
-      ...pendingRows.map((r) => Date.parse(r.sent_at as string) || Date.now())
-    );
-    const matchedEmail = findBounceMatchInMessages(
-      messages,
-      pendingRows.map((r) => r.to_address as string),
-      oldestSentMs
-    );
-    if (!matchedEmail) return;
-
-    const match = pendingRows.find((r) => (r.to_address as string).toLowerCase() === matchedEmail);
-    if (!match) return;
-
-    await supabase
-      .from("email_tracking")
-      .update({ bounced: true, bounced_at: new Date().toISOString() })
-      .eq("id", match.id);
+    await markBounceFromNotice(supabase, team, messages);
   } catch {
     // Best-effort bookkeeping — never let this affect the thread actually loading.
   }

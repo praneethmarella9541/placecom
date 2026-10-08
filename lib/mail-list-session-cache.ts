@@ -17,6 +17,8 @@ export type MailThreadListItem = {
   hasAttachments?: boolean;
   hasCalendarInvite?: boolean;
   historyId?: string;
+  participants?: string[];
+  messageCount?: number;
 };
 
 export type MailListCacheSnapshot = {

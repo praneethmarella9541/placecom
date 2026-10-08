@@ -92,12 +92,20 @@ export function previewLineFromBody(body: string | null | undefined): string {
 
 /** Gmail snippets sometimes include HTML markup from marketing mail — strip for list UI. */
 export function cleanMailSnippet(snippet: string): string {
+  // Gmail returns snippets HTML-escaped ("Master&#39;s", "&quot;Design&quot;"); decode
+  // them like Gmail's own list does. &amp; goes last so "&amp;lt;" stays "&lt;".
+  const codePoint = (n: number) =>
+    Number.isFinite(n) && n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : "";
   return snippet
     .replace(/<[^>]*>/g, "")
     .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/g, "&")
+    .replace(/&#(\d+);/g, (_, n: string) => codePoint(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n: string) => codePoint(parseInt(n, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .trim();
 }

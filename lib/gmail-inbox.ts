@@ -27,6 +27,10 @@ export type ThreadListItem = {
   from: string;
   date: string;
   historyId?: string;
+  /** Each distinct sender's From header in the thread, oldest first — for the "me, raghu" label. */
+  participants?: string[];
+  /** Messages in the thread. */
+  messageCount?: number;
   /** Present for drafts list rows — stable key when multiple drafts share a thread. */
   draftId?: string;
   /** True if any message in the thread carries the Gmail UNREAD label. */
@@ -280,7 +284,19 @@ function deriveThreadMeta(td: RawThreadMessages): ThreadMeta {
         ?.value || "";
     return /^multipart\/mixed/i.test(ct);
   });
+  // Distinct senders by address, in the order they first wrote.
+  const seen = new Set<string>();
+  const participants: string[] = [];
+  for (const m of msgs) {
+    const from = getH(m, "From");
+    const key = from.match(/<([^>]+)>/)?.[1]?.trim().toLowerCase() ?? from.toLowerCase();
+    if (!from || seen.has(key)) continue;
+    seen.add(key);
+    participants.push(from);
+  }
   return {
+    participants,
+    messageCount: msgs.length,
     subject: getH(first, "Subject"),
     from: getH(last, "From"),
     date,

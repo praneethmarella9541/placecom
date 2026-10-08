@@ -5,6 +5,7 @@ import { IconSearch, IconX } from "@/components/Icons";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { titleCase } from "@/lib/title-case";
+import { isScopeOnly, stripScope } from "@/lib/mail-search-scope";
 import { cn } from "@/lib/utils";
 import { Loader2, Mail, Paperclip, SlidersHorizontal } from "lucide-react";
 import type { RecipientSuggestion } from "@/components/RecipientField";
@@ -41,6 +42,8 @@ type Props = {
   onOpenThread: (threadId: string) => void;
   /** True while the suggest dropdown is open — parent can defer live list search until Enter. */
   onSuggestingChange?: (suggesting: boolean) => void;
+  /** The current folder's search operator (`in:sent`, …), prefilled into the box on focus like Gmail does. */
+  scope?: string | null;
 };
 
 function suggestDateLabel(iso: string): string {
@@ -101,6 +104,7 @@ export function MailSearchBar({
   localContacts,
   onOpenThread,
   onSuggestingChange,
+  scope = null,
 }: Props) {
   const [focused, setFocused] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -114,7 +118,10 @@ export function MailSearchBar({
   const fetchRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
-  const q = inputValue.trim();
+  // What was actually typed — the prefilled folder operator doesn't count, so a
+  // box holding only "in:sent" shows no suggestions and runs no search.
+  const q = stripScope(inputValue, scope).trim();
+  const withScope = useCallback((text: string) => (scope ? `${scope} ${text}` : text), [scope]);
   const showDropdown = focused && q.length >= 1 && !filterOpen;
 
   useEffect(() => {
@@ -187,7 +194,7 @@ export function MailSearchBar({
       void (async () => {
         try {
           const res = await fetch(
-            `/api/gmail/search/suggest?${new URLSearchParams({ q }).toString()}`,
+            `/api/gmail/search/suggest?${new URLSearchParams(scope ? { q, scope } : { q }).toString()}`,
             { cache: "no-store", signal: controller.signal },
           );
           const data = (await res.json()) as {
@@ -210,7 +217,7 @@ export function MailSearchBar({
       })();
     }, 250);
     return () => clearTimeout(t);
-  }, [q, showDropdown]);
+  }, [q, showDropdown, scope]);
 
   useEffect(() => {
     if (!showDropdown) return;
@@ -226,19 +233,19 @@ export function MailSearchBar({
   const submitSearch = useCallback(
     (query: string) => {
       const t = query.trim();
-      if (!t) return;
+      if (!t || isScopeOnly(t, scope)) return;
       onSearch(t);
       setFocused(false);
     },
-    [onSearch],
+    [onSearch, scope],
   );
 
   const acceptCompletion = useCallback(() => {
     if (effectiveCompletion) {
-      onInputChange(effectiveCompletion);
+      onInputChange(withScope(effectiveCompletion));
       inputRef.current?.focus();
     }
-  }, [effectiveCompletion, onInputChange]);
+  }, [effectiveCompletion, onInputChange, withScope]);
 
   const applyQuickFilter = useCallback(
     (modifier: string) => {
@@ -287,8 +294,8 @@ export function MailSearchBar({
       if (highlight < mergedContacts.length) {
         const c = mergedContacts[highlight];
         if (c) {
-          onInputChange(c.email);
-          submitSearch(c.email);
+          onInputChange(withScope(c.email));
+          submitSearch(withScope(c.email));
         }
         return;
       }
@@ -296,7 +303,7 @@ export function MailSearchBar({
       if (ti < threads.length) {
         const th = threads[ti];
         if (th) {
-          submitSearch(q);
+          submitSearch(inputValue);
           onOpenThread(th.id);
         }
         return;
@@ -330,7 +337,15 @@ export function MailSearchBar({
           role="searchbox"
           value={inputValue}
           onChange={(e) => onInputChange(e.target.value)}
-          onFocus={() => setFocused(true)}
+          onFocus={() => {
+            setFocused(true);
+            // Like Gmail: an empty box in Sent/Drafts/… starts with that folder's operator.
+            if (scope && !inputValue.trim()) onInputChange(`${scope} `);
+          }}
+          onBlur={() => {
+            // Nothing typed after the prefilled operator — put the box back to empty.
+            if (isScopeOnly(inputValue, scope)) onInputChange("");
+          }}
           onKeyDown={onKeyDown}
           placeholder={titleCase("Search mail")}
           className={cn(
@@ -411,8 +426,8 @@ export function MailSearchBar({
                 )}
                 onMouseEnter={() => setHighlight(idx)}
                 onClick={() => {
-                  onInputChange(c.email);
-                  submitSearch(c.email);
+                  onInputChange(withScope(c.email));
+                  submitSearch(withScope(c.email));
                 }}
               >
                 <GmailAvatar
@@ -462,7 +477,7 @@ export function MailSearchBar({
                 )}
                 onMouseEnter={() => setHighlight(idx)}
                 onClick={() => {
-                  submitSearch(q);
+                  submitSearch(inputValue);
                   onOpenThread(t.id);
                 }}
               >

@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServiceSupabase } from "@/lib/supabase-service";
+import { SET_PASSWORD_COOKIE, SET_PASSWORD_PATH } from "@/lib/password-setup";
 
 const MSG_MAX = 450;
 
@@ -90,6 +91,13 @@ export async function GET(request: Request) {
     } catch {
       console.error("[auth/callback/exchange] Failed to persist Google mailbox credentials");
     }
+  }
+
+  // The sign-in link was requested through "Forgot password?" — send them to
+  // choose a new one. Google accounts have no password to set.
+  if (cookieStore.get(SET_PASSWORD_COOKIE)?.value && provider !== "google") {
+    cookieStore.set(SET_PASSWORD_COOKIE, "", { path: "/", maxAge: 0 });
+    return NextResponse.redirect(`${origin}${SET_PASSWORD_PATH}`);
   }
 
   return NextResponse.redirect(`${origin}${next}`);

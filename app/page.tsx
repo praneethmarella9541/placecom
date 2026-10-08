@@ -9,6 +9,7 @@ import { PasswordInput } from "@/components/PasswordInput";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { titleCase } from "@/lib/title-case";
 import { NOT_IN_TEAM_MESSAGE } from "@/lib/team-membership";
+import { SET_PASSWORD_COOKIE, SET_PASSWORD_COOKIE_MAX_AGE_S } from "@/lib/password-setup";
 
 /** name@domain.tld — stricter than "has an @", so "a@b" can't enable Send Link. */
 const MAGIC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/;
@@ -31,6 +32,9 @@ export default function HomePage() {
   const [staffBusy, setStaffBusy] = useState(false);
   const [staffPwdBusy, setStaffPwdBusy] = useState(false);
   const [magicOpen, setMagicOpen] = useState(false);
+  // The magic-link panel was opened through "Forgot password?" — the link then
+  // lands on the set-new-password page instead of the inbox.
+  const [resetIntent, setResetIntent] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -138,6 +142,11 @@ export default function HomePage() {
     setStaffMsg(null);
     setStaffBusy(true);
     const origin = window.location.origin;
+    // Same browser as the link will be opened in (the sign-in needs that anyway),
+    // so a cookie can carry "ask for a new password after sign-in" across it.
+    document.cookie = resetIntent
+      ? `${SET_PASSWORD_COOKIE}=1; path=/; max-age=${SET_PASSWORD_COOKIE_MAX_AGE_S}; SameSite=Lax`
+      : `${SET_PASSWORD_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
     const { error } = await supabase.auth.signInWithOtp({
       email,
       // Only emails an admin has already added can get a link; an unknown
@@ -146,6 +155,7 @@ export default function HomePage() {
     });
     setStaffBusy(false);
     if (error) {
+      document.cookie = `${SET_PASSWORD_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
       setStaffMsg(
         /signups? not allowed|not allowed for otp|user not found/i.test(error.message)
           ? NOT_IN_TEAM_MESSAGE
@@ -156,7 +166,9 @@ export default function HomePage() {
     }
     setStaffMsgIsError(false);
     setStaffMsg(
-      `${titleCase("Check your email for the sign-in link.")} Open it in this same browser, or copy the link from the email and paste it into this browser. Each new request sends a new link; old links can expire.`
+      `${titleCase("Check your email for the sign-in link.")}${
+        resetIntent ? " After you open it, you'll be asked to choose a new password." : ""
+      } Open it in this same browser, or copy the link from the email and paste it into this browser. Each new request sends a new link; old links can expire.`
     );
   }
 
@@ -387,12 +399,27 @@ export default function HomePage() {
                 wrapperClassName="mt-3"
                 className="landing-input"
               />
+              <div className="mt-2 flex justify-end">
+                <button
+                  data-testid="auth-forgot-btn"
+                  type="button"
+                  onClick={() => {
+                    setResetIntent(true);
+                    setMagicOpen(true);
+                    setMagicEmail((m) => staffEmail.trim() || m);
+                    setStaffMsg(null);
+                  }}
+                  className="text-[12.5px] font-medium text-[#9a4510] hover:underline"
+                >
+                  Forgot password?
+                </button>
+              </div>
               <button
                 data-testid="auth-signin-btn"
                 type="button"
                 disabled={staffPwdBusy}
                 onClick={() => void signInStaffPassword()}
-                className="landing-btn-primary mt-4"
+                className="landing-btn-primary mt-3"
               >
                 {staffPwdBusy ? titleCase("Signing in…") : titleCase("Sign In")}
               </button>
@@ -403,7 +430,10 @@ export default function HomePage() {
               <button
                 data-testid="auth-magic-toggle"
                 type="button"
-                onClick={() => setMagicOpen((v) => !v)}
+                onClick={() => {
+                  setMagicOpen((v) => !v);
+                  setResetIntent(false);
+                }}
                 className="mt-4 w-full text-center text-[13px] font-medium text-[#9a4510] hover:underline"
               >
                 Use magic link instead
@@ -411,6 +441,12 @@ export default function HomePage() {
 
               {magicOpen ? (
                 <div data-testid="auth-magic-panel" className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4">
+                  {resetIntent ? (
+                    <p className="mb-3 text-[13px] text-[var(--color-text-muted)]">
+                      Enter your work email. We&apos;ll send a sign-in link, and you&apos;ll choose a new password
+                      after you open it.
+                    </p>
+                  ) : null}
                   <input
                     data-testid="auth-magic-email-input"
                     type="email"

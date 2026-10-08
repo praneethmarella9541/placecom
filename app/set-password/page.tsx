@@ -1,0 +1,140 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { PasswordInput } from "@/components/PasswordInput";
+import { PlacecomLogo } from "@/components/PlacecomLogo";
+import { createClient } from "@/lib/supabase";
+import { MIN_PASSWORD_LENGTH } from "@/lib/password-setup";
+import { titleCase } from "@/lib/title-case";
+
+/**
+ * Where "Forgot password?" ends up: the sign-in link has just signed the person
+ * in, so a new password can be set without the old one. Next time they can use
+ * it on the login page.
+ */
+export default function SetPasswordPage() {
+  const [supabase] = useState(() => createClient());
+  const [ready, setReady] = useState(false);
+  const [email, setEmail] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    void supabase.auth.getUser().then(({ data }) => {
+      const user = data.user;
+      // Only reachable through a sign-in link; anyone else has nothing to reset.
+      if (!user) {
+        window.location.replace("/");
+        return;
+      }
+      if ((user.app_metadata as { provider?: string } | undefined)?.provider === "google") {
+        window.location.replace("/inbox");
+        return;
+      }
+      setEmail(user.email ?? null);
+      setReady(true);
+    });
+  }, [supabase]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      return;
+    }
+    if (password !== confirm) {
+      setError("Passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    const { error: updateErr } = await supabase.auth.updateUser({ password });
+    if (updateErr) {
+      setBusy(false);
+      setError(updateErr.message);
+      return;
+    }
+    setDone(true);
+    window.setTimeout(() => window.location.replace("/inbox"), 1200);
+  }
+
+  if (!ready) return <main className="min-h-screen bg-[var(--color-bg)]" />;
+
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[var(--color-bg)] p-6">
+      <div className="w-full max-w-md rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8 shadow-sm">
+        <div className="mb-6 flex justify-center">
+          <PlacecomLogo />
+        </div>
+        <h1 className="text-center font-display text-xl font-bold text-[var(--color-text)]">
+          {titleCase("Set a new password")}
+        </h1>
+        <p className="mt-2 text-center text-[13.5px] text-[var(--color-text-muted)]">
+          {email ? (
+            <>
+              You&apos;re signed in as <span className="font-medium text-[var(--color-text)]">{email}</span>. Choose a
+              password to use the next time you sign in.
+            </>
+          ) : (
+            "Choose a password to use the next time you sign in."
+          )}
+        </p>
+
+        {done ? (
+          <p
+            data-testid="set-password-done"
+            className="mt-6 rounded-lg bg-[var(--color-success)]/10 px-3 py-2.5 text-center text-sm font-medium text-[var(--color-success)]"
+          >
+            Password updated. Taking you to your inbox…
+          </p>
+        ) : (
+          <form className="mt-6 space-y-3" onSubmit={(e) => void submit(e)}>
+            <PasswordInput
+              data-testid="set-password-new"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={titleCase("New password")}
+              className="landing-input"
+            />
+            <PasswordInput
+              data-testid="set-password-confirm"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              placeholder={titleCase("Confirm new password")}
+              className="landing-input"
+            />
+            <p className="text-[12px] text-[var(--color-text-faint)]">At least {MIN_PASSWORD_LENGTH} characters.</p>
+            {error && (
+              <p
+                data-testid="set-password-error"
+                className="rounded-lg border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-3 py-2 text-[13px] text-[var(--color-danger)]"
+              >
+                {error}
+              </p>
+            )}
+            <button
+              type="submit"
+              data-testid="set-password-submit"
+              disabled={busy || !password || !confirm}
+              className="btn-primary-copper w-full"
+            >
+              {busy ? titleCase("Saving…") : titleCase("Save password")}
+            </button>
+            <a
+              href="/inbox"
+              data-testid="set-password-skip"
+              className="block text-center text-[13px] font-medium text-[#9a4510] hover:underline"
+            >
+              Skip for now
+            </a>
+          </form>
+        )}
+      </div>
+    </main>
+  );
+}

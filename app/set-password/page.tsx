@@ -64,7 +64,11 @@ export default function SetPasswordPage() {
       return;
     }
     setDone(true);
-    window.setTimeout(() => window.location.replace("/inbox"), 1200);
+    // Changing the password ends the session, so go to sign-in with the new one
+    // (signOut clears whatever is left of it in this browser).
+    window.setTimeout(() => {
+      void supabase.auth.signOut().finally(() => window.location.replace("/"));
+    }, 1500);
   }
 
   async function signOut() {
@@ -99,7 +103,7 @@ export default function SetPasswordPage() {
             data-testid="set-password-done"
             className="mt-6 rounded-lg bg-[var(--color-success)]/10 px-3 py-2.5 text-center text-sm font-medium text-[var(--color-success)]"
           >
-            Password updated. Taking you to your inbox…
+            Password updated. Taking you to the sign-in page. Sign in with your new password.
           </p>
         ) : (
           <form className="mt-6 space-y-3" onSubmit={(e) => void submit(e)}>

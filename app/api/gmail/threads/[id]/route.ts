@@ -50,7 +50,8 @@ export async function GET(
       auth.userId,
       auth.gmailAddress,
       threadId,
-      messages
+      messages,
+      auth.mailboxOwnerId
     );
 
     return NextResponse.json(

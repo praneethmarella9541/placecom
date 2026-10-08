@@ -1093,3 +1093,17 @@
     -webkit-backdrop-filter: blur(12px);
   }
 }
+
+
+/* Analytics chart series colours — categorical slots 1 and 2 of the data-viz
+   palette, validated for colour-blind separation and contrast on this surface.
+   The app has no dark theme, so the dark steps apply only if one is switched on
+   explicitly with data-theme="dark" (never from the OS setting alone). */
+.viz-emails {
+  --viz-series-1: #2a78d6;
+  --viz-series-2: #eb6834;
+}
+:root[data-theme="dark"] .viz-emails {
+  --viz-series-1: #3987e5;
+  --viz-series-2: #d95926;
+}

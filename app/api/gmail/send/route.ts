@@ -88,19 +88,28 @@ export async function POST(request: Request) {
 
   let trackRow: { id: string } | null = null;
   try {
-    const { data } = await supabase
+    const base = {
+      user_id: auth.userId,
+      gmail_message_id: "__pending__",
+      to_address: to,
+      subject: subject || null,
+      campaign_id: body.campaignId || null,
+      campaign_name: body.campaignId ? body.campaignName?.trim() || null : null,
+    };
+    // CC and BCC are kept so a delivery failure for one of them can be matched
+    // to this email (0071). Without that migration applied, insert without them
+    // rather than losing tracking for the send altogether.
+    const withCopies = await supabase
       .from("email_tracking")
-      .insert({
-        user_id: auth.userId,
-        gmail_message_id: "__pending__",
-        to_address: to,
-        subject: subject || null,
-        campaign_id: body.campaignId || null,
-        campaign_name: body.campaignId ? body.campaignName?.trim() || null : null,
-      })
+      .insert({ ...base, cc_address: cc ?? null, bcc_address: bcc ?? null })
       .select("id")
       .single();
-    trackRow = data;
+    if (!withCopies.error) {
+      trackRow = withCopies.data;
+    } else {
+      const { data } = await supabase.from("email_tracking").insert(base).select("id").single();
+      trackRow = data;
+    }
   } catch {
     // tracking table may not exist yet — continue without tracking
   }

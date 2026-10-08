@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { checkThreadForReplyOrBounce, searchForBounceNotification } from "@/lib/email-thread-outcome";
+import { recordThreadResponses } from "@/lib/email-responses";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { sendMailViaGmail } from "@/lib/gmail-inbox";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-google-token";
@@ -223,6 +224,15 @@ async function processEnrollment(
         firstSentAt,
         mailboxKey: mailbox.ownerId,
         priority: "batch",
+        // Store every reply in the thread for analytics' "Responded" count,
+        // from the messages this check fetches anyway.
+        onMessages: (messages) =>
+          recordThreadResponses(ctx.svc, {
+            threadId: enrollment.gmail_thread_id!,
+            messages,
+            mailboxAddress: mailbox.mailboxAddress,
+            source: "sequence",
+          }),
       },
     );
     // Gmail's own bounce notices frequently land as a new thread rather than

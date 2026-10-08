@@ -1,17 +1,10 @@
 import "server-only";
 
 import { extractEmailAddress } from "@/lib/email-parse";
+import { isBounceSender, isDelayNotice, looksAutomated } from "@/lib/email-message-classify";
 import { getThreadMessages, listThreadsPage, type ThreadMessageView } from "@/lib/gmail-inbox";
 import type { GmailPriority } from "@/lib/gmail-quota";
 
-/** Auto-responders must not be mistaken for a real reply. */
-function looksAutomated(subject: string): boolean {
-  return /^\s*(automatic reply|auto[- ]?reply|out of office|ooo\b)/i.test(subject);
-}
-
-function isBounceSender(email: string): boolean {
-  return /(^|\W)(mailer-daemon|postmaster)@/i.test(email);
-}
 
 /**
  * Pure reply/bounce heuristic over messages the caller already has in hand —
@@ -37,14 +30,30 @@ export function evaluateMessagesForOutcome(
     const from = extractEmailAddress(message.from).toLowerCase();
     if (!from) continue;
     if (ourAddress && from === ourAddress) continue;
-    if (isBounceSender(from)) return "bounced";
 
+    // Anything that arrived before our email can't be an answer to it — or a
+    // bounce of it. This comes first because the thread may have been started
+    // by the contact (we're replying to them): their earlier messages, or an
+    // old delivery-failure notice already in it, must not count.
     const receivedAt = Date.parse(message.date);
     if (Number.isFinite(receivedAt) && opts.firstSentAt && receivedAt < opts.firstSentAt) continue;
+
+    if (isBounceSender(from)) {
+      // "Still trying" notices aren't a failure; keep looking.
+      if (isDelayNotice(message)) continue;
+      return "bounced";
+    }
+
+    // Without the sending mailbox's own address there is no telling the sender's
+    // messages (including the very email that started the thread) from a
+    // recipient's, so nothing can be called a response. Bounces above don't
+    // depend on it.
+    if (!ourAddress) continue;
+
     if (looksAutomated(message.subject ?? "")) continue;
 
-    // We started this thread, so any other inbound participant is the recipient
-    // replying — including from an alias or an assistant's address.
+    // Any other participant writing after our email is the recipient responding
+    // — including from an alias or an assistant's address.
     return "replied";
   }
 
@@ -101,6 +110,8 @@ export async function checkThreadForReplyOrBounce(
     mailboxKey: string;
     /** Defaults to "interactive" — a background/cron caller should opt into "batch". */
     priority?: GmailPriority;
+    /** Handed the thread's messages once fetched, so a caller can reuse them (e.g. to record replies) without a second fetch. */
+    onMessages?: (messages: ThreadMessageView[]) => Promise<void> | void;
   }
 ): Promise<"replied" | "bounced" | null> {
   let messages;
@@ -112,6 +123,14 @@ export async function checkThreadForReplyOrBounce(
   } catch {
     // Thread deleted or momentarily unavailable — never block the caller on this.
     return null;
+  }
+
+  if (opts.onMessages) {
+    try {
+      await opts.onMessages(messages);
+    } catch {
+      // The caller's bookkeeping must not change the outcome.
+    }
   }
 
   return evaluateMessagesForOutcome(messages, opts);

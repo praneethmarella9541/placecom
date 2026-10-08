@@ -16,22 +16,20 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const messageIds = searchParams.get("messageIds");
 
-  let query = supabase
-    .from("email_tracking")
-    .select(
-      "id, gmail_message_id, to_address, subject, sent_at, opened, opened_at, open_count, campaign_id, campaign_name, replied, bounced"
-    )
-    .eq("user_id", user.id)
-    .order("sent_at", { ascending: false });
+  const ids = (messageIds ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const run = (columns: string) => {
+    let q = supabase.from("email_tracking").select(columns).eq("user_id", user.id).order("sent_at", { ascending: false });
+    if (ids.length > 0) q = q.in("gmail_message_id", ids);
+    return q.limit(200);
+  };
 
-  if (messageIds) {
-    const ids = messageIds.split(",").map((s) => s.trim()).filter(Boolean);
-    if (ids.length > 0) {
-      query = query.in("gmail_message_id", ids);
-    }
+  const BASE =
+    "id, gmail_message_id, to_address, subject, sent_at, opened, opened_at, open_count, campaign_id, campaign_name, replied, bounced";
+  // With 0071: who else it went to and which addresses failed, for "Partly bounced".
+  let { data, error } = await run(`${BASE}, cc_address, bcc_address, bounced_recipients`);
+  if (error?.code === "42703") {
+    ({ data, error } = await run(BASE));
   }
-
-  const { data, error } = await query.limit(200);
 
   // Migration 0063 (campaign_id/campaign_name/replied/bounced) not applied
   // yet on this environment — fall back to the pre-campaign column set rather

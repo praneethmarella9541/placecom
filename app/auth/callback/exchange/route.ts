@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServiceSupabase } from "@/lib/supabase-service";
-import { SET_PASSWORD_COOKIE, SET_PASSWORD_PATH } from "@/lib/password-setup";
+import { MUST_SET_PASSWORD_KEY, SET_PASSWORD_PATH } from "@/lib/password-setup";
 
 const MSG_MAX = 450;
 
@@ -93,10 +93,25 @@ export async function GET(request: Request) {
     }
   }
 
-  // The sign-in link was requested through "Forgot password?" — send them to
-  // choose a new one. Google accounts have no password to set.
-  if (cookieStore.get(SET_PASSWORD_COOKIE)?.value && provider !== "google") {
-    cookieStore.set(SET_PASSWORD_COOKIE, "", { path: "/", maxAge: 0 });
+  // The only email link the login page sends is "Forgot password?", so a non-Google
+  // session coming out of this exchange has to choose a new password before it
+  // can use anything else — flagged here, enforced in middleware.ts. (Google
+  // accounts have no password to set.) If the flag can't be written, fail closed
+  // rather than let the session straight into the app.
+  if (session && provider !== "google") {
+    try {
+      const svc = createServiceSupabase();
+      const { error: flagErr } = await svc.auth.admin.updateUserById(session.user.id, {
+        app_metadata: { [MUST_SET_PASSWORD_KEY]: true },
+      });
+      if (flagErr) throw flagErr;
+    } catch (e) {
+      console.error("[auth/callback/exchange] Failed to flag account for password setup", e);
+      await supabase.auth.signOut();
+      return NextResponse.redirect(
+        `${origin}/?error=auth&msg=${encodeURIComponent("Couldn't finish signing you in. Request a new link and try again.")}`
+      );
+    }
     return NextResponse.redirect(`${origin}${SET_PASSWORD_PATH}`);
   }
 

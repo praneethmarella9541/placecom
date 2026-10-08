@@ -1,16 +1,26 @@
 /**
- * "Forgot password" without an old password: the login page sends the normal
- * magic link, and remembers (in this browser) that the person asked because they
- * forgot their password. When the link signs them in, /auth/callback/exchange
- * sees that marker and lands them on SET_PASSWORD_PATH instead of the inbox, where
- * they choose a new password — no current password needed, the link already
- * proved they own the mailbox. The marker is a cookie rather than a redirect
- * query param so it needs no change to Supabase's allowed redirect URLs.
+ * "Forgot password" without an old password, and made mandatory:
+ *
+ *  1. The login page emails a sign-in link ("Forgot password?").
+ *  2. /auth/callback/exchange signs the person in and — for anything but Google —
+ *     sets MUST_SET_PASSWORD_KEY on the account. It lives in app_metadata, which
+ *     only the service role can write, so the person can't clear it themselves
+ *     the way they could a user_metadata flag.
+ *  3. middleware.ts keeps a flagged account on SET_PASSWORD_PATH: every other page
+ *     redirects there and every other API call is refused until it's cleared.
+ *  4. POST /api/me/set-password sets the password and clears the flag in one
+ *     step — no current password needed, the emailed link already proved they own
+ *     the mailbox.
  */
 
-export const SET_PASSWORD_COOKIE = "placecom_set_password";
 export const SET_PASSWORD_PATH = "/set-password";
+export const SET_PASSWORD_API_PATH = "/api/me/set-password";
 export const MIN_PASSWORD_LENGTH = 8;
 
-/** Matches the sign-in link's own lifetime — a marker older than that is stale. */
-export const SET_PASSWORD_COOKIE_MAX_AGE_S = 60 * 60;
+/** app_metadata key: true while the account still has to choose a password. */
+export const MUST_SET_PASSWORD_KEY = "must_set_password";
+
+export function mustSetPassword(user: { app_metadata?: unknown } | null | undefined): boolean {
+  const meta = user?.app_metadata as Record<string, unknown> | undefined;
+  return meta?.[MUST_SET_PASSWORD_KEY] === true;
+}

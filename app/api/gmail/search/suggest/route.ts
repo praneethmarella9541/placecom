@@ -6,6 +6,7 @@ import {
 } from "@/lib/gmail-search-suggest";
 import { searchContactsByQuery } from "@/lib/google-people-contacts";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { SUGGEST_SCOPE_RE } from "@/lib/mail-search-scope";
 
 export const runtime = "nodejs";
 
@@ -34,7 +35,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
 
-  const q = new URL(request.url).searchParams.get("q")?.trim() ?? "";
+  const params = new URL(request.url).searchParams;
+  const q = params.get("q")?.trim() ?? "";
+  // The folder operator the search box was prefilled with (in:sent, …). It narrows
+  // the thread hits only — contacts are matched on what was typed — and only a
+  // known operator is accepted, since it is spliced into the Gmail query.
+  const scopeRaw = params.get("scope")?.trim() ?? "";
+  const scope = SUGGEST_SCOPE_RE.test(scopeRaw) ? scopeRaw : "";
   if (q.length < 1) {
     return NextResponse.json({ contacts: [], threads: [] });
   }
@@ -42,7 +49,7 @@ export async function GET(request: Request) {
   try {
     const [people, threads] = await Promise.all([
       searchContactsByQuery(auth.accessToken, q),
-      listThreadSearchSuggestions(auth.accessToken, q, 5, {
+      listThreadSearchSuggestions(auth.accessToken, scope ? `${scope} ${q}` : q, 5, {
         mailboxKey: auth.mailboxOwnerId,
       }),
     ]);

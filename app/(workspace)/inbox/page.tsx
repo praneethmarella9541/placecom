@@ -87,6 +87,8 @@ import { useWorkspaceTopbarActionsNode } from "@/lib/workspace-topbar-context";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
+import { replyRecipients } from "@/lib/reply-recipients";
+import { threadParticipants } from "@/lib/thread-participants";
 import { cn, formatDate, previewLineFromBody, timeAgo } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { useModuleVisibility } from "@/lib/module-visibility";
@@ -106,6 +108,7 @@ import {
   formatMessageRecipientsLine,
 } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
+import { isScopeOnly, searchScopeForFolder, stripAnyLeadingScope } from "@/lib/mail-search-scope";
 import { mailPerfBegin, mailPerfFirstPaint, mailPerfComplete } from "@/lib/mail-perf";
 import {
   buildMailListCacheKey,
@@ -171,6 +174,9 @@ type ThreadRow = {
   hasAttachments?: boolean;
   hasCalendarInvite?: boolean;
   historyId?: string;
+  /** Distinct senders' From headers, oldest first, and the thread's message count. */
+  participants?: string[];
+  messageCount?: number;
   /** Streamed search row whose subject/from/date are still being fetched. */
   pending?: boolean;
 };
@@ -368,9 +374,11 @@ function senderName(from: string): string {
   if (!from) return "Unknown";
   const match = from.match(/^"?([^"<]+)"?\s*</);
   if (match) return match[1].trim();
-  const atIdx = from.indexOf("@");
-  if (atIdx > 0) return from.slice(0, atIdx);
-  return from;
+  // A bare "<postmaster@host>" has no name part — use the address's local part, not "<postmaster".
+  const addr = extractEmailAddress(from).replace(/[<>]/g, "");
+  const atIdx = addr.indexOf("@");
+  if (atIdx > 0) return addr.slice(0, atIdx);
+  return addr || from;
 }
 
 type AttachmentView = {
@@ -755,6 +763,29 @@ function MessageBubble({
                 <time className="whitespace-nowrap text-[12px] text-[var(--color-text-faint)]">
                   {formatDate(m.date)}
                 </time>
+                {/* Reply / ⋮ (Reply all, Forward) on this message — like Gmail, each
+                    message in the thread is replied to on its own. The header
+                    toggles collapse on click, so this keeps the click to itself. */}
+                {!isCollapsed && hasThreadActions && (
+                  <span className="ml-1 flex items-center" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      data-testid="message-reply-btn"
+                      onClick={() => runThreadAction(onReply)}
+                      className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--color-text-faint)] hover:bg-[var(--color-surface-offset)] hover:text-[var(--color-text)]"
+                      title="Reply"
+                      aria-label="Reply to this message"
+                    >
+                      <Reply className="h-4 w-4" strokeWidth={2} />
+                    </button>
+                    <ThreadActionsMenu
+                      compact
+                      onReply={() => runThreadAction(onReply)}
+                      onReplyAll={() => runThreadAction(onReplyAll)}
+                      onForward={() => runThreadAction(onForward)}
+                    />
+                  </span>
+                )}
                 {/* Fullscreen button — only visible when expanded */}
                 {!isCollapsed && (
                   <button
@@ -895,6 +926,9 @@ function readStoredWidth(key: string, fallback: number, min: number, max: number
 
 /** Width a collapsed pane keeps so the handle stays reachable. */
 const COLLAPSED_PANE_W = 10;
+
+/** Threads longer than this fold their middle messages into one count divider; shorter ones show every message. */
+const THREAD_FOLD_AFTER = 10;
 
 /**
  * Vertical drag handle between resizable mail panes, modelled on Trello's:
@@ -1087,7 +1121,7 @@ export default function InboxPage() {
   /** Suggest dropdown open — defer debounced list search until Enter (Gmail-style). */
   const [mailSearchSuggesting, setMailSearchSuggesting] = useState(false);
   const searchHighlight = useMemo(
-    () => (mailSearch.trim() ? searchHighlightTerms(mailSearch) : []),
+    () => (mailSearch.trim() ? searchHighlightTerms(stripAnyLeadingScope(mailSearch)) : []),
     [mailSearch],
   );
 
@@ -1405,6 +1439,15 @@ export default function InboxPage() {
         : folder === "trash" || folder === "spam" || folder === "allmail" || folder === "sent" || folder === "drafts"
           ? null
           : filterLabelId ?? (folder === "inbox" ? INBOX_CATEGORY_LABEL[category] : null);
+
+  // The operator Gmail prefills in its search box for this view (in:sent, …); null
+  // for Inbox / All Mail, which search everything.
+  const mailSearchScope = useMemo(() => {
+    const userLabel = filterLabelId
+      ? allLabels.find((l) => l.id === filterLabelId && !l.isSystem && !l.isCategory)
+      : undefined;
+    return searchScopeForFolder(folder, userLabel?.name ?? null);
+  }, [folder, filterLabelId, allLabels]);
 
   // Multi-select state (Gmail-style row checkboxes).
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
@@ -2712,14 +2755,15 @@ export default function InboxPage() {
 
   useEffect(() => {
     const trimmed = mailSearchInput.trim();
-    if (!trimmed) {
+    // Empty, or only the prefilled folder operator: nothing to search for yet.
+    if (!trimmed || isScopeOnly(trimmed, mailSearchScope)) {
       setMailSearch("");
       return;
     }
     if (mailSearchSuggesting) return;
     const t = setTimeout(() => setMailSearch(trimmed), 400);
     return () => clearTimeout(t);
-  }, [mailSearchInput, mailSearchSuggesting]);
+  }, [mailSearchInput, mailSearchSuggesting, mailSearchScope]);
 
   const loadTracking = useCallback(async () => {
     try {
@@ -3833,12 +3877,11 @@ export default function InboxPage() {
   }, [threadLabelIds, selectedId, threads]);
 
   /**
-   * What actually renders in the open thread pane — Gmail's rule, not "every
-   * message gets a row": show the first message, hide any run of messages
-   * strictly between it and the last two behind a single count divider
-   * (ThreadMiddleDivider), and always show the last two (the very last one
-   * expanded, via MessageBubble's own isLast prop). With 3 or fewer messages
-   * there's no "middle" to hide, so nothing collapses into a divider.
+   * What renders in the open thread pane: every message gets a row — the last one
+   * expanded, the rest collapsed to one line (sender, snippet, date), so nothing
+   * from the other party is hidden. Only a very long thread folds its middle into
+   * a single count divider (ThreadMiddleDivider), keeping the first message and
+   * the last three.
    */
   const threadRows = useMemo(() => {
     type Row =
@@ -3846,7 +3889,7 @@ export default function InboxPage() {
       | { kind: "divider"; count: number };
     if (!messages) return [] as Row[];
     const n = messages.length;
-    if (n <= 3 || middleExpanded) {
+    if (n <= THREAD_FOLD_AFTER || middleExpanded) {
       return messages.map((message, i) => ({
         kind: "message" as const,
         message,
@@ -3855,7 +3898,8 @@ export default function InboxPage() {
     }
     return [
       { kind: "message" as const, message: messages[0]!, isLast: false },
-      { kind: "divider" as const, count: n - 3 },
+      { kind: "divider" as const, count: n - 4 },
+      { kind: "message" as const, message: messages[n - 3]!, isLast: false },
       { kind: "message" as const, message: messages[n - 2]!, isLast: false },
       { kind: "message" as const, message: messages[n - 1]!, isLast: true },
     ];
@@ -4825,14 +4869,39 @@ export default function InboxPage() {
     return /^re:\s/i.test(trimmed) ? trimmed : `Re: ${trimmed}`;
   }
 
-  function openReply(mode: "reply" | "replyAll") {
+  /**
+   * The mailbox's own Gmail address. Normally already loaded; if a reply is
+   * clicked before that finished, fetch it now — without it a message the
+   * mailbox itself sent can't be told apart from one received, and the reply
+   * would be addressed to the mailbox.
+   */
+  async function resolveMyEmail(): Promise<string> {
+    if (myEmail) return myEmail;
+    try {
+      const res = await fetch("/api/gmail/me");
+      if (res.ok) {
+        const j = (await res.json()) as { email?: string };
+        if (j.email) {
+          setMyEmail(j.email);
+          return j.email;
+        }
+      }
+    } catch {
+      /* fall through — reply as if the last message were received */
+    }
+    return "";
+  }
+
+  /** `target`: the message whose Reply was clicked; without one, the thread's last message. */
+  async function openReply(mode: "reply" | "replyAll", target?: MsgView) {
     if (!selectedId || !messages?.length) return;
-    const last = messages[messages.length - 1];
-    const cc = mode === "replyAll" ? buildReplyAllCc(last) : "";
+    const last = target ?? messages[messages.length - 1];
+    const me = await resolveMyEmail();
+    const { to, cc } = replyRecipients(last, mode, me);
     setComposeKind(mode);
     setComposeThreadId(selectedId);
     setComposeInReplyToId(last.id);
-    setComposeTo(extractEmailAddress(last.from));
+    setComposeTo(to);
     setComposeCc(cc);
     setComposeBcc("");
     setComposeSubject(replySubject(last.subject || ""));
@@ -4846,39 +4915,12 @@ export default function InboxPage() {
   }
 
   /**
-   * Build the CC string for Reply All — all addresses in the thread except
-   * the original sender (already in To) and the current user's own address.
-   */
-  function buildReplyAllCc(lastMsg: { from: string; to: string; cc: string }): string {
-    const exclude = new Set<string>();
-    // Exclude the sender (they go in To).
-    exclude.add(extractEmailAddress(lastMsg.from).toLowerCase());
-    // Exclude own address so we don't CC ourselves.
-    if (myEmail) exclude.add(myEmail.toLowerCase());
-
-    const candidates = [
-      ...(lastMsg.to ? extractAllEmailsFromText(lastMsg.to) : []),
-      ...(lastMsg.cc ? extractAllEmailsFromText(lastMsg.cc) : []),
-    ];
-    const seen = new Set<string>();
-    const result: string[] = [];
-    for (const addr of candidates) {
-      const lower = addr.toLowerCase();
-      if (!exclude.has(lower) && !seen.has(lower)) {
-        seen.add(lower);
-        result.push(addr);
-      }
-    }
-    return result.join(", ");
-  }
-
-  /**
    * Open the compose window pre-filled for forwarding the current thread.
    * The subject is prefixed with "Fwd:" and the last message body is quoted.
    */
-  function openForward() {
+  function openForward(target?: MsgView) {
     if (!messages?.length) return;
-    const last = messages[messages.length - 1];
+    const last = target ?? messages[messages.length - 1];
     const fwdSubject = last.subject.startsWith("Fwd:")
       ? last.subject
       : `Fwd: ${last.subject}`;
@@ -5566,6 +5608,7 @@ export default function InboxPage() {
               localContacts={composeRecipientSuggestions}
               onOpenThread={(threadId) => void openThread(threadId)}
               onSuggestingChange={setMailSearchSuggesting}
+              scope={mailSearchScope}
             />
           </div>
 
@@ -6285,8 +6328,12 @@ export default function InboxPage() {
                 className="scrollbar-thin flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto overscroll-y-contain p-3"
               >
                 {threads.map((t) => {
-                  const name = senderName(t.from);
-                  const fromEmail = extractEmailAddress(t.from || "");
+                  // "me, raghu" — everyone in the thread, like Gmail, not just the last sender.
+                  const people = threadParticipants(t.from, t.participants, myEmail);
+                  const name = people.label;
+                  const avatarName = people.avatarName;
+                  const fromEmail = extractEmailAddress(people.avatarFrom || "");
+                  const msgCount = t.messageCount ?? 0;
                   const isSelected = selectedThreadIds.has(t.id);
                   const isActiveThread = selectedId === t.id;
                   const isUnread = Boolean(t.unread);
@@ -6345,6 +6392,9 @@ export default function InboxPage() {
                             ) : (
                               name
                             )}
+                            {msgCount > 1 && (
+                              <span className="ml-1 text-[11px] font-normal text-[var(--color-text-faint)]">{msgCount}</span>
+                            )}
                           </span>
                           <span className="flex shrink-0 items-center gap-1">
                             {(t.hasCalendarInvite ?? isCalendarInviteThread({ subject: t.subject, from: t.from, snippet: t.snippet })) && (
@@ -6390,8 +6440,8 @@ export default function InboxPage() {
                             it yields to the checkbox for bulk actions. */}
                         <span className="relative mt-0.5 shrink-0">
                           <GmailAvatar
-                            seed={fromEmail || name}
-                            name={name}
+                            seed={fromEmail || avatarName}
+                            name={avatarName}
                             email={fromEmail || undefined}
                             size={34}
                           />
@@ -6434,6 +6484,9 @@ export default function InboxPage() {
                                 <SearchHighlight text={name} terms={searchHighlight} />
                               ) : (
                                 name
+                              )}
+                              {msgCount > 1 && (
+                                <span className="ml-1 text-[11px] font-normal text-[var(--color-text-faint)]">{msgCount}</span>
                               )}
                             </span>
                             <time className={cn(
@@ -6738,9 +6791,9 @@ export default function InboxPage() {
                         isLast={row.isLast}
                         trackingRow={trackingMap[row.message.id]}
                         myEmail={myEmail}
-                        onReply={() => openReply("reply")}
-                        onReplyAll={() => openReply("replyAll")}
-                        onForward={() => openForward()}
+                        onReply={() => openReply("reply", row.message)}
+                        onReplyAll={() => openReply("replyAll", row.message)}
+                        onForward={() => openForward(row.message)}
                       />
                     )
                   )}

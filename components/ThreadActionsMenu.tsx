@@ -11,6 +11,8 @@ type ThreadActionsMenuProps = {
   onReplyAll: () => void;
   onForward: () => void;
   className?: string;
+  /** Smaller trigger, for sitting inside a message header rather than the thread title. */
+  compact?: boolean;
 };
 
 /** Gmail-style ⋮ menu with Reply, Reply all, and Forward. */
@@ -19,6 +21,7 @@ export function ThreadActionsMenu({
   onReplyAll,
   onForward,
   className,
+  compact,
 }: ThreadActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -50,13 +53,16 @@ export function ThreadActionsMenu({
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[#444746] hover:bg-[#e8eaed]"
+        className={cn(
+          "inline-flex items-center justify-center rounded-full text-[#444746] hover:bg-[#e8eaed]",
+          compact ? "h-7 w-7" : "h-9 w-9"
+        )}
         aria-label={titleCase("More actions")}
         title={titleCase("More actions")}
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <MoreVertical className="h-5 w-5" strokeWidth={2} />
+        <MoreVertical className={compact ? "h-4 w-4" : "h-5 w-5"} strokeWidth={2} />
       </button>
       {open && (
         <div

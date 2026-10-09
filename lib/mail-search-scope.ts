@@ -51,3 +51,14 @@ export function stripAnyLeadingScope(query: string): string {
 
 /** Scope tokens the suggest endpoint accepts — it prepends one to the Gmail query, so it must not take arbitrary text. */
 export const SUGGEST_SCOPE_RE = /^(?:in:(?:sent|drafts|trash|spam)|is:(?:starred|important)|label:[^\s"{}()]+)$/i;
+
+/** Whether a query already names a folder/label itself (`in:anywhere`, `label:x`, `is:starred`, …) — then no scope should be added on top. */
+const FOLDER_OPERATOR_RE = /(?:^|\s)(?:in:\S+|label:\S+|is:(?:starred|important))/i;
+export function hasFolderOperator(query: string): boolean {
+  return FOLDER_OPERATOR_RE.test(query);
+}
+
+/** True when the query begins with this folder's scope token. */
+export function startsWithScope(query: string, scope: string | null | undefined): boolean {
+  return Boolean(scope) && stripScope(query, scope) !== query;
+}

@@ -3,6 +3,7 @@
  * Survives navigation within the workspace so prefetched views stay warm.
  */
 
+import { MAIL_PAGE_SIZE } from "@/lib/mail-page-size";
 import {
   clearMailListSessionStorage,
   hydrateMailListSessionCache,
@@ -163,7 +164,7 @@ async function fetchMailListIntoCache(
     const search = opts.search ?? "";
     const params = new URLSearchParams({
       folder: spec.apiFolder,
-      maxResults: "25",
+      maxResults: String(MAIL_PAGE_SIZE),
     });
     if (spec.labelId) params.set("labelId", spec.labelId);
     if (search) params.set("search", search);

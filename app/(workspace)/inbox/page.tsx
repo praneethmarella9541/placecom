@@ -89,6 +89,8 @@ import { extractEmailAddress } from "@/lib/email-parse";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
 import { replyRecipients } from "@/lib/reply-recipients";
 import { threadParticipants } from "@/lib/thread-participants";
+import { MailPager } from "@/components/MailPager";
+import { MAIL_PAGE_SIZE } from "@/lib/mail-page-size";
 import { cn, formatDate, previewLineFromBody, timeAgo } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { useModuleVisibility } from "@/lib/module-visibility";
@@ -194,7 +196,9 @@ const LANDING_BODY_PREFETCH_DELAY_MS = 600;
  */
 async function readThreadStream(
   res: Response,
-  onProgress: (rows: ThreadRow[]) => void
+  onProgress: (rows: ThreadRow[]) => void,
+  /** The next-page token, available as soon as Gmail's list call returns — long before every row has resolved. */
+  onNextToken?: (token: string | undefined) => void
 ): Promise<{ threads: ThreadRow[]; nextPageToken?: string }> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error("Failed to load inbox");
@@ -206,12 +210,13 @@ async function readThreadStream(
   const handle = (line: string) => {
     if (!line.trim()) return;
     const msg = JSON.parse(line) as
-      | { type: "list"; threads: ThreadRow[] }
+      | { type: "list"; threads: ThreadRow[]; nextPageToken?: string }
       | { type: "row"; row: ThreadRow }
       | { type: "done"; threads: ThreadRow[]; nextPageToken?: string }
       | { type: "error"; error: string };
     if (msg.type === "list") {
       rows = msg.threads;
+      onNextToken?.(msg.nextPageToken);
       onProgress(rows);
     } else if (msg.type === "row") {
       rows = rows.map((r) => (r.id === msg.row.id ? msg.row : r));
@@ -927,6 +932,17 @@ function readStoredWidth(key: string, fallback: number, min: number, max: number
 /** Width a collapsed pane keeps so the handle stays reachable. */
 const COLLAPSED_PANE_W = 10;
 
+/** Folders whose list is exactly one Gmail label, so the pager's total is that label's thread count. */
+const COUNT_LABEL_BY_FOLDER: Partial<Record<string, string>> = {
+  sent: "SENT",
+  drafts: "DRAFT",
+  trash: "TRASH",
+  spam: "SPAM",
+};
+
+/** How long a counted view total is reused before it's counted again. */
+const LIST_COUNT_TTL_MS = 15 * 60_000;
+
 /** Threads longer than this fold their middle messages into one count divider; shorter ones show every message. */
 const THREAD_FOLD_AFTER = 10;
 
@@ -1109,9 +1125,17 @@ export default function InboxPage() {
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
   const [nextPageToken, setNextPageToken] = useState<string | undefined>();
-  const [loadingMore, setLoadingMore] = useState(false);
-  const loadingMoreRef = useRef(false); // stable ref so the observer doesn't re-subscribe on every render
-  const loadMoreSentinelRef = useRef<HTMLLIElement>(null);
+  /** Cache key of the page `nextPageToken` belongs to — Older/Newer wait until it is the page on screen. */
+  const [shownPageKey, setShownPageKey] = useState<string | null>(null);
+  /** The background count of the current view's threads (for views with no label total). */
+  const [listCount, setListCount] = useState<{ key: string; count: number; capped: boolean } | null>(null);
+  const listCountsRef = useRef(new Map<string, { count: number; capped: boolean; at: number }>());
+  /** Which page of the current view is showing, and the token that opens each page (tokens[0] = first page). */
+  const [pager, setPager] = useState<{ viewKey: string; index: number; tokens: (string | undefined)[] }>({
+    viewKey: "",
+    index: 0,
+    tokens: [undefined],
+  });
   const [loadingList, setLoadingList] = useState(true);
   /** Gmail-style top bar while manually refreshing an already-visible list. */
   const [listRefreshing, setListRefreshing] = useState(false);
@@ -1410,6 +1434,7 @@ export default function InboxPage() {
       if (cached?.threads.length) {
         setThreads(cached.threads);
         setNextPageToken(cached.nextPageToken);
+        setShownPageKey(cacheKey);
         setLoadingList(false);
         prefetchBodiesForRows(cached.threads);
       } else {
@@ -1419,6 +1444,7 @@ export default function InboxPage() {
           if (activeListCacheKeyRef.current !== cacheKey) return;
           setThreads(snap.threads);
           setNextPageToken(snap.nextPageToken);
+          setShownPageKey(cacheKey);
           setLoadingList(false);
           prefetchBodiesForRows(snap.threads);
         });
@@ -1439,6 +1465,24 @@ export default function InboxPage() {
         : folder === "trash" || folder === "spam" || folder === "allmail" || folder === "sent" || folder === "drafts"
           ? null
           : filterLabelId ?? (folder === "inbox" ? INBOX_CATEGORY_LABEL[category] : null);
+
+  // Page of the current view. Tied to the view's key, so changing folder, tab,
+  // label or search lands on page 1 without a separate reset step.
+  const listViewKey = buildMailListCacheKey(
+    folder === "starred" || folder === "important" ? "inbox" : folder,
+    effectiveLabelId,
+    mailSearch
+  );
+  const pageIndex = pager.viewKey === listViewKey ? pager.index : 0;
+  const pageToken = pageIndex > 0 ? pager.tokens[pageIndex] : undefined;
+  const currentPageKey = pageIndex > 0 ? `${listViewKey}|p${pageIndex}` : listViewKey;
+  // True once the token in state is the one that follows the page being shown. Before
+  // that it is the PREVIOUS page's, and using it to open "the next page" would load
+  // the page already on screen again.
+  const pageTokenReady = shownPageKey === currentPageKey;
+  useEffect(() => {
+    setPager((p) => (p.viewKey === listViewKey ? p : { viewKey: listViewKey, index: 0, tokens: [undefined] }));
+  }, [listViewKey]);
 
   // The operator Gmail prefills in its search box for this view (in:sent, …); null
   // for Inbox / All Mail, which search everything.
@@ -2786,8 +2830,8 @@ export default function InboxPage() {
    *   1. If we have cached data for this (folder, category, labelFilter,
    *      search) combo, paint it INSTANTLY (no spinner).
    *   2. Then fetch in the background and silently swap in the fresh result.
-   * For appended pages (infinite scroll) we never cache — that path always
-   * hits the network.
+   * Each page of a view is cached under its own key (`<view>|p<n>`), so paging
+   * back to a page already seen paints instantly too.
    *
    * Tabs/folders/labels therefore feel instant on return, matching Gmail.
    * A mutation that affects the visible list (star/read/archive) updates the
@@ -2797,8 +2841,6 @@ export default function InboxPage() {
    */
   const loadThreads = useCallback(
     async (opts: {
-      append: boolean;
-      pageToken?: string;
       forceRefresh?: boolean;
       indicateRefresh?: boolean;
     }) => {
@@ -2814,39 +2856,34 @@ export default function InboxPage() {
               : folder === "allmail"
                 ? "allmail"
                 : folder;
-      const params = new URLSearchParams({ folder: apiFolder, maxResults: "25" });
-      if (opts.pageToken) params.set("pageToken", opts.pageToken);
+      const params = new URLSearchParams({ folder: apiFolder, maxResults: String(MAIL_PAGE_SIZE) });
+      if (pageToken) params.set("pageToken", pageToken);
       if (mailSearch) params.set("search", mailSearch);
-      // First page of any list (search or folder/tab) streams its rows in as they
-      // resolve. Drafts come from a different Gmail call and aren't streamed.
-      const streaming = !opts.append && apiFolder !== "drafts";
+      // Any list page (search or folder/tab) streams its rows in as they resolve.
+      // Drafts come from a different Gmail call and aren't streamed.
+      const streaming = apiFolder !== "drafts";
       if (streaming) params.set("stream", "1");
       // When a search query is active, drop the category/label filter so results
       // match all mail — exactly like Gmail's own search bar behaviour.
       if (effectiveLabelId && !mailSearch) params.set("labelId", effectiveLabelId);
 
-      const cacheKey = buildMailListCacheKey(apiFolder, effectiveLabelId, mailSearch);
+      const viewKey = buildMailListCacheKey(apiFolder, effectiveLabelId, mailSearch);
+      const cacheKey = pageIndex > 0 ? `${viewKey}|p${pageIndex}` : viewKey;
       const isActiveListView = () => activeListCacheKeyRef.current === cacheKey;
 
       // Track whether the list is already visible (cached) BEFORE the fetch
       // so we know whether to preserve scroll when fresh data arrives.
       let listWasVisible = false;
 
-      let loadGen = listLoadGenRef.current;
-      let perfId = 0;
-      if (!opts.append) {
-        perfId = mailPerfBegin(mailSearch ? "search" : "tab", mailSearch ? "search" : cacheKey);
-        loadGen = ++listLoadGenRef.current;
-        activeListCacheKeyRef.current = cacheKey;
-        listFetchAbortRef.current?.abort();
-        listFetchAbortRef.current = new AbortController();
-      }
+      const perfId = mailPerfBegin(mailSearch ? "search" : "tab", mailSearch ? "search" : cacheKey);
+      const loadGen = ++listLoadGenRef.current;
+      activeListCacheKeyRef.current = cacheKey;
+      listFetchAbortRef.current?.abort();
+      listFetchAbortRef.current = new AbortController();
 
       const fetchSignal = listFetchAbortRef.current?.signal;
 
-      if (opts.append) {
-        setLoadingMore(true); loadingMoreRef.current = true;
-      } else {
+      {
         if (opts.indicateRefresh) setListRefreshing(true);
         setListError(null);
         // SWR: paint cached rows instantly on tab-switch (never an empty placeholder).
@@ -2855,6 +2892,7 @@ export default function InboxPage() {
         if (hasCachedRows && cached) {
           setThreads(cached.threads);
           setNextPageToken(cached.nextPageToken);
+          setShownPageKey(cacheKey);
           bumpHistoryAnchorFromThreads(latestHistoryIdRef, cached.threads);
           setLoadingList(false);
           listWasVisible = true;
@@ -2892,6 +2930,11 @@ export default function InboxPage() {
                 mailPerfFirstPaint(perfId, "network");
                 setLoadingList(false);
                 setThreads(rows);
+              }, (token) => {
+                // This page's next-page token is known now — Older can act on it.
+                if (!isActiveListView()) return;
+                setNextPageToken(token);
+                setShownPageKey(cacheKey);
               })
             : await res.json()
         ) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
@@ -2902,49 +2945,38 @@ export default function InboxPage() {
         if (!isActiveListView()) return;
 
         bumpHistoryAnchorFromThreads(latestHistoryIdRef, incoming);
+        // The token for the page after this one — set even if the rows below aren't
+        // applied (optimistic edits win), since it's valid either way.
+        setNextPageToken(data.nextPageToken);
+        setShownPageKey(cacheKey);
 
-        if (opts.append) {
-          setThreads((prev) => {
-            const seen = new Set(prev.map((t) => t.id));
-            const uniqueIncoming = incoming.filter((t) => !seen.has(t.id));
-            const merged = [...prev, ...uniqueIncoming];
-            // Keep the cache snapshot in sync with the merged list so coming
-            // back to this view after infinite-scrolling still feels instant.
-            setMailListCache(cacheKey, { threads: merged, nextPageToken: data.nextPageToken });
-            prefetchBodiesForRows(uniqueIncoming, { append: true });
-            return merged;
+        // Don't clobber optimistic label/star/read state if the user mutated
+        // while this fetch was in-flight (unless this is an explicit refresh).
+        if (!opts.forceRefresh && lastMutationAtRef.current > fetchStartedAt) {
+          return;
+        }
+        // Background SWR / forceRefresh: the user already sees the list and
+        // may have scrolled. Snapshot scrollTop BEFORE React re-renders with
+        // fresh data, then restore it immediately after so the view doesn't jump.
+        const scrollBefore = listWasVisible ? (listScrollRef.current?.scrollTop ?? 0) : 0;
+        setThreads(incoming);
+        setMailListCache(cacheKey, {
+          threads: incoming,
+          nextPageToken: data.nextPageToken,
+        });
+        prefetchBodiesForRows(incoming, { forceRefresh: opts.forceRefresh });
+        if (scrollBefore > 0) {
+          requestAnimationFrame(() => {
+            if (listScrollRef.current) {
+              listScrollRef.current.scrollTop = scrollBefore;
+            }
           });
-        } else {
-          // Don't clobber optimistic label/star/read state if the user mutated
-          // while this fetch was in-flight (unless this is an explicit refresh).
-          if (!opts.forceRefresh && lastMutationAtRef.current > fetchStartedAt) {
-            return;
-          }
-          // Background SWR / forceRefresh: the user already sees the list and
-          // may have scrolled. Snapshot scrollTop BEFORE React re-renders with
-          // fresh data, then restore it immediately after so the view doesn't jump.
-          const scrollBefore = listWasVisible ? (listScrollRef.current?.scrollTop ?? 0) : 0;
-          setThreads(incoming);
-          setMailListCache(cacheKey, { threads: incoming, nextPageToken: data.nextPageToken });
-          prefetchBodiesForRows(incoming, { forceRefresh: opts.forceRefresh });
-          if (scrollBefore > 0) {
-            requestAnimationFrame(() => {
-              if (listScrollRef.current) {
-                listScrollRef.current.scrollTop = scrollBefore;
-              }
-            });
-          }
         }
-        if (isActiveListView()) {
-          setNextPageToken(data.nextPageToken);
-        }
-        if (!opts.append) {
-          mailPerfFirstPaint(perfId, "network");
-          mailPerfComplete(perfId, incoming.length);
-        }
+        mailPerfFirstPaint(perfId, "network");
+        mailPerfComplete(perfId, incoming.length);
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;
-        if (!opts.append && isActiveListView() && loadGen === listLoadGenRef.current) {
+        if (isActiveListView() && loadGen === listLoadGenRef.current) {
           const hasRows = listCacheRef.current.get(cacheKey)?.threads.length;
           if (!hasRows) {
             setListError(e instanceof Error ? e.message : "Failed to load");
@@ -2953,27 +2985,101 @@ export default function InboxPage() {
         }
       } finally {
         if (opts.indicateRefresh) setListRefreshing(false);
-        const stillCurrent =
-          !opts.append &&
-          loadGen === listLoadGenRef.current &&
-          !fetchSignal?.aborted;
-        if (opts.append) {
-          if (isActiveListView()) {
-            setLoadingMore(false);
-            loadingMoreRef.current = false;
-          }
-        } else if (isActiveListView() && stillCurrent) {
+        const stillCurrent = loadGen === listLoadGenRef.current && !fetchSignal?.aborted;
+        if (isActiveListView() && stillCurrent) {
           setLoadingList(false);
         }
       }
     },
-    [folder, mailSearch, effectiveLabelId, prefetchBodiesForRows]
+    [folder, mailSearch, effectiveLabelId, pageIndex, pageToken, prefetchBodiesForRows]
   );
+
+  /**
+   * Newer / Older: move to page `target` of the current view (0-based). Newer
+   * always works — its tokens were collected on the way here. Older needs the
+   * token that follows the page on screen; that arrives with Gmail's list call
+   * (well before the rows), and a click before then is remembered and carried
+   * out the moment it does, so the button never has to be disabled.
+   */
+  const [olderQueued, setOlderQueued] = useState(false);
+  const goToPage = useCallback(
+    (target: number) => {
+      if (target < 0 || target === pageIndex) return;
+      if (target < pageIndex) {
+        setOlderQueued(false);
+        setPager({ viewKey: listViewKey, index: target, tokens: pager.viewKey === listViewKey ? pager.tokens : [undefined] });
+      } else {
+        if (!pageTokenReady) {
+          setOlderQueued(true);
+          return;
+        }
+        if (!nextPageToken) return;
+        const known = pager.viewKey === listViewKey ? pager.tokens : [undefined];
+        // Remember the token that opens the next page, so Newer can come back through them.
+        setPager({ viewKey: listViewKey, index: target, tokens: [...known.slice(0, pageIndex + 1), nextPageToken] });
+      }
+      // A new page starts at the top with nothing selected, like Gmail.
+      listScrollRef.current?.scrollTo({ top: 0 });
+      setSelectedThreadIds(new Set());
+    },
+    [pager, listViewKey, pageIndex, nextPageToken, pageTokenReady]
+  );
+  // Carry out a queued Older as soon as the token for this page is known.
+  useEffect(() => {
+    if (!olderQueued || !pageTokenReady) return;
+    setOlderQueued(false);
+    if (nextPageToken) goToPage(pageIndex + 1);
+  }, [olderQueued, pageTokenReady, nextPageToken, pageIndex, goToPage]);
+  // A queued click belongs to the view it was made in.
+  useEffect(() => {
+    setOlderQueued(false);
+  }, [listViewKey]);
+
+  // The pager's "of N" for views that aren't a single label (Inbox tabs, labels,
+  // Starred, All Mail, search): count the matching threads in the background once
+  // there's more than one page to count. Cached per view; skipped when it's moot.
+  const hasNextPage = Boolean(nextPageToken);
+  useEffect(() => {
+    if (!hasNextPage || COUNT_LABEL_BY_FOLDER[folder]) return;
+    const cached = listCountsRef.current.get(listViewKey);
+    if (cached && Date.now() - cached.at < LIST_COUNT_TTL_MS) {
+      setListCount({ key: listViewKey, count: cached.count, capped: cached.capped });
+      return;
+    }
+    const ac = new AbortController();
+    // Not on every quick tab click: wait until the user has stayed on the view.
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const params = new URLSearchParams({
+            folder: folder === "starred" || folder === "important" ? "inbox" : folder,
+          });
+          if (effectiveLabelId && !mailSearch) params.set("labelId", effectiveLabelId);
+          if (mailSearch) params.set("search", mailSearch);
+          const res = await fetch(`/api/gmail/list-count?${params.toString()}`, {
+            cache: "no-store",
+            signal: ac.signal,
+          });
+          if (!res.ok) return;
+          const j = (await res.json()) as { count?: number; capped?: boolean };
+          if (typeof j.count !== "number") return;
+          listCountsRef.current.set(listViewKey, { count: j.count, capped: Boolean(j.capped), at: Date.now() });
+          setListCount({ key: listViewKey, count: j.count, capped: Boolean(j.capped) });
+        } catch {
+          /* aborted or failed — the pager keeps saying "many" */
+        }
+      })();
+    }, 1200);
+    return () => {
+      clearTimeout(timer);
+      ac.abort();
+    };
+  }, [hasNextPage, folder, listViewKey, effectiveLabelId, mailSearch]);
 
   // useLayoutEffect so cached folder/tab content paints before the browser
   // draws — avoids one frame of the previous folder when switching fast.
   useLayoutEffect(() => {
-    void loadThreads({ append: false });
+    void loadThreads({});
   }, [loadThreads]);
 
   // Prefetch thread bodies as soon as the user lands on a folder/tab (from list cache).
@@ -3313,7 +3419,7 @@ export default function InboxPage() {
   const handleMailListRefresh = useCallback(async () => {
     clearMailListSessionCache();
     clearMailThreadPrefetchCache();
-    await loadThreads({ append: false, forceRefresh: true, indicateRefresh: true });
+    await loadThreads({ forceRefresh: true, indicateRefresh: true });
     scheduleCountRefresh();
     warmMailListCachesAfterRefresh();
   }, [loadThreads, scheduleCountRefresh, warmMailListCachesAfterRefresh]);
@@ -3343,7 +3449,7 @@ export default function InboxPage() {
     if (hadContent) {
       void saveDraft().then(() => {
         // Background SWR refresh — keep cached list visible (no full-page reload).
-        if (folder === "drafts") void loadThreads({ append: false });
+        if (folder === "drafts") void loadThreads({});
         scheduleCountRefresh();
       });
     }
@@ -3373,7 +3479,7 @@ export default function InboxPage() {
             const j = (await res.json().catch(() => ({}))) as { error?: string };
             throw new Error(j.error || "Could not delete draft");
           }
-          if (folder === "drafts") void loadThreads({ append: false });
+          if (folder === "drafts") void loadThreads({});
           scheduleCountRefresh();
           showSendSnack({ phase: "sent", message: "Draft deleted" }, 3000);
         })
@@ -3448,7 +3554,7 @@ export default function InboxPage() {
           // Local read/label/archive already updated list + badges optimistically.
           if (!inMutationCooldown) {
             void pollRef.current.loadCounts();
-            void pollRef.current.loadThreads({ append: false, forceRefresh: true });
+            void pollRef.current.loadThreads({ forceRefresh: true });
           }
         }
       } catch {
@@ -3485,29 +3591,6 @@ export default function InboxPage() {
     });
     return () => cancelAnimationFrame(raf);
   }, [selectedId]);
-
-  // Auto-load more: observe the sentinel li inside the scrollable ul.
-  // Re-subscribes whenever nextPageToken changes so the new token is captured.
-  useEffect(() => {
-    const sentinel = loadMoreSentinelRef.current;
-    const scroller = listScrollRef.current; // the <ul> that actually scrolls
-    const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
-    // Mobile hides the list while reading — skip load-more until back on list.
-    if (!sentinel || !scroller || !nextPageToken || (selectedId && !isDesktop)) return;
-    let fired = false;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting && !fired && !loadingMoreRef.current) {
-          fired = true;
-          observer.disconnect();
-          void loadThreads({ append: true, pageToken: nextPageToken });
-        }
-      },
-      { root: scroller, rootMargin: "200px", threshold: 0 }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [nextPageToken, selectedId, loadThreads]);
 
   // Load recipient suggestions (Google contacts + recruiter list) the
   // first time either Compose or the advanced search filter opens. Both
@@ -3755,6 +3838,9 @@ export default function InboxPage() {
 
       listCacheRef.current.forEach((entry, cacheKey) => {
         if (listCacheLabelId(cacheKey) !== labelId) return;
+        // A thread newly given this label belongs on the first page of its view
+        // (newest first), not spliced into a later page's snapshot.
+        if (action === "add" && /\|p\d+$/.test(cacheKey)) return;
         if (action === "remove") {
           const idSet = new Set(threadIds);
           const next = entry.threads.filter((t) => !idSet.has(t.id));
@@ -3798,6 +3884,7 @@ export default function InboxPage() {
         if (entry) {
           setThreads(entry.threads);
           setNextPageToken(entry.nextPageToken);
+          setShownPageKey(bucketKey);
         }
       }
     },
@@ -4277,7 +4364,7 @@ export default function InboxPage() {
 
       const rollback = () => {
         listCacheRef.current.clear();
-        void loadThreads({ append: false, forceRefresh: true });
+        void loadThreads({ forceRefresh: true });
         scheduleCountRefresh();
       };
 
@@ -4829,7 +4916,7 @@ export default function InboxPage() {
           setAllLabels(snapshotLabels);
           setLabelCounts(snapshotCounts);
           listCacheRef.current.clear();
-          void loadThreads({ append: false, forceRefresh: true });
+          void loadThreads({ forceRefresh: true });
           alert(e instanceof Error ? e.message : "Could not delete label");
         }
       })();
@@ -5222,7 +5309,7 @@ export default function InboxPage() {
     if (snapshot.draftId) {
       void fetch(`/api/gmail/drafts/${snapshot.draftId}`, { method: "DELETE" }).catch(() => {});
     }
-    void loadThreads({ append: false, forceRefresh: true });
+    void loadThreads({ forceRefresh: true });
   }
 
   /** Reset compose + all mass state after a campaign finishes. */
@@ -5460,7 +5547,7 @@ export default function InboxPage() {
         // If the user is currently viewing Sent, refresh it so the real row
         // replaces the optimistic one. Any other active folder is left alone.
         if (folder === "sent") {
-          void loadThreads({ append: false, forceRefresh: true });
+          void loadThreads({ forceRefresh: true });
         }
       }
       void loadTracking();
@@ -5593,6 +5680,43 @@ export default function InboxPage() {
   const mobilePrimaryFolders = FOLDER_NAV.filter((f) => MOBILE_PRIMARY_FOLDER_KEYS.has(f.key));
   const mobileMoreFolders = FOLDER_NAV.filter((f) => !MOBILE_PRIMARY_FOLDER_KEYS.has(f.key));
   const mobileMoreFolderActive = mobileMoreFolders.some((f) => f.key === folder);
+
+  // The pager sits at the right end of the select-all toolbar, on the row under
+  // the category tabs — like Gmail's checkbox / refresh / pager row.
+  const mailPagerNode: ReactNode =
+    threads.length === 0
+      ? null
+      : (() => {
+              const start = pageIndex * MAIL_PAGE_SIZE + 1;
+              const end = start + threads.length - 1;
+              // Last page: the total is exactly what's been counted. Otherwise the
+              // folder's own label total (Sent/Drafts/Trash/Spam), else the
+              // background count of the view, else "many" until that arrives.
+              let totalText = "many";
+              if (!nextPageToken) {
+                totalText = end.toLocaleString();
+              } else if (COUNT_LABEL_BY_FOLDER[folder]) {
+                const t = labelCounts[COUNT_LABEL_BY_FOLDER[folder]!]?.total;
+                if (typeof t === "number") totalText = Math.max(t, end).toLocaleString();
+              } else if (listCount?.key === listViewKey) {
+                totalText = listCount.capped
+                  ? `${listCount.count.toLocaleString()}+`
+                  : Math.max(listCount.count, end).toLocaleString();
+              }
+              return (
+                <MailPager
+                  start={start}
+                  end={end}
+                  totalText={totalText}
+                  hasNewer={pageIndex > 0}
+                  hasOlder={Boolean(nextPageToken) || !pageTokenReady}
+                  onNewer={() => goToPage(pageIndex - 1)}
+                  onOlder={() => goToPage(pageIndex + 1)}
+                  busy={loadingList}
+                  compact={selectedThreadIds.size > 0}
+                />
+              );
+            })();
 
   const topbarActions = topbarActionsNode
     ? createPortal(
@@ -6120,20 +6244,18 @@ export default function InboxPage() {
             style={selectedId ? { width: listPaneWidth } : undefined}
           >
 
-            {/* Gmail-style top bar — manual refresh + load-more */}
+            {/* Gmail-style top bar — manual refresh */}
             <div
               className={cn(
                 "pointer-events-none absolute inset-x-0 top-0 z-20 h-[3px] overflow-hidden transition-opacity duration-200",
-                listRefreshing || loadingMore ? "opacity-100" : "opacity-0"
+                listRefreshing ? "opacity-100" : "opacity-0"
               )}
-              aria-hidden={!listRefreshing && !loadingMore}
+              aria-hidden={!listRefreshing}
               aria-live="polite"
-              aria-busy={listRefreshing || loadingMore}
+              aria-busy={listRefreshing}
             >
               {listRefreshing ? (
                 <div className="h-full w-1/4 animate-gmail-refresh-indeterminate bg-[var(--color-copper)]" />
-              ) : loadingMore ? (
-                <div className="h-full w-full origin-left animate-progress-bar bg-[var(--color-copper)]" />
               ) : null}
             </div>
 
@@ -6259,6 +6381,7 @@ export default function InboxPage() {
                     {threads.length} message{threads.length !== 1 ? "s" : ""}
                   </span>
                 )}
+                {mailPagerNode}
               </div>
             )}
 
@@ -6608,33 +6731,6 @@ export default function InboxPage() {
                     </li>
                   );
                 })}
-
-                {/* Skeleton rows appended inside the scroll list while loading more.
-                    Mirrors the real card layout (avatar, sender + date, subject line)
-                    so the swap-in is seamless. */}
-                {loadingMore && [0,1,2,3].map((i) => {
-                  const senderW = i % 3 === 0 ? "w-[120px]" : i % 3 === 1 ? "w-[95px]" : "w-[140px]";
-                  const subjectW = i % 4 === 0 ? "w-[70%]" : i % 4 === 1 ? "w-[55%]" : i % 4 === 2 ? "w-[85%]" : "w-[40%]";
-                  const dateW = i % 2 === 0 ? "w-[58px]" : "w-[72px]";
-                  return (
-                    <li key={`skel-${i}`} className="flex w-full items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-3.5 py-3">
-                      <div className="skeleton-shimmer h-[34px] w-[34px] shrink-0 rounded-full" />
-                      <div className="min-w-0 w-full flex-1">
-                        <div className="flex w-full items-center gap-2">
-                          <div className={cn("skeleton-shimmer h-3 shrink-0 rounded", senderW)} />
-                          <span className="min-w-2 flex-1" />
-                          <div className={cn("skeleton-shimmer h-2.5 shrink-0 rounded", dateW)} />
-                        </div>
-                        <div className={cn("skeleton-shimmer mt-2 h-2.5 rounded", subjectW)} />
-                      </div>
-                    </li>
-                  );
-                })}
-
-                {/* Sentinel: sits at bottom of scroll list; IntersectionObserver fires load-more */}
-                {nextPageToken && (
-                  <li ref={loadMoreSentinelRef} className="h-4 list-none" aria-hidden />
-                )}
               </ul>
             )}
             {selectedId && (

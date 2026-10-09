@@ -375,35 +375,132 @@ async function fetchThreadMeta(
  * the fan-out rather than a fixed constant that knew nothing about what the rest
  * of the app was spending at the same moment.
  */
+/**
+ * Rows fetched at once. The quota pacing, not this, sets the speed (a call takes ~300ms and
+ * the pace grants one every ~125ms, so ~3 are in flight anyway); this caps the burst and keeps
+ * a page the user has left from queueing 50 calls. Gmail also limits concurrent requests per user.
+ */
+const ROW_FETCH_CONCURRENCY = 5;
+
 async function mapThreadsWithMeta(
   accessToken: string,
   rawThreads: { id: string; snippet?: string; historyId?: string }[],
   mailboxKey: string | undefined,
   priority: GmailPriority | undefined,
   /** Called as each row resolves, so a streaming caller can send it without waiting for the rest. */
-  onRow?: (row: ThreadListItem) => void
+  onRow?: (row: ThreadListItem) => void,
+  /** Aborted when the client leaves the page — rows not yet started are then never fetched. */
+  signal?: AbortSignal
 ): Promise<ThreadListItem[]> {
-  return Promise.all(
-    rawThreads.map(async (t): Promise<ThreadListItem> => {
-      const snippet = cleanMailSnippet(t.snippet || "");
-      const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority);
-      const row: ThreadListItem = meta
-        ? {
-            id: t.id,
+  const buildRow = async (t: { id: string; snippet?: string; historyId?: string }): Promise<ThreadListItem> => {
+    const snippet = cleanMailSnippet(t.snippet || "");
+    const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority);
+    const row: ThreadListItem = meta
+      ? {
+          id: t.id,
+          snippet,
+          historyId: t.historyId,
+          ...meta,
+          hasCalendarInvite: isCalendarInviteThread({
+            subject: meta.subject,
+            from: meta.from,
             snippet,
-            historyId: t.historyId,
-            ...meta,
-            hasCalendarInvite: isCalendarInviteThread({
-              subject: meta.subject,
-              from: meta.from,
-              snippet,
-            }),
-          }
-        : { id: t.id, snippet, subject: "", from: "", date: "", historyId: t.historyId };
-      onRow?.(row);
-      return row;
-    })
-  );
+          }),
+        }
+      : { id: t.id, snippet, subject: "", from: "", date: "", historyId: t.historyId };
+    onRow?.(row);
+    return row;
+  };
+
+  // A small pool rather than all rows at once: if the user pages on, the rows not
+  // yet started are dropped instead of all being spent against the Gmail quota.
+  const rows: ThreadListItem[] = new Array(rawThreads.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < rawThreads.length && !signal?.aborted) {
+      const i = next++;
+      rows[i] = await buildRow(rawThreads[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(ROW_FETCH_CONCURRENCY, rawThreads.length) }, worker));
+  if (signal?.aborted) throw new Error("Request aborted");
+  return rows;
+}
+
+/**
+ * The Gmail `labelIds` / `q` a list view maps to — shared by the list itself and
+ * by the count of how many threads it holds, so the two always agree.
+ *
+ * When a search query is active, ALL folder/label restrictions drop so results
+ * come from all mail (inbox + sent + etc.) — exactly like Gmail's own search bar.
+ * Folder + category filters apply only when browsing.
+ */
+function buildThreadListQuery(options: {
+  folder: ThreadListFolder;
+  labelId?: string;
+  searchQuery?: string;
+}): { rawUserQ: string; isSearch: boolean; labels: string[]; q: string } {
+  const rawUserQ = normalizeGmailSearchQuery(options.searchQuery || "");
+  const isSearch = rawUserQ.length > 0;
+  const labels: string[] = isSearch ? [] : [...LABELS[options.folder]];
+  const categoryQuery = !isSearch && options.labelId ? CATEGORY_LABEL_TO_QUERY[options.labelId] : undefined;
+  if (!isSearch && options.labelId && !categoryQuery && !labels.includes(options.labelId)) {
+    labels.push(options.labelId);
+  }
+  const baseQ = isSearch ? "" : QUERY[options.folder];
+  const q = [baseQ, categoryQuery, rawUserQ].filter(Boolean).join(" ");
+  return { rawUserQ, isSearch, labels, q };
+}
+
+/**
+ * How many threads a list view holds — the "of N" in the pager. Gmail's own
+ * `resultSizeEstimate` can't be used: for a query it's closer to "a bit more than
+ * you've paged through" than a total. So count for real, ids only (500 per call, 10
+ * units each), on the background lane so it never slows what the user is waiting
+ * on, and stop at `cap` — the pager then shows "N+".
+ */
+export async function countThreadsUpTo(
+  accessToken: string,
+  options: {
+    folder: ThreadListFolder;
+    labelId?: string;
+    searchQuery?: string;
+    mailboxKey?: string;
+    cap: number;
+    /** Stop early (the user moved on). */
+    signal?: AbortSignal;
+  }
+): Promise<{ count: number; capped: boolean }> {
+  const { labels, q } = buildThreadListQuery(options);
+  let count = 0;
+  let pageToken: string | undefined;
+  do {
+    if (options.signal?.aborted) throw new Error("aborted");
+    const params = new URLSearchParams({ maxResults: "500", fields: "nextPageToken,threads/id" });
+    for (const l of labels) params.append("labelIds", l);
+    if (q) params.set("q", q);
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await fetchGmail(
+      `${GMAIL_API}/threads?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: options.mailboxKey, cost: GMAIL_COST.threadsList, priority: "batch" }
+    );
+    if (res.status === 401) {
+      const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+      err.code = "UNAUTHORIZED";
+      throw err;
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throwIfGmailInsufficientScope(res.status, text);
+      throw new Error(`Gmail threads count ${res.status}: ${text}`);
+    }
+    const data = (await res.json()) as { threads?: { id: string }[]; nextPageToken?: string };
+    count += data.threads?.length ?? 0;
+    pageToken = data.nextPageToken;
+    if (pageToken && count >= options.cap) return { count: options.cap, capped: true };
+  } while (pageToken);
+  return { count, capped: false };
 }
 
 export async function listThreadsPage(
@@ -428,23 +525,12 @@ export async function listThreadsPage(
     onSkeleton?: (page: ThreadListPage) => void;
     /** Streaming callers: each row as its header fetch resolves. */
     onRow?: (row: ThreadListItem) => void;
+    /** Client disconnected — stop fetching the rows still waiting. */
+    signal?: AbortSignal;
   }
 ): Promise<ThreadListPage> {
   const startedAt = Date.now();
-  const rawUserQ = normalizeGmailSearchQuery(options.searchQuery || "");
-  const userQ = rawUserQ;
-  const isSearch = userQ.length > 0;
-
-  // When a search query is active, drop ALL folder/label restrictions so
-  // results come from all mail (inbox + sent + etc.) — exactly like Gmail's
-  // own search bar. Only apply folder + category filters when browsing.
-  const labels: string[] = isSearch ? [] : [...LABELS[options.folder]];
-  const categoryQuery = (!isSearch && options.labelId) ? CATEGORY_LABEL_TO_QUERY[options.labelId] : undefined;
-  if (!isSearch && options.labelId && !categoryQuery && !labels.includes(options.labelId)) {
-    labels.push(options.labelId);
-  }
-  const baseQ = isSearch ? "" : QUERY[options.folder];
-  const q = [baseQ, categoryQuery, userQ].filter(Boolean).join(" ");
+  const { rawUserQ, isSearch, labels, q } = buildThreadListQuery(options);
 
   // For pure `from:X` queries, also run a supplemental full-text search for
   // the person's email address. This catches Google notification emails
@@ -547,7 +633,8 @@ export async function listThreadsPage(
     rawThreads,
     options.mailboxKey,
     options.priority,
-    options.onRow
+    options.onRow,
+    options.signal
   );
   // Splits a slow load into "Gmail list call" vs "per-row header fetches" (which
   // includes time queued in the quota bucket) — the two have different fixes.

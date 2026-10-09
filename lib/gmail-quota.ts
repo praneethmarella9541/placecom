@@ -337,6 +337,17 @@ function rateLimitReason(bodyText: string): string {
   return m ? m[1] : "unknown";
 }
 
+/**
+ * Gmail's own wording for the 403 — the reason alone ("rateLimitExceeded") is shared
+ * by different limits. "Too many concurrent requests for user" means too many calls
+ * in flight at once (fix: fewer in parallel); "User-rate limit exceeded" / "Rate Limit
+ * Exceeded" means too many units per second (fix: a lower pace).
+ */
+function rateLimitMessage(bodyText: string): string {
+  const m = /"message"\s*:\s*"([^"]+)"/i.exec(bodyText);
+  return m ? m[1].slice(0, 140) : "";
+}
+
 // Once the per-user window is exhausted nothing succeeds until it rolls over, so
 // the backoff has to be able to outlast a full minute: ~1s, 2s, 4s, 8s, 16s, 32s.
 const RATE_LIMIT_MAX_ATTEMPTS = 7;
@@ -402,8 +413,8 @@ export async function fetchGmail(
     // happen entirely silently. The reason tells us WHICH ceiling this is —
     // see rateLimitReason's doc comment — since the fix differs by reason.
     console.warn(
-      `[gmail-quota] throttled by Gmail (${res.status} ${rateLimitReason(bodyText)}) on attempt ${attempt + 1}; ` +
-        `backing off ${Math.round(backoffMs)}ms`
+      `[gmail-quota] throttled by Gmail (${res.status} ${rateLimitReason(bodyText)}: "${rateLimitMessage(bodyText)}") ` +
+        `on attempt ${attempt + 1}; backing off ${Math.round(backoffMs)}ms`
     );
 
     await new Promise((resolve) => setTimeout(resolve, backoffMs));

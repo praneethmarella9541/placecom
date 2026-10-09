@@ -110,7 +110,13 @@ import {
   formatMessageRecipientsLine,
 } from "@/lib/message-recipients-display";
 import { MailSearchBar } from "@/components/MailSearchBar";
-import { isScopeOnly, searchScopeForFolder, stripAnyLeadingScope } from "@/lib/mail-search-scope";
+import {
+  hasFolderOperator,
+  isScopeOnly,
+  searchScopeForFolder,
+  startsWithScope,
+  stripAnyLeadingScope,
+} from "@/lib/mail-search-scope";
 import { mailPerfBegin, mailPerfFirstPaint, mailPerfComplete } from "@/lib/mail-perf";
 import {
   buildMailListCacheKey,
@@ -1163,6 +1169,13 @@ export default function InboxPage() {
   const [filterHasWords, setFilterHasWords] = useState("");
   const [filterDoesntHave, setFilterDoesntHave] = useState("");
   const [filterHasAttachment, setFilterHasAttachment] = useState(false);
+  // Advanced search stays inside the folder being viewed, like the search box does
+  // (Gmail's "Search: <folder>" dropdown). false = all mail. Only meaningful in a
+  // folder that has a scope (Sent, Drafts, Trash, Spam, Starred, Important, a label).
+  const [filterInFolder, setFilterInFolder] = useState(true);
+  // The current folder's scope token. A ref because the callbacks below are defined
+  // before the folder state it derives from; they read it when called.
+  const mailSearchScopeRef = useRef<string | null>(null);
   // Date-within: one of Gmail's preset spans (matches Gmail UI).
   type DateWithin = "" | "1d" | "3d" | "7d" | "14d" | "30d" | "60d" | "180d" | "365d";
   const [filterDateWithin, setFilterDateWithin] = useState<DateWithin>("");
@@ -1229,15 +1242,21 @@ export default function InboxPage() {
     }
     if (filterHasAttachment) parts.push("has:attachment");
     parts.push(...buildDateSearchClauses(filterDateWithin, filterDateAnchor));
-    return parts.join(" ");
+    let q = parts.join(" ");
+    // Search inside the folder the user is in, unless they chose All mail or wrote
+    // their own folder operator (in:anywhere, label:…).
+    const scope = mailSearchScopeRef.current;
+    if (filterInFolder && scope && !hasFolderOperator(q)) q = q ? `${scope} ${q}` : scope;
+    return q;
   }
 
   /** Apply: build the query, push into the input, close the panel. */
   function applyFilter() {
     const q = buildFilterQuery();
     setMailSearchInput(q);
-    // Skip the 400 ms debounce — the user explicitly clicked Search.
-    setMailSearch(q);
+    // Skip the 400 ms debounce — the user explicitly clicked Search. A box holding
+    // only the folder operator has nothing to search for.
+    setMailSearch(isScopeOnly(q, mailSearchScopeRef.current) ? "" : q);
     setFilterOpen(false);
   }
 
@@ -1251,6 +1270,7 @@ export default function InboxPage() {
     setFilterHasAttachment(false);
     setFilterDateWithin("");
     setFilterDateAnchor("");
+    setFilterInFolder(true);
   }, []);
 
   const applyFilterFields = useCallback((fields: GmailFilterFields) => {
@@ -1272,7 +1292,8 @@ export default function InboxPage() {
         clearFilter();
         return;
       }
-      applyFilterFields(parseGmailQueryToFilterFields(q));
+      // The folder operator isn't a field — it's the "Search in" choice — so keep it out of "Has the words".
+      applyFilterFields(parseGmailQueryToFilterFields(stripAnyLeadingScope(q)));
     },
     [applyFilterFields, clearFilter],
   );
@@ -1280,7 +1301,11 @@ export default function InboxPage() {
   const handleFilterOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
-        syncFilterFromQuery(mailSearchInput.trim() || mailSearch.trim());
+        const text = mailSearchInput.trim() || mailSearch.trim();
+        syncFilterFromQuery(text);
+        // In the folder if the box is empty or begins with its operator; a query
+        // that dropped the operator was a deliberate all-mail search.
+        setFilterInFolder(!text || startsWithScope(text, mailSearchScopeRef.current));
       }
       setFilterOpen(open);
     },
@@ -1292,6 +1317,7 @@ export default function InboxPage() {
       const q = query.trim();
       setMailSearch(q);
       syncFilterFromQuery(q);
+      setFilterInFolder(startsWithScope(q, mailSearchScopeRef.current));
     },
     [syncFilterFromQuery],
   );
@@ -1491,6 +1517,14 @@ export default function InboxPage() {
       ? allLabels.find((l) => l.id === filterLabelId && !l.isSystem && !l.isCategory)
       : undefined;
     return searchScopeForFolder(folder, userLabel?.name ?? null);
+  }, [folder, filterLabelId, allLabels]);
+  mailSearchScopeRef.current = mailSearchScope;
+  /** What the "Search in" dropdown calls the current folder. */
+  const mailSearchScopeLabel = useMemo(() => {
+    const userLabel = filterLabelId
+      ? allLabels.find((l) => l.id === filterLabelId && !l.isSystem && !l.isCategory)
+      : undefined;
+    return userLabel?.name ?? titleCase(folder === "allmail" ? "All mail" : folder);
   }, [folder, filterLabelId, allLabels]);
 
   // Multi-select state (Gmail-style row checkboxes).
@@ -5802,6 +5836,19 @@ export default function InboxPage() {
                     />
                   </div>
                 </FilterRow>
+                {mailSearchScope && (
+                  <FilterRow label="Search in">
+                    <select
+                      data-testid="inbox-filter-scope-select"
+                      value={filterInFolder ? "folder" : "all"}
+                      onChange={(e) => setFilterInFolder(e.target.value === "folder")}
+                      className="input-field h-9 w-full text-[13px]"
+                    >
+                      <option value="folder">{mailSearchScopeLabel}</option>
+                      <option value="all">{titleCase("All mail")}</option>
+                    </select>
+                  </FilterRow>
+                )}
                 <label className="flex cursor-pointer items-center gap-2 pl-[108px] text-[13px] text-[var(--color-text)]">
                   <input
                     type="checkbox"

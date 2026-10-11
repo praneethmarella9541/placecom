@@ -8,12 +8,20 @@ import {
 } from "@/lib/gmail-search-query";
 import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
-import { fetchGmail, GMAIL_COST, type GmailPriority } from "@/lib/gmail-quota";
+import {
+  fetchGmail,
+  GMAIL_COST,
+  gmailPaceUnitsPerSec,
+  newCallTiming,
+  type GmailCallTiming,
+  type GmailPriority,
+} from "@/lib/gmail-quota";
 import {
   getCachedThreadMeta,
   setCachedThreadMeta,
   type ThreadMeta,
 } from "@/lib/gmail-thread-meta-cache";
+import { waitUntil } from "@vercel/functions";
 import {
   createThreadMetaSaver,
   hydrateThreadMetaFromStore,
@@ -62,6 +70,8 @@ export type ThreadListItem = {
 export type ThreadListPage = {
   threads: ThreadListItem[];
   nextPageToken?: string;
+  /** Where this page's server time went, in ms. */
+  timings?: { listMs: number; storeMs: number; rowsMs: number };
 };
 
 type ThreadListFolder = Exclude<MailFolder, "drafts">;
@@ -331,7 +341,9 @@ async function fetchThreadMeta(
   mailboxKey: string | undefined,
   priority: GmailPriority | undefined,
   /** Called with each row actually fetched from Gmail (not cache hits), to be saved to the shared store. */
-  onFetched?: (item: StoredMetaItem) => void
+  onFetched?: (item: StoredMetaItem) => void,
+  /** Called once per row fetched from Gmail with where its time went. */
+  onTiming?: (t: GmailCallTiming & { totalMs: number }) => void
 ): Promise<ThreadMeta | null> {
   const cached = getCachedThreadMeta(mailboxKey, threadId, historyId);
   if (cached) return cached;
@@ -351,15 +363,18 @@ async function fetchThreadMeta(
 
   const promise = (async () => {
     try {
+      const timing = newCallTiming();
+      const startedAt = Date.now();
       const res = await fetchGmail(
         `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?${params.toString()}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        { mailboxKey, cost: GMAIL_COST.threadsGet, priority }
+        { mailboxKey, cost: GMAIL_COST.threadsGet, priority, timing }
       );
       if (!res.ok) return null;
       const meta = deriveThreadMeta((await res.json()) as RawThreadMessages);
       setCachedThreadMeta(mailboxKey, threadId, historyId, meta);
       if (historyId) onFetched?.({ threadId, historyId, meta });
+      onTiming?.({ ...timing, totalMs: Date.now() - startedAt });
       return meta;
     } catch {
       return null;
@@ -384,11 +399,20 @@ async function fetchThreadMeta(
  * of the app was spending at the same moment.
  */
 /**
- * Rows fetched at once. The quota pacing, not this, sets the speed (a call takes ~300ms and
- * the pace grants one every ~125ms, so ~3 are in flight anyway); this caps the burst and keeps
- * a page the user has left from queueing 50 calls. Gmail also limits concurrent requests per user.
+ * Rows in progress at once. A row holds a slot while it waits for its pacing turn and while
+ * Gmail answers (~450ms from a dev machine, ~600ms per row in all), so keeping the pace
+ * saturated needs about 1 + latency / gap slots — 6 at 100 units/s — and slow calls (1.5s
+ * seen) need more headroom. Measured at pace 100: 5 slots reached ~75-79 units/s on a 50-row
+ * page; a simulation with a jittery 480ms Gmail gave 6.1s (5 slots) vs 5.6s (10 slots), no
+ * gain beyond. So the default is one second's worth of calls: pace / 10 units per call
+ * (10 at pace 100), never below 5. A waiting row isn't a request in flight — the pace still
+ * limits Gmail's load. Override with GMAIL_ROW_CONCURRENCY.
  */
-const ROW_FETCH_CONCURRENCY = 5;
+const ROW_FETCH_CONCURRENCY = (() => {
+  const n = parseInt(process.env.GMAIL_ROW_CONCURRENCY || "", 10);
+  if (Number.isFinite(n) && n >= 1) return n;
+  return Math.max(5, Math.round(gmailPaceUnitsPerSec("interactive") / GMAIL_COST.threadsGet));
+})();
 
 async function mapThreadsWithMeta(
   accessToken: string,
@@ -406,11 +430,12 @@ async function mapThreadsWithMeta(
    * stops the rest. A background warm-up uses it to skip rows saved meanwhile and to
    * step aside when a person opens the page.
    */
-  shouldContinue?: (remaining: { id: string; historyId?: string }[]) => Promise<boolean>
+  shouldContinue?: (remaining: { id: string; historyId?: string }[]) => Promise<boolean>,
+  onTiming?: (t: GmailCallTiming & { totalMs: number }) => void
 ): Promise<ThreadListItem[]> {
   const buildRow = async (t: { id: string; snippet?: string; historyId?: string }): Promise<ThreadListItem> => {
     const snippet = cleanMailSnippet(t.snippet || "");
-    const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority, onFetched);
+    const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority, onFetched, onTiming);
     const row: ThreadListItem = meta
       ? {
           id: t.id,
@@ -657,8 +682,13 @@ export async function listThreadsPage(
   // Rows already fetched by this or another server instance (or teammate) come
   // from the shared store — the list call's historyId proves they're current — so
   // only genuinely new or changed threads cost a Gmail call.
+  const storeStartedAt = Date.now();
   const storeHits = await hydrateThreadMetaFromStore(options.mailboxKey, rawThreads);
+  const storeMs = Date.now() - storeStartedAt;
+  const rowsStartedAt = Date.now();
   const saver = createThreadMetaSaver(options.mailboxKey);
+  // Where a cold page's time goes, summed over the rows fetched from Gmail (see the [mail-cold] log below).
+  const cold = { calls: 0, sharedMs: 0, localMs: 0, httpMs: 0, totalMs: 0, maxTotalMs: 0, attempts: 0, backoffMs: 0 };
 
   const threads: ThreadListItem[] = await mapThreadsWithMeta(
     accessToken,
@@ -668,15 +698,52 @@ export async function listThreadsPage(
     options.onRow,
     options.signal,
     (item) => saver.add(item),
-    options.shouldContinue
+    options.shouldContinue,
+    (t) => {
+      cold.calls++;
+      cold.sharedMs += t.sharedMs;
+      cold.localMs += t.localMs;
+      cold.httpMs += t.httpMs;
+      cold.totalMs += t.totalMs;
+      cold.maxTotalMs = Math.max(cold.maxTotalMs, t.totalMs);
+      cold.attempts += t.attempts;
+      cold.backoffMs += t.backoffMs;
+    }
   );
-  // Rows were saved in batches as they arrived; finish the last batch so nobody has to ask Gmail again.
-  await saver.done();
+  const rowsMs = Date.now() - rowsStartedAt;
+  // Rows were saved in batches as they arrived; the last partial batch is saved after the page
+  // is returned, not before — the rows are already on screen, and this write is a database
+  // round trip (~250ms from a dev machine) that only delayed the page reporting "done".
+  // waitUntil keeps it alive past the response on Vercel.
+  const finalSave = saver.done();
+  try {
+    waitUntil(finalSave);
+  } catch {
+    /* not on Vercel — the promise just runs on */
+  }
+  if (cold.calls > 0) {
+    const pace = gmailPaceUnitsPerSec(options.priority ?? "interactive");
+    const n = cold.calls;
+    const avg = (ms: number) => Math.round(ms / n);
+    console.log(
+      `[mail-cold] ${options.priority ?? "interactive"} fetched=${n} wall=${rowsMs}ms ` +
+        `(ideal at ${pace} units/s: ${Math.round((n * GMAIL_COST.threadsGet * 1000) / pace)}ms) | ` +
+        `per row avg: shared-wait=${avg(cold.sharedMs)}ms own-pacing=${avg(cold.localMs)}ms ` +
+        `gmail-http=${avg(cold.httpMs)}ms total=${avg(cold.totalMs)}ms (slowest ${cold.maxTotalMs}ms) | ` +
+        `attempts=${cold.attempts} (retries=${cold.attempts - n}) backoff=${cold.backoffMs}ms | ` +
+        `effective=${Math.round((n * GMAIL_COST.threadsGet * 1000) / Math.max(rowsMs, 1))} units/s (workers=${ROW_FETCH_CONCURRENCY}) | ` +
+        (Math.round((n * GMAIL_COST.threadsGet * 1000) / Math.max(rowsMs, 1)) >= pace * 0.8
+          ? "AT THE CAP (the pace is the limit)"
+          : n < 15
+            ? "BELOW THE CAP (too few rows to ramp up — normal for small batches)"
+            : "BELOW THE CAP (slots x Gmail latency is the limit — raise GMAIL_ROW_CONCURRENCY)")
+    );
+  }
   // Splits a slow load into "Gmail list call" vs "per-row header fetches" (which
   // includes time queued in the quota bucket) — the two have different fixes.
   console.log(
     `[${options.logLabel ?? (isSearch ? "mail-search" : "mail-list")}] ${options.folder}${options.labelId ? `/${options.labelId}` : ""} ` +
-      `list=${listMs}ms rows=${Date.now() - startedAt - listMs}ms n=${rawThreads.length} store=${storeHits} gmail=${saver.count}`
+      `list=${listMs}ms store=${storeMs}ms rows=${rowsMs}ms n=${rawThreads.length} hits=${storeHits} gmail=${saver.count}`
   );
 
   // Gmail's own order (from data.threads above) ranks a thread by when it last
@@ -704,7 +771,7 @@ export async function listThreadsPage(
     return dateMs(b.date) - dateMs(a.date);
   });
 
-  return { threads, nextPageToken: nextPageTokenFromApi };
+  return { threads, nextPageToken: nextPageTokenFromApi, timings: { listMs, storeMs, rowsMs } };
 }
 
 /**

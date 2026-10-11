@@ -2,6 +2,7 @@ import "server-only";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { getVerifiedUser } from "@/lib/auth-verify";
 
 export type AuthedUser = { id: string; email?: string; app_metadata?: { provider?: string } };
 export type AuthedRequest = {
@@ -43,10 +44,10 @@ export async function getAuthedRequest(request: Request): Promise<AuthedRequest 
   }
 
   const supabase = createServerSupabaseClient();
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error || !user) return null;
+  const user = await getVerifiedUser(supabase.auth);
+  if (!user) return null;
   return {
-    user: { id: user.id, email: user.email, app_metadata: user.app_metadata },
+    user: { id: user.id, email: user.email, app_metadata: user.app_metadata as { provider?: string } },
     // Cast to the broader SupabaseClient type — server client is API-compatible
     supabase: supabase as unknown as SupabaseClient,
     isBearer: false,

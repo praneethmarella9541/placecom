@@ -16,7 +16,9 @@ import type { ThreadListItem } from "@/lib/gmail-inbox";
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
+  const authStartedAt = Date.now();
   const auth = await requireGmailAccessToken(request);
+  const authMs = Date.now() - authStartedAt;
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -92,7 +94,12 @@ export async function GET(request: Request) {
             signal: request.signal,
           });
           // Final, date-sorted order — the client swaps it in once everything has arrived.
-          send({ type: "done", threads: page.threads, nextPageToken: page.nextPageToken });
+          send({
+            type: "done",
+            threads: page.threads,
+            nextPageToken: page.nextPageToken,
+            timings: { ...page.timings, authMs },
+          });
           warmNext(page.nextPageToken);
           sweepNotices(page.threads);
         } catch (e) {
@@ -110,7 +117,11 @@ export async function GET(request: Request) {
       },
     });
     return new Response(body, {
-      headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" },
+      headers: {
+        "Content-Type": "application/x-ndjson",
+        "Cache-Control": "no-store",
+        "Server-Timing": `auth;dur=${authMs}`,
+      },
     });
   }
 
@@ -135,8 +146,8 @@ export async function GET(request: Request) {
     if (folder !== "drafts") sweepNotices(page.threads);
     warmNext(page.nextPageToken);
     return NextResponse.json(
-      { folder, threads: page.threads, nextPageToken: page.nextPageToken },
-      { headers: { "Cache-Control": "no-store" } }
+      { folder, threads: page.threads, nextPageToken: page.nextPageToken, timings: { ...page.timings, authMs } },
+      { headers: { "Cache-Control": "no-store", "Server-Timing": `auth;dur=${authMs}` } }
     );
   } catch (e) {
     const err = e as Error & { code?: string };

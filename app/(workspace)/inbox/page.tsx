@@ -189,6 +189,9 @@ type ThreadRow = {
   pending?: boolean;
 };
 
+/** Where a list request's server time went (ms) — logged to the console beside the browser's own total. */
+type ServerTimings = { authMs?: number; listMs?: number; storeMs?: number; rowsMs?: number };
+
 /** Rows whose bodies are prefetched when a folder/tab is landed on. */
 const LANDING_BODY_PREFETCH_MAX = 6;
 /** How long the user must stay on a view before its bodies are prefetched. */
@@ -205,20 +208,20 @@ async function readThreadStream(
   onProgress: (rows: ThreadRow[]) => void,
   /** The next-page token, available as soon as Gmail's list call returns — long before every row has resolved. */
   onNextToken?: (token: string | undefined) => void
-): Promise<{ threads: ThreadRow[]; nextPageToken?: string }> {
+): Promise<{ threads: ThreadRow[]; nextPageToken?: string; timings?: ServerTimings }> {
   const reader = res.body?.getReader();
   if (!reader) throw new Error("Failed to load inbox");
   const decoder = new TextDecoder();
   let buffer = "";
   let rows: ThreadRow[] = [];
-  let final: { threads: ThreadRow[]; nextPageToken?: string } | null = null;
+  let final: { threads: ThreadRow[]; nextPageToken?: string; timings?: ServerTimings } | null = null;
 
   const handle = (line: string) => {
     if (!line.trim()) return;
     const msg = JSON.parse(line) as
       | { type: "list"; threads: ThreadRow[]; nextPageToken?: string }
       | { type: "row"; row: ThreadRow }
-      | { type: "done"; threads: ThreadRow[]; nextPageToken?: string }
+      | { type: "done"; threads: ThreadRow[]; nextPageToken?: string; timings?: ServerTimings }
       | { type: "error"; error: string };
     if (msg.type === "list") {
       rows = msg.threads;
@@ -228,7 +231,7 @@ async function readThreadStream(
       rows = rows.map((r) => (r.id === msg.row.id ? msg.row : r));
       onProgress(rows);
     } else if (msg.type === "done") {
-      final = { threads: msg.threads, nextPageToken: msg.nextPageToken };
+      final = { threads: msg.threads, nextPageToken: msg.nextPageToken, timings: msg.timings };
     } else if (msg.type === "error") {
       throw new Error(msg.error);
     }
@@ -2971,8 +2974,15 @@ export default function InboxPage() {
                 setShownPageKey(cacheKey);
               })
             : await res.json()
-        ) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string };
+        ) as { error?: string; threads?: ThreadRow[]; nextPageToken?: string; timings?: ServerTimings };
         if (!res.ok) throw new Error(data.error || "Failed to load inbox");
+        if (data.timings) {
+          // total = what the browser waited; the rest is the server's own breakdown (auth + Gmail list + store read + rows).
+          console.log(
+            `[mail-timing] total=${Date.now() - fetchStartedAt}ms mw=${res.headers.get("x-mw-ms") ?? "?"}ms ` +
+              `auth=${data.timings.authMs}ms list=${data.timings.listMs}ms store=${data.timings.storeMs}ms rows=${data.timings.rowsMs}ms`
+          );
+        }
         const incoming = data.threads || [];
 
         // User switched tabs while this request was in flight — discard result.

@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** September 5, 2026
+**Last updated:** October 11, 2026
 **Effective date:** September 5, 2026
 
 ## 1. Introduction
@@ -65,6 +65,7 @@ If you connect a Google account (including Gmail, Google Calendar, Google Drive,
 - We will not transfer this data to others except as necessary to provide or improve those features, to comply with applicable law, or as part of a merger, acquisition, or sale of assets.
 - We will never use Google user data for serving advertisements of any kind.
 - We will not allow personnel to read this data except with your affirmative agreement for specific messages, where necessary for security purposes such as investigating abuse, to comply with applicable law, or for internal operations where the data has been aggregated and anonymized.
+- To make the inbox fast, we keep a copy of the message-list information for a connected Gmail mailbox — for each conversation, its subject, the sender and participant email addresses, dates, labels, and read, starred and attachment status. We do not store the message body or the preview snippet in this copy. It is encrypted at rest, accessible only to our servers (not to browsers), used solely to display that mailbox's inbox to the people the mailbox owner has authorized, and deleted as described in Section 9.
 - Our use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.
 
 ## 5. How We Use Personal Data
@@ -110,6 +111,8 @@ We use reasonable technical and organizational measures designed to protect pers
 We retain personal data for as long as necessary to provide the Service, comply with legal obligations, resolve disputes, and enforce our agreements.
 
 Following closure of an account or an organization's workspace, we retain the associated personal data for **90 days**, after which it is deleted or de-identified from our production systems. This period does not by itself guarantee immediate deletion from routine backups, which are retained and cycled out on a separate schedule, or from third-party providers who independently control data you connected or sent through them.
+
+The copy of Gmail message-list information described in Section 4 is deleted automatically if it has not been refreshed for **90 days**, and is deleted together with the connected mailbox owner's account.
 
 Where we act as a processor, personal data is retained in accordance with the instructions of the relevant customer.
 

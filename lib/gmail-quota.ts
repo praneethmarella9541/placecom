@@ -1,5 +1,8 @@
 import "server-only";
 
+import { createServiceSupabase } from "@/lib/supabase-service";
+import { WARM_PAUSE_MS, bump, pauseKey } from "@/lib/gmail-claims";
+
 /**
  * Shared Gmail quota governor.
  *
@@ -89,7 +92,12 @@ const PEAK_UNITS_PER_SEC = (() => {
  * (PEAK_UNITS_PER_SEC) since a person actually waiting on it is the traffic
  * worth protecting.
  */
-const BATCH_UNITS_PER_SEC = 15;
+const BATCH_UNITS_PER_SEC = (() => {
+  // Background lane: the page warmer, mailbox sync, sequence sends. 20 = about 8% of the
+  // 15,000/min ceiling. Lower it (GMAIL_BATCH_UNITS_PER_SEC) if background work ever causes throttling.
+  const n = parseInt(process.env.GMAIL_BATCH_UNITS_PER_SEC || "", 10);
+  return Number.isFinite(n) && n >= 1 ? n : 20;
+})();
 
 export type GmailPriority = "interactive" | "batch";
 
@@ -303,7 +311,136 @@ export async function spendGmailQuota(
 ): Promise<void> {
   const want = Math.min(Math.max(cost, 0), burstCapacity(priority));
 
+  // First agree the slot with every other server instance (shared timeline),
+  // then pace this instance's own calls inside it.
+  await takeSharedLease(key, want, priority);
   await spendViaMemory(key, want, priority);
+}
+
+// ---------------------------------------------------------------------------
+// Shared pacing across server instances (supabase/migrations/0073_gmail_pace.sql)
+// ---------------------------------------------------------------------------
+
+/**
+ * Units reserved from the shared timeline per round trip — about a second of the
+ * interactive pace. Small on purpose: two busy instances interleave in chunks this
+ * size instead of one waiting out the other's whole page.
+ */
+const LEASE_UNITS = 100;
+/** Unspent lease older than this is dropped — its window has long passed, and spending it late would burst. */
+const LEASE_TTL_MS = 2000;
+/** Never wait longer than this for the shared timeline, or for the database to answer. */
+const LEASE_MAX_WAIT_MS = 20_000;
+const LEASE_RPC_TIMEOUT_MS = 1000;
+/** After the database fails, pace locally only for this long before trying it again. */
+const SHARED_RETRY_AFTER_MS = 30_000;
+const SHARED_ENABLED = process.env.GMAIL_SHARED_LIMITER !== "0";
+
+/** Identifies this server process in the quota logs — how many distinct ones are active tells you whether sharing matters. */
+export const GMAIL_INSTANCE_ID = `${process.env.VERCEL_REGION ?? "local"}-${Math.random().toString(36).slice(2, 6)}`;
+
+type Lease = { units: number; at: number; refilling: Promise<void> | null };
+const leases = new Map<string, Lease>();
+let sharedDownUntil = 0;
+let sharedWarnedAt = 0;
+
+/** Reserves a window on the shared timeline and returns the ms until it opens. Swappable for tests. */
+type Reserve = (key: string, units: number, unitsPerSec: number) => Promise<number>;
+const defaultReserve: Reserve = async (key, units, unitsPerSec) => {
+  const { data, error } = await createServiceSupabase()
+    .rpc("gmail_reserve", {
+      p_key: key,
+      p_units: units,
+      p_units_per_sec: unitsPerSec,
+      p_max_wait_ms: LEASE_MAX_WAIT_MS,
+    })
+    .abortSignal(AbortSignal.timeout(LEASE_RPC_TIMEOUT_MS));
+  if (error) throw error;
+  return Number(data) || 0;
+};
+let reserveRemote: Reserve = defaultReserve;
+export function __setReserveForTests(fn: Reserve | null): void {
+  reserveRemote = fn ?? defaultReserve;
+  leases.clear();
+  sharedDownUntil = 0;
+}
+
+function sharedFailed(e: unknown): void {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  const code = (e as { code?: string } | null)?.code ?? "";
+  const missing = code === "PGRST202" || code === "42883" || /gmail_reserve/i.test(msg) && /(does not exist|schema cache|not find)/i.test(msg);
+  // Missing function = migration not applied here: stop trying for good; anything else: try again later.
+  sharedDownUntil = missing ? Number.POSITIVE_INFINITY : Date.now() + SHARED_RETRY_AFTER_MS;
+  if (missing || Date.now() - sharedWarnedAt > 60_000) {
+    sharedWarnedAt = Date.now();
+    console.warn(
+      `[gmail-quota] shared pacing unavailable (${missing ? "apply migration 0073" : msg}); pacing this instance alone` +
+        (missing ? "." : ` for ${SHARED_RETRY_AFTER_MS / 1000}s.`)
+    );
+  }
+}
+
+/** Get `units` more on this lease: reserve from the shared timeline, wait for the window to open, credit it. */
+function refillLease(leaseKey: string, mailbox: string, priority: GmailPriority, units: number): Promise<void> {
+  const lease = leases.get(leaseKey)!;
+  if (lease.refilling) return lease.refilling;
+  lease.refilling = (async () => {
+    try {
+      const rate = targetUnitsPerSec(priority);
+      const waitMs = await reserveRemote(`gmail:${mailbox}:${priority}`, units, rate);
+      if (waitMs > 1000) {
+        console.log(`[gmail-quota] ${GMAIL_INSTANCE_ID} waited ${waitMs}ms for a shared slot (${priority}, ${units} units)`);
+      }
+      if (waitMs > 0) await new Promise((r) => setTimeout(r, Math.min(waitMs, LEASE_MAX_WAIT_MS)));
+      lease.units += units;
+      lease.at = Date.now();
+    } catch (e) {
+      sharedFailed(e);
+    } finally {
+      lease.refilling = null;
+    }
+  })();
+  return lease.refilling;
+}
+
+/**
+ * How many ms a new reservation on this lane would wait right now (0 if the shared
+ * pacing is off or unreachable). Reserving zero units doesn't queue anything — it
+ * just reports the backlog, so the page warmer can skip work that would only sit
+ * in line.
+ */
+export async function sharedBacklogMs(mailbox: string, priority: GmailPriority): Promise<number> {
+  if (!SHARED_ENABLED || Date.now() < sharedDownUntil) return 0;
+  try {
+    return await reserveRemote(`gmail:${mailbox}:${priority}`, 0, targetUnitsPerSec(priority));
+  } catch (e) {
+    sharedFailed(e);
+    return 0;
+  }
+}
+
+async function takeSharedLease(mailbox: string, want: number, priority: GmailPriority): Promise<void> {
+  if (!SHARED_ENABLED || Date.now() < sharedDownUntil || want <= 0) return;
+  const leaseKey = `${mailbox}:${priority}`;
+  let lease = leases.get(leaseKey);
+  if (!lease) {
+    lease = { units: 0, at: 0, refilling: null };
+    leases.set(leaseKey, lease);
+  }
+  if (lease.units > 0 && Date.now() - lease.at > LEASE_TTL_MS) lease.units = 0;
+
+  // Not enough in hand: reserve more now and wait for its window.
+  while (lease.units < want && Date.now() >= sharedDownUntil) {
+    await refillLease(leaseKey, mailbox, priority, Math.max(LEASE_UNITS, want));
+  }
+  // Failed to reserve (database trouble) — proceed on local pacing alone.
+  if (lease.units < want) return;
+  lease.units -= want;
+
+  // Running low: top up in the background so the next call doesn't have to wait for it.
+  if (lease.units < LEASE_UNITS / 2 && !lease.refilling) {
+    void refillLease(leaseKey, mailbox, priority, LEASE_UNITS);
+  }
 }
 
 /** Retries exhausted against a quota error — the caller should back off, not fail outright. */
@@ -413,9 +550,12 @@ export async function fetchGmail(
     // happen entirely silently. The reason tells us WHICH ceiling this is —
     // see rateLimitReason's doc comment — since the fix differs by reason.
     console.warn(
-      `[gmail-quota] throttled by Gmail (${res.status} ${rateLimitReason(bodyText)}: "${rateLimitMessage(bodyText)}") ` +
+      `[gmail-quota] ${GMAIL_INSTANCE_ID} throttled by Gmail (${res.status} ${rateLimitReason(bodyText)}: "${rateLimitMessage(bodyText)}") ` +
         `on attempt ${attempt + 1}; backing off ${Math.round(backoffMs)}ms`
     );
+
+    // Tell the page warmer (on every instance) to stand down for a while.
+    if (key) void bump(pauseKey(key), WARM_PAUSE_MS);
 
     await new Promise((resolve) => setTimeout(resolve, backoffMs));
   }

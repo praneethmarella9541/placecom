@@ -7,6 +7,8 @@ import {
 } from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { MAIL_PAGE_SIZE } from "@/lib/mail-page-size";
+import { bump, inUseKey } from "@/lib/gmail-claims";
+import { scheduleNextPageWarm } from "@/lib/gmail-warmer";
 import { sweepBounceNotices } from "@/lib/bounce-detection";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import type { ThreadListItem } from "@/lib/gmail-inbox";
@@ -36,6 +38,20 @@ export async function GET(request: Request) {
   const pageToken = searchParams.get("pageToken") || undefined;
   const searchQuery = searchParams.get("search")?.trim() || undefined;
   const labelId = searchParams.get("labelId")?.trim() || undefined;
+
+  // A person asking for page N (N > 1): tell the warmer to stop working on this page.
+  if (pageToken && auth.mailboxOwnerId) void bump(inUseKey(auth.mailboxOwnerId, pageToken), 60_000);
+  // After serving a browse page, warm the one after it in the background.
+  const warmNext = (nextPageToken: string | undefined) => {
+    if (searchQuery) return;
+    scheduleNextPageWarm({
+      accessToken: auth.accessToken,
+      mailboxKey: auth.mailboxOwnerId,
+      folder,
+      labelId,
+      nextPageToken,
+    });
+  };
   const maxResults = Math.min(
     100,
     Math.max(5, parseInt(searchParams.get("maxResults") || String(MAIL_PAGE_SIZE), 10) || MAIL_PAGE_SIZE)
@@ -77,6 +93,7 @@ export async function GET(request: Request) {
           });
           // Final, date-sorted order — the client swaps it in once everything has arrived.
           send({ type: "done", threads: page.threads, nextPageToken: page.nextPageToken });
+          warmNext(page.nextPageToken);
           sweepNotices(page.threads);
         } catch (e) {
           const err = e as Error & { code?: string };
@@ -116,6 +133,7 @@ export async function GET(request: Request) {
             signal: request.signal,
           });
     if (folder !== "drafts") sweepNotices(page.threads);
+    warmNext(page.nextPageToken);
     return NextResponse.json(
       { folder, threads: page.threads, nextPageToken: page.nextPageToken },
       { headers: { "Cache-Control": "no-store" } }

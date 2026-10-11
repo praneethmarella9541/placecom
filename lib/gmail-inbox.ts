@@ -14,6 +14,11 @@ import {
   setCachedThreadMeta,
   type ThreadMeta,
 } from "@/lib/gmail-thread-meta-cache";
+import {
+  createThreadMetaSaver,
+  hydrateThreadMetaFromStore,
+  type StoredMetaItem,
+} from "@/lib/gmail-thread-meta-store";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -324,7 +329,9 @@ async function fetchThreadMeta(
   threadId: string,
   historyId: string | undefined,
   mailboxKey: string | undefined,
-  priority: GmailPriority | undefined
+  priority: GmailPriority | undefined,
+  /** Called with each row actually fetched from Gmail (not cache hits), to be saved to the shared store. */
+  onFetched?: (item: StoredMetaItem) => void
 ): Promise<ThreadMeta | null> {
   const cached = getCachedThreadMeta(mailboxKey, threadId, historyId);
   if (cached) return cached;
@@ -352,6 +359,7 @@ async function fetchThreadMeta(
       if (!res.ok) return null;
       const meta = deriveThreadMeta((await res.json()) as RawThreadMessages);
       setCachedThreadMeta(mailboxKey, threadId, historyId, meta);
+      if (historyId) onFetched?.({ threadId, historyId, meta });
       return meta;
     } catch {
       return null;
@@ -390,11 +398,19 @@ async function mapThreadsWithMeta(
   /** Called as each row resolves, so a streaming caller can send it without waiting for the rest. */
   onRow?: (row: ThreadListItem) => void,
   /** Aborted when the client leaves the page — rows not yet started are then never fetched. */
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** Called with each row fetched from Gmail (not cache hits), for the shared store. */
+  onFetched?: (item: StoredMetaItem) => void,
+  /**
+   * Asked before each group of rows is started, with the rows not yet started; false
+   * stops the rest. A background warm-up uses it to skip rows saved meanwhile and to
+   * step aside when a person opens the page.
+   */
+  shouldContinue?: (remaining: { id: string; historyId?: string }[]) => Promise<boolean>
 ): Promise<ThreadListItem[]> {
   const buildRow = async (t: { id: string; snippet?: string; historyId?: string }): Promise<ThreadListItem> => {
     const snippet = cleanMailSnippet(t.snippet || "");
-    const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority);
+    const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority, onFetched);
     const row: ThreadListItem = meta
       ? {
           id: t.id,
@@ -416,15 +432,21 @@ async function mapThreadsWithMeta(
   // yet started are dropped instead of all being spent against the Gmail quota.
   const rows: ThreadListItem[] = new Array(rawThreads.length);
   let next = 0;
+  let stopped = false;
   const worker = async () => {
-    while (next < rawThreads.length && !signal?.aborted) {
+    while (next < rawThreads.length && !signal?.aborted && !stopped) {
       const i = next++;
+      // Every 5th row, ask whether to carry on (the answer may also refresh what's stored).
+      if (shouldContinue && i % 5 === 0 && !(await shouldContinue(rawThreads.slice(i)))) {
+        stopped = true;
+        break;
+      }
       rows[i] = await buildRow(rawThreads[i]);
     }
   };
   await Promise.all(Array.from({ length: Math.min(ROW_FETCH_CONCURRENCY, rawThreads.length) }, worker));
   if (signal?.aborted) throw new Error("Request aborted");
-  return rows;
+  return rows.filter(Boolean);
 }
 
 /**
@@ -527,6 +549,10 @@ export async function listThreadsPage(
     onRow?: (row: ThreadListItem) => void;
     /** Client disconnected — stop fetching the rows still waiting. */
     signal?: AbortSignal;
+    /** See mapThreadsWithMeta — lets a background warm-up stop early. */
+    shouldContinue?: (remaining: { id: string; historyId?: string }[]) => Promise<boolean>;
+    /** Log prefix; defaults to mail-list / mail-search. */
+    logLabel?: string;
   }
 ): Promise<ThreadListPage> {
   const startedAt = Date.now();
@@ -628,19 +654,29 @@ export async function listThreadsPage(
     nextPageToken: nextPageTokenFromApi,
   });
 
+  // Rows already fetched by this or another server instance (or teammate) come
+  // from the shared store — the list call's historyId proves they're current — so
+  // only genuinely new or changed threads cost a Gmail call.
+  const storeHits = await hydrateThreadMetaFromStore(options.mailboxKey, rawThreads);
+  const saver = createThreadMetaSaver(options.mailboxKey);
+
   const threads: ThreadListItem[] = await mapThreadsWithMeta(
     accessToken,
     rawThreads,
     options.mailboxKey,
     options.priority,
     options.onRow,
-    options.signal
+    options.signal,
+    (item) => saver.add(item),
+    options.shouldContinue
   );
+  // Rows were saved in batches as they arrived; finish the last batch so nobody has to ask Gmail again.
+  await saver.done();
   // Splits a slow load into "Gmail list call" vs "per-row header fetches" (which
   // includes time queued in the quota bucket) — the two have different fixes.
   console.log(
-    `[${isSearch ? "mail-search" : "mail-list"}] ${options.folder}${options.labelId ? `/${options.labelId}` : ""} ` +
-      `list=${listMs}ms rows=${Date.now() - startedAt - listMs}ms n=${rawThreads.length}`
+    `[${options.logLabel ?? (isSearch ? "mail-search" : "mail-list")}] ${options.folder}${options.labelId ? `/${options.labelId}` : ""} ` +
+      `list=${listMs}ms rows=${Date.now() - startedAt - listMs}ms n=${rawThreads.length} store=${storeHits} gmail=${saver.count}`
   );
 
   // Gmail's own order (from data.threads above) ranks a thread by when it last

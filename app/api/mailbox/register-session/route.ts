@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import { getAuthedRequest } from "@/lib/api-auth";
-import { encryptToken, decryptToken } from "@/lib/token-crypto";
+import { encryptToken } from "@/lib/token-crypto";
 
 export const runtime = "nodejs";
 

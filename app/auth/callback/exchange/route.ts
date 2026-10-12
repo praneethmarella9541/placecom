@@ -7,7 +7,7 @@ import {
   MUST_SET_PASSWORD_KEY,
   SET_PASSWORD_PATH,
 } from "@/lib/password-setup";
-import { encryptToken, decryptToken } from "@/lib/token-crypto";
+import { encryptToken } from "@/lib/token-crypto";
 
 const MSG_MAX = 450;
 

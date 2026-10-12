@@ -25,7 +25,7 @@ export async function POST(
     return NextResponse.json({ error: "Missing event id" }, { status: 400 });
   }
 
-  let body: { status?: string; attendeeEmail?: string };
+  let body: { status?: string; attendeeEmail?: string; comment?: string };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -61,7 +61,7 @@ export async function POST(
       eventId,
       attendeeEmail,
       status,
-      { sendUpdates: "all" }
+      { sendUpdates: "all", comment: typeof body.comment === "string" ? body.comment : undefined }
     );
     return NextResponse.json({ event });
   } catch (e) {

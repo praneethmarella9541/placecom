@@ -1,6 +1,10 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { describeUpstreamFetchError } from "@/lib/fetch-errors";
+import { extrasToPayload, type EventExtras } from "@/lib/calendar-extras";
+import { firstRrule, replaceRrule, rruleCount, rruleWithCount, rruleWithUntil } from "@/lib/calendar-recurrence";
+import { addDaysToDate, untilDateValue, utcMsToWall, utcStamp, wallForGoogle } from "@/lib/calendar-time";
 
 const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 export const CALENDAR_INSUFFICIENT_SCOPE = "CALENDAR_INSUFFICIENT_SCOPE";
@@ -20,11 +24,73 @@ export type CalendarEventItem = {
     responseStatus?: string;
     organizer?: boolean;
     self?: boolean;
+    optional?: boolean;
+    comment?: string;
+    resource?: boolean;
   }[];
   organizer?: { email?: string; displayName?: string; self?: boolean };
   recurrence?: string[];
   recurringEventId?: string;
+  /** For an instance of a repeating event: when it was originally scheduled (before any one-off change). */
+  originalStartTime?: { dateTime?: string; date?: string; timeZone?: string };
+  reminders?: { useDefault?: boolean; overrides?: { method?: string; minutes?: number }[] };
+  visibility?: string;
+  transparency?: string;
+  guestsCanModify?: boolean;
+  guestsCanInviteOthers?: boolean;
+  guestsCanSeeOtherGuests?: boolean;
+  colorId?: string;
+  attachments?: { fileUrl?: string; title?: string; mimeType?: string; fileId?: string }[];
+  /** The Google Meet join link, once the event has one. */
+  hangoutLink?: string;
+  conferenceData?: {
+    entryPoints?: { entryPointType?: string; uri?: string; label?: string }[];
+    conferenceSolution?: { name?: string };
+    /** While Google is still setting the Meet up, `statusCode` is "pending"; "failure" if it couldn't. */
+    createRequest?: { status?: { statusCode?: string } };
+  };
 };
+
+/**
+ * `conferenceData` that asks Google to create a Meet room for an event. Needs
+ * `conferenceDataVersion=1` on the request, and the calendar.events scope we already have.
+ * `requestId` must be unique per request — a repeat of one Google has seen is treated as a retry.
+ */
+function newMeetRequest() {
+  return { createRequest: { requestId: randomUUID(), conferenceSolutionKey: { type: "hangoutsMeet" } } };
+}
+
+/** The Meet join link of an event, from `hangoutLink` or its video entry point. */
+export function meetLinkOf(event: Pick<CalendarEventItem, "hangoutLink" | "conferenceData">): string | undefined {
+  return (
+    event.hangoutLink ||
+    event.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video")?.uri ||
+    undefined
+  );
+}
+
+/** "created" if the event has a Meet link, "pending" if Google is still making it, "failed" otherwise. */
+export function meetStatusOf(event: CalendarEventItem): "created" | "pending" | "failed" {
+  if (meetLinkOf(event)) return "created";
+  return event.conferenceData?.createRequest?.status?.statusCode === "pending" ? "pending" : "failed";
+}
+
+/**
+ * Meet rooms are usually ready in the create response, but Google can answer "pending" first.
+ * Look again a few times, briefly, so the person gets the link now instead of an empty event.
+ */
+async function settleMeetLink(accessToken: string, event: CalendarEventItem): Promise<CalendarEventItem> {
+  let current = event;
+  for (let i = 0; i < 4 && meetStatusOf(current) === "pending"; i++) {
+    await new Promise((r) => setTimeout(r, 600));
+    try {
+      current = await getCalendarEvent(accessToken, event.id);
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
 
 export type RsvpStatus = "accepted" | "declined" | "tentative";
 
@@ -35,6 +101,9 @@ export type FreeBusyResult = {
 };
 
 export type SendUpdates = "all" | "externalOnly" | "none";
+
+/** A guest as sent to Google. Existing guests should go back with their status, so a patch doesn't reset replies. */
+export type GuestInput = { email: string; responseStatus?: string; optional?: boolean; comment?: string };
 
 function toErrorCode(status: number): string {
   if (status === 401) return "UNAUTHORIZED";
@@ -257,15 +326,23 @@ export async function updateCalendarEventRsvp(
   eventId: string,
   attendeeEmail: string,
   responseStatus: RsvpStatus,
-  opts: { sendUpdates?: SendUpdates } = {}
+  opts: { sendUpdates?: SendUpdates; comment?: string } = {}
 ): Promise<CalendarEventItem> {
   const event = await getCalendarEvent(accessToken, eventId);
   const target = attendeeEmail.trim().toLowerCase();
+  // Every guest goes back as it came (status, optional, note) — a patch replaces the whole list.
   const attendees = (event.attendees ?? []).map((a) => {
+    const keep = {
+      email: a.email!,
+      responseStatus: a.responseStatus,
+      ...(a.optional ? { optional: true } : {}),
+      ...(a.comment ? { comment: a.comment } : {}),
+    };
     if (a.email?.trim().toLowerCase() === target) {
-      return { email: a.email, responseStatus };
+      const comment = opts.comment?.trim();
+      return { ...keep, responseStatus, ...(comment ? { comment: comment.slice(0, 1000) } : {}) };
     }
-    return { email: a.email!, responseStatus: a.responseStatus };
+    return keep;
   });
   if (!attendees.some((a) => a.email?.trim().toLowerCase() === target)) {
     throw new Error("You are not listed as a guest on this event.");
@@ -290,15 +367,22 @@ export async function createCalendarEvent(
     location?: string;
     start: { dateTime?: string; date?: string; timeZone?: string };
     end: { dateTime?: string; date?: string; timeZone?: string };
-    attendees?: { email: string }[];
+    attendees?: GuestInput[];
     sendUpdates?: SendUpdates;
     recurrence?: string[];
+    /** Also create a Google Meet room for the event. */
+    addMeetLink?: boolean;
+    /** Reminders, guest permissions, visibility, busy/free, attachments. */
+    extras?: EventExtras;
   }
 ): Promise<CalendarEventItem> {
-  const { sendUpdates, ...rest } = input;
-  const payload: Record<string, unknown> = { ...rest };
+  const { sendUpdates, addMeetLink, extras, ...rest } = input;
+  const payload: Record<string, unknown> = { ...rest, ...extrasToPayload(extras) };
+  if (addMeetLink) payload.conferenceData = newMeetRequest();
   const params = new URLSearchParams();
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
+  if (addMeetLink) params.set("conferenceDataVersion", "1");
+  if (extras?.attachments?.length) params.set("supportsAttachments", "true");
   const qs = params.toString();
   const url = qs
     ? `${CALENDAR_API}/calendars/primary/events?${qs}`
@@ -327,7 +411,8 @@ export async function createCalendarEvent(
     err.code = toErrorCode(res.status);
     throw err;
   }
-  return (await res.json()) as CalendarEventItem;
+  const created = (await res.json()) as CalendarEventItem;
+  return addMeetLink ? settleMeetLink(accessToken, created) : created;
 }
 
 export async function patchCalendarEvent(
@@ -339,15 +424,24 @@ export async function patchCalendarEvent(
     location?: string;
     start?: { dateTime?: string; date?: string; timeZone?: string };
     end?: { dateTime?: string; date?: string; timeZone?: string };
-    attendees?: { email: string }[];
+    attendees?: GuestInput[];
     sendUpdates?: SendUpdates;
     recurrence?: string[];
+    /** Add a Google Meet room to an event that doesn't have one. */
+    addMeetLink?: boolean;
+    /** Reminders, guest permissions, visibility, busy/free, attachments. */
+    extras?: EventExtras;
+    /** Restore a deleted (cancelled) event, or cancel one. */
+    status?: "confirmed" | "cancelled";
   }
 ): Promise<CalendarEventItem> {
-  const { sendUpdates, ...rest } = input;
-  const payload: Record<string, unknown> = { ...rest };
+  const { sendUpdates, addMeetLink, extras, ...rest } = input;
+  const payload: Record<string, unknown> = { ...rest, ...extrasToPayload(extras) };
+  if (addMeetLink) payload.conferenceData = newMeetRequest();
   const params = new URLSearchParams();
   if (sendUpdates) params.set("sendUpdates", sendUpdates);
+  if (addMeetLink) params.set("conferenceDataVersion", "1");
+  if (extras?.attachments !== undefined) params.set("supportsAttachments", "true");
   const qs = params.toString();
   const base = `${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(eventId)}`;
   const url = qs ? `${base}?${qs}` : base;
@@ -375,7 +469,8 @@ export async function patchCalendarEvent(
     err.code = toErrorCode(res.status);
     throw err;
   }
-  return (await res.json()) as CalendarEventItem;
+  const patched = (await res.json()) as CalendarEventItem;
+  return addMeetLink ? settleMeetLink(accessToken, patched) : patched;
 }
 
 export async function deleteCalendarEvent(
@@ -433,6 +528,12 @@ export async function createPlacementMeetingEvent(
     /** Whether to send invite emails to attendees. Defaults to "all". */
     sendUpdates?: SendUpdates;
     recurrence?: string[];
+    /** Also create a Google Meet room for the event (its link goes out in the invite). */
+    addMeetLink?: boolean;
+    /** An all-day event instead of a timed one: first day, and the day AFTER the last ("YYYY-MM-DD"). */
+    allDay?: { startDate: string; endDate: string };
+    /** Reminders, guest permissions, visibility, busy/free, attachments. */
+    extras?: EventExtras;
   }
 ): Promise<CalendarEventItem> {
   const seen = new Set<string>();
@@ -454,17 +555,18 @@ export async function createPlacementMeetingEvent(
     summary: input.title.trim(),
     description: input.notes?.trim() || undefined,
     location: input.location?.trim() || undefined,
-    start: {
-      dateTime: input.startDateTime,
-      timeZone: input.timeZone || "Asia/Kolkata",
-    },
-    end: {
-      dateTime: input.endDateTime,
-      timeZone: input.timeZone || "Asia/Kolkata",
-    },
-    attendees,
+    start: input.allDay
+      ? { date: input.allDay.startDate }
+      : { dateTime: input.startDateTime, timeZone: input.timeZone || "Asia/Kolkata" },
+    end: input.allDay
+      ? { date: input.allDay.endDate }
+      : { dateTime: input.endDateTime, timeZone: input.timeZone || "Asia/Kolkata" },
+    ...(attendees.length ? { attendees } : {}),
     guestsCanInviteOthers: false,
     ...(input.recurrence?.length ? { recurrence: input.recurrence } : {}),
+    ...(input.addMeetLink ? { conferenceData: newMeetRequest() } : {}),
+    // The chosen settings win over the defaults above (e.g. guests may invite others).
+    ...extrasToPayload(input.extras),
   };
 
   let res: Response;
@@ -472,6 +574,8 @@ export async function createPlacementMeetingEvent(
     const cal = encodeURIComponent(calendarId.trim() || "primary");
     const qp = new URLSearchParams();
     qp.set("sendUpdates", sendUpdates);
+    if (input.addMeetLink) qp.set("conferenceDataVersion", "1");
+    if (input.extras?.attachments?.length) qp.set("supportsAttachments", "true");
     res = await fetch(`${CALENDAR_API}/calendars/${cal}/events?${qp.toString()}`, {
       method: "POST",
       headers: {
@@ -495,7 +599,8 @@ export async function createPlacementMeetingEvent(
     throw err;
   }
 
-  return (await res.json()) as CalendarEventItem;
+  const created = (await res.json()) as CalendarEventItem;
+  return input.addMeetLink ? settleMeetLink(accessToken, created) : created;
 }
 
 /** Creates a placement-meeting event on the signed-in user's primary calendar. */
@@ -504,4 +609,250 @@ export async function createPrimaryCalendarEvent(
   input: Parameters<typeof createPlacementMeetingEvent>[2]
 ): Promise<CalendarEventItem> {
   return createPlacementMeetingEvent(accessToken, "primary", input);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * Repeating events: change or delete "this event", "this and following events" or
+ * "all events", and undo.
+ *
+ * Google models a series as a master event plus instances. Changing one occurrence is a
+ * plain edit of the instance. Changing all of them edits the master. "This and following"
+ * has no API call: the master is cut short just before that occurrence (an UNTIL on its
+ * rule) and a NEW series is created from that occurrence on — the same thing Google
+ * Calendar's own screen does.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+export type SeriesScope = "this" | "following" | "all";
+
+type EventTime = { dateTime?: string; date?: string; timeZone?: string };
+
+/** Every instance of a repeating event in a window. */
+export async function listEventInstances(
+  accessToken: string,
+  masterId: string,
+  opts: { timeMin?: string; timeMax?: string } = {}
+): Promise<CalendarEventItem[]> {
+  const out: CalendarEventItem[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const u = new URL(`${CALENDAR_API}/calendars/primary/events/${encodeURIComponent(masterId)}/instances`);
+    u.searchParams.set("maxResults", "2500");
+    if (opts.timeMin) u.searchParams.set("timeMin", opts.timeMin);
+    if (opts.timeMax) u.searchParams.set("timeMax", opts.timeMax);
+    if (pageToken) u.searchParams.set("pageToken", pageToken);
+    let res: Response;
+    try {
+      res = await fetch(u.toString(), { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" });
+    } catch (e) {
+      throw new Error(describeUpstreamFetchError(e, "Google Calendar API (list instances)"));
+    }
+    if (!res.ok) {
+      const msg = await parseGoogleErrorBody(res);
+      const err = new Error(`Google Calendar instances failed: ${msg}`) as Error & { code?: string };
+      err.code = toErrorCode(res.status);
+      throw err;
+    }
+    const data = (await res.json()) as { items?: CalendarEventItem[]; nextPageToken?: string };
+    out.push(...(data.items ?? []));
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+  return out;
+}
+
+function timeMs(t: EventTime | undefined): number {
+  if (!t) return NaN;
+  return t.dateTime ? Date.parse(t.dateTime) : t.date ? Date.parse(`${t.date}T00:00:00Z`) : NaN;
+}
+
+/** Whether `instance` is the first occurrence of `master`'s series. */
+function isFirstOccurrence(master: CalendarEventItem, instance: CalendarEventItem): boolean {
+  return timeMs(instance.originalStartTime ?? instance.start) === timeMs(master.start);
+}
+
+/** Move an event time by a number of WALL-CLOCK minutes (so a daylight-saving change doesn't skew the series). */
+function shiftWall(t: EventTime, minutes: number, fromTz: string, toTz: string): EventTime {
+  if (t.date) return { date: addDaysToDate(t.date, Math.round(minutes / 1440)) };
+  const wall = utcMsToWall(Date.parse(t.dateTime!), fromTz); // "YYYY-MM-DDTHH:mm"
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(wall)!;
+  const naive = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) + minutes * 60_000;
+  return { dateTime: wallForGoogle(new Date(naive).toISOString().slice(0, 16)), timeZone: toTz };
+}
+
+/** `UNTIL` value that ends a series just before `instance`. */
+function untilBefore(instance: CalendarEventItem): string {
+  const orig = instance.originalStartTime ?? instance.start;
+  return orig.date ? untilDateValue(addDaysToDate(orig.date, -1)) : utcStamp(Date.parse(orig.dateTime!) - 1000);
+}
+
+/** Cut the series so it ends just before `instance`. Returns the rule lines it had, for undo. */
+async function truncateSeriesBefore(
+  accessToken: string,
+  master: CalendarEventItem,
+  instance: CalendarEventItem,
+  sendUpdates: SendUpdates
+): Promise<string[]> {
+  const rule = firstRrule(master.recurrence);
+  if (!rule) throw new Error("This event doesn't repeat.");
+  const previous = master.recurrence ?? [];
+  await patchCalendarEvent(accessToken, master.id, {
+    recurrence: replaceRrule(previous, [rruleWithUntil(rule, untilBefore(instance))]),
+    sendUpdates,
+  });
+  return previous;
+}
+
+export type SeriesPatch = {
+  summary?: string;
+  description?: string;
+  location?: string;
+  /** The edited occurrence's own start/end — used for "this" and "following". */
+  start?: EventTime;
+  end?: EventTime;
+  attendees?: GuestInput[];
+  recurrence?: string[];
+  sendUpdates?: SendUpdates;
+  addMeetLink?: boolean;
+  extras?: EventExtras;
+  /** "all": how far the edited occurrence's wall-clock start/end moved, in minutes, and the zones involved. */
+  startShiftMinutes?: number;
+  endShiftMinutes?: number;
+  timeZone?: string;
+  originalTimeZone?: string;
+};
+
+/**
+ * Edit a repeating event's occurrence, the occurrences from it on, or the whole series.
+ * `eventId` is the occurrence the person opened. Returns the changed event (for "following", the new series).
+ */
+export async function editEventInScope(
+  accessToken: string,
+  eventId: string,
+  scope: SeriesScope,
+  patch: SeriesPatch
+): Promise<CalendarEventItem> {
+  const sendUpdates = patch.sendUpdates ?? "all";
+  const { startShiftMinutes, endShiftMinutes, timeZone, originalTimeZone, ...fields } = patch;
+
+  if (scope === "this") return patchCalendarEvent(accessToken, eventId, fields);
+
+  const instance = await getCalendarEvent(accessToken, eventId);
+  if (!instance.recurringEventId) return patchCalendarEvent(accessToken, eventId, fields); // not part of a series
+  const master = instance.recurringEventId === instance.id ? instance : await getCalendarEvent(accessToken, instance.recurringEventId);
+
+  // "this and following" from the very first occurrence is just "all".
+  const effective: SeriesScope = scope === "following" && isFirstOccurrence(master, instance) ? "all" : scope;
+
+  if (effective === "all") {
+    const { start: _s, end: _e, ...rest } = fields;
+    void _s;
+    void _e;
+    const body: Parameters<typeof patchCalendarEvent>[2] = { ...rest, sendUpdates };
+    const oldTz = originalTimeZone || master.start?.timeZone || timeZone || "UTC";
+    const newTz = timeZone || oldTz;
+    if (master.start && (startShiftMinutes || timeZone)) body.start = shiftWall(master.start, startShiftMinutes ?? 0, oldTz, newTz);
+    if (master.end && (endShiftMinutes || timeZone)) body.end = shiftWall(master.end, endShiftMinutes ?? 0, oldTz, newTz);
+    return patchCalendarEvent(accessToken, master.id, body);
+  }
+
+  // following: end the old series just before this occurrence, start a new one from it.
+  const rule = firstRrule(master.recurrence);
+  let remainingCount: number | null = null;
+  const total = rule ? rruleCount(rule) : null;
+  if (total !== null) {
+    const before = (
+      await listEventInstances(accessToken, master.id, {
+        timeMin: new Date(timeMs(master.start)).toISOString(),
+        timeMax: new Date(timeMs(instance.originalStartTime ?? instance.start)).toISOString(),
+      })
+    ).filter((i) => i.status !== "cancelled").length;
+    remainingCount = Math.max(1, total - before);
+  }
+  await truncateSeriesBefore(accessToken, master, instance, "none");
+
+  const tz = timeZone || instance.start?.timeZone || master.start?.timeZone || originalTimeZone || "UTC";
+  const withZone = (t: EventTime | undefined): EventTime | undefined => (t && t.dateTime && !t.timeZone ? { ...t, timeZone: tz } : t);
+  const recurrence =
+    fields.recurrence ??
+    (rule
+      ? replaceRrule(master.recurrence, [remainingCount !== null ? rruleWithCount(rule, remainingCount) : rule])
+      : undefined);
+  const hadMeet = !!(master.hangoutLink || master.conferenceData?.entryPoints?.length);
+
+  return createCalendarEvent(accessToken, {
+    summary: fields.summary ?? master.summary ?? "",
+    description: fields.description ?? master.description,
+    location: fields.location ?? master.location,
+    start: withZone(fields.start ?? instance.start)!,
+    end: withZone(fields.end ?? instance.end)!,
+    attendees:
+      fields.attendees ??
+      (master.attendees ?? []).filter((a) => a.email && !a.resource).map((a) => ({ email: a.email!, ...(a.optional ? { optional: true } : {}) })),
+    recurrence,
+    sendUpdates,
+    addMeetLink: fields.addMeetLink ?? hadMeet,
+    extras: {
+      // What the master had, unless this edit changes it.
+      reminders: master.reminders?.useDefault === false
+        ? { useDefault: false, overrides: (master.reminders.overrides ?? []).filter((o) => o.method === "popup" || o.method === "email").map((o) => ({ method: o.method as "popup" | "email", minutes: o.minutes ?? 10 })) }
+        : { useDefault: true },
+      ...(master.visibility ? { visibility: master.visibility as "default" | "public" | "private" | "confidential" } : {}),
+      ...(master.transparency ? { transparency: master.transparency as "opaque" | "transparent" } : {}),
+      ...(master.guestsCanModify !== undefined ? { guestsCanModify: master.guestsCanModify } : {}),
+      ...(master.guestsCanInviteOthers !== undefined ? { guestsCanInviteOthers: master.guestsCanInviteOthers } : {}),
+      ...(master.guestsCanSeeOtherGuests !== undefined ? { guestsCanSeeOtherGuests: master.guestsCanSeeOtherGuests } : {}),
+      ...(master.attachments?.length
+        ? { attachments: master.attachments.filter((a) => a.fileUrl).map((a) => ({ fileUrl: a.fileUrl!, title: a.title, mimeType: a.mimeType, fileId: a.fileId })) }
+        : {}),
+      ...fields.extras,
+    },
+  });
+}
+
+/** What happened on a delete — enough for `undoDelete`. */
+export type DeleteOutcome = { mode: "deleted" | "truncated"; eventId: string; previousRecurrence?: string[] };
+
+/** Delete an occurrence, the occurrences from it on, or the whole series. */
+export async function deleteEventInScope(
+  accessToken: string,
+  eventId: string,
+  scope: SeriesScope,
+  opts: { sendUpdates?: SendUpdates } = {}
+): Promise<DeleteOutcome> {
+  const sendUpdates = opts.sendUpdates ?? "all";
+  if (scope === "this") {
+    await deleteCalendarEvent(accessToken, eventId, { sendUpdates });
+    return { mode: "deleted", eventId };
+  }
+  const instance = await getCalendarEvent(accessToken, eventId);
+  if (!instance.recurringEventId) {
+    await deleteCalendarEvent(accessToken, eventId, { sendUpdates });
+    return { mode: "deleted", eventId };
+  }
+  const masterId = instance.recurringEventId;
+  if (scope === "all") {
+    await deleteCalendarEvent(accessToken, masterId, { sendUpdates });
+    return { mode: "deleted", eventId: masterId };
+  }
+  const master = masterId === instance.id ? instance : await getCalendarEvent(accessToken, masterId);
+  if (isFirstOccurrence(master, instance)) {
+    await deleteCalendarEvent(accessToken, masterId, { sendUpdates });
+    return { mode: "deleted", eventId: masterId };
+  }
+  const previousRecurrence = await truncateSeriesBefore(accessToken, master, instance, sendUpdates);
+  return { mode: "truncated", eventId: masterId, previousRecurrence };
+}
+
+/** Reverse a delete: bring a deleted event back, or give a shortened series its old rule back. */
+export async function undoDelete(
+  accessToken: string,
+  outcome: DeleteOutcome,
+  opts: { sendUpdates?: SendUpdates } = {}
+): Promise<CalendarEventItem> {
+  const sendUpdates = opts.sendUpdates ?? "all";
+  if (outcome.mode === "truncated") {
+    if (!outcome.previousRecurrence?.length) throw new Error("Nothing to restore.");
+    return patchCalendarEvent(accessToken, outcome.eventId, { recurrence: outcome.previousRecurrence, sendUpdates });
+  }
+  return patchCalendarEvent(accessToken, outcome.eventId, { status: "confirmed", sendUpdates });
 }

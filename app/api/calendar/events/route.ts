@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { sanitizeExtras } from "@/lib/calendar-extras";
 import {
   CALENDAR_INSUFFICIENT_SCOPE,
   createCalendarEvent,
   listPrimaryCalendarEvents,
+  meetLinkOf,
+  meetStatusOf,
   searchPrimaryCalendarEvents,
 } from "@/lib/google-calendar";
 
@@ -71,6 +74,9 @@ type CreateBody = {
   end?: { dateTime?: string; date?: string; timeZone?: string };
   attendees?: { email: string }[];
   sendUpdates?: "all" | "externalOnly" | "none";
+  /** Create a Google Meet room for the event. */
+  addMeetLink?: boolean;
+  extras?: unknown;
 };
 
 export async function POST(request: Request) {
@@ -112,8 +118,24 @@ export async function POST(request: Request) {
       end: body.end,
       attendees: body.attendees,
       sendUpdates: body.sendUpdates,
+      addMeetLink: body.addMeetLink === true,
+      extras: sanitizeExtras(body.extras),
     });
-    return NextResponse.json({ event }, { status: 201 });
+    return NextResponse.json(
+      {
+        event,
+        ...(body.addMeetLink === true
+          ? {
+              meetLink: meetLinkOf(event) ?? null,
+              meetError:
+                meetStatusOf(event) === "created"
+                  ? null
+                  : "The event was created, but Google couldn't add a Meet link to it.",
+            }
+          : {}),
+      },
+      { status: 201 }
+    );
   } catch (e) {
     const err = e as Error & { code?: string };
     if (err.code === "UNAUTHORIZED") {

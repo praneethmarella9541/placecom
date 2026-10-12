@@ -10,6 +10,7 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import type { DateSelectArg, EventClickArg, EventDropArg } from "@fullcalendar/core";
 import type { EventResizeDoneArg } from "@fullcalendar/interaction";
+import { Check, Copy, Paperclip, Repeat, Video } from "lucide-react";
 import { clientFetchFailedMessage } from "@/lib/fetch-errors";
 import { useModuleVisibility } from "@/lib/module-visibility";
 import { formatCalendarDateTime } from "@/lib/utils";
@@ -23,12 +24,28 @@ import {
 } from "@/components/Icons";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
+import CalendarRecurrenceEditor from "@/components/CalendarRecurrenceEditor";
+import CalendarEventOptions from "@/components/CalendarEventOptions";
+import CalendarScopeDialog, { ScopeChoice } from "@/components/CalendarScopeDialog";
 import {
+  defaultOptions,
+  optionsFromEvent,
+  optionsToExtras,
+  reminderLabel,
+  type EventOptions,
+} from "@/lib/calendar-extras";
+import { addDaysToDate, utcMsToWall, wallToUtcMs } from "@/lib/calendar-time";
+import type { SeriesScope } from "@/lib/google-calendar";
+import {
+  DEFAULT_CUSTOM_SPEC,
   RECURRENCE_OPTIONS,
-  buildRecurrenceRules,
+  WEEKDAYS,
+  buildRecurrence,
   formatRecurrenceLabel,
-  parseRecurrencePreset,
+  parseRecurrence,
+  validateSpec,
   type RecurrencePreset,
+  type RecurrenceSpec,
 } from "@/lib/calendar-recurrence";
 import { CalendarFreeBusyPanel } from "@/components/CalendarFreeBusyPanel";
 import { CalendarRsvpButtons, type RsvpStatus } from "@/components/CalendarRsvpButtons";
@@ -45,6 +62,9 @@ type Attendee = {
   responseStatus?: "accepted" | "declined" | "tentative" | "needsAction" | string;
   organizer?: boolean;
   self?: boolean;
+  resource?: boolean;
+  optional?: boolean;
+  comment?: string;
 };
 
 type EventRow = {
@@ -54,13 +74,48 @@ type EventRow = {
   description?: string;
   location?: string;
   status?: string;
-  start?: { dateTime?: string; date?: string };
+  start?: { dateTime?: string; date?: string; timeZone?: string };
   end?: { dateTime?: string; date?: string };
   attendees?: Attendee[];
   organizer?: { email?: string; displayName?: string; self?: boolean };
   recurrence?: string[];
   recurringEventId?: string;
+  /** The Google Meet join link, when the event has one. */
+  hangoutLink?: string;
+  conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] };
+  reminders?: { useDefault?: boolean; overrides?: { method?: string; minutes?: number }[] };
+  visibility?: string;
+  transparency?: string;
+  guestsCanModify?: boolean;
+  guestsCanInviteOthers?: boolean;
+  guestsCanSeeOtherGuests?: boolean;
+  attachments?: { fileUrl?: string; title?: string; mimeType?: string; fileId?: string }[];
 };
+
+/** Guests other than the organizer and the signed-in user — the people a change or cancellation is sent to. */
+function realGuests(ev: EventRow): Attendee[] {
+  return (ev.attendees ?? []).filter((a) => a.email && !a.organizer && !a.self && !a.resource);
+}
+
+/** The UTC instant of a wall time in a zone, as an ISO string — null while the text isn't a full date-time. */
+function wallToIso(wall: string, tz: string): string | null {
+  const ms = wallToUtcMs(wall, tz);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/** Minutes between two "YYYY-MM-DDTHH:mm" wall times (wall clock, so a DST change doesn't count). */
+function wallMinutesBetween(from: string, to: string): number {
+  const ms = (w: string) => Date.UTC(+w.slice(0, 4), +w.slice(5, 7) - 1, +w.slice(8, 10), +w.slice(11, 13), +w.slice(14, 16));
+  return Math.round((ms(to) - ms(from)) / 60_000);
+}
+
+/** What the event's "show as" / visibility add to its details. */
+const VISIBILITY_TEXT: Record<string, string> = { public: "Public", private: "Private", confidential: "Confidential" };
+
+/** The Meet join link of an event, from `hangoutLink` or its video entry point. */
+function meetUrlOf(ev: EventRow): string | undefined {
+  return ev.hangoutLink || ev.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video")?.uri || undefined;
+}
 
 type RecruiterRow = {
   email: string;
@@ -84,14 +139,21 @@ function eventStartMs(e: EventRow): number | null {
   return parseMs(e.start?.dateTime || e.start?.date);
 }
 
+/** Weekday code of a "YYYY-MM-DDTHH:mm" input value. */
+function weekdayOf(value: string) {
+  const d = new Date(`${value.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? undefined : WEEKDAYS[(d.getDay() + 6) % 7];
+}
+
 function toInputValue(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Some browsers report India as the legacy "Asia/Calcutta"; use the current name.
 const USER_TZ =
   typeof Intl !== "undefined"
-    ? Intl.DateTimeFormat().resolvedOptions().timeZone
+    ? Intl.DateTimeFormat().resolvedOptions().timeZone.replace(/^Asia\/Calcutta$/, "Asia/Kolkata")
     : "Asia/Kolkata";
 
 function defaultMeetingTimes(): { start: string; end: string } {
@@ -187,22 +249,30 @@ export default function CalendarPage() {
   const [editEvent, setEditEvent] = useState<EventRow | null>(null);
 
   // Create form fields
-  const [busy, setBusy] = useState(false);
   const [recruiterEmail, setRecruiterEmail] = useState("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
   const [location, setLocation] = useState("");
+  // Create a Google Meet room with the event. On by default: these are mostly recruiter calls.
+  const [addMeet, setAddMeet] = useState(true);
+  const [meetBusy, setMeetBusy] = useState(false);
+  const [meetCopied, setMeetCopied] = useState(false);
   const [startDateTime, setStartDateTime] = useState("");
   const [endDateTime, setEndDateTime] = useState("");
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [recurrencePreset, setRecurrencePreset] = useState<RecurrencePreset>("none");
+  const [allDay, setAllDay] = useState(false);
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState(""); // last day, inclusive
+  const [notify, setNotify] = useState<SendUpdates>("all");
+  const [scheduleOpts, setScheduleOpts] = useState<EventOptions>(() => defaultOptions(USER_TZ));
+  const [customSpec, setCustomSpec] = useState<RecurrenceSpec>(DEFAULT_CUSTOM_SPEC);
 
   // Signed-in user emails — for in-app RSVP matching
   const [sessionEmail, setSessionEmail] = useState<string | null>(null);
   const [mailboxEmail, setMailboxEmail] = useState<string | null>(null);
 
   // Edit form fields
-  const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editNotes, setEditNotes] = useState("");
@@ -213,6 +283,13 @@ export default function CalendarPage() {
   const [editAttendees, setEditAttendees] = useState(""); // comma-sep emails
   const [editNotify, setEditNotify] = useState<SendUpdates>("all");
   const [editRecurrencePreset, setEditRecurrencePreset] = useState<RecurrencePreset>("none");
+  const [editCustomSpec, setEditCustomSpec] = useState<RecurrenceSpec>(DEFAULT_CUSTOM_SPEC);
+  const [editOpts, setEditOpts] = useState<EventOptions>(() => defaultOptions(USER_TZ));
+  const [editStartDate, setEditStartDate] = useState("");
+  const [editEndDate, setEditEndDate] = useState(""); // last day, inclusive
+  // The times as the event had them — a repeating series moves by how far they were changed.
+  const [editOrig, setEditOrig] = useState<{ start: string; end: string; tz: string } | null>(null);
+  const [askScope, setAskScope] = useState(false);
   const [editIsSeriesInstance, setEditIsSeriesInstance] = useState(false);
 
   /* ── Data loading ────────────────────────────────────── */
@@ -393,12 +470,27 @@ export default function CalendarPage() {
     end?: string;
     title?: string;
     recruiterEmail?: string;
+    notes?: string;
+    location?: string;
+    options?: EventOptions;
+    addMeet?: boolean;
+    /** All-day: first day and LAST day (inclusive), "YYYY-MM-DD". */
+    allDay?: { startDate: string; endDate: string };
   }) {
     const defaults = defaultMeetingTimes();
     setStartDateTime(prefill?.start ?? defaults.start);
     setEndDateTime(prefill?.end ?? defaults.end);
+    setAllDay(!!prefill?.allDay);
+    setStartDate(prefill?.allDay?.startDate ?? defaults.start.slice(0, 10));
+    setEndDate(prefill?.allDay?.endDate ?? defaults.start.slice(0, 10));
     setRecurrencePreset("none");
+    setCustomSpec(DEFAULT_CUSTOM_SPEC);
+    setNotify("all");
+    setScheduleOpts(prefill?.options ?? defaultOptions(USER_TZ));
     setScheduleError(null);
+    setAddMeet(prefill?.addMeet ?? true);
+    if (prefill?.notes !== undefined) setNotes(prefill.notes);
+    if (prefill?.location !== undefined) setLocation(prefill.location);
     if (prefill?.title !== undefined) setTitle(prefill.title);
     if (prefill?.recruiterEmail !== undefined) setRecruiterEmail(prefill.recruiterEmail);
     setScheduleOpen(true);
@@ -437,7 +529,96 @@ export default function CalendarPage() {
     setSelectedEvent((cur) => (cur?.id === ev.id ? { ...cur, ...updated } : cur));
   }
 
+  // A repeating occurrence doesn't carry its rule — the series' own record does, fetched once per series.
+  const [seriesRules, setSeriesRules] = useState<Record<string, string[] | null>>({});
+  useEffect(() => {
+    const id = selectedEvent && !selectedEvent.recurrence?.length ? selectedEvent.recurringEventId : undefined;
+    if (!id || id in seriesRules) return;
+    let cancelled = false;
+    const remember = (rule: string[] | null) => {
+      if (!cancelled) setSeriesRules((m) => ({ ...m, [id]: rule }));
+    };
+    fetch(`/api/calendar/events/${encodeURIComponent(id)}`)
+      .then((r) => r.json())
+      .then((b: { event?: { recurrence?: string[] } }) => remember(b.event?.recurrence?.length ? b.event.recurrence : null))
+      .catch(() => remember(null));
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEvent, seriesRules]);
+
+  /** "Weekly on Monday" — how Google Calendar words the repeat. */
+  function repeatLabelOf(ev: EventRow): string | null {
+    const rule = ev.recurrence?.length ? ev.recurrence : ev.recurringEventId ? seriesRules[ev.recurringEventId] : null;
+    if (!rule) return null;
+    const tz = ev.start?.timeZone || USER_TZ;
+    const day = ev.start?.date || (ev.start?.dateTime ? utcMsToWall(Date.parse(ev.start.dateTime), tz).slice(0, 10) : undefined);
+    return formatRecurrenceLabel(rule, tz, day);
+  }
+
+  /** Open the schedule form filled from an existing event (same time, guests, settings). */
+  function duplicateEvent(ev: EventRow) {
+    const options = optionsFromEvent(ev, USER_TZ);
+    const wall = (iso?: string) => (iso ? utcMsToWall(Date.parse(iso), options.timeZone) : undefined);
+    setSelectedEvent(null);
+    openScheduleModal({
+      title: ev.summary ?? "",
+      recruiterEmail: realGuests(ev).map((a) => a.email).join(", "),
+      notes: ev.description ?? "",
+      location: ev.location ?? "",
+      options,
+      addMeet: !!meetUrlOf(ev),
+      ...(isAllDayEvent(ev) && ev.start?.date
+        ? { allDay: { startDate: ev.start.date, endDate: ev.end?.date ? addDaysToDate(ev.end.date, -1) : ev.start.date } }
+        : { start: wall(ev.start?.dateTime), end: wall(ev.end?.dateTime) }),
+    });
+  }
+
+  /** Add a Google Meet room to an event that doesn't have one (guests are told about the new link). */
+  async function addMeetToEvent(ev: EventRow) {
+    setMeetBusy(true);
+    setError(null);
+    try {
+      const hasGuests = (ev.attendees ?? []).some((a) => !a.self && !a.organizer);
+      const res = await fetch(`/api/calendar/events/${encodeURIComponent(ev.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addMeetLink: true, sendUpdates: hasGuests ? "all" : "none" }),
+      });
+      const body = (await res.json()) as { error?: string; event?: EventRow; meetError?: string | null };
+      if (!res.ok) throw new Error(body.error || "Couldn't add a Meet link");
+      if (body.event) {
+        const updated = body.event;
+        setEvents((prev) => prev.map((e) => (e.id === ev.id ? { ...e, ...updated } : e)));
+        setSelectedEvent((cur) => (cur?.id === ev.id ? { ...cur, ...updated } : cur));
+      }
+      if (body.meetError) setError(body.meetError);
+    } catch (e) {
+      setError(clientFetchFailedMessage(e));
+    } finally {
+      setMeetBusy(false);
+    }
+  }
+
+  async function copyMeetLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setMeetCopied(true);
+      window.setTimeout(() => setMeetCopied(false), 1500);
+    } catch {
+      /* clipboard blocked — the link is still shown and clickable */
+    }
+  }
+
   function onDateSelect(arg: DateSelectArg) {
+    // Dragging across day cells (month view / all-day strip) makes an all-day event, like Google Calendar.
+    if (arg.allDay) {
+      const day = (d: Date) => toInputValue(d).slice(0, 10);
+      const last = addDaysToDate(day(arg.end), -1);
+      const first = day(arg.start);
+      openScheduleModal({ allDay: { startDate: first, endDate: last < first ? first : last } });
+      return;
+    }
     openScheduleModal({
       start: toInputValue(arg.start),
       end: toInputValue(arg.end),
@@ -488,51 +669,73 @@ export default function CalendarPage() {
     const allEmails = extractAllEmailsFromText(recruiterEmail);
     const primary = allEmails[0];
     const extras = allEmails.slice(1);
-    if (!primary || !title || !startDateTime || !endDateTime) {
-      setScheduleError("Fill in title, guests, and start/end times.");
+    const tz = scheduleOpts.timeZone;
+    const startIso = allDay ? null : wallToIso(startDateTime, tz);
+    const endIso = allDay ? null : wallToIso(endDateTime, tz);
+    if (!title || (allDay ? !startDate || !endDate : !startIso || !endIso)) {
+      setScheduleError("Fill in the title and the start/end times.");
       return;
     }
-    if (new Date(endDateTime) <= new Date(startDateTime)) {
-      setScheduleError("End time must be after start time.");
+    if (allDay ? endDate < startDate : new Date(endIso!) <= new Date(startIso!)) {
+      setScheduleError(allDay ? "The last day can't be before the first day." : "End time must be after start time.");
       return;
     }
-    setBusy(true);
+    if (recurrencePreset === "custom") {
+      const problem = validateSpec(customSpec, allDay ? startDate : startDateTime.slice(0, 10));
+      if (problem) {
+        setScheduleError(problem);
+        return;
+      }
+    }
+    // Close the form right away and finish in the background; if Google refuses, it comes back as it was.
     setScheduleError(null);
     setError(null);
+    setScheduleOpen(false);
+    showToast({ tone: "busy", text: "Creating event…" });
     try {
       const res = await fetch("/api/calendar/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          recruiterEmail: primary,
+          recruiterEmail: primary ?? "",
           title,
           notes,
           location: location.trim() || undefined,
-          timeZone: USER_TZ,
-          startDateTime: new Date(startDateTime).toISOString(),
-          endDateTime: new Date(endDateTime).toISOString(),
-          recurrence: buildRecurrenceRules(recurrencePreset),
-          sendUpdates: "all",
+          timeZone: tz,
+          ...(allDay
+            ? { allDay: true, startDate, endDate: addDaysToDate(endDate, 1) } // Google's all-day end is the day AFTER
+            : { startDateTime: startIso, endDateTime: endIso }),
+          recurrence: buildRecurrence(recurrencePreset, customSpec, { allDay, timeZone: tz }),
+          sendUpdates: notify,
+          extras: optionsToExtras(scheduleOpts),
           extraAttendeeEmails: extras.length ? extras : undefined,
+          addMeetLink: addMeet,
         }),
       });
       const body = (await res.json()) as {
         error?: string;
         event?: { htmlLink?: string };
+        /** Set when a Meet was asked for but Google couldn't add one — the event itself was still created. */
+        meetError?: string | null;
       };
       if (!res.ok) throw new Error(body.error || "Failed to schedule meeting");
+      if (body.meetError) setError(body.meetError);
 
-      setScheduleOpen(false);
       setRecruiterEmail("");
       setTitle("");
       setNotes("");
       setLocation("");
-      await loadRecruiters();
-      await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
+      showToast({ tone: "ok", text: "Event created" });
+      // Show it on the grid now; the refresh below brings the full details.
+      const created = body.event as EventRow | undefined;
+      if (created?.id) setEvents((prev) => (prev.some((e) => e.id === created.id) ? prev : [...prev, created]));
+      void loadRecruiters();
+      void loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     } catch (e) {
-      setScheduleError(clientFetchFailedMessage(e));
-    } finally {
-      setBusy(false);
+      const message = clientFetchFailedMessage(e);
+      setScheduleError(message);
+      setScheduleOpen(true);
+      showToast({ tone: "error", text: `Couldn't create “${title}”: ${message}` });
     }
   }
 
@@ -544,22 +747,21 @@ export default function CalendarPage() {
     setEditLocation(ev.location || "");
     const allDay = isAllDayEvent(ev);
     setEditAllDay(allDay);
-    setEditStart(
-      allDay
-        ? ev.start?.date || ""
-        : ev.start?.dateTime
-          ? toInputValue(new Date(ev.start.dateTime))
-          : ""
-    );
-    setEditEnd(
-      allDay
-        ? ev.end?.date || ""
-        : ev.end?.dateTime
-          ? toInputValue(new Date(ev.end.dateTime))
-          : ""
-    );
+    const tz = ev.start?.timeZone || USER_TZ;
+    const wall = (iso?: string) => (iso ? utcMsToWall(Date.parse(iso), tz) : "");
+    const startWall = allDay ? "" : wall(ev.start?.dateTime);
+    const endWall = allDay ? "" : wall(ev.end?.dateTime);
+    setEditStart(startWall);
+    setEditEnd(endWall);
+    setEditStartDate(allDay ? ev.start?.date || "" : "");
+    setEditEndDate(allDay && ev.end?.date ? addDaysToDate(ev.end.date, -1) : ev.start?.date || "");
+    setEditOrig({ start: startWall, end: endWall, tz });
+    setEditOpts(optionsFromEvent(ev, USER_TZ));
+    setAskScope(false);
     setEditAttendees((ev.attendees ?? []).map((a) => a.email).filter(Boolean).join(", "));
-    setEditRecurrencePreset(parseRecurrencePreset(ev.recurrence));
+    const parsedRule = parseRecurrence(ev.recurrence, ev.start?.timeZone || USER_TZ);
+    setEditRecurrencePreset(parsedRule.preset);
+    setEditCustomSpec(parsedRule.spec ?? DEFAULT_CUSTOM_SPEC);
     setEditIsSeriesInstance(!!ev.recurringEventId && ev.recurringEventId !== ev.id);
     setEditNotify("all");
     setEditError(null);
@@ -579,10 +781,45 @@ export default function CalendarPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<EventRow | null>(null);
   const [deleteNote, setDeleteNote] = useState("");
+  const [deleteScope, setDeleteScope] = useState<SeriesScope>("this");
+  const [deleteNotify, setDeleteNotify] = useState<SendUpdates>("all");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // After a delete: what's needed to bring it back, shown as an "Undo" toast for a few seconds.
+  const [undoInfo, setUndoInfo] = useState<{ eventId: string; undo: unknown; title: string; sendUpdates: SendUpdates } | null>(null);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const undoTimer = useRef<number | null>(null);
+  // Saves run in the background: the form closes at once and this shows how it's going.
+  const [toast, setToast] = useState<{ tone: "busy" | "ok" | "error"; text: string } | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  function showToast(next: { tone: "busy" | "ok" | "error"; text: string } | null) {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    setToast(next);
+    if (next && next.tone !== "busy") {
+      toastTimer.current = window.setTimeout(() => setToast(null), next.tone === "error" ? 8000 : 3000);
+    }
+  }
 
   function openDeleteConfirm(ev: EventRow) {
     setDeleteTarget(ev);
     setDeleteNote("");
+    setDeleteScope("this");
+    setDeleteNotify("all");
+    setDeleteError(null);
+  }
+
+  function closeDeleteConfirm() {
+    setDeleteTarget(null);
+    setDeleteNote("");
+    setDeleteError(null);
+  }
+
+  /** The organizer's own event, or one with no organizer info (e.g. created here). Guests can't cancel it for others. */
+  function isOrganizerOf(ev: EventRow): boolean {
+    return !ev.organizer || ev.organizer.self === true;
+  }
+
+  function isRepeating(ev: EventRow): boolean {
+    return !!ev.recurringEventId || !!ev.recurrence?.length;
   }
 
   /** Send a follow-up email to a meeting's attendees explaining a change
@@ -596,7 +833,7 @@ export default function CalendarPage() {
     // extra organizer note goes out through our own mailbox, so it is skipped
     // with Mail off rather than failing silently on a 403.
     if (!mailEnabled) return;
-    const recipients = (ev.attendees ?? [])
+    const recipients = realGuests(ev)
       .map((a) => a.email)
       .filter((e): e is string => !!e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
     if (recipients.length === 0 || !note.trim()) return;
@@ -628,86 +865,211 @@ export default function CalendarPage() {
   async function confirmDelete() {
     const ev = deleteTarget;
     if (!ev) return;
-    const hasGuests = (ev.attendees?.length ?? 0) > 0;
-    setDeleteBusy(true);
+    const guests = realGuests(ev);
+    const organizer = isOrganizerOf(ev);
+    // Only the organizer's cancellation goes to guests; removing a copy from your own calendar tells no one.
+    const sendUpdates: SendUpdates = organizer && guests.length > 0 ? deleteNotify : "none";
+    const scope = isRepeating(ev) ? deleteScope : "this";
+    // Take it off the grid and close the dialog at once; it's put back if Google refuses.
+    const before = events;
+    const seriesId = ev.recurringEventId ?? ev.id;
+    const evStart = eventStartMs(ev) ?? 0;
+    setEvents((prev) =>
+      prev.filter((e) => {
+        if (scope === "this") return e.id !== ev.id;
+        if ((e.recurringEventId ?? e.id) !== seriesId) return true;
+        return scope === "following" ? (eventStartMs(e) ?? 0) < evStart : false;
+      })
+    );
+    setSelectedEvent(null);
+    setEditEvent(null);
+    closeDeleteConfirm();
+    showToast({ tone: "busy", text: "Deleting…" });
     try {
-      // sendUpdates=all so Google emails the cancellation to attendees,
-      // matching what Gmail/Calendar does when you delete from their UI.
       const res = await fetch(
-        `/api/calendar/events/${encodeURIComponent(ev.id)}?sendUpdates=${hasGuests ? "all" : "none"}`,
+        `/api/calendar/events/${encodeURIComponent(ev.id)}?sendUpdates=${sendUpdates}&scope=${scope}`,
         { method: "DELETE" }
       );
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; undo?: unknown };
       if (!res.ok) throw new Error(body.error || "Failed to delete event");
-      // Optional follow-up email with the user's note. Fired-and-forget so
-      // a hiccup doesn't block the UI from closing.
-      if (deleteNote.trim() && hasGuests) {
+      // Optional follow-up email with the user's note — only when guests were told.
+      if (deleteNote.trim() && organizer && guests.length > 0 && sendUpdates !== "none") {
         void sendAttendeeNote(ev, deleteNote, "cancelled");
       }
-      // Close any open detail / edit / delete views referencing this event
+      showToast(null);
+      if (body.undo) {
+        if (undoTimer.current) window.clearTimeout(undoTimer.current);
+        setUndoInfo({ eventId: ev.id, undo: body.undo, title: ev.summary || "Event", sendUpdates });
+        undoTimer.current = window.setTimeout(() => setUndoInfo(null), 10_000);
+      }
+      void loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
+    } catch (e) {
+      setEvents(before);
+      showToast({ tone: "error", text: `Couldn't delete “${ev.summary || "event"}”: ${clientFetchFailedMessage(e)}` });
+    }
+  }
+
+  /** A guest turns the event down instead of removing it: the organizer sees "declined". */
+  async function declineEvent(ev: EventRow, scope: SeriesScope) {
+    // "All events" is the series itself; Google has no "this and following" for a reply.
+    const targetId = scope === "all" && ev.recurringEventId ? ev.recurringEventId : ev.id;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/calendar/events/${encodeURIComponent(targetId)}/rsvp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "declined" }),
+      });
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(body.error || "Couldn't decline the event");
       setSelectedEvent(null);
-      setEditEvent(null);
-      setDeleteTarget(null);
-      setDeleteNote("");
+      closeDeleteConfirm();
       await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     } catch (e) {
-      alert(clientFetchFailedMessage(e));
+      setDeleteError(clientFetchFailedMessage(e));
     } finally {
       setDeleteBusy(false);
     }
   }
 
-  /* ── Save edits ──────────────────────────────────────── */
-  async function saveEdit() {
-    if (!editEvent || !editTitle || !editStart || !editEnd) return;
-    if (!editAllDay && new Date(editEnd) <= new Date(editStart)) {
-      setEditError("End time must be after start time.");
-      return;
-    }
-    setEditBusy(true);
-    setEditError(null);
+  async function undoDelete() {
+    const info = undoInfo;
+    if (!info) return;
+    setUndoBusy(true);
     try {
-      const attendees = extractAllEmailsFromText(editAttendees).map((email) => ({ email }));
-      const start = editAllDay
-        ? editEvent.start?.date
-          ? { date: editEvent.start.date }
-          : undefined
-        : { dateTime: new Date(editStart).toISOString(), timeZone: USER_TZ };
-      const end = editAllDay
-        ? editEvent.end?.date
-          ? { date: editEvent.end.date }
-          : undefined
-        : { dateTime: new Date(editEnd).toISOString(), timeZone: USER_TZ };
+      const res = await fetch(`/api/calendar/events/${encodeURIComponent(info.eventId)}/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ undo: info.undo, sendUpdates: info.sendUpdates }),
+      });
+      const body = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(body.error || "Couldn't restore the event");
+      if (undoTimer.current) window.clearTimeout(undoTimer.current);
+      setUndoInfo(null);
+      await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
+    } catch (e) {
+      setError(clientFetchFailedMessage(e));
+      setUndoInfo(null);
+    } finally {
+      setUndoBusy(false);
+    }
+  }
 
-      const res = await fetch(`/api/calendar/events/${encodeURIComponent(editEvent.id)}`, {
+  useEffect(
+    () => () => {
+      if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    },
+    []
+  );
+
+  /* ── Save edits ──────────────────────────────────────── */
+  /** Validates the edit form. The scope question (repeating events) comes after, then `saveEdit`. */
+  function requestSaveEdit() {
+    if (!editEvent || !editTitle) return;
+    if (editAllDay) {
+      if (!editStartDate || !editEndDate) return;
+      if (editEndDate < editStartDate) {
+        setEditError("The last day can't be before the first day.");
+        return;
+      }
+    } else {
+      if (!editStart || !editEnd) return;
+      const s0 = wallToIso(editStart, editOpts.timeZone);
+      const e0 = wallToIso(editEnd, editOpts.timeZone);
+      if (!s0 || !e0 || new Date(e0) <= new Date(s0)) {
+        setEditError("End time must be after start time.");
+        return;
+      }
+    }
+    if (editRecurrencePreset === "custom" && !editIsSeriesInstance) {
+      const problem = validateSpec(editCustomSpec, editAllDay ? editStartDate : editStart.slice(0, 10));
+      if (problem) {
+        setEditError(problem);
+        return;
+      }
+    }
+    setEditError(null);
+    if (isRepeating(editEvent)) setAskScope(true);
+    else void saveEdit("this");
+  }
+
+  async function saveEdit(scope: SeriesScope) {
+    const ev = editEvent;
+    if (!ev) return;
+    setAskScope(false);
+    setEditError(null);
+    // Close the form right away and finish in the background; if Google refuses, it comes back as it was.
+    setEditEvent(null);
+    showToast({ tone: "busy", text: "Saving changes…" });
+    try {
+      const tz = editOpts.timeZone;
+      // Keep each guest's reply, optional flag and note — sending bare emails would reset them.
+      const known = new Map((ev.attendees ?? []).filter((a) => a.email).map((a) => [a.email!.toLowerCase(), a]));
+      const attendees = extractAllEmailsFromText(editAttendees).map((email) => {
+        const old = known.get(email.toLowerCase());
+        return old
+          ? { email, responseStatus: old.responseStatus, optional: old.optional, comment: old.comment }
+          : { email };
+      });
+      const start = editAllDay
+        ? { date: editStartDate }
+        : { dateTime: wallToIso(editStart, tz)!, timeZone: tz };
+      const end = editAllDay
+        ? { date: addDaysToDate(editEndDate, 1) } // Google's all-day end is the day AFTER
+        : { dateTime: wallToIso(editEnd, tz)!, timeZone: tz };
+
+      // For "all events": how far the times moved, as wall-clock minutes, so the series moves with them.
+      const orig = editOrig;
+      const shifts =
+        scope === "all" && orig
+          ? editAllDay
+            ? {
+                startShiftMinutes: wallMinutesBetween(`${ev.start?.date}T00:00`, `${editStartDate}T00:00`),
+                endShiftMinutes: wallMinutesBetween(`${ev.end?.date}T00:00`, `${addDaysToDate(editEndDate, 1)}T00:00`),
+              }
+            : {
+                startShiftMinutes: wallMinutesBetween(orig.start, editStart),
+                endShiftMinutes: wallMinutesBetween(orig.end, editEnd),
+                ...(orig.tz !== tz ? { timeZone: tz, originalTimeZone: orig.tz } : {}),
+              }
+          : {};
+
+      const res = await fetch(`/api/calendar/events/${encodeURIComponent(ev.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           summary: editTitle,
           description: editNotes || undefined,
           location: editLocation.trim() || undefined,
-          ...(start ? { start } : {}),
-          ...(end ? { end } : {}),
-          attendees: attendees.length ? attendees : undefined,
+          start,
+          end,
+          attendees,
           sendUpdates: editNotify,
-          ...(editIsSeriesInstance
+          scope,
+          extras: optionsToExtras(editOpts),
+          ...shifts,
+          // A repeating occurrence's own record has no rule; its series' rule isn't edited here.
+          // "keep" = an existing rule the editor can't express: leave it untouched.
+          ...(editIsSeriesInstance || editRecurrencePreset === "keep"
             ? {}
             : {
                 recurrence:
                   editRecurrencePreset === "none"
                     ? []
-                    : buildRecurrenceRules(editRecurrencePreset),
+                    : buildRecurrence(editRecurrencePreset, editCustomSpec, { allDay: editAllDay, timeZone: tz }),
               }),
         }),
       });
       const body = (await res.json()) as { error?: string; event?: EventRow };
       if (!res.ok) throw new Error(body.error || "Failed to update event");
-      setEditEvent(null);
-      await loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
+      showToast({ tone: "ok", text: "Event updated" });
+      void loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     } catch (e) {
-      setEditError(clientFetchFailedMessage(e));
-    } finally {
-      setEditBusy(false);
+      const message = clientFetchFailedMessage(e);
+      setEditEvent((cur) => cur ?? ev);
+      setEditError(message);
+      showToast({ tone: "error", text: `Couldn't save “${editTitle}”: ${message}` });
     }
   }
 
@@ -830,17 +1192,16 @@ export default function CalendarPage() {
     [recruiterEmail]
   );
 
-  const scheduleStartIso = startDateTime ? new Date(startDateTime).toISOString() : null;
-  const scheduleEndIso = endDateTime ? new Date(endDateTime).toISOString() : null;
+  const scheduleStartIso = startDateTime && !allDay ? wallToIso(startDateTime, scheduleOpts.timeZone) : null;
+  const scheduleEndIso = endDateTime && !allDay ? wallToIso(endDateTime, scheduleOpts.timeZone) : null;
 
   const editGuestEmails = useMemo(
     () => extractAllEmailsFromText(editAttendees),
     [editAttendees]
   );
 
-  const editStartIso =
-    editStart && !editAllDay ? new Date(editStart).toISOString() : null;
-  const editEndIso = editEnd && !editAllDay ? new Date(editEnd).toISOString() : null;
+  const editStartIso = editStart && !editAllDay ? wallToIso(editStart, editOpts.timeZone) : null;
+  const editEndIso = editEnd && !editAllDay ? wallToIso(editEnd, editOpts.timeZone) : null;
 
   const topbarActions = topbarActionsNode
     ? createPortal(
@@ -1138,7 +1499,7 @@ export default function CalendarPage() {
 
             {/* Error badge */}
             {error ? (
-              <span className="max-w-[200px] shrink-0 truncate rounded-full bg-red-100 px-2.5 py-0.5 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
+              <span title={error} className="max-w-[200px] shrink-0 truncate rounded-full bg-red-100 px-2.5 py-0.5 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">
                 {error}
               </span>
             ) : null}
@@ -1224,6 +1585,11 @@ export default function CalendarPage() {
                           <span className="text-xs text-[var(--color-text-muted)]">
                             {formatEventWhen(ev)}
                           </span>
+                          {meetUrlOf(ev) ? (
+                            <span className="inline-flex items-center gap-1 text-xs text-[var(--color-copper)]">
+                              <Video className="h-3 w-3" aria-hidden /> Google Meet
+                            </span>
+                          ) : null}
                           {ev.location ? (
                             <span className="truncate text-xs text-[var(--color-text-faint)]">
                               {ev.location}
@@ -1305,14 +1671,14 @@ export default function CalendarPage() {
       {/* ── Schedule meeting modal ─────────────────────── */}
       {scheduleOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center animate-fade-in">
-          <div data-testid="calendar-schedule-modal" className="card gc-modal w-full max-w-xl overflow-hidden animate-scale-in">
+          <div data-testid="calendar-schedule-modal" className="card gc-modal flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden animate-scale-in">
             <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
               <h3 className="text-base font-semibold text-[var(--color-text)]">Schedule meeting</h3>
               <button data-testid="calendar-schedule-close" type="button" onClick={() => setScheduleOpen(false)} className="btn-ghost p-1.5">
                 <IconX className="h-4 w-4" />
               </button>
             </div>
-            <div className="space-y-3 p-5">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
               <input
                 data-testid="calendar-event-title-input"
                 type="text"
@@ -1324,7 +1690,7 @@ export default function CalendarPage() {
               />
               <div>
                 <RecipientField
-                  placeholder="Recipients (recruiters, guests, contacts) *"
+                  placeholder="Guests (recruiters, contacts) — optional"
                   value={recruiterEmail}
                   onChange={setRecruiterEmail}
                   suggestions={recipientSuggestions}
@@ -1333,6 +1699,54 @@ export default function CalendarPage() {
                   <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">Loading suggestions…</p>
                 )}
               </div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-text)]">
+                <input
+                  data-testid="calendar-allday-toggle"
+                  type="checkbox"
+                  checked={allDay}
+                  onChange={(e) => {
+                    setAllDay(e.target.checked);
+                    // An all-day block (out of office, holiday …) rarely wants a video room.
+                    if (e.target.checked) setAddMeet(false);
+                    // Start the all-day range on the day already chosen.
+                    if (e.target.checked && startDateTime) {
+                      setStartDate(startDateTime.slice(0, 10));
+                      setEndDate(endDateTime ? endDateTime.slice(0, 10) : startDateTime.slice(0, 10));
+                    }
+                  }}
+                  className="h-4 w-4 accent-[var(--color-copper)]"
+                />
+                All day
+              </label>
+              {allDay ? (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">First day</label>
+                    <input
+                      data-testid="calendar-start-date"
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => {
+                        setStartDate(e.target.value);
+                        if (endDate < e.target.value) setEndDate(e.target.value);
+                      }}
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Last day</label>
+                    <input
+                      data-testid="calendar-end-date"
+                      type="date"
+                      min={startDate || undefined}
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="input-field"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Start</label>
@@ -1374,9 +1788,11 @@ export default function CalendarPage() {
                   </button>
                 ))}
                 <span className="self-center text-[10px] text-[var(--color-text-faint)]">
-                  {mounted ? USER_TZ : ""}
+                  {mounted ? scheduleOpts.timeZone : ""}
                 </span>
               </div>
+                </>
+              )}
               <label className="block">
                 <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Repeat</span>
                 <select
@@ -1392,11 +1808,22 @@ export default function CalendarPage() {
                   ))}
                 </select>
               </label>
-              <CalendarFreeBusyPanel
-                startIso={scheduleStartIso}
-                endIso={scheduleEndIso}
-                emails={scheduleGuestEmails}
-              />
+              {recurrencePreset === "custom" ? (
+                <CalendarRecurrenceEditor
+                  spec={customSpec}
+                  onChange={setCustomSpec}
+                  startDate={allDay ? startDate : startDateTime.slice(0, 10)}
+                  startWeekday={weekdayOf(allDay ? startDate : startDateTime)}
+                  error={validateSpec(customSpec, allDay ? startDate : startDateTime.slice(0, 10))}
+                />
+              ) : null}
+              {!allDay ? (
+                <CalendarFreeBusyPanel
+                  startIso={scheduleStartIso}
+                  endIso={scheduleEndIso}
+                  emails={scheduleGuestEmails}
+                />
+              ) : null}
               <input
                 type="text"
                 placeholder="Location or video call link (optional)"
@@ -1404,6 +1831,17 @@ export default function CalendarPage() {
                 onChange={(e) => setLocation(e.target.value)}
                 className="input-field"
               />
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-text)]">
+                <input
+                  data-testid="calendar-schedule-add-meet"
+                  type="checkbox"
+                  checked={addMeet}
+                  onChange={(e) => setAddMeet(e.target.checked)}
+                  className="h-4 w-4 accent-[var(--color-copper)]"
+                />
+                <Video className="h-4 w-4 text-[var(--color-copper)]" aria-hidden />
+                Add Google Meet video conferencing
+              </label>
               <textarea
                 rows={3}
                 placeholder="Notes (optional)"
@@ -1411,6 +1849,20 @@ export default function CalendarPage() {
                 onChange={(e) => setNotes(e.target.value)}
                 className="input-field resize-none"
               />
+              <CalendarEventOptions value={scheduleOpts} onChange={setScheduleOpts} timed={!allDay} driveEnabled={isVisible("drive")} />
+              <label className="block">
+                <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Send invitations</span>
+                <select
+                  data-testid="calendar-notify-select"
+                  value={notify}
+                  onChange={(e) => setNotify(e.target.value as SendUpdates)}
+                  className="input-field"
+                >
+                  <option value="all">Yes, email all guests</option>
+                  <option value="externalOnly">Only guests outside my organization</option>
+                  <option value="none">No, don&apos;t send emails</option>
+                </select>
+              </label>
 
               {scheduleError && (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">
@@ -1430,11 +1882,11 @@ export default function CalendarPage() {
               <button
                 data-testid="calendar-schedule-submit"
                 type="button"
-                disabled={busy || !recruiterEmail || !title || !startDateTime || !endDateTime}
+                disabled={!title || (allDay ? !startDate || !endDate : !startDateTime || !endDateTime)}
                 onClick={() => void scheduleMeeting()}
                 className="btn-primary"
               >
-                {busy ? "Scheduling…" : "Create event"}
+                Create event
               </button>
             </div>
           </div>
@@ -1444,7 +1896,7 @@ export default function CalendarPage() {
       {/* ── Event detail modal ─────────────────────────── */}
       {selectedEvent ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center animate-fade-in">
-          <div className="card gc-modal w-full max-w-lg overflow-hidden animate-scale-in">
+          <div className="card gc-modal flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden animate-scale-in">
             {/* Colored header strip */}
             <div className="flex items-center justify-between bg-[var(--color-copper)] px-5 py-3">
               <h3 className="text-base font-semibold text-white truncate pr-4">
@@ -1460,20 +1912,17 @@ export default function CalendarPage() {
               </button>
             </div>
 
-            <div className="divide-y divide-[var(--color-border)] p-0">
+            <div className="min-h-0 flex-1 divide-y divide-[var(--color-border)] overflow-y-auto p-0">
               <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-3 px-5 py-4 text-sm">
                 <dt className="text-[var(--color-text-faint)] font-medium whitespace-nowrap">When</dt>
                 <dd className="text-[var(--color-text)]">
                   {formatCalendarDateTime(selectedEvent.start?.dateTime || selectedEvent.start?.date || "")}
                   {" — "}
                   {formatCalendarDateTime(selectedEvent.end?.dateTime || selectedEvent.end?.date || "")}
-                  {formatRecurrenceLabel(selectedEvent.recurrence) ? (
-                    <span className="mt-1 block text-[12px] text-[var(--color-text-muted)]">
-                      ↻ {formatRecurrenceLabel(selectedEvent.recurrence)}
-                    </span>
-                  ) : selectedEvent.recurringEventId ? (
-                    <span className="mt-1 block text-[12px] text-[var(--color-text-muted)]">
-                      ↻ Part of a repeating series
+                  {repeatLabelOf(selectedEvent) ? (
+                    <span className="mt-1 flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
+                      <Repeat className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                      {repeatLabelOf(selectedEvent)}
                     </span>
                   ) : null}
                 </dd>
@@ -1487,7 +1936,56 @@ export default function CalendarPage() {
                         currentStatus={findSelfAttendee(selectedEvent)?.responseStatus}
                         onUpdated={(status) => onRsvpUpdated(selectedEvent, status)}
                         variant="detail"
+                        extras
+                        htmlLink={selectedEvent.htmlLink}
                       />
+                    </dd>
+                  </>
+                ) : null}
+
+                {meetUrlOf(selectedEvent) ? (
+                  <>
+                    <dt className="text-[var(--color-text-faint)] font-medium">Meet</dt>
+                    <dd className="flex flex-wrap items-center gap-2">
+                      <a
+                        data-testid="calendar-join-meet"
+                        href={meetUrlOf(selectedEvent)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="btn-primary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                      >
+                        <Video className="h-3.5 w-3.5" aria-hidden />
+                        Join with Google Meet
+                      </a>
+                      <button
+                        type="button"
+                        data-testid="calendar-copy-meet"
+                        onClick={() => void copyMeetLink(meetUrlOf(selectedEvent)!)}
+                        className="btn-ghost inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
+                        title="Copy the meeting link"
+                      >
+                        {meetCopied ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
+                        {meetCopied ? "Copied" : "Copy link"}
+                      </button>
+                      <span className="w-full break-all text-xs text-[var(--color-text-faint)]">
+                        {meetUrlOf(selectedEvent)!.replace(/^https?:\/\//, "")}
+                      </span>
+                    </dd>
+                  </>
+                ) : selectedEvent.organizer?.self ? (
+                  <>
+                    <dt className="text-[var(--color-text-faint)] font-medium">Meet</dt>
+                    <dd>
+                      <button
+                        type="button"
+                        data-testid="calendar-add-meet"
+                        disabled={meetBusy}
+                        onClick={() => void addMeetToEvent(selectedEvent)}
+                        className="btn-ghost inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                      >
+                        <Video className="h-3.5 w-3.5" aria-hidden />
+                        {meetBusy ? "Adding…" : "Add Google Meet video conferencing"}
+                      </button>
                     </dd>
                   </>
                 ) : null}
@@ -1579,6 +2077,50 @@ export default function CalendarPage() {
                   </>
                 ) : null}
 
+                {selectedEvent.reminders?.useDefault === false ? (
+                  <>
+                    <dt className="text-[var(--color-text-faint)] font-medium">Reminders</dt>
+                    <dd className="text-[var(--color-text)]">
+                      {selectedEvent.reminders.overrides?.length
+                        ? selectedEvent.reminders.overrides
+                            .map((o) => `${reminderLabel(o.minutes ?? 0)} (${o.method === "email" ? "email" : "notification"})`)
+                            .join(" · ")
+                        : "None"}
+                    </dd>
+                  </>
+                ) : null}
+
+                {VISIBILITY_TEXT[selectedEvent.visibility ?? ""] || selectedEvent.transparency === "transparent" ? (
+                  <>
+                    <dt className="text-[var(--color-text-faint)] font-medium">Status</dt>
+                    <dd className="text-[var(--color-text)]">
+                      {[VISIBILITY_TEXT[selectedEvent.visibility ?? ""], selectedEvent.transparency === "transparent" ? "Shown as free" : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </dd>
+                  </>
+                ) : null}
+
+                {selectedEvent.attachments?.length ? (
+                  <>
+                    <dt className="text-[var(--color-text-faint)] font-medium">Files</dt>
+                    <dd>
+                      <ul className="space-y-1">
+                        {selectedEvent.attachments
+                          .filter((a) => a.fileUrl)
+                          .map((a) => (
+                            <li key={a.fileUrl} className="flex items-center gap-1.5">
+                              <Paperclip className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-faint)]" aria-hidden />
+                              <a href={a.fileUrl} target="_blank" rel="noreferrer" className="truncate text-[var(--color-copper)] hover:underline">
+                                {a.title || a.fileUrl}
+                              </a>
+                            </li>
+                          ))}
+                      </ul>
+                    </dd>
+                  </>
+                ) : null}
+
                 {selectedEvent.description ? (
                   <>
                     <dt className="text-[var(--color-text-faint)] font-medium">Notes</dt>
@@ -1595,13 +2137,24 @@ export default function CalendarPage() {
                 <button data-testid="calendar-event-close-btn" type="button" onClick={() => setSelectedEvent(null)} className="btn-ghost">
                   Close
                 </button>
+                {isOrganizerOf(selectedEvent) || selectedEvent.guestsCanModify ? (
+                  <button
+                    data-testid="calendar-event-edit-btn"
+                    type="button"
+                    onClick={() => openEdit(selectedEvent)}
+                    className="btn-secondary"
+                  >
+                    Edit
+                  </button>
+                ) : null}
                 <button
-                  data-testid="calendar-event-edit-btn"
+                  data-testid="calendar-event-duplicate-btn"
                   type="button"
-                  onClick={() => openEdit(selectedEvent)}
-                  className="btn-secondary"
+                  onClick={() => duplicateEvent(selectedEvent)}
+                  className="btn-ghost"
+                  title="Make a copy of this event"
                 >
-                  Edit
+                  Duplicate
                 </button>
                 <button
                   data-testid="calendar-event-delete-btn"
@@ -1609,9 +2162,9 @@ export default function CalendarPage() {
                   onClick={() => openDeleteConfirm(selectedEvent)}
                   disabled={deleteBusy}
                   className="btn-ghost text-[var(--color-danger)] hover:bg-[var(--color-danger-light)] disabled:opacity-50"
-                  title="Delete this meeting"
+                  title={isOrganizerOf(selectedEvent) ? "Delete this meeting" : "Remove from your calendar or decline"}
                 >
-                  {deleteBusy ? "Deleting…" : "Delete"}
+                  {deleteBusy ? "Working…" : isOrganizerOf(selectedEvent) ? "Delete" : "Remove"}
                 </button>
               </div>
             </div>
@@ -1622,7 +2175,7 @@ export default function CalendarPage() {
       {/* ── Edit event modal ───────────────────────────────── */}
       {editEvent ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center animate-fade-in">
-          <div className="card gc-modal w-full max-w-xl overflow-hidden animate-scale-in">
+          <div className="card gc-modal flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden animate-scale-in">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
               <h3 className="text-base font-semibold text-[var(--color-text)]">Edit event</h3>
@@ -1631,7 +2184,7 @@ export default function CalendarPage() {
               </button>
             </div>
 
-            <div className="space-y-3 p-5">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
               {/* Title */}
               <input
                 type="text"
@@ -1644,27 +2197,53 @@ export default function CalendarPage() {
 
               {/* Times */}
               {editAllDay ? (
-                <p className="rounded-lg bg-[var(--color-surface-offset)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-                  All-day events can be edited in Google Calendar. Timed reschedule is not supported here.
-                </p>
-              ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <input
-                    type="datetime-local"
-                    value={editStart}
-                    onChange={(e) => setEditStart(e.target.value)}
-                    className="input-field"
-                  />
-                  <input
-                    type="datetime-local"
-                    value={editEnd}
-                    onChange={(e) => setEditEnd(e.target.value)}
-                    className="input-field"
-                  />
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">First day</span>
+                    <input
+                      type="date"
+                      value={editStartDate}
+                      onChange={(e) => {
+                        setEditStartDate(e.target.value);
+                        if (editEndDate < e.target.value) setEditEndDate(e.target.value);
+                      }}
+                      className="input-field"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Last day</span>
+                    <input
+                      type="date"
+                      min={editStartDate || undefined}
+                      value={editEndDate}
+                      onChange={(e) => setEditEndDate(e.target.value)}
+                      className="input-field"
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <input
+                      type="datetime-local"
+                      aria-label="Start"
+                      value={editStart}
+                      onChange={(e) => setEditStart(e.target.value)}
+                      className="input-field"
+                    />
+                    <input
+                      type="datetime-local"
+                      aria-label="End"
+                      value={editEnd}
+                      onChange={(e) => setEditEnd(e.target.value)}
+                      className="input-field"
+                    />
+                  </div>
+                  <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">{mounted ? editOpts.timeZone : ""}</p>
                 </div>
               )}
 
-              {!editAllDay && !editIsSeriesInstance ? (
+              {!editIsSeriesInstance ? (
                 <label className="block">
                   <span className="mb-1 block text-[11px] font-medium text-[var(--color-text-faint)]">Repeat</span>
                   <select
@@ -1672,17 +2251,25 @@ export default function CalendarPage() {
                     onChange={(e) => setEditRecurrencePreset(e.target.value as RecurrencePreset)}
                     className="input-field"
                   >
+                    {editRecurrencePreset === "keep" ? <option value="keep">Keep current repeat</option> : null}
                     {RECURRENCE_OPTIONS.map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
                     ))}
                   </select>
+                  {editRecurrencePreset === "custom" ? (
+                    <div className="mt-2">
+                      <CalendarRecurrenceEditor
+                        spec={editCustomSpec}
+                        onChange={setEditCustomSpec}
+                        startDate={editAllDay ? editStartDate : editStart.slice(0, 10)}
+                        startWeekday={weekdayOf(editAllDay ? editStartDate : editStart)}
+                        error={validateSpec(editCustomSpec, editAllDay ? editStartDate : editStart.slice(0, 10))}
+                      />
+                    </div>
+                  ) : null}
                 </label>
-              ) : editIsSeriesInstance ? (
-                <p className="rounded-lg bg-[var(--color-surface-offset)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-                  Recurrence applies to the whole series — edit the series in Google Calendar to change the repeat rule.
-                </p>
               ) : null}
 
               {!editAllDay ? (
@@ -1719,6 +2306,14 @@ export default function CalendarPage() {
                 value={editNotes}
                 onChange={(e) => setEditNotes(e.target.value)}
                 className="input-field resize-none"
+              />
+
+              <CalendarEventOptions
+                value={editOpts}
+                onChange={setEditOpts}
+                timed={!editAllDay}
+                driveEnabled={isVisible("drive")}
+                hasGuests={extractAllEmailsFromText(editAttendees).length > 0}
               />
 
               {/* Notify guests — Google Calendar style */}
@@ -1788,11 +2383,11 @@ export default function CalendarPage() {
               </button>
               <button
                 type="button"
-                disabled={editBusy || !editTitle || (!editAllDay && (!editStart || !editEnd))}
-                onClick={() => void saveEdit()}
+                disabled={!editTitle || (editAllDay ? !editStartDate || !editEndDate : !editStart || !editEnd)}
+                onClick={requestSaveEdit}
                 className="btn-primary"
               >
-                {editBusy ? "Saving…" : editNotify === "none" ? "Save quietly" : "Save & notify"}
+                {editNotify === "none" ? "Save quietly" : "Save & notify"}
               </button>
               </div>
             </div>
@@ -1800,66 +2395,151 @@ export default function CalendarPage() {
         </div>
       ) : null}
 
-      {/* ── Delete confirmation modal (with optional note) ──── */}
+      {askScope && editEvent ? (
+        <CalendarScopeDialog
+          title="Edit repeating event"
+          confirmLabel="OK"
+          onConfirm={(scope) => void saveEdit(scope)}
+          onCancel={() => setAskScope(false)}
+        />
+      ) : null}
+
+      {/* ── Delete / remove modal ──── */}
       {deleteTarget ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in">
-          <div className="card gc-modal w-full max-w-md overflow-hidden animate-scale-in">
+          <div data-testid="calendar-delete-dialog" className="card gc-modal flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden animate-scale-in">
             <div className="border-b border-[var(--color-border)] px-5 py-4">
               <h3 className="text-base font-semibold text-[var(--color-text)]">
-                Delete meeting?
+                {isOrganizerOf(deleteTarget) ? "Delete meeting?" : "Remove from your calendar?"}
               </h3>
               <p className="mt-1 text-[13px] text-[var(--color-text-muted)] line-clamp-2">
                 {deleteTarget.summary || "(untitled meeting)"}
               </p>
             </div>
-            <div className="space-y-3 px-5 py-4">
-              {(deleteTarget.attendees?.length ?? 0) > 0 ? (
-                <>
-                  <p className="text-[13px] text-[var(--color-text)]">
-                    All {deleteTarget.attendees?.length} guests will receive a cancellation email.
-                  </p>
-                  <div>
-                    <label htmlFor="delete-note" className="mb-1 block text-[12px] font-medium text-[var(--color-text-muted)]">
-                      Add a note to guests <span className="text-[var(--color-text-faint)]">(optional)</span>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              {isRepeating(deleteTarget) ? <ScopeChoice value={deleteScope} onChange={setDeleteScope} name="delete-scope" /> : null}
+
+              {isOrganizerOf(deleteTarget) ? (
+                realGuests(deleteTarget).length > 0 ? (
+                  <>
+                    <label className="block">
+                      <span className="mb-1 block text-[12px] font-medium text-[var(--color-text-muted)]">
+                        {realGuests(deleteTarget).length === 1 ? "1 guest" : `${realGuests(deleteTarget).length} guests`} — send a cancellation email?
+                      </span>
+                      <select
+                        data-testid="calendar-delete-notify"
+                        value={deleteNotify}
+                        onChange={(e) => setDeleteNotify(e.target.value as SendUpdates)}
+                        className="input-field"
+                      >
+                        <option value="all">Yes, email all guests</option>
+                        <option value="externalOnly">Only guests outside my organization</option>
+                        <option value="none">No, don&apos;t send emails</option>
+                      </select>
                     </label>
-                    <textarea
-                      id="delete-note"
-                      rows={3}
-                      value={deleteNote}
-                      onChange={(e) => setDeleteNote(e.target.value)}
-                      placeholder="Explain why you're cancelling…"
-                      className="input-field w-full resize-none text-[13px]"
-                    />
-                    <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
-                      Sent as a separate email after the cancellation notice.
-                    </p>
-                  </div>
-                </>
+                    {deleteNotify !== "none" ? (
+                      <div>
+                        <label htmlFor="delete-note" className="mb-1 block text-[12px] font-medium text-[var(--color-text-muted)]">
+                          Add a note to guests <span className="text-[var(--color-text-faint)]">(optional)</span>
+                        </label>
+                        <textarea
+                          id="delete-note"
+                          rows={3}
+                          value={deleteNote}
+                          onChange={(e) => setDeleteNote(e.target.value)}
+                          placeholder="Explain why you're cancelling…"
+                          className="input-field w-full resize-none text-[13px]"
+                        />
+                        <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">
+                          Sent as a separate email after the cancellation notice.
+                        </p>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="text-[13px] text-[var(--color-text)]">
+                    {isRepeating(deleteTarget) ? "The selected events will be deleted." : "This meeting will be deleted."}
+                  </p>
+                )
               ) : (
                 <p className="text-[13px] text-[var(--color-text)]">
-                  This meeting will be permanently deleted.
+                  You&apos;re a guest on this event. Removing it only takes it off your calendar — to let the organizer know
+                  you can&apos;t make it, decline instead.
                 </p>
               )}
+
+              {deleteError ? (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/30 dark:text-red-300">{deleteError}</p>
+              ) : null}
             </div>
-            <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-5 py-3">
-              <button
-                type="button"
-                onClick={() => { setDeleteTarget(null); setDeleteNote(""); }}
-                disabled={deleteBusy}
-                className="btn-ghost"
-              >
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] px-5 py-3">
+              <button type="button" onClick={closeDeleteConfirm} disabled={deleteBusy} className="btn-ghost">
                 Cancel
               </button>
+              {!isOrganizerOf(deleteTarget) ? (
+                <button
+                  type="button"
+                  data-testid="calendar-decline-instead"
+                  onClick={() => void declineEvent(deleteTarget, deleteScope)}
+                  disabled={deleteBusy || (isRepeating(deleteTarget) && deleteScope === "following")}
+                  title={deleteScope === "following" && isRepeating(deleteTarget) ? "Choose “This event” or “All events” to decline" : undefined}
+                  className="btn-secondary disabled:opacity-50"
+                >
+                  Decline
+                </button>
+              ) : null}
               <button
                 type="button"
+                data-testid="calendar-delete-confirm"
                 onClick={() => void confirmDelete()}
                 disabled={deleteBusy}
                 className="rounded-[var(--radius-md)] bg-[var(--color-danger)] px-4 py-1.5 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50"
               >
-                {deleteBusy ? "Deleting…" : "Delete"}
+                {deleteBusy ? "Working…" : isOrganizerOf(deleteTarget) ? "Delete" : "Remove"}
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {/* ── Background save status ──── */}
+      {toast ? (
+        <div
+          role="status"
+          data-testid="calendar-toast"
+          className={`fixed bottom-4 left-4 z-[70] flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-lg px-4 py-2.5 text-sm text-white shadow-lg ${
+            toast.tone === "error" ? "bg-[var(--color-danger)]" : "bg-[#323232]"
+          }`}
+        >
+          <span>{toast.text}</span>
+          {toast.tone !== "busy" ? (
+            <button type="button" onClick={() => showToast(null)} className="shrink-0 text-white/70 hover:text-white" aria-label="Dismiss">
+              <IconX className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* ── Undo toast after a delete ──── */}
+      {undoInfo ? (
+        <div
+          role="status"
+          data-testid="calendar-undo-toast"
+          className="fixed bottom-4 left-1/2 z-[70] flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 rounded-lg bg-[#323232] px-4 py-2.5 text-sm text-white shadow-lg"
+        >
+          <span className="truncate">“{undoInfo.title}” deleted</span>
+          <button
+            type="button"
+            data-testid="calendar-undo-btn"
+            onClick={() => void undoDelete()}
+            disabled={undoBusy}
+            className="shrink-0 font-semibold text-[#8ab4f8] hover:underline disabled:opacity-50"
+          >
+            {undoBusy ? "Restoring…" : "Undo"}
+          </button>
+          <button type="button" onClick={() => setUndoInfo(null)} className="shrink-0 text-white/70 hover:text-white" aria-label="Dismiss">
+            <IconX className="h-3.5 w-3.5" />
+          </button>
         </div>
       ) : null}
     </>

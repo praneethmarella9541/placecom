@@ -8,12 +8,25 @@ import {
 } from "@/lib/gmail-search-query";
 import { draftSubjectForDisplay } from "@/lib/gmail-draft-subject";
 import { throwIfGmailInsufficientScope } from "@/lib/gmail-scope-error";
-import { fetchGmail, GMAIL_COST, type GmailPriority } from "@/lib/gmail-quota";
+import {
+  fetchGmail,
+  GMAIL_COST,
+  gmailPaceUnitsPerSec,
+  newCallTiming,
+  type GmailCallTiming,
+  type GmailPriority,
+} from "@/lib/gmail-quota";
 import {
   getCachedThreadMeta,
   setCachedThreadMeta,
   type ThreadMeta,
 } from "@/lib/gmail-thread-meta-cache";
+import { waitUntil } from "@vercel/functions";
+import {
+  createThreadMetaSaver,
+  hydrateThreadMetaFromStore,
+  type StoredMetaItem,
+} from "@/lib/gmail-thread-meta-store";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -57,6 +70,8 @@ export type ThreadListItem = {
 export type ThreadListPage = {
   threads: ThreadListItem[];
   nextPageToken?: string;
+  /** Where this page's server time went, in ms. */
+  timings?: { listMs: number; storeMs: number; rowsMs: number };
 };
 
 type ThreadListFolder = Exclude<MailFolder, "drafts">;
@@ -324,7 +339,11 @@ async function fetchThreadMeta(
   threadId: string,
   historyId: string | undefined,
   mailboxKey: string | undefined,
-  priority: GmailPriority | undefined
+  priority: GmailPriority | undefined,
+  /** Called with each row actually fetched from Gmail (not cache hits), to be saved to the shared store. */
+  onFetched?: (item: StoredMetaItem) => void,
+  /** Called once per row fetched from Gmail with where its time went. */
+  onTiming?: (t: GmailCallTiming & { totalMs: number }) => void
 ): Promise<ThreadMeta | null> {
   const cached = getCachedThreadMeta(mailboxKey, threadId, historyId);
   if (cached) return cached;
@@ -344,14 +363,18 @@ async function fetchThreadMeta(
 
   const promise = (async () => {
     try {
+      const timing = newCallTiming();
+      const startedAt = Date.now();
       const res = await fetchGmail(
         `${GMAIL_API}/threads/${encodeURIComponent(threadId)}?${params.toString()}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
-        { mailboxKey, cost: GMAIL_COST.threadsGet, priority }
+        { mailboxKey, cost: GMAIL_COST.threadsGet, priority, timing }
       );
       if (!res.ok) return null;
       const meta = deriveThreadMeta((await res.json()) as RawThreadMessages);
       setCachedThreadMeta(mailboxKey, threadId, historyId, meta);
+      if (historyId) onFetched?.({ threadId, historyId, meta });
+      onTiming?.({ ...timing, totalMs: Date.now() - startedAt });
       return meta;
     } catch {
       return null;
@@ -375,35 +398,156 @@ async function fetchThreadMeta(
  * the fan-out rather than a fixed constant that knew nothing about what the rest
  * of the app was spending at the same moment.
  */
+/**
+ * Rows in progress at once. A row holds a slot while it waits for its pacing turn and while
+ * Gmail answers (~450ms from a dev machine, ~600ms per row in all), so keeping the pace
+ * saturated needs about 1 + latency / gap slots — 6 at 100 units/s — and slow calls (1.5s
+ * seen) need more headroom. Measured at pace 100: 5 slots reached ~75-79 units/s on a 50-row
+ * page; a simulation with a jittery 480ms Gmail gave 6.1s (5 slots) vs 5.6s (10 slots), no
+ * gain beyond. So the default is one second's worth of calls: pace / 10 units per call
+ * (10 at pace 100), never below 5. A waiting row isn't a request in flight — the pace still
+ * limits Gmail's load. Override with GMAIL_ROW_CONCURRENCY.
+ */
+const ROW_FETCH_CONCURRENCY = (() => {
+  const n = parseInt(process.env.GMAIL_ROW_CONCURRENCY || "", 10);
+  if (Number.isFinite(n) && n >= 1) return n;
+  return Math.max(5, Math.round(gmailPaceUnitsPerSec("interactive") / GMAIL_COST.threadsGet));
+})();
+
 async function mapThreadsWithMeta(
   accessToken: string,
   rawThreads: { id: string; snippet?: string; historyId?: string }[],
   mailboxKey: string | undefined,
   priority: GmailPriority | undefined,
   /** Called as each row resolves, so a streaming caller can send it without waiting for the rest. */
-  onRow?: (row: ThreadListItem) => void
+  onRow?: (row: ThreadListItem) => void,
+  /** Aborted when the client leaves the page — rows not yet started are then never fetched. */
+  signal?: AbortSignal,
+  /** Called with each row fetched from Gmail (not cache hits), for the shared store. */
+  onFetched?: (item: StoredMetaItem) => void,
+  /**
+   * Asked before each group of rows is started, with the rows not yet started; false
+   * stops the rest. A background warm-up uses it to skip rows saved meanwhile and to
+   * step aside when a person opens the page.
+   */
+  shouldContinue?: (remaining: { id: string; historyId?: string }[]) => Promise<boolean>,
+  onTiming?: (t: GmailCallTiming & { totalMs: number }) => void
 ): Promise<ThreadListItem[]> {
-  return Promise.all(
-    rawThreads.map(async (t): Promise<ThreadListItem> => {
-      const snippet = cleanMailSnippet(t.snippet || "");
-      const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority);
-      const row: ThreadListItem = meta
-        ? {
-            id: t.id,
+  const buildRow = async (t: { id: string; snippet?: string; historyId?: string }): Promise<ThreadListItem> => {
+    const snippet = cleanMailSnippet(t.snippet || "");
+    const meta = await fetchThreadMeta(accessToken, t.id, t.historyId, mailboxKey, priority, onFetched, onTiming);
+    const row: ThreadListItem = meta
+      ? {
+          id: t.id,
+          snippet,
+          historyId: t.historyId,
+          ...meta,
+          hasCalendarInvite: isCalendarInviteThread({
+            subject: meta.subject,
+            from: meta.from,
             snippet,
-            historyId: t.historyId,
-            ...meta,
-            hasCalendarInvite: isCalendarInviteThread({
-              subject: meta.subject,
-              from: meta.from,
-              snippet,
-            }),
-          }
-        : { id: t.id, snippet, subject: "", from: "", date: "", historyId: t.historyId };
-      onRow?.(row);
-      return row;
-    })
-  );
+          }),
+        }
+      : { id: t.id, snippet, subject: "", from: "", date: "", historyId: t.historyId };
+    onRow?.(row);
+    return row;
+  };
+
+  // A small pool rather than all rows at once: if the user pages on, the rows not
+  // yet started are dropped instead of all being spent against the Gmail quota.
+  const rows: ThreadListItem[] = new Array(rawThreads.length);
+  let next = 0;
+  let stopped = false;
+  const worker = async () => {
+    while (next < rawThreads.length && !signal?.aborted && !stopped) {
+      const i = next++;
+      // Every 5th row, ask whether to carry on (the answer may also refresh what's stored).
+      if (shouldContinue && i % 5 === 0 && !(await shouldContinue(rawThreads.slice(i)))) {
+        stopped = true;
+        break;
+      }
+      rows[i] = await buildRow(rawThreads[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(ROW_FETCH_CONCURRENCY, rawThreads.length) }, worker));
+  if (signal?.aborted) throw new Error("Request aborted");
+  return rows.filter(Boolean);
+}
+
+/**
+ * The Gmail `labelIds` / `q` a list view maps to — shared by the list itself and
+ * by the count of how many threads it holds, so the two always agree.
+ *
+ * When a search query is active, ALL folder/label restrictions drop so results
+ * come from all mail (inbox + sent + etc.) — exactly like Gmail's own search bar.
+ * Folder + category filters apply only when browsing.
+ */
+function buildThreadListQuery(options: {
+  folder: ThreadListFolder;
+  labelId?: string;
+  searchQuery?: string;
+}): { rawUserQ: string; isSearch: boolean; labels: string[]; q: string } {
+  const rawUserQ = normalizeGmailSearchQuery(options.searchQuery || "");
+  const isSearch = rawUserQ.length > 0;
+  const labels: string[] = isSearch ? [] : [...LABELS[options.folder]];
+  const categoryQuery = !isSearch && options.labelId ? CATEGORY_LABEL_TO_QUERY[options.labelId] : undefined;
+  if (!isSearch && options.labelId && !categoryQuery && !labels.includes(options.labelId)) {
+    labels.push(options.labelId);
+  }
+  const baseQ = isSearch ? "" : QUERY[options.folder];
+  const q = [baseQ, categoryQuery, rawUserQ].filter(Boolean).join(" ");
+  return { rawUserQ, isSearch, labels, q };
+}
+
+/**
+ * How many threads a list view holds — the "of N" in the pager. Gmail's own
+ * `resultSizeEstimate` can't be used: for a query it's closer to "a bit more than
+ * you've paged through" than a total. So count for real, ids only (500 per call, 10
+ * units each), on the background lane so it never slows what the user is waiting
+ * on, and stop at `cap` — the pager then shows "N+".
+ */
+export async function countThreadsUpTo(
+  accessToken: string,
+  options: {
+    folder: ThreadListFolder;
+    labelId?: string;
+    searchQuery?: string;
+    mailboxKey?: string;
+    cap: number;
+    /** Stop early (the user moved on). */
+    signal?: AbortSignal;
+  }
+): Promise<{ count: number; capped: boolean }> {
+  const { labels, q } = buildThreadListQuery(options);
+  let count = 0;
+  let pageToken: string | undefined;
+  do {
+    if (options.signal?.aborted) throw new Error("aborted");
+    const params = new URLSearchParams({ maxResults: "500", fields: "nextPageToken,threads/id" });
+    for (const l of labels) params.append("labelIds", l);
+    if (q) params.set("q", q);
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await fetchGmail(
+      `${GMAIL_API}/threads?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+      { mailboxKey: options.mailboxKey, cost: GMAIL_COST.threadsList, priority: "batch" }
+    );
+    if (res.status === 401) {
+      const err = new Error("UNAUTHORIZED") as Error & { code?: string };
+      err.code = "UNAUTHORIZED";
+      throw err;
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throwIfGmailInsufficientScope(res.status, text);
+      throw new Error(`Gmail threads count ${res.status}: ${text}`);
+    }
+    const data = (await res.json()) as { threads?: { id: string }[]; nextPageToken?: string };
+    count += data.threads?.length ?? 0;
+    pageToken = data.nextPageToken;
+    if (pageToken && count >= options.cap) return { count: options.cap, capped: true };
+  } while (pageToken);
+  return { count, capped: false };
 }
 
 export async function listThreadsPage(
@@ -428,23 +572,16 @@ export async function listThreadsPage(
     onSkeleton?: (page: ThreadListPage) => void;
     /** Streaming callers: each row as its header fetch resolves. */
     onRow?: (row: ThreadListItem) => void;
+    /** Client disconnected — stop fetching the rows still waiting. */
+    signal?: AbortSignal;
+    /** See mapThreadsWithMeta — lets a background warm-up stop early. */
+    shouldContinue?: (remaining: { id: string; historyId?: string }[]) => Promise<boolean>;
+    /** Log prefix; defaults to mail-list / mail-search. */
+    logLabel?: string;
   }
 ): Promise<ThreadListPage> {
   const startedAt = Date.now();
-  const rawUserQ = normalizeGmailSearchQuery(options.searchQuery || "");
-  const userQ = rawUserQ;
-  const isSearch = userQ.length > 0;
-
-  // When a search query is active, drop ALL folder/label restrictions so
-  // results come from all mail (inbox + sent + etc.) — exactly like Gmail's
-  // own search bar. Only apply folder + category filters when browsing.
-  const labels: string[] = isSearch ? [] : [...LABELS[options.folder]];
-  const categoryQuery = (!isSearch && options.labelId) ? CATEGORY_LABEL_TO_QUERY[options.labelId] : undefined;
-  if (!isSearch && options.labelId && !categoryQuery && !labels.includes(options.labelId)) {
-    labels.push(options.labelId);
-  }
-  const baseQ = isSearch ? "" : QUERY[options.folder];
-  const q = [baseQ, categoryQuery, userQ].filter(Boolean).join(" ");
+  const { rawUserQ, isSearch, labels, q } = buildThreadListQuery(options);
 
   // For pure `from:X` queries, also run a supplemental full-text search for
   // the person's email address. This catches Google notification emails
@@ -542,18 +679,71 @@ export async function listThreadsPage(
     nextPageToken: nextPageTokenFromApi,
   });
 
+  // Rows already fetched by this or another server instance (or teammate) come
+  // from the shared store — the list call's historyId proves they're current — so
+  // only genuinely new or changed threads cost a Gmail call.
+  const storeStartedAt = Date.now();
+  const storeHits = await hydrateThreadMetaFromStore(options.mailboxKey, rawThreads);
+  const storeMs = Date.now() - storeStartedAt;
+  const rowsStartedAt = Date.now();
+  const saver = createThreadMetaSaver(options.mailboxKey);
+  // Where a cold page's time goes, summed over the rows fetched from Gmail (see the [mail-cold] log below).
+  const cold = { calls: 0, sharedMs: 0, localMs: 0, httpMs: 0, totalMs: 0, maxTotalMs: 0, attempts: 0, backoffMs: 0 };
+
   const threads: ThreadListItem[] = await mapThreadsWithMeta(
     accessToken,
     rawThreads,
     options.mailboxKey,
     options.priority,
-    options.onRow
+    options.onRow,
+    options.signal,
+    (item) => saver.add(item),
+    options.shouldContinue,
+    (t) => {
+      cold.calls++;
+      cold.sharedMs += t.sharedMs;
+      cold.localMs += t.localMs;
+      cold.httpMs += t.httpMs;
+      cold.totalMs += t.totalMs;
+      cold.maxTotalMs = Math.max(cold.maxTotalMs, t.totalMs);
+      cold.attempts += t.attempts;
+      cold.backoffMs += t.backoffMs;
+    }
   );
+  const rowsMs = Date.now() - rowsStartedAt;
+  // Rows were saved in batches as they arrived; the last partial batch is saved after the page
+  // is returned, not before — the rows are already on screen, and this write is a database
+  // round trip (~250ms from a dev machine) that only delayed the page reporting "done".
+  // waitUntil keeps it alive past the response on Vercel.
+  const finalSave = saver.done();
+  try {
+    waitUntil(finalSave);
+  } catch {
+    /* not on Vercel — the promise just runs on */
+  }
+  if (cold.calls > 0) {
+    const pace = gmailPaceUnitsPerSec(options.priority ?? "interactive");
+    const n = cold.calls;
+    const avg = (ms: number) => Math.round(ms / n);
+    console.log(
+      `[mail-cold] ${options.priority ?? "interactive"} fetched=${n} wall=${rowsMs}ms ` +
+        `(ideal at ${pace} units/s: ${Math.round((n * GMAIL_COST.threadsGet * 1000) / pace)}ms) | ` +
+        `per row avg: shared-wait=${avg(cold.sharedMs)}ms own-pacing=${avg(cold.localMs)}ms ` +
+        `gmail-http=${avg(cold.httpMs)}ms total=${avg(cold.totalMs)}ms (slowest ${cold.maxTotalMs}ms) | ` +
+        `attempts=${cold.attempts} (retries=${cold.attempts - n}) backoff=${cold.backoffMs}ms | ` +
+        `effective=${Math.round((n * GMAIL_COST.threadsGet * 1000) / Math.max(rowsMs, 1))} units/s (workers=${ROW_FETCH_CONCURRENCY}) | ` +
+        (Math.round((n * GMAIL_COST.threadsGet * 1000) / Math.max(rowsMs, 1)) >= pace * 0.8
+          ? "AT THE CAP (the pace is the limit)"
+          : n < 15
+            ? "BELOW THE CAP (too few rows to ramp up — normal for small batches)"
+            : "BELOW THE CAP (slots x Gmail latency is the limit — raise GMAIL_ROW_CONCURRENCY)")
+    );
+  }
   // Splits a slow load into "Gmail list call" vs "per-row header fetches" (which
   // includes time queued in the quota bucket) — the two have different fixes.
   console.log(
-    `[${isSearch ? "mail-search" : "mail-list"}] ${options.folder}${options.labelId ? `/${options.labelId}` : ""} ` +
-      `list=${listMs}ms rows=${Date.now() - startedAt - listMs}ms n=${rawThreads.length}`
+    `[${options.logLabel ?? (isSearch ? "mail-search" : "mail-list")}] ${options.folder}${options.labelId ? `/${options.labelId}` : ""} ` +
+      `list=${listMs}ms store=${storeMs}ms rows=${rowsMs}ms n=${rawThreads.length} hits=${storeHits} gmail=${saver.count}`
   );
 
   // Gmail's own order (from data.threads above) ranks a thread by when it last
@@ -581,7 +771,7 @@ export async function listThreadsPage(
     return dateMs(b.date) - dateMs(a.date);
   });
 
-  return { threads, nextPageToken: nextPageTokenFromApi };
+  return { threads, nextPageToken: nextPageTokenFromApi, timings: { listMs, storeMs, rowsMs } };
 }
 
 /**

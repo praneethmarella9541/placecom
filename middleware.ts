@@ -7,6 +7,7 @@ import {
   requestPathToFeature,
   type FeatureKey,
 } from "@/lib/feature-access";
+import { getVerifiedUser } from "@/lib/auth-verify";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import {
   readMiddlewareAccessCache,
@@ -59,7 +60,7 @@ function denyFeature(
   return NextResponse.redirect(url);
 }
 
-export async function middleware(request: NextRequest) {
+async function runMiddleware(request: NextRequest) {
   if (PUBLIC_PATHS.has(request.nextUrl.pathname)) {
     return NextResponse.next();
   }
@@ -89,9 +90,7 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getVerifiedUser(supabase.auth);
 
   const pathname = request.nextUrl.pathname;
 
@@ -296,6 +295,18 @@ export async function middleware(request: NextRequest) {
   }
 
   return supabaseResponse;
+}
+
+/** Times the whole middleware pass (auth check, profile/role lookup) and reports it in `x-mw-ms`, so the network panel shows what it costs per request. */
+export async function middleware(request: NextRequest) {
+  const t0 = Date.now();
+  const response = await runMiddleware(request);
+  try {
+    response.headers.set("x-mw-ms", String(Date.now() - t0));
+  } catch {
+    /* immutable response — skip */
+  }
+  return response;
 }
 
 export const config = {

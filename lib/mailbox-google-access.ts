@@ -18,7 +18,9 @@ export type MailboxTokenResult =
  * lookup) before it can even reach Gmail/People — this shaves that off for
  * rapid repeat calls within the same few seconds.
  */
-const RESOLVED_CACHE_MS = 15_000;
+// A resolved Google token always has more than ACCESS_SKEW_MS (5 min) of life left, so a
+// minute here can't hand out an expired one; role / mailbox-link changes lag by at most this.
+const RESOLVED_CACHE_MS = 60_000;
 const resolvedCache = new Map<string, { result: MailboxTokenResult; expiresAt: number }>();
 
 function cacheKeyFor(authed?: AuthedRequest | null): string | null {

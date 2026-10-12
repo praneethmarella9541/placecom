@@ -6,6 +6,9 @@ import {
   type MailFolder,
 } from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
+import { MAIL_PAGE_SIZE } from "@/lib/mail-page-size";
+import { bump, inUseKey } from "@/lib/gmail-claims";
+import { scheduleNextPageWarm } from "@/lib/gmail-warmer";
 import { sweepBounceNotices } from "@/lib/bounce-detection";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import type { ThreadListItem } from "@/lib/gmail-inbox";
@@ -13,7 +16,9 @@ import type { ThreadListItem } from "@/lib/gmail-inbox";
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
+  const authStartedAt = Date.now();
   const auth = await requireGmailAccessToken(request);
+  const authMs = Date.now() - authStartedAt;
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -35,9 +40,23 @@ export async function GET(request: Request) {
   const pageToken = searchParams.get("pageToken") || undefined;
   const searchQuery = searchParams.get("search")?.trim() || undefined;
   const labelId = searchParams.get("labelId")?.trim() || undefined;
+
+  // A person asking for page N (N > 1): tell the warmer to stop working on this page.
+  if (pageToken && auth.mailboxOwnerId) void bump(inUseKey(auth.mailboxOwnerId, pageToken), 60_000);
+  // After serving a browse page, warm the one after it in the background.
+  const warmNext = (nextPageToken: string | undefined) => {
+    if (searchQuery) return;
+    scheduleNextPageWarm({
+      accessToken: auth.accessToken,
+      mailboxKey: auth.mailboxOwnerId,
+      folder,
+      labelId,
+      nextPageToken,
+    });
+  };
   const maxResults = Math.min(
     100,
-    Math.max(5, parseInt(searchParams.get("maxResults") || "25", 10) || 25)
+    Math.max(5, parseInt(searchParams.get("maxResults") || String(MAIL_PAGE_SIZE), 10) || MAIL_PAGE_SIZE)
   );
 
   // Delivery-failure notices land in the inbox as their own threads; spotting
@@ -72,9 +91,16 @@ export async function GET(request: Request) {
             mailboxKey: auth.mailboxOwnerId,
             onSkeleton: (p) => send({ type: "list", ...p }),
             onRow: (row) => send({ type: "row", row }),
+            signal: request.signal,
           });
           // Final, date-sorted order — the client swaps it in once everything has arrived.
-          send({ type: "done", threads: page.threads, nextPageToken: page.nextPageToken });
+          send({
+            type: "done",
+            threads: page.threads,
+            nextPageToken: page.nextPageToken,
+            timings: { ...page.timings, authMs },
+          });
+          warmNext(page.nextPageToken);
           sweepNotices(page.threads);
         } catch (e) {
           const err = e as Error & { code?: string };
@@ -91,7 +117,11 @@ export async function GET(request: Request) {
       },
     });
     return new Response(body, {
-      headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" },
+      headers: {
+        "Content-Type": "application/x-ndjson",
+        "Cache-Control": "no-store",
+        "Server-Timing": `auth;dur=${authMs}`,
+      },
     });
   }
 
@@ -111,11 +141,13 @@ export async function GET(request: Request) {
             searchQuery,
             labelId,
             mailboxKey: auth.mailboxOwnerId,
+            signal: request.signal,
           });
     if (folder !== "drafts") sweepNotices(page.threads);
+    warmNext(page.nextPageToken);
     return NextResponse.json(
-      { folder, threads: page.threads, nextPageToken: page.nextPageToken },
-      { headers: { "Cache-Control": "no-store" } }
+      { folder, threads: page.threads, nextPageToken: page.nextPageToken, timings: { ...page.timings, authMs } },
+      { headers: { "Cache-Control": "no-store", "Server-Timing": `auth;dur=${authMs}` } }
     );
   } catch (e) {
     const err = e as Error & { code?: string };
@@ -131,6 +163,7 @@ export async function GET(request: Request) {
         { status: 403 }
       );
     }
+    if (request.signal.aborted) return new NextResponse(null, { status: 499 });
     console.error(e);
     return NextResponse.json(
       { error: err.message || "Failed to list threads" },

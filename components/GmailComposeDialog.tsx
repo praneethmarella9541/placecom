@@ -1,5 +1,6 @@
 "use client";
 
+import { sanitizeHtml } from "@/lib/sanitize-html";
 import { createPortal } from "react-dom";
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2, Eye, Mails } from "lucide-react";
@@ -620,7 +621,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                   className="min-h-[200px] flex-1 px-3 py-3 text-[13px] leading-relaxed text-[#202124] [overflow-wrap:anywhere] [&_a]:text-[#1a73e8] [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-[#ccc] [&_blockquote]:pl-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ul]:list-disc [&_ul]:pl-6"
                   // Preview of the user's own draft with merge values substituted.
                   // Same HTML the send path will submit, rendered read-only.
-                  dangerouslySetInnerHTML={{ __html: review.bodyHtml }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeHtml(review.bodyHtml) }}
                 />
               </>
             ) : (

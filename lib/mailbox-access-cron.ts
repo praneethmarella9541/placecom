@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ACCESS_SKEW_MS, refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
+import { encryptToken, decryptToken } from "@/lib/token-crypto";
 
 
 export type CronMailboxTokenResult =
@@ -41,11 +42,11 @@ export async function getMailboxAccessTokenForOwner(
   if (row.access_token && row.access_token_expires_at) {
     const exp = new Date(row.access_token_expires_at as string).getTime();
     if (!Number.isNaN(exp) && exp > now + ACCESS_SKEW_MS) {
-      return { ok: true, accessToken: row.access_token as string, gmailAddress };
+      return { ok: true, accessToken: decryptToken(row.access_token as string) as string, gmailAddress };
     }
   }
 
-  const refresh = row.refresh_token as string | undefined;
+  const refresh = decryptToken(row.refresh_token as string | undefined) ?? undefined;
   if (!refresh) {
     return {
       ok: false,
@@ -61,7 +62,7 @@ export async function getMailboxAccessTokenForOwner(
     await svc
       .from("google_mailbox_credentials")
       .update({
-        access_token: refreshed.access_token,
+        access_token: encryptToken(refreshed.access_token),
         access_token_expires_at: expiresAt,
         updated_at: new Date().toISOString(),
       })

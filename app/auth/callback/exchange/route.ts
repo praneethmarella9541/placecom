@@ -7,6 +7,7 @@ import {
   MUST_SET_PASSWORD_KEY,
   SET_PASSWORD_PATH,
 } from "@/lib/password-setup";
+import { encryptToken, decryptToken } from "@/lib/token-crypto";
 
 const MSG_MAX = 450;
 
@@ -109,8 +110,8 @@ export async function GET(request: Request) {
           {
             owner_user_id: userId,
             gmail_address: email,
-            refresh_token: refreshToken ?? "",
-            access_token: accessToken ?? null,
+            refresh_token: encryptToken(refreshToken ?? "") ?? "",
+            access_token: encryptToken(accessToken ?? null),
             access_token_expires_at: expiresAt,
             updated_at: new Date().toISOString(),
           },

@@ -13,6 +13,10 @@ type Props = {
   className?: string;
   /** Gmail-style pill buttons vs compact toolbar buttons */
   variant?: "invite" | "detail";
+  /** Show "Add a note" (sent to the organizer with the reply) and, with a link, "Propose a new time". */
+  extras?: boolean;
+  /** The event's Google Calendar link — "Propose a new time" opens it there (that part isn't in the API). */
+  htmlLink?: string;
 };
 
 export function CalendarRsvpButtons({
@@ -21,7 +25,11 @@ export function CalendarRsvpButtons({
   onUpdated,
   className,
   variant = "detail",
+  extras = false,
+  htmlLink,
 }: Props) {
+  const [note, setNote] = useState("");
+  const [noting, setNoting] = useState(false);
   const [busy, setBusy] = useState<RsvpStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,11 +40,13 @@ export function CalendarRsvpButtons({
       const res = await fetch(`/api/calendar/events/${encodeURIComponent(eventId)}/rsvp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, ...(note.trim() ? { comment: note.trim() } : {}) }),
       });
       const body = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(body.error || "Could not save RSVP");
       onUpdated?.(status);
+      setNote("");
+      setNoting(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "RSVP failed");
     } finally {
@@ -92,6 +102,36 @@ export function CalendarRsvpButtons({
           );
         })}
       </div>
+      {extras ? (
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <button type="button" onClick={() => setNoting((v) => !v)} className="font-medium text-[var(--color-copper)] hover:underline">
+              {noting ? "Hide note" : "Add a note"}
+            </button>
+            {htmlLink ? (
+              <a
+                href={`${htmlLink}${htmlLink.includes("?") ? "&" : "?"}action=PROPOSE`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-[var(--color-copper)] hover:underline"
+                title="Opens Google Calendar"
+              >
+                Propose a new time ↗
+              </a>
+            ) : null}
+          </div>
+          {noting ? (
+            <textarea
+              rows={2}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              maxLength={1000}
+              placeholder="Note for the organizer — sent with your next reply"
+              className="input-field w-full resize-none text-[13px]"
+            />
+          ) : null}
+        </div>
+      ) : null}
       {error ? <p className="mt-1.5 text-[11px] text-red-600 dark:text-red-400">{error}</p> : null}
     </div>
   );

@@ -3,9 +3,12 @@ import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
   CALENDAR_INSUFFICIENT_SCOPE,
   createPlacementMeetingEvent,
+  meetLinkOf,
+  meetStatusOf,
   type SendUpdates,
 } from "@/lib/google-calendar";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { sanitizeExtras } from "@/lib/calendar-extras";
 
 export const runtime = "nodejs";
 
@@ -45,17 +48,38 @@ export async function POST(request: Request) {
         sendUpdates?: SendUpdates;
         extraAttendeeEmails?: string[];
         recurrence?: string[];
+        /** Create a Google Meet room for the meeting. */
+        addMeetLink?: boolean;
+        /** An all-day event: `startDate` and `endDate` ("YYYY-MM-DD"; endDate is the day AFTER the last day). */
+        allDay?: boolean;
+        startDate?: string;
+        endDate?: string;
+        /** Reminders, guest permissions, visibility, busy/free, attachments (validated below). */
+        extras?: unknown;
       }
     | null;
 
   const recruiterEmail = body?.recruiterEmail?.trim() || "";
   const title = body?.title?.trim() || "";
+  const allDay = body?.allDay === true;
+  const startDate = body?.startDate?.trim() || "";
+  const endDate = body?.endDate?.trim() || "";
   const startDateTime = body?.startDateTime?.trim() || "";
   const endDateTime = body?.endDateTime?.trim() || "";
+  // A time zone must be a real one — it goes straight into the event.
+  const timeZone = body?.timeZone?.trim() || undefined;
+  if (timeZone) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone });
+    } catch {
+      return NextResponse.json({ error: "Unknown time zone." }, { status: 400 });
+    }
+  }
 
-  if (!recruiterEmail || !isValidEmail(recruiterEmail)) {
+  // Guests are optional — an out-of-office or a block of focus time has none.
+  if (recruiterEmail && !isValidEmail(recruiterEmail)) {
     return NextResponse.json(
-      { error: "Valid recruiterEmail is required." },
+      { error: "That guest email address isn't valid." },
       { status: 400 }
     );
   }
@@ -65,7 +89,15 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-  if (!startDateTime || !endDateTime) {
+  if (allDay) {
+    const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+    if (!isDate(startDate) || !isDate(endDate)) {
+      return NextResponse.json({ error: "startDate and endDate (YYYY-MM-DD) are required for an all-day event." }, { status: 400 });
+    }
+    if (endDate <= startDate) {
+      return NextResponse.json({ error: "An all-day event must end after it starts." }, { status: 400 });
+    }
+  } else if (!startDateTime || !endDateTime) {
     return NextResponse.json(
       { error: "startDateTime and endDateTime are required." },
       { status: 400 }
@@ -76,7 +108,9 @@ export async function POST(request: Request) {
   //  1. Signed-in user's platform email (always — so the scheduler gets the invite)
   //  2. Any additional emails sent from the client
   const extraAttendeeEmails: string[] = [];
-  if (signedInUserEmail && isValidEmail(signedInUserEmail)) {
+  // (Not for an event with no guests: that one stays on your own calendar.)
+  const hasGuests = !!recruiterEmail || (body?.extraAttendeeEmails ?? []).length > 0;
+  if (hasGuests && signedInUserEmail && isValidEmail(signedInUserEmail)) {
     const lc = signedInUserEmail.toLowerCase();
     if (
       lc !== organizerGmailAddress?.toLowerCase() &&
@@ -106,9 +140,12 @@ export async function POST(request: Request) {
         endDateTime,
         notes: body?.notes,
         location: body?.location,
-        timeZone: body?.timeZone,
+        timeZone,
+        ...(allDay ? { allDay: { startDate, endDate } } : {}),
+        extras: sanitizeExtras(body?.extras),
         extraAttendeeEmails,
         recurrence: body?.recurrence,
+        addMeetLink: body?.addMeetLink === true,
         sendUpdates: body?.sendUpdates ?? "all",     // default: send invite emails
       }
     );
@@ -118,6 +155,16 @@ export async function POST(request: Request) {
         event,
         organizerEmail: organizerGmailAddress,
         scheduledByEmail: signedInUserEmail,
+        // Only present when a Meet was asked for: the link, or why there isn't one.
+        ...(body?.addMeetLink === true
+          ? {
+              meetLink: meetLinkOf(event) ?? null,
+              meetError:
+                meetStatusOf(event) === "created"
+                  ? null
+                  : "The meeting was created, but Google couldn't add a Meet link to it. You can add one from the event.",
+            }
+          : {}),
       },
       { status: 201 }
     );

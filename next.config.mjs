@@ -1,10 +1,10 @@
 /** @type {import('next').NextConfig} */
-// Content Security Policy — REPORT-ONLY for now: the browser logs violations to the
-// console ("[Report Only] Refused to ...") but blocks nothing. Once the console is
-// clean across the app, rename the header below to "Content-Security-Policy".
+// Content Security Policy — enforced: anything outside these allowlists is blocked.
+// To debug a new third-party integration, temporarily rename the header below to
+// "Content-Security-Policy-Report-Only" (logs violations to the console, blocks nothing).
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseWs = supabaseUrl.replace(/^https:/, "wss:");
-const cspReportOnly = [
+const csp = [
   "default-src 'self'",
   // Next.js injects inline scripts; tighten with nonces later.
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://us-assets.i.posthog.com https://apis.google.com",
@@ -24,7 +24,7 @@ const cspReportOnly = [
 ].join("; ");
 
 const securityHeaders = [
-  { key: "Content-Security-Policy-Report-Only", value: cspReportOnly },
+  { key: "Content-Security-Policy", value: csp },
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "SAMEORIGIN" },

@@ -165,8 +165,7 @@ async function classifyBatch(
  * Classifies leads in batches, summing token usage across every call so the
  * caller can price the whole run once. Batches run sequentially: a
  * re-classify is a handful of requests at most, and a serial loop keeps this
- * well clear of rate limits without needing the concurrency pool that the
- * much larger extraction runs use.
+ * well clear of rate limits without needing a concurrency pool.
  */
 export async function classifyLeads(
   model: string,

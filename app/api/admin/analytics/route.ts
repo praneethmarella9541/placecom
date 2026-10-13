@@ -229,8 +229,8 @@ export async function GET(request: Request) {
     fetchTrackingRows(),
     fetchAllRows<JobRow & { id: string }>((from, to) =>
       svc
-        .from("extraction_jobs")
-        .select("id, user_id, openai_input_tokens, openai_output_tokens, openai_cost_usd, created_at")
+        .from("ai_usage_events")
+        .select("id, user_id, openai_input_tokens:input_tokens, openai_output_tokens:output_tokens, openai_cost_usd:cost_usd, created_at")
         .in("user_id", userIdsForQuery)
         .gte("created_at", sinceIso)
         .lt("created_at", queryUpperIso)

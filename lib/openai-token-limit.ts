@@ -2,9 +2,9 @@ import "server-only";
 
 import { createServiceSupabase } from "@/lib/supabase-service";
 
-type JobUsageRow = {
-  openai_input_tokens: number | null;
-  openai_output_tokens: number | null;
+type UsageRow = {
+  input_tokens: number | null;
+  output_tokens: number | null;
 };
 
 export type TokenLimitStatus = {
@@ -23,15 +23,15 @@ export async function getUserOpenAITokenUsage(userId: string): Promise<number> {
   }
 
   const { data, error } = await svc
-    .from("extraction_jobs")
-    .select("openai_input_tokens, openai_output_tokens")
+    .from("ai_usage_events")
+    .select("input_tokens, output_tokens")
     .eq("user_id", userId);
 
   if (error) return 0;
 
   let total = 0;
-  for (const row of (data ?? []) as JobUsageRow[]) {
-    total += (Number(row.openai_input_tokens) || 0) + (Number(row.openai_output_tokens) || 0);
+  for (const row of (data ?? []) as UsageRow[]) {
+    total += (Number(row.input_tokens) || 0) + (Number(row.output_tokens) || 0);
   }
   return total;
 }

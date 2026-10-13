@@ -52,8 +52,8 @@ export function CreateNamePopup({ icon, title, placeholder, creating, error, onS
 
   // Portal to <body> so no ancestor stacking context (the workspace main's
   // flex layout, the ContentTopbar's backdrop-filter) can trap the overlay.
-  // z-[1000] clears the sidebar (z-40), topbars (z-20/30) and extraction
-  // banner (z-60) without colliding with the compose dock at z-[999].
+  // z-[1000] clears the sidebar (z-40), topbars (z-20/30) and banners
+  // (z-60) without colliding with the compose dock at z-[999].
   return createPortal(
     <div
       className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm animate-fade-in"

@@ -88,8 +88,7 @@ export default function HomePage() {
         const nextRole = j?.role ?? null;
         setRole(nextRole);
         // Once signed in, everyone (admin, staff, committee) lands on /inbox
-        // by default. The old "Open mail / Go to extraction" choice screen
-        // was an extra step for admins; mail is the more common destination.
+        // by default; mail is the most common destination.
         if (nextRole) {
           window.location.replace("/inbox");
         }
@@ -238,16 +237,13 @@ export default function HomePage() {
           </h1>
           <p className="mt-3 text-[15px] text-[var(--color-text-muted)]">
             {titleCase(
-              "Mailbox is ready. Open mail or extraction from the navigation when you are set up."
+              "Mailbox is ready. Open mail from the navigation when you are set up."
             )}
           </p>
         </div>
         <div className="flex flex-wrap justify-center gap-3">
           <Link href="/inbox" className="btn-secondary">
             <IconMail className="h-4 w-4" /> {titleCase("Open mail")}
-          </Link>
-          <Link href="/dashboard" className="btn-primary">
-            {titleCase("Go to extraction")}
           </Link>
         </div>
       </div>
@@ -256,8 +252,8 @@ export default function HomePage() {
 
   const features = [
     { n: "01", text: "Shared inbox for the whole placement team" },
-    { n: "02", text: "Auto-extract recruiter contacts from every email" },
-    { n: "03", text: "Outbound calls with recordings & AI transcripts" },
+    { n: "02", text: "Email sequences and mass mail from your own Gmail" },
+    { n: "03", text: "CRM pipeline with stages and interaction history" },
     { n: "04", text: "Calendar sync across the whole placement team" },
   ];
 
@@ -283,10 +279,10 @@ export default function HomePage() {
             >
               <div className="animate-fade-up" style={{ animationDelay: "140ms" }}>
                 <h2 className="landing-headline">
-                  One workspace for mail, calls, and the whole team.
+                  One workspace for mail, outreach, and the whole team.
                 </h2>
                 <p className="landing-body">
-                  Placecom keeps placement communication in one place — inbox, extraction, outreach, and follow-up without switching tools.
+                  Placecom keeps placement communication in one place — inbox, outreach, and follow-up without switching tools.
                 </p>
               </div>
 

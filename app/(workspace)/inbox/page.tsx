@@ -1123,8 +1123,6 @@ const INBOX_CATEGORY_LABEL: Record<InboxCategoryKey, string> = {
 };
 
 export default function InboxPage() {
-  // Recruiter suggestions in the composer come from the Extraction module.
-  const extractionEnabled = useModuleVisibility().isVisible("dashboard");
   // Saved templates are a /configs module of their own, with no page to hide —
   // this flag is the only thing standing between the operator's switch and the
   // Templates button in the composer footer.
@@ -2291,7 +2289,6 @@ export default function InboxPage() {
     []
   );
 
-  const [recruiterSuggestions, setRecruiterSuggestions] = useState<{ email: string; name: string }[]>([]);
   const [googleContacts, setGoogleContacts] = useState<RecipientSuggestion[]>([]);
   const [contactsHint, setContactsHint] = useState<string | null>(null);
 
@@ -2653,10 +2650,6 @@ export default function InboxPage() {
       const em = c.email.trim().toLowerCase();
       if (em) map.set(em, c.displayName?.trim() || em);
     }
-    for (const r of recruiterSuggestions) {
-      const em = r.email.trim().toLowerCase();
-      if (em && !map.has(em)) map.set(em, r.name.trim() || em);
-    }
     for (const e of Array.from(threadDerivedEmails)) {
       if (!map.has(e)) map.set(e, e);
     }
@@ -2664,7 +2657,7 @@ export default function InboxPage() {
       email,
       displayName: label !== email ? label : undefined,
     }));
-  }, [googleContacts, recruiterSuggestions, threadDerivedEmails]);
+  }, [googleContacts, threadDerivedEmails]);
 
   /**
    * Search pool for the mass-send rail, ordered by how much merge data each
@@ -3636,7 +3629,7 @@ export default function InboxPage() {
     return () => cancelAnimationFrame(raf);
   }, [selectedId]);
 
-  // Load recipient suggestions (Google contacts + recruiter list) the
+  // Load recipient suggestions (Google contacts) the
   // first time either Compose or the advanced search filter opens. Both
   // surfaces consume composeRecipientSuggestions; we only fetch once
   // per session unless explicitly refreshed.
@@ -3647,19 +3640,10 @@ export default function InboxPage() {
     contactsLoadedRef.current = true;
     let cancelled = false;
     setContactsHint(null);
-    void Promise.all([
-      // Recruiter suggestions come from Extraction; skip that half when the
-      // module is off so the composer still gets Google contacts.
-      extractionEnabled
-        ? fetch("/api/recruiters").then((r) => (r.ok ? r.json() : null))
-        : Promise.resolve(null),
-      fetch("/api/gmail/contacts").then((r) => (r.ok ? r.json() : null)),
-    ])
-      .then(([recruitersJson, contactsJson]) => {
+    void fetch("/api/gmail/contacts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((contactsJson) => {
         if (cancelled) return;
-        setRecruiterSuggestions(
-          (recruitersJson as { recruiters?: { email: string; name: string }[] } | null)?.recruiters ?? [],
-        );
         const raw = contactsJson as {
           contacts?: RecipientSuggestion[];
           hint?: string;
@@ -3670,7 +3654,6 @@ export default function InboxPage() {
       })
       .catch(() => {
         if (!cancelled) {
-          setRecruiterSuggestions([]);
           setGoogleContacts([]);
           // Allow a retry on next open if the first attempt failed
           contactsLoadedRef.current = false;
@@ -3679,7 +3662,7 @@ export default function InboxPage() {
     return () => {
       cancelled = true;
     };
-  }, [composeOpen, filterOpen, extractionEnabled]);
+  }, [composeOpen, filterOpen]);
 
   const openDraft = useCallback(async (draftId: string) => {
     if (draftLoadingRef.current) return;

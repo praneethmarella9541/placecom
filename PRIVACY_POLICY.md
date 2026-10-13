@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** October 11, 2026
+**Last updated:** October 13, 2026
 **Effective date:** September 5, 2026
 
 ## 1. Introduction
@@ -64,8 +64,12 @@ If you connect a Google account (including Gmail, Google Calendar, Google Drive,
 - We will only use access to data from a connected Google service to provide the CRM, email, calendar, drive, forms, and sheets features of the Service that are prominent in the Service's user interface, and to improve those user-facing features.
 - We will not transfer this data to others except as necessary to provide or improve those features, to comply with applicable law, or as part of a merger, acquisition, or sale of assets.
 - We will never use Google user data for serving advertisements of any kind.
+- We do not use Google user data to develop, improve, or train generalized artificial-intelligence or machine-learning models.
 - We will not allow personnel to read this data except with your affirmative agreement for specific messages, where necessary for security purposes such as investigating abuse, to comply with applicable law, or for internal operations where the data has been aggregated and anonymized.
 - To make the inbox fast, we keep a copy of the message-list information for a connected Gmail mailbox — for each conversation, its subject, the sender and participant email addresses, dates, labels, and read, starred and attachment status. We do not store the message body or the preview snippet in this copy. It is encrypted at rest, accessible only to our servers (not to browsers), used solely to display that mailbox's inbox to the people the mailbox owner has authorized, and deleted as described in Section 9.
+- Beyond that copy, we store only what the features need. For emails sent through the Service: the recipient addresses, subject, send time, and open and bounce status, used for campaign reports. For replies: the Gmail message and thread identifiers and the sender's address, used for reply statistics. If you sync contacts: names, email addresses, companies, and interaction counts derived from your mail and contacts. We do not keep the body of your emails, or the content of your Drive files, calendar events, forms, or spreadsheets, apart from what you yourself save into the Service (such as a message template or a file you upload as an attachment). Messages and files are retrieved from Google when you view them.
+- Google access tokens are stored encrypted at rest. An administrator can disconnect their Google account at any time from Profile settings, and any user can remove the Service's access at myaccount.google.com/permissions. Disconnecting from Profile settings revokes our access at Google and deletes the stored tokens.
+- If you use an AI-assisted feature, such as the suggestion of a CRM pipeline stage for a lead, the relevant email subjects and snippets and your own notes are sent to our AI provider, OpenAI, only to produce that result for you. This data is not used to train generalized artificial-intelligence or machine-learning models.
 - Our use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.
 
 ## 5. How We Use Personal Data
@@ -90,7 +94,7 @@ We do not sell personal data, and we do not use personal data processed on behal
 We may share personal data with:
 
 - **Infrastructure and service providers.** Providers who host our application, provide database and authentication services, deliver push notifications, and support the calling, SMS, and WhatsApp features of the Service, each acting under instructions from us and, where applicable, from the relevant customer.
-- **AI processing providers.** Providers who process content for features such as contact extraction from email or transcription of call recordings, when those features are used.
+- **AI processing provider.** OpenAI, which processes content only to provide the AI-assisted features you choose to use, such as CRM pipeline stage suggestions (see Section 4).
 - **Professional advisors.** Lawyers, accountants, or consultants, where necessary to obtain advice or services.
 - **Legal and safety.** Where required by law, legal process, or a valid governmental request, or where necessary to protect the rights, safety, or property of The Nucleus, our customers, or others.
 - **Corporate transactions.** An acquirer, successor, or assignee in connection with a merger, acquisition, financing, reorganization, or sale of assets.
@@ -104,7 +108,7 @@ Personal data may be stored or processed in countries other than the country whe
 
 ## 8. Security
 
-We use reasonable technical and organizational measures designed to protect personal data, including encrypted transport, access controls, and authentication safeguards appropriate to the nature of the information. No system can be completely secure, and we cannot guarantee the absolute security of personal data.
+We use reasonable technical and organizational measures designed to protect personal data, including encrypted transport (HTTPS with HSTS), secure session cookies, encryption at rest of Google access tokens, access controls, and authentication safeguards appropriate to the nature of the information. No system can be completely secure, and we cannot guarantee the absolute security of personal data.
 
 ## 9. Retention
 
@@ -113,6 +117,8 @@ We retain personal data for as long as necessary to provide the Service, comply 
 Following closure of an account or an organization's workspace, we retain the associated personal data for **90 days**, after which it is deleted or de-identified from our production systems. This period does not by itself guarantee immediate deletion from routine backups, which are retained and cycled out on a separate schedule, or from third-party providers who independently control data you connected or sent through them.
 
 The copy of Gmail message-list information described in Section 4 is deleted automatically if it has not been refreshed for **90 days**, and is deleted together with the connected mailbox owner's account.
+
+When an administrator disconnects their Google account from Profile settings, the stored Google tokens are revoked at Google and deleted immediately.
 
 Where we act as a processor, personal data is retained in accordance with the instructions of the relevant customer.
 

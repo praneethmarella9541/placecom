@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /** @type {import('next').NextConfig} */
 // Content Security Policy — enforced: anything outside these allowlists is blocked.
 // To debug a new third-party integration, temporarily rename the header below to
@@ -33,6 +36,8 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // A package-lock.json also exists in the parent folder; pin tracing to this project.
+  outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
   // Don't advertise the framework in an X-Powered-By header.
   poweredByHeader: false,
   async headers() {

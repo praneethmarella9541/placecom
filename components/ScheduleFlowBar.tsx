@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { CalendarClock, ChevronDown, ChevronUp, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { GmailDatePicker } from "@/components/GmailDatePicker";
+import { isoDateLocal } from "@/lib/gmail-search-query";
 import {
   MAX_FOLLOW_UPS,
   followUpDelayLabel,
@@ -24,6 +26,24 @@ const TIMEZONES = [
 ];
 
 const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
+
+/** Start times in 15-minute steps, "09:00" with a 12-hour label. */
+const START_TIMES = Array.from({ length: 96 }, (_, i) => {
+  const h = Math.floor(i / 4);
+  const m = (i % 4) * 15;
+  const value = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  const label = `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+  return { value, label };
+});
+
+function hourLabel(value: string): string {
+  const h = Number(value.slice(0, 2));
+  return `${h % 12 === 0 ? 12 : h % 12}:00 ${h < 12 ? "AM" : "PM"}`;
+}
+
+// `input-field` is full-width by default; the time dropdowns want a compact fixed width.
+const selectClass =
+  "input-field h-9 !w-[116px] rounded-lg px-2 text-[13px] text-[#202124] disabled:cursor-not-allowed disabled:opacity-60";
 
 type Props = {
   flow: ScheduleFlowState;
@@ -53,6 +73,9 @@ export function ScheduleFlowBar({
 }: Props) {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const zones = TIMEZONES.includes(flow.timezone) ? TIMEZONES : [flow.timezone, ...TIMEZONES];
+  // The start is stored as one "YYYY-MM-DDTHH:mm" value; the date and time are edited separately.
+  const startDate = flow.startLocal.slice(0, 10);
+  const startTime = flow.startLocal.slice(11, 16) || "09:00";
 
   return (
     <div className="shrink-0 border-b border-[#f1f3f4] bg-[#faf8f5]" data-testid="schedule-flow-bar">
@@ -103,7 +126,7 @@ export function ScheduleFlowBar({
       <p className="px-3 pb-2 text-[11.5px] text-[#5f6368]">{scheduleSummary(flow)}</p>
 
       {optionsOpen && (
-        <div className="scrollbar-thin grid max-h-[38vh] gap-x-6 gap-y-3 overflow-y-auto border-t border-[#f1f3f4] bg-white px-3 py-3 text-[12.5px] text-[#3c4043] sm:grid-cols-2">
+        <div className="grid gap-x-6 gap-y-3 border-t border-[#f1f3f4] bg-white px-3 py-3 text-[12.5px] text-[#3c4043] sm:grid-cols-2">
           <fieldset className="space-y-1.5">
             <legend className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#5f6368]">Start</legend>
             <label className="flex items-center gap-2">
@@ -125,14 +148,25 @@ export function ScheduleFlowBar({
                 onChange={() => onChange({ startMode: "later" })}
               />
               On
-              <input
-                type="datetime-local"
-                value={flow.startLocal}
-                disabled={disabled}
-                onFocus={() => onChange({ startMode: "later" })}
-                onChange={(e) => onChange({ startMode: "later", startLocal: e.target.value })}
-                className="rounded border border-[#dadce0] px-2 py-1 text-[12.5px]"
+              <GmailDatePicker
+                className="w-[150px]"
+                value={startDate}
+                onChange={(d) => onChange({ startMode: "later", startLocal: `${d}T${startTime}` })}
               />
+              <select
+                value={startTime}
+                disabled={disabled}
+                onChange={(e) => {
+                  const date = startDate || isoDateLocal(new Date());
+                  onChange({ startMode: "later", startLocal: `${date}T${e.target.value}` });
+                }}
+                className={selectClass}
+                aria-label="Start time"
+              >
+                {START_TIMES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
             </label>
             <p className="text-[11px] text-[#5f6368]">
               Mails only go out inside the send window below, so a start outside it moves to the next opening.
@@ -172,11 +206,11 @@ export function ScheduleFlowBar({
                 value={flow.windowStart}
                 disabled={disabled}
                 onChange={(e) => onChange({ windowStart: e.target.value })}
-                className="rounded border border-[#dadce0] px-2 py-1"
+                className={selectClass}
                 aria-label="Window starts"
               >
                 {HOURS.map((h) => (
-                  <option key={h} value={h}>{h}</option>
+                  <option key={h} value={h}>{hourLabel(h)}</option>
                 ))}
               </select>
               to
@@ -184,11 +218,11 @@ export function ScheduleFlowBar({
                 value={flow.windowEnd}
                 disabled={disabled}
                 onChange={(e) => onChange({ windowEnd: e.target.value })}
-                className="rounded border border-[#dadce0] px-2 py-1"
+                className={selectClass}
                 aria-label="Window ends"
               >
                 {HOURS.map((h) => (
-                  <option key={h} value={h}>{h}</option>
+                  <option key={h} value={h}>{hourLabel(h)}</option>
                 ))}
               </select>
             </div>
@@ -196,7 +230,7 @@ export function ScheduleFlowBar({
               value={flow.timezone}
               disabled={disabled}
               onChange={(e) => onChange({ timezone: e.target.value })}
-              className="w-full rounded border border-[#dadce0] px-2 py-1"
+              className={cn(selectClass, "!w-full")}
               aria-label="Time zone"
             >
               {zones.map((z) => (
@@ -214,27 +248,6 @@ export function ScheduleFlowBar({
             </label>
           </fieldset>
 
-          <fieldset className="space-y-1.5">
-            <legend className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-[#5f6368]">Pace</legend>
-            <label className="flex items-center gap-2">
-              At most
-              <input
-                type="number"
-                min={1}
-                max={2000}
-                value={flow.dailyLimit}
-                disabled={disabled}
-                onChange={(e) =>
-                  onChange({ dailyLimit: Math.min(2000, Math.max(1, Math.floor(Number(e.target.value)) || 1)) })
-                }
-                className="w-20 rounded border border-[#dadce0] px-2 py-1"
-              />
-              emails a day
-            </label>
-            <p className="text-[11px] text-[#5f6368]">
-              A bigger audience is spread over several days automatically, which keeps Gmail happy.
-            </p>
-          </fieldset>
         </div>
       )}
 

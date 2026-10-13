@@ -20,7 +20,7 @@ export type FollowUpDraft = {
 
 export type ScheduleFlowState = {
   startMode: "now" | "later";
-  /** Wall-clock "YYYY-MM-DDTHH:mm" in `timezone` (the value of a datetime-local input). */
+  /** Wall-clock "YYYY-MM-DDTHH:mm" in `timezone` (date and time are edited separately). */
   startLocal: string;
   followUps: FollowUpDraft[];
   exitOnReply: boolean;
@@ -32,13 +32,8 @@ export type ScheduleFlowState = {
   threadEmails: boolean;
 };
 
-export function browserTimeZone(): string {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata";
-  } catch {
-    return "Asia/Kolkata";
-  }
-}
+/** The platform's working zone (Asia/Calcutta is the older name for the same zone). */
+export const DEFAULT_SCHEDULE_TIMEZONE = "Asia/Kolkata";
 
 export function defaultScheduleFlow(): ScheduleFlowState {
   return {
@@ -46,7 +41,7 @@ export function defaultScheduleFlow(): ScheduleFlowState {
     startLocal: "",
     followUps: [],
     exitOnReply: true,
-    timezone: browserTimeZone(),
+    timezone: DEFAULT_SCHEDULE_TIMEZONE,
     windowStart: "09:00",
     windowEnd: "17:00",
     businessDaysOnly: true,

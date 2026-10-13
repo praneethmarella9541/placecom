@@ -5,10 +5,11 @@ import { removeTemplateFiles } from "@/lib/mail-template-attachments";
 
 export const runtime = "nodejs";
 
-type Params = { params: { templateId: string; attachmentId: string } };
+type Params = { params: Promise<{ templateId: string; attachmentId: string }> };
 
 /** DELETE /api/mail-templates/:id/attachments/:attachmentId */
-export async function DELETE(request: Request, { params }: Params) {
+export async function DELETE(request: Request, props: Params) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

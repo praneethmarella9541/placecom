@@ -45,10 +45,8 @@ function errResponse(e: unknown) {
 }
 
 /** GET — list the permissions on a file/folder + return its share link. */
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
@@ -81,10 +79,8 @@ const VALID_ROLES: DriveRole[] = ["reader", "commenter", "writer"];
 const VALID_TYPES: DrivePermissionType[] = ["user", "group", "domain", "anyone"];
 
 /** POST — add a permission (share with a person or make link-shareable). */
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });

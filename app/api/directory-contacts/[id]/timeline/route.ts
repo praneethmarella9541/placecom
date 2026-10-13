@@ -51,7 +51,8 @@ async function attributeToOwners<T extends { user_id: string | null }>(
  * One source per call — mirrors CompanyDetailPanel's lazy per-tab load pattern
  * rather than one big fan-out request. Frontend merges them for "All Interaction".
  */
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

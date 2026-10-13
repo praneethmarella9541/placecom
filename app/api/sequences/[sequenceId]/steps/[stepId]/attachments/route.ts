@@ -22,7 +22,7 @@ import { isValidDriveLink } from "@/lib/storage-signed-upload";
 
 export const runtime = "nodejs";
 
-type Params = { params: { sequenceId: string; stepId: string } };
+type Params = { params: Promise<{ sequenceId: string; stepId: string }> };
 
 /**
  * Attaching a file to a sequence email step. Same rule as compose and mail
@@ -43,7 +43,7 @@ function tooBigError(name: string, size: number): string {
   return `File size exceeded: "${name}" is ${formatMb(size)}, over Gmail's ${formatMb(GMAIL_ATTACHMENT_MAX_BYTES)} per-file limit, so it has to be shared as a Google Drive link.`;
 }
 
-async function loadStep(request: Request, params: Params["params"]) {
+async function loadStep(request: Request, params: Awaited<Params["params"]>) {
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return { error: ctx } as const;
 
@@ -88,7 +88,8 @@ async function insertRow(
 }
 
 /** POST — sign a direct upload for a file that will be sent as an attachment. */
-export async function POST(request: Request, { params }: Params) {
+export async function POST(request: Request, props: Params) {
+  const params = await props.params;
   const loaded = await loadStep(request, params);
   if ("error" in loaded) return loaded.error;
   const { ctx, sequenceId, stepId } = loaded;
@@ -120,7 +121,8 @@ export async function POST(request: Request, { params }: Params) {
 }
 
 /** PUT — record an uploaded file, or a file already put on Drive and shared. */
-export async function PUT(request: Request, { params }: Params) {
+export async function PUT(request: Request, props: Params) {
+  const params = await props.params;
   const loaded = await loadStep(request, params);
   if ("error" in loaded) return loaded.error;
   const { ctx, sequenceId, stepId } = loaded;

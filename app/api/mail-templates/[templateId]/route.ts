@@ -16,7 +16,7 @@ import {
 
 export const runtime = "nodejs";
 
-type Params = { params: { templateId: string } };
+type Params = { params: Promise<{ templateId: string }> };
 
 /** Postgres unique-violation on mail_templates_user_name_key. */
 function isDuplicateName(message: string): boolean {
@@ -31,7 +31,8 @@ function isDuplicateName(message: string): boolean {
  * recording that it was just inserted (`touch`). The second is why this is not
  * a strict PUT — the client fires it on every insert and sends no content.
  */
-export async function PATCH(request: Request, { params }: Params) {
+export async function PATCH(request: Request, props: Params) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -114,7 +115,8 @@ export async function PATCH(request: Request, { params }: Params) {
 }
 
 /** DELETE /api/mail-templates/:id */
-export async function DELETE(request: Request, { params }: Params) {
+export async function DELETE(request: Request, props: Params) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

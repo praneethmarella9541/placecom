@@ -10,7 +10,7 @@ import type { SequenceSend } from "@/lib/sequence-types";
 
 export const runtime = "nodejs";
 
-type Params = { params: { sequenceId: string } };
+type Params = { params: Promise<{ sequenceId: string }> };
 
 type SendRow = {
   id: string;
@@ -24,7 +24,8 @@ type SendRow = {
 };
 
 /** GET /api/sequences/[id]/activity?enrollmentId= — the send log. */
-export async function GET(request: Request, { params }: Params) {
+export async function GET(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 

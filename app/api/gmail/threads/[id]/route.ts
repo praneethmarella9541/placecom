@@ -9,14 +9,14 @@ export const runtime = "nodejs";
 
 export async function GET(
   request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
 
-  const threadId = context.params.id;
+  const threadId = (await context.params).id;
   if (!threadId) {
     return NextResponse.json({ error: "Missing thread id" }, { status: 400 });
   }

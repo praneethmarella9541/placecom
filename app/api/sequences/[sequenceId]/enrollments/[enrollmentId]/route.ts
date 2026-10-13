@@ -16,7 +16,7 @@ import {
 
 export const runtime = "nodejs";
 
-type Params = { params: { sequenceId: string; enrollmentId: string } };
+type Params = { params: Promise<{ sequenceId: string; enrollmentId: string }> };
 
 type PatchBody = {
   action?: "pause" | "resume" | "restart";
@@ -28,7 +28,8 @@ type PatchBody = {
 const ENROLLMENT_COLUMNS =
   "id, email, display_name, status, current_step_order, next_run_at, first_sent_at, last_sent_at, replied_at, last_error, merge_fields, cc";
 
-export async function PATCH(request: Request, { params }: Params) {
+export async function PATCH(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 
@@ -121,7 +122,8 @@ export async function PATCH(request: Request, { params }: Params) {
 }
 
 /** Soft-removes by default; ?hard=1 also drops the send log. */
-export async function DELETE(request: Request, { params }: Params) {
+export async function DELETE(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 

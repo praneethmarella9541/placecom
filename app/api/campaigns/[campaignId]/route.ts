@@ -82,7 +82,8 @@ function buildReport(campaignId: string, rows: TrackingRow[]): CampaignReport {
  * recipient who replied without you having opened that thread in the inbox
  * yet won't show here until you do (or until you hit Refresh — see POST).
  */
-export async function GET(request: Request, { params }: { params: { campaignId: string } }) {
+export async function GET(request: Request, props: { params: Promise<{ campaignId: string }> }) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -105,7 +106,8 @@ export async function GET(request: Request, { params }: { params: { campaignId: 
  * and intentional, which is a real browser-click's worth of quota rather than
  * the automatic, unbounded cost a plain page view was paying before.
  */
-export async function POST(request: Request, { params }: { params: { campaignId: string } }) {
+export async function POST(request: Request, props: { params: Promise<{ campaignId: string }> }) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

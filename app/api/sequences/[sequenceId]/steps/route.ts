@@ -18,13 +18,14 @@ import type { SequenceStep, SequenceStepInput } from "@/lib/sequence-types";
 
 export const runtime = "nodejs";
 
-type Params = { params: { sequenceId: string } };
+type Params = { params: Promise<{ sequenceId: string }> };
 
 /**
  * PUT /api/sequences/[id]/steps — whole-list replace. The array order IS the
  * step order, so the editor can add, reorder and delete in one save.
  */
-export async function PUT(request: Request, { params }: Params) {
+export async function PUT(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 

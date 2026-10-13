@@ -6,10 +6,8 @@ import { restoreDriveFile } from "@/lib/drive";
 export const runtime = "nodejs";
 
 /** POST — restore a file or folder from Drive's trash. Gated with the rest of delete. */
-export async function POST(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const forbidden = await deleteForbiddenResponse();
   if (forbidden) return forbidden;
 

@@ -33,6 +33,8 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // Don't advertise the framework in an X-Powered-By header.
+  poweredByHeader: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

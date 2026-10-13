@@ -16,6 +16,9 @@ export type GmailComposeFooterProps = {
   onMassSendingChange?: (on: boolean) => void;
   /** Disables the toggle mid-flight, e.g. once a campaign send has started. */
   massToggleDisabled?: boolean;
+  /** Scheduling switch — only offered while mass sending is on. Omit to hide it. */
+  schedulingEnabled?: boolean;
+  onSchedulingChange?: (on: boolean) => void;
   /** Replaces the icon row with a Back control on the review screen. */
   backLabel?: string;
   onBack?: () => void;
@@ -53,6 +56,8 @@ export function GmailComposeFooter({
   massSending,
   onMassSendingChange,
   massToggleDisabled,
+  schedulingEnabled,
+  onSchedulingChange,
   backLabel,
   onBack,
   onReview,
@@ -64,6 +69,7 @@ export function GmailComposeFooter({
 }: GmailComposeFooterProps) {
   const label = sending ? "Sending…" : sendLabel ?? "Send";
   const showMassToggle = massSending !== undefined && !!onMassSendingChange;
+  const showSchedulingToggle = !!massSending && !!onSchedulingChange && schedulingEnabled !== undefined;
 
   return (
     <div className="shrink-0 border-t border-[#e8eaed] bg-[#f8f9fa]">
@@ -113,41 +119,23 @@ export function GmailComposeFooter({
         <div className="flex-1" />
 
         {showMassToggle && (
-          <div className="mr-1 flex shrink-0 items-center gap-1">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={massSending}
-              disabled={massToggleDisabled}
-              onClick={() => onMassSendingChange?.(!massSending)}
-              // Label sits inside the control so the whole thing is one hit
-              // target, and both halves share a single items-center baseline.
-              className="flex items-center gap-2 rounded-full px-2 py-1.5 hover:bg-[#e8eaed] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-            >
-              <span
-                className={cn(
-                  "relative block h-5 w-9 shrink-0 rounded-full transition-colors",
-                  massSending ? "bg-[var(--color-copper)]" : "bg-[#bdc1c6]"
-                )}
-              >
-                {/* Explicit left + vertical centering — the knob previously
-                    relied on its static position, which drifts with padding. */}
-                <span
-                  className={cn(
-                    "absolute top-1/2 block h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-sm transition-[left] duration-150",
-                    massSending ? "left-[18px]" : "left-0.5"
-                  )}
-                />
-              </span>
-              <span className="text-[13px] leading-none text-[#3c4043]">Mass sending</span>
-            </button>
-            <span
-              title="Send a personalised copy to each recipient. Use {variables} to fill in their details."
-              className="flex shrink-0 items-center text-[#5f6368]"
-            >
-              <Info className="h-3.5 w-3.5" />
-            </span>
-          </div>
+          <FooterToggle
+            checked={!!massSending}
+            disabled={massToggleDisabled}
+            label="Mass sending"
+            info="Send a personalised copy to each recipient. Use {variables} to fill in their details."
+            onToggle={() => onMassSendingChange?.(!massSending)}
+          />
+        )}
+
+        {showSchedulingToggle && (
+          <FooterToggle
+            checked={!!schedulingEnabled}
+            disabled={massToggleDisabled || sending}
+            label="Scheduling"
+            info="Send later, add follow-up emails, and stop when someone replies. It keeps running even when you are away."
+            onToggle={() => onSchedulingChange?.(!schedulingEnabled)}
+          />
         )}
 
         <FooterBtn title="Discard draft" onClick={onDiscard}>
@@ -180,6 +168,55 @@ export function GmailComposeFooter({
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+function FooterToggle({
+  checked,
+  disabled,
+  label,
+  info,
+  onToggle,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  label: string;
+  info: string;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="mr-1 flex shrink-0 items-center gap-1">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        disabled={disabled}
+        onClick={onToggle}
+        // Label sits inside the control so the whole thing is one hit
+        // target, and both halves share a single items-center baseline.
+        className="flex items-center gap-2 rounded-full px-2 py-1.5 hover:bg-[#e8eaed] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+      >
+        <span
+          className={cn(
+            "relative block h-5 w-9 shrink-0 rounded-full transition-colors",
+            checked ? "bg-[var(--color-copper)]" : "bg-[#bdc1c6]"
+          )}
+        >
+          {/* Explicit left + vertical centering — the knob previously
+              relied on its static position, which drifts with padding. */}
+          <span
+            className={cn(
+              "absolute top-1/2 block h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow-sm transition-[left] duration-150",
+              checked ? "left-[18px]" : "left-0.5"
+            )}
+          />
+        </span>
+        <span className="text-[13px] leading-none text-[#3c4043]">{label}</span>
+      </button>
+      <span title={info} className="flex shrink-0 items-center text-[#5f6368]">
+        <Info className="h-3.5 w-3.5" />
+      </span>
     </div>
   );
 }

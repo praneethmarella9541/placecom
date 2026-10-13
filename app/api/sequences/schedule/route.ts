@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { isValidEmail } from "@/lib/broadcast-recipients";
+import { stripVariableSpans } from "@/lib/compose-variables";
 import { getStagedAttachment, releaseStagedAttachments } from "@/lib/draft-attachment-staging";
 import { GMAIL_ATTACHMENT_MAX_BYTES } from "@/lib/gmail-draft-limits";
 import {
@@ -235,7 +236,7 @@ export async function POST(request: Request) {
         step_order: 1,
         kind: "email",
         subject_template: subject,
-        body_html: bodyHtml,
+        body_html: stripVariableSpans(bodyHtml),
       },
     ];
     let order = 2;
@@ -255,7 +256,7 @@ export async function POST(request: Request) {
         step_order: order++,
         kind: "email",
         subject_template: threadEmails ? "" : (f.subject ?? "").trim(),
-        body_html: f.bodyHtml ?? "",
+        body_html: stripVariableSpans(f.bodyHtml ?? ""),
       });
     }
 

@@ -49,7 +49,16 @@ import {
   type ComposeVariable,
   type UnknownPlaceholderMode,
 } from "@/lib/compose-variables";
-import { listPlaceholdersInTemplate, mergeTemplate, type MailMergeRow } from "@/lib/mail-merge";
+import { listPlaceholdersInTemplate, mergeTemplate, validateMergeTemplates, type MailMergeRow } from "@/lib/mail-merge";
+import { ScheduleFlowBar } from "@/components/ScheduleFlowBar";
+import { ScheduleFollowUpEditor, type ScheduleFollowUpEditorHandle } from "@/components/ScheduleFollowUpEditor";
+import {
+  defaultScheduleFlow,
+  newFollowUp,
+  scheduleStartDate,
+  validateScheduleFlow,
+  type ScheduleFlowState,
+} from "@/lib/schedule-flow";
 import { GmailInlineReply } from "@/components/GmailInlineReply";
 import { GmailPendingAttachments } from "@/components/GmailPendingAttachments";
 import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
@@ -1660,6 +1669,13 @@ export default function InboxPage() {
   // One personalised copy per recipient, addressed individually (never a
   // shared To/Cc list), with {variables} resolved from each contact's card.
   const [massSending, setMassSending] = useState(false);
+  // Scheduling (mass sending only): a flow of this email plus follow-ups that the server sends on
+  // a schedule, with the tab closed. `scheduleStep` is 0 for the first email, n for follow-up n.
+  const [scheduling, setScheduling] = useState(false);
+  const [scheduleFlow, setScheduleFlow] = useState<ScheduleFlowState>(() => defaultScheduleFlow());
+  const [scheduleStep, setScheduleStep] = useState(0);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const followUpEditorRef = useRef<ScheduleFollowUpEditorHandle>(null);
   const [massRecipients, setMassRecipients] = useState<MassRecipient[]>([]);
   /**
    * Which of the two audiences is live. They are mutually exclusive by
@@ -1899,6 +1915,9 @@ export default function InboxPage() {
    */
   const resetMassState = useCallback(() => {
     setMassSending(false);
+    setScheduling(false);
+    setScheduleStep(0);
+    setScheduleFlow(defaultScheduleFlow());
     setMassRecipients([]);
     setMassSource("contacts");
     setMassImport(null);
@@ -1916,6 +1935,11 @@ export default function InboxPage() {
    */
   const applyMassSending = useCallback((on: boolean) => {
     setMassSending(on);
+    if (!on) {
+      // Scheduling only exists inside mass sending.
+      setScheduling(false);
+      setScheduleStep(0);
+    }
     setReviewEmail(null);
     setMassToggleConfirm(null);
     if (on) {
@@ -5242,6 +5266,189 @@ export default function InboxPage() {
     ).byRecipient.get(reviewRow.email);
   }, [reviewRow, composeSubject, composeBody, massSending, massVariables]);
 
+  // ── Scheduling (mass sending) ───────────────────────────────────────────
+  const toggleScheduling = (on: boolean) => {
+    if (
+      !on &&
+      scheduleFlow.followUps.length > 0 &&
+      !window.confirm("Turn scheduling off? The follow-ups you wrote will be discarded.")
+    ) {
+      return;
+    }
+    setScheduling(on);
+    setScheduleStep(0);
+    if (on) setScheduleFlow(defaultScheduleFlow());
+  };
+
+  const patchScheduleFlow = (patch: Partial<ScheduleFlowState>) =>
+    setScheduleFlow((prev) => ({ ...prev, ...patch }));
+
+  const addScheduleFollowUp = () => {
+    setScheduleFlow((prev) => ({ ...prev, followUps: [...prev.followUps, newFollowUp()] }));
+    setScheduleStep(scheduleFlow.followUps.length + 1);
+  };
+
+  const patchFollowUp = (index: number, patch: Partial<ScheduleFlowState["followUps"][number]>) =>
+    setScheduleFlow((prev) => ({
+      ...prev,
+      followUps: prev.followUps.map((f, i) => (i === index ? { ...f, ...patch } : f)),
+    }));
+
+  const removeFollowUp = (index: number) => {
+    setScheduleFlow((prev) => ({ ...prev, followUps: prev.followUps.filter((_, i) => i !== index) }));
+    setScheduleStep(0);
+  };
+
+  /**
+   * Recipients a follow-up cannot fill in. Like the first email's review banner, but for the
+   * steps the review screen does not show: the server skips such a recipient at that step and
+   * marks them "needs attention", so say so before it happens.
+   */
+  const scheduleWarnings = useMemo(() => {
+    if (!massSending || !scheduling) return [];
+    const out: string[] = [];
+    scheduleFlow.followUps.forEach((f, i) => {
+      if (!f.bodyHtml.trim()) return;
+      let missing = 0;
+      for (const row of massMergeRows) {
+        const check = validateMergeTemplates(
+          scheduleFlow.threadEmails ? "" : f.subject,
+          stripVariableSpans(f.bodyHtml),
+          row.fields
+        );
+        if (!check.ok) missing += 1;
+      }
+      if (missing > 0) {
+        out.push(
+          `${missing} recipient${missing === 1 ? " has" : "s have"} no value for a field used in follow-up ${i + 1}, so ${missing === 1 ? "they" : "they"} would be skipped at that step. Set a fallback on the review screen, or edit the follow-up.`
+        );
+      }
+    });
+    return out;
+  }, [massSending, scheduling, scheduleFlow.followUps, scheduleFlow.threadEmails, massMergeRows]);
+
+  /**
+   * Hand the audience to the server as a scheduled flow. From here the cron does the sending, so
+   * it carries on when this tab is closed — unlike sendMassCampaign, which loops in the browser.
+   */
+  async function scheduleMassCampaign() {
+    const rows = massMergeRows;
+    if (rows.length === 0) return;
+
+    if (!composeSubject.trim()) {
+      setComposeFieldError({ title: "Add a subject", message: "Write a subject for the first email before scheduling." });
+      return;
+    }
+    const problem = validateScheduleFlow(scheduleFlow);
+    if (problem) {
+      setComposeFieldError({ title: "Can't schedule yet", message: problem });
+      return;
+    }
+
+    const snapshot = {
+      subject: composeSubject,
+      body: composeBody,
+      files: composeFiles,
+      draftId: composeDraftId,
+      labelIds: composeLabelIds,
+    };
+
+    setScheduleBusy(true);
+    try {
+      const attachments = await resolveAttachmentsForUpload(snapshot.files);
+      const stagedUploadIds = snapshot.files
+        .filter((f): f is Extract<PendingFile, { kind: "staged" }> => f.kind === "staged")
+        .map((f) => f.uploadId);
+      const driveFiles = snapshot.files
+        .filter((f): f is Extract<PendingFile, { kind: "drive" }> => f.kind === "drive")
+        .map((f) => ({
+          id: f.driveFileId,
+          name: f.name,
+          mimeType: f.mimeType,
+          size: f.size,
+          webViewLink: f.webViewLink,
+        }));
+
+      const startAt = scheduleStartDate(scheduleFlow);
+      const res = await fetch("/api/sequences/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: snapshot.subject,
+          bodyHtml: snapshot.body,
+          followUps: scheduleFlow.followUps.map((f) => ({
+            delayDays: f.delayDays,
+            delayHours: f.delayHours,
+            subject: f.subject,
+            bodyHtml: f.bodyHtml,
+          })),
+          startAt: startAt ? startAt.toISOString() : null,
+          recipients: rows.map((r) => ({
+            email: r.email,
+            displayName: r.name && r.name !== r.email ? r.name : null,
+            // An imported list's columns are authoritative; contact-card audiences are resolved
+            // from the contact book by the server, as an immediate mass send does.
+            fields: massSource === "import" ? r.baseFields : undefined,
+          })),
+          mergeSource: massSource === "import" ? "stored" : "contacts",
+          variableFallbacks,
+          labelIds: snapshot.labelIds,
+          attachments: attachments.length ? attachments : undefined,
+          stagedUploadIds: stagedUploadIds.length ? stagedUploadIds : undefined,
+          driveFiles: driveFiles.length ? driveFiles : undefined,
+          settings: {
+            timezone: scheduleFlow.timezone,
+            sendWindowStart: scheduleFlow.windowStart,
+            sendWindowEnd: scheduleFlow.windowEnd,
+            businessDaysOnly: scheduleFlow.businessDaysOnly,
+            dailySendLimit: scheduleFlow.dailyLimit,
+            threadEmails: scheduleFlow.threadEmails,
+            exitOnReply: scheduleFlow.exitOnReply,
+            trackOpens: true,
+          },
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        scheduled?: number;
+        sequenceId?: string;
+        firstRunAt?: string;
+      };
+      if (!res.ok) throw new Error(data.error || "Could not schedule this send.");
+
+      const count = data.scheduled ?? rows.length;
+      const first = data.firstRunAt
+        ? new Intl.DateTimeFormat("en-GB", {
+            timeZone: scheduleFlow.timezone,
+            weekday: "short",
+            day: "numeric",
+            month: "short",
+            hour: "numeric",
+            minute: "2-digit",
+            hour12: true,
+          }).format(new Date(data.firstRunAt))
+        : null;
+      closeMassCompose();
+      showSendSnack(
+        {
+          phase: "sent",
+          message: `Scheduled ${count} email${count === 1 ? "" : "s"}${first ? ` — first send ${first}` : ""}. It runs even when you're away.`,
+        },
+        6000
+      );
+      if (snapshot.draftId) {
+        void fetch(`/api/gmail/drafts/${snapshot.draftId}`, { method: "DELETE" }).catch(() => {});
+      }
+    } catch (e) {
+      setComposeFieldError({
+        title: "Couldn't schedule",
+        message: e instanceof Error ? e.message : "Could not schedule this send.",
+      });
+    } finally {
+      setScheduleBusy(false);
+    }
+  }
+
   async function sendMassCampaign() {
     const rows = massMergeRows;
     if (rows.length === 0) return;
@@ -7053,6 +7260,7 @@ export default function InboxPage() {
         onClose={closeComposeAndSaveDraft}
         onSend={() => {
           if (!massSending) return void sendCompose();
+          if (scheduling) return void scheduleMassCampaign();
           void sendMassCampaign();
         }}
         // Any draft with variables gets reviewed once before it can go out —
@@ -7120,7 +7328,51 @@ export default function InboxPage() {
           }
           applyMassSending(on);
         }}
-        sendLabel={massSending ? `Send emails (${massMergeRows.length})` : "Send email"}
+        schedulingEnabled={massSending ? scheduling : undefined}
+        onSchedulingChange={massSending ? toggleScheduling : undefined}
+        scheduleBar={
+          massSending && scheduling ? (
+            <ScheduleFlowBar
+              flow={scheduleFlow}
+              onChange={patchScheduleFlow}
+              activeStep={scheduleStep}
+              onSelectStep={setScheduleStep}
+              onAddFollowUp={addScheduleFollowUp}
+              warnings={scheduleWarnings}
+              disabled={scheduleBusy}
+            />
+          ) : undefined
+        }
+        scheduleStepEditor={
+          massSending && scheduling && scheduleStep > 0 && scheduleFlow.followUps[scheduleStep - 1] ? (
+            <ScheduleFollowUpEditor
+              ref={followUpEditorRef}
+              key={scheduleFlow.followUps[scheduleStep - 1].id}
+              index={scheduleStep - 1}
+              followUp={scheduleFlow.followUps[scheduleStep - 1]}
+              firstSubject={composeSubject}
+              threadEmails={scheduleFlow.threadEmails}
+              businessDaysOnly={scheduleFlow.businessDaysOnly}
+              variables={editorVariables}
+              unknownPlaceholders={unknownPlaceholders}
+              onChange={(patch) => patchFollowUp(scheduleStep - 1, patch)}
+              onRemove={() => removeFollowUp(scheduleStep - 1)}
+            />
+          ) : undefined
+        }
+        insertVariableOverride={
+          massSending && scheduling && scheduleStep > 0
+            ? () => followUpEditorRef.current?.insertVariableTrigger()
+            : undefined
+        }
+        sending={scheduleBusy}
+        sendLabel={
+          massSending
+            ? scheduling
+              ? `Schedule emails (${massMergeRows.length})`
+              : `Send emails (${massMergeRows.length})`
+            : "Send email"
+        }
         review={
           reviewRow
             ? {
@@ -7149,7 +7401,11 @@ export default function InboxPage() {
           massSending ? (
             <div className="flex shrink-0 items-center gap-2 border-t border-[#f1f3f4] bg-white px-4 py-2 text-[12px] text-[#5f6368]">
               <IconInfo className="h-3.5 w-3.5 shrink-0" />
-              <span>Delivery time will depend on items in your outbox.</span>
+              <span>
+                {scheduling
+                  ? "Scheduled emails are sent by the server, so you can close this window once they are scheduled."
+                  : "Delivery time will depend on items in your outbox."}
+              </span>
             </div>
           ) : null
         }

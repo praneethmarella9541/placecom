@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { MeProfileResponse } from "@/app/api/me/profile/route";
 import { PasswordInput } from "@/components/PasswordInput";
 import { titleCase } from "@/lib/title-case";
 import { formatPhone } from "@/lib/phone-contacts-display";
-import { patchMeMailboxCache, refreshMeMailbox } from "@/lib/use-me-mailbox";
+import { clearMeMailboxCache, patchMeMailboxCache, refreshMeMailbox } from "@/lib/use-me-mailbox";
+import { createClient } from "@/lib/supabase";
 import { gmailAvatarInitials } from "@/lib/gmail-avatar";
 
 export function ProfileSettings() {
@@ -16,6 +17,9 @@ export function ProfileSettings() {
   const [passwordMsg, setPasswordMsg] = useState<string | null>(null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectMsg, setDisconnectMsg] = useState<string | null>(null);
+  const supabase = useMemo(() => createClient(), []);
 
   const [displayUsername, setDisplayUsername] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -87,6 +91,29 @@ export function ProfileSettings() {
       setProfileMsg(e instanceof Error ? e.message : "Could not save profile");
     } finally {
       setSavingProfile(false);
+    }
+  }
+
+  async function disconnectGoogle() {
+    if (
+      !window.confirm(
+        "Disconnect your Google account?\n\nThis revokes The Nucleus's access to your Gmail, Drive, Calendar and other Google data and deletes the stored connection. Your team will lose shared-mailbox access until you sign in with Google again. You will be signed out now."
+      )
+    ) {
+      return;
+    }
+    setDisconnecting(true);
+    setDisconnectMsg(null);
+    try {
+      const res = await fetch("/api/mailbox/disconnect", { method: "DELETE" });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) throw new Error(data.error || "Could not disconnect Google");
+      clearMeMailboxCache();
+      await supabase.auth.signOut();
+      window.location.href = "/";
+    } catch (e) {
+      setDisconnectMsg(e instanceof Error ? e.message : "Could not disconnect Google");
+      setDisconnecting(false);
     }
   }
 
@@ -175,6 +202,23 @@ export function ProfileSettings() {
               <div>
                 <dt className="text-xs font-bold text-[var(--color-text)]">{titleCase("Shared mailbox")}</dt>
                 <dd className="mt-0.5 text-[var(--color-text)]">{profile.mailboxEmail || titleCase("Not linked yet")}</dd>
+                {profile.role === "admin" && profile.mailboxEmail && (
+                  <div className="mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => void disconnectGoogle()}
+                      disabled={disconnecting}
+                      className="text-xs font-semibold text-[var(--color-danger)] hover:underline disabled:opacity-60"
+                    >
+                      {disconnecting ? titleCase("Disconnecting…") : titleCase("Disconnect Google account")}
+                    </button>
+                    {disconnectMsg && (
+                      <p className="mt-1 text-xs text-[var(--color-danger)]" role="status">
+                        {disconnectMsg}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <dt className="text-xs font-bold text-[var(--color-text)]">{titleCase("Assigned virtual number")}</dt>

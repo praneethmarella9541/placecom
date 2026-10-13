@@ -17,7 +17,10 @@ export function createServerSupabaseClient() {
         setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
           try {
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
+              cookieStore.set(name, value, {
+                ...options,
+                secure: process.env.NODE_ENV === "production",
+              })
             );
           } catch {
             // Called from a Server Component — ignore if middleware already refreshed session.

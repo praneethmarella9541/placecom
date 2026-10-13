@@ -2,7 +2,7 @@
 export const GMAIL_INSUFFICIENT_SCOPE = "GMAIL_INSUFFICIENT_SCOPE" as const;
 
 export const GMAIL_INSUFFICIENT_SCOPE_MESSAGE =
-  "Your Google sign-in did not grant Gmail API access. In Google Cloud Console for the same OAuth client used by Supabase: enable the Gmail API; under Google Auth Platform → Data access (Scopes), add https://www.googleapis.com/auth/gmail.readonly and https://www.googleapis.com/auth/gmail.send; then sign out of this app and sign in with Google again and accept Gmail permissions.";
+  "Your Google sign-in did not grant Gmail API access. In Google Cloud Console for the same OAuth client used by Supabase: enable the Gmail API; under Google Auth Platform → Data access (Scopes), add https://www.googleapis.com/auth/gmail.modify; then sign out of this app and sign in with Google again and accept Gmail permissions.";
 
 export function isGmailInsufficientScopeResponse(
   status: number,

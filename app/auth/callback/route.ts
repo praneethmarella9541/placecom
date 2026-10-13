@@ -45,7 +45,7 @@ export async function GET(request: Request) {
     });
   }
 
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const mobileReturnRaw = cookieStore.get(MOBILE_OAUTH_RETURN_COOKIE)?.value ?? "";
   const mobileReturn = isAllowedMobileOAuthReturnUri(mobileReturnRaw) ? mobileReturnRaw : "";
 

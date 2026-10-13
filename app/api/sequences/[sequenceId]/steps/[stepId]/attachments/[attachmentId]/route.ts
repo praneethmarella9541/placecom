@@ -10,10 +10,11 @@ import {
 
 export const runtime = "nodejs";
 
-type Params = { params: { sequenceId: string; stepId: string; attachmentId: string } };
+type Params = { params: Promise<{ sequenceId: string; stepId: string; attachmentId: string }> };
 
 /** DELETE /api/sequences/[id]/steps/[stepId]/attachments/[attachmentId] */
-export async function DELETE(request: Request, { params }: Params) {
+export async function DELETE(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 

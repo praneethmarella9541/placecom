@@ -114,12 +114,10 @@ async function prefetchWhatsAppData(signal?: AbortSignal): Promise<void> {
 /* ─── Calendar ─────────────────────────────────────────────── */
 
 export type CalendarPrefetchEvent = Record<string, unknown>;
-export type CalendarPrefetchRecruiter = { email: string; name: string };
 export type CalendarPrefetchContact = { email: string; displayName?: string };
 
 export type CalendarPrefetchSnapshot = {
   events: CalendarPrefetchEvent[];
-  recruiters: CalendarPrefetchRecruiter[];
   googleContacts: CalendarPrefetchContact[];
 };
 
@@ -137,7 +135,7 @@ export function patchCalendarPrefetchCache(
   patch: Partial<CalendarPrefetchSnapshot>
 ): void {
   calendarCache = {
-    ...(calendarCache ?? { events: [], recruiters: [], googleContacts: [] }),
+    ...(calendarCache ?? { events: [], googleContacts: [] }),
     ...patch,
   };
 }
@@ -154,9 +152,8 @@ async function prefetchCalendarData(signal?: AbortSignal): Promise<void> {
   const { timeMin, timeMax } = defaultCalendarRangeIso();
   const eventsUrl = `/api/calendar/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=500`;
 
-  const [eventsRes, recruitersRes, contactsRes] = await Promise.all([
+  const [eventsRes, contactsRes] = await Promise.all([
     fetch(eventsUrl, { cache: "no-store", signal }),
-    fetch("/api/recruiters", { cache: "no-store", signal }),
     fetch("/api/gmail/contacts", { cache: "no-store", signal }),
   ]);
 
@@ -168,12 +165,6 @@ async function prefetchCalendarData(signal?: AbortSignal): Promise<void> {
     events = body.events ?? [];
   }
 
-  let recruiters: CalendarPrefetchRecruiter[] = [];
-  if (recruitersRes.ok) {
-    const body = (await recruitersRes.json()) as { recruiters?: CalendarPrefetchRecruiter[] };
-    recruiters = body.recruiters ?? [];
-  }
-
   let googleContacts: CalendarPrefetchContact[] = [];
   if (contactsRes.ok) {
     const body = (await contactsRes.json()) as { contacts?: CalendarPrefetchContact[] };
@@ -181,7 +172,7 @@ async function prefetchCalendarData(signal?: AbortSignal): Promise<void> {
   }
 
   if (signal?.aborted) return;
-  setCalendarPrefetchCache({ events, recruiters, googleContacts });
+  setCalendarPrefetchCache({ events, googleContacts });
 }
 
 /* ─── Forms ────────────────────────────────────────────────── */

@@ -20,7 +20,6 @@ import {
   MessageCircle,
   MessageSquare,
   Radio,
-  ScanText,
   SlidersHorizontal,
   UserRound,
   Users,
@@ -66,21 +65,18 @@ const opsNav = [
   { href: "/docs", label: "Docs", Icon: BookText },
 ] as const;
 
-const dataNav = [{ href: "/dashboard", label: "Extraction", Icon: ScanText }] as const;
-
 /**
  * Sidebar nav grouped the same way /configs groups its toggles — also used by
  * WorkspaceChrome for the breadcrumb.
  *
- * SMS and Extraction are listed here but ship switched off in /configs, which
- * is how they were already invisible before this nav existed. They appear the
- * moment someone turns them on, rather than needing a code change.
+ * SMS is listed here but ships switched off in /configs, which is how it was
+ * already invisible before this nav existed. It appears the moment someone
+ * turns it on, rather than needing a code change.
  */
 export const workspaceNavGroups = [
   { label: "Comms", items: commsNav },
   { label: "Pipeline", items: pipelineNav },
   { label: "Ops", items: opsNav },
-  { label: "Data", items: dataNav },
 ] as const;
 
 function isNavActive(href: string, pathname: string): boolean {

@@ -5,7 +5,6 @@ export const FEATURE_KEYS = [
   "sheets",
   "docs",
   "sequences",
-  "dashboard",
   "crm",
   "calendar",
   "sms",
@@ -24,7 +23,6 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   sheets: "Sheets",
   docs: "Docs",
   sequences: "Sequences",
-  dashboard: "Extraction",
   crm: "CRM",
   calendar: "Calendar",
   sms: "SMS",
@@ -84,7 +82,6 @@ export function pathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/forms")) return "forms";
   if (pathname.startsWith("/sheets")) return "sheets";
   if (pathname.startsWith("/docs")) return "docs";
-  if (pathname.startsWith("/dashboard")) return "dashboard";
   if (pathname.startsWith("/crm")) return "crm";
   if (pathname.startsWith("/calendar")) return "calendar";
   if (pathname.startsWith("/sequences")) return "sequences";
@@ -119,12 +116,11 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
     if (pathname.startsWith(p)) return null;
   }
 
-  if (pathname.startsWith("/api/fetch-emails")) return "dashboard";
   if (pathname.startsWith("/api/gmail")) return "inbox";
 
   // Persisting the Google refresh token is shared account infrastructure, not a
   // Mail feature: Drive, Calendar, Forms, Sheets, Docs, CRM, Contacts,
-  // Campaigns and Extraction all authenticate with that same token via
+  // and Campaigns all authenticate with that same token via
   // lib/gmail-auth.ts. Gating it on "inbox" meant switching Mail off silently
   // stopped the token being refreshed and degraded every one of them, so it is
   // gated on being signed in only.
@@ -145,16 +141,6 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   // it is reached entirely from the composer's footer, so pathToFeature has no
   // entry for it and this is the only gate that can refuse it.
   if (pathname.startsWith("/api/mail-templates")) return "mailTemplates";
-
-  if (
-    pathname.startsWith("/api/extract") ||
-    pathname.startsWith("/api/delete-extractions") ||
-    pathname.startsWith("/api/export-csv") ||
-    pathname.startsWith("/api/jobs") ||
-    pathname.startsWith("/api/recruiters")
-  ) {
-    return "dashboard";
-  }
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";
@@ -212,7 +198,6 @@ export function firstAccessibleWorkspacePath(restricted: FeatureKey[]): string {
     "/docs",
     "/sms",
     "/whatsapp",
-    "/dashboard",
   ];
   for (const path of candidates) {
     const f = pathToFeature(path);

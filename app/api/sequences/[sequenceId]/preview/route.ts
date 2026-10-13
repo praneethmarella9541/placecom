@@ -11,7 +11,7 @@ import {
 
 export const runtime = "nodejs";
 
-type Params = { params: { sequenceId: string } };
+type Params = { params: Promise<{ sequenceId: string }> };
 type Body = { stepId?: string; enrollmentId?: string };
 
 /**
@@ -20,7 +20,8 @@ type Body = { stepId?: string; enrollmentId?: string };
  * Deliberately goes through the same buildStepEmail() the scheduler uses; a
  * preview that renders differently from the real send is worse than none.
  */
-export async function POST(request: Request, { params }: Params) {
+export async function POST(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 

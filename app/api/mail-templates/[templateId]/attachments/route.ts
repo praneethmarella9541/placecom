@@ -20,7 +20,7 @@ import {
 
 export const runtime = "nodejs";
 
-type Params = { params: { templateId: string } };
+type Params = { params: Promise<{ templateId: string }> };
 
 /**
  * Attaching a file is two calls with the upload in between, because the bytes
@@ -68,7 +68,8 @@ async function loadContext(request: Request, templateId: string) {
 }
 
 /** POST — check a file fits, then sign an upload URL for it. */
-export async function POST(request: Request, { params }: Params) {
+export async function POST(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await loadContext(request, params.templateId);
   if ("error" in ctx) return ctx.error;
 
@@ -101,7 +102,8 @@ export async function POST(request: Request, { params }: Params) {
 }
 
 /** PUT — record a file the browser has finished uploading. */
-export async function PUT(request: Request, { params }: Params) {
+export async function PUT(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await loadContext(request, params.templateId);
   if ("error" in ctx) return ctx.error;
 

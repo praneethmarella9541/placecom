@@ -13,7 +13,8 @@ export type ContactNoteRow = {
 };
 
 /** GET /api/directory-contacts/[id]/notes — notes + quick-logged calls for a contact, shared org-wide */
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -34,7 +35,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
 }
 
 /** POST /api/directory-contacts/[id]/notes — add a note (or a quick-logged call) */
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

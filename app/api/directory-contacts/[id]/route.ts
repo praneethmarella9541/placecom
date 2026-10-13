@@ -23,7 +23,8 @@ type ContactInput = {
 };
 
 /** GET /api/directory-contacts/[id] — single shared contact card */
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -55,7 +56,8 @@ export async function GET(request: Request, { params }: { params: { id: string }
 }
 
 /** PATCH /api/directory-contacts/[id] — edit a shared contact card (any signed-in user) */
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -152,7 +154,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
 }
 
 /** DELETE /api/directory-contacts/[id] — remove a shared contact card (any signed-in user) */
-export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 

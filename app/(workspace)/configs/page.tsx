@@ -326,7 +326,7 @@ export default function ConfigsPage() {
 
           {/* Flipping a switch only edits local state — nothing is persisted
               until this bar's Save. It is fixed to the viewport and offset past
-              the sidebar (same geometry as ExtractionRunBanner) so a pending
+              the sidebar (same geometry as the other sidebar banners) so a pending
               save cannot scroll out of sight and be mistaken for "nothing
               happened". */}
           {dirty && (

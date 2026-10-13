@@ -14,7 +14,7 @@ import { FEATURE_KEYS, FEATURE_LABELS, type FeatureKey } from "@/lib/feature-acc
  * only offers modules this config leaves on.
  */
 
-export type ModuleGroupKey = "comms" | "pipeline" | "ops" | "data";
+export type ModuleGroupKey = "comms" | "pipeline" | "ops";
 
 export type ModuleGroup = {
   key: ModuleGroupKey;
@@ -26,8 +26,7 @@ export type ModuleGroup = {
 
 /**
  * Groups mirror the sidebar's own grouping (see `workspaceNavGroups`) so the
- * toggles read the same way the nav does, plus a "data" group for Extraction
- * which has never had a nav entry.
+ * toggles read the same way the nav does.
  */
 export const MODULE_GROUPS: readonly ModuleGroup[] = [
   {
@@ -57,12 +56,6 @@ export const MODULE_GROUPS: readonly ModuleGroup[] = [
     description: "Google Workspace surfaces — Drive, Calendar, Forms, Sheets, and Docs.",
     modules: ["drive", "calendar", "forms", "sheets", "docs"],
   },
-  {
-    key: "data",
-    label: "Data",
-    description: "AI extraction of recruiters and jobs from mail.",
-    modules: ["dashboard"],
-  },
 ] as const;
 
 /** Short per-module blurb for the /configs rows. */
@@ -82,7 +75,6 @@ export const MODULE_DESCRIPTIONS: Record<FeatureKey, string> = {
   forms: "Form builder and response collection.",
   sheets: "Embedded Google Sheets editor.",
   docs: "Embedded Google Docs editor with link sharing.",
-  dashboard: "AI extraction of recruiter and job data from mail.",
 };
 
 const GROUP_KEYS = new Set<string>(MODULE_GROUPS.map((g) => g.key));
@@ -114,23 +106,24 @@ export type ModuleConfig = {
  * Shipping default, and the fallback whenever the config row is missing or
  * unreadable.
  *
- * `sms` and `dashboard` start off because that is what the product looked like
- * before /configs existed: both had working pages, APIs, and feature keys but
- * no sidebar entry, so no user could reach them through the UI. Encoding that
- * here makes the state explicit and reversible instead of hardcoded — flip
- * either one on in /configs to surface it.
+ * `sms` starts off because that is what the product looked like before
+ * /configs existed: it had a working page, API, and feature key but no sidebar
+ * entry, so no user could reach it through the UI. Encoding that here makes the
+ * state explicit and reversible instead of hardcoded — flip it on in /configs
+ * to surface it.
  *
  * `whatsapp` starts off because its code was deleted outright in 7db62ea and
  * restored later; nobody had it while it was gone, so turning it on should be a
  * deliberate choice rather than a side effect of deploying the restore.
  *
- * Migration 0066 seeds these same three keys. Keep the two in sync: this
+ * Migration 0066 seeds these keys (plus the since-removed "dashboard", which
+ * normalizeModuleConfig drops). Keep the two in sync: this
  * default applies only when the config row is missing, the seed applies only
  * when the row is first created, and neither ever overrides a saved config.
  */
 export const DEFAULT_MODULE_CONFIG: ModuleConfig = {
   disabledGroups: [],
-  disabledModules: ["sms", "dashboard", "whatsapp"],
+  disabledModules: ["sms", "whatsapp"],
   allowDelete: false,
 };
 

@@ -18,7 +18,7 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-type Params = { params: { sequenceId: string; stepId: string } };
+type Params = { params: Promise<{ sequenceId: string; stepId: string }> };
 
 /**
  * POST /api/sequences/:id/steps/:stepId/attachments/from-template
@@ -29,7 +29,8 @@ type Params = { params: { sequenceId: string; stepId: string } };
  * attachment rule (sendsAsDriveLink), so this is a straight copy: stored files
  * become stored step files, Drive links stay Drive links. All or nothing.
  */
-export async function POST(request: Request, { params }: Params) {
+export async function POST(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 

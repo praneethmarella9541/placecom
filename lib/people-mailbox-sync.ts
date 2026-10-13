@@ -378,7 +378,7 @@ async function processHeadersPage(
  * its `contact_sync_state` row (keyed by mailboxOwnerId — one admin mailbox's
  * cursor never touches another's) before returning, so a timeout never loses
  * work. Call again while `done: false` to continue (mirrors the existing
- * extraction_jobs batch-loop pattern in app/api/extract/route.ts).
+ * batch-loop pattern the app's other long-running jobs use).
  *
  * Backfill (first ever sync) pages through the WHOLE mailbox with no message cap —
  * once it completes, every later call runs a fast, exact incremental sync off

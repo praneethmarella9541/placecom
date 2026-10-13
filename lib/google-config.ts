@@ -18,11 +18,11 @@ export function getGoogleOAuthClientId(): string {
  * Minimal scopes for Supabase account linking + Gmail API token on the session.
  * - openid: OIDC
  * - userinfo.email: stable Google account id / email for Supabase user
- * - gmail.modify: list/read threads and messages, plus mark-as-read on open
- *   (supersedes gmail.readonly). Users must re-consent after this is added.
- * - gmail.send: send and reply (required for compose)
- * - calendar.readonly: list events for timeline/weekly views
- * - calendar.events: create recruiter meetings and add attendees
+ * - gmail.modify: list/read threads and messages, mark-as-read on open, AND send/reply
+ *   (supersedes gmail.readonly and gmail.send — messages.send accepts gmail.modify).
+ *   Users must re-consent after this is added.
+ * - calendar.events: list events for the timeline/weekly views, create recruiter meetings,
+ *   add attendees, edit/cancel, and free/busy lookups (covers what calendar.readonly did).
  * - drive: full Drive access — needed because the app lists arbitrary user
  *   files (drive.readonly behaviour), uploads (drive.file behaviour) AND
  *   manages permissions (sharing). The narrower scopes can't grant
@@ -57,8 +57,6 @@ export const GOOGLE_OAUTH_SCOPES = [
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/gmail.modify",
-  "https://www.googleapis.com/auth/gmail.send",
-  "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/drive",
   "https://www.googleapis.com/auth/contacts",

@@ -47,8 +47,9 @@ const VALID_ROLES: DriveRole[] = ["reader", "commenter", "writer"];
 /** PATCH — change a permission's role. */
 export async function PATCH(
   request: Request,
-  { params }: { params: { id: string; permissionId: string } }
+  props: { params: Promise<{ id: string; permissionId: string }> }
 ) {
+  const params = await props.params;
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
@@ -88,8 +89,9 @@ export async function PATCH(
 /** DELETE — revoke a permission. */
 export async function DELETE(
   request: Request,
-  { params }: { params: { id: string; permissionId: string } }
+  props: { params: Promise<{ id: string; permissionId: string }> }
 ) {
+  const params = await props.params;
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });

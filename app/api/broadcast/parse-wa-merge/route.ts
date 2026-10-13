@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
+import { trimSheetToData } from "@/lib/sheet-utils";
 import { getUserOr401 } from "@/lib/request-auth";
 import { splitCsvLine } from "@/lib/broadcast-recipients";
 import {
@@ -116,6 +117,7 @@ export async function POST(request: Request) {
       const sheetName = wb.SheetNames[0];
       if (!sheetName) return NextResponse.json({ error: "Empty workbook" }, { status: 400 });
       const sheet = wb.Sheets[sheetName];
+      trimSheetToData(sheet);
       const raw = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
         header: 1,
         defval: "",

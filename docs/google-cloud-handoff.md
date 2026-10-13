@@ -53,9 +53,10 @@ In **APIs & Services** → **Library**, enable for the project:
 **Data access / Scopes** should include (app requests these on sign-in):
 
 - `openid`, `userinfo.email`
-- `gmail.readonly`, `gmail.send`
-- `calendar.readonly`, `calendar.events`
-- `drive.readonly`
+- `gmail.modify` (read, send, labels)
+- `calendar.events`
+- `drive`, `contacts`, `contacts.other.readonly`
+- `forms.body`, `forms.responses.readonly`, `spreadsheets`
 
 Match `lib/google-config.ts` → `GOOGLE_OAUTH_SCOPES`.
 

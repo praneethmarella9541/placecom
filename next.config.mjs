@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 /** @type {import('next').NextConfig} */
 // Content Security Policy — enforced: anything outside these allowlists is blocked.
 // To debug a new third-party integration, temporarily rename the header below to
@@ -33,6 +36,8 @@ const securityHeaders = [
 ];
 
 const nextConfig = {
+  // A package-lock.json also exists in the parent folder; pin tracing to this project.
+  outputFileTracingRoot: path.dirname(fileURLToPath(import.meta.url)),
   // Don't advertise the framework in an X-Powered-By header.
   poweredByHeader: false,
   async headers() {
@@ -41,6 +46,9 @@ const nextConfig = {
   // Lucide is a barrel package; this avoids flaky dev/HMR issues (e.g. "__webpack_modules__[moduleId] is not a function")
   // and improves tree-shaking. See https://nextjs.org/docs/app/api-reference/next-config-js/optimizePackageImports
   experimental: {
+    // Next 15 stopped caching client-side navigations by default; keep Next 14's windows so
+    // moving between pages doesn't refetch every time.
+    staleTimes: { dynamic: 30, static: 300 },
     optimizePackageImports: ["lucide-react"],
   },
   webpack: (config, { dev }) => {

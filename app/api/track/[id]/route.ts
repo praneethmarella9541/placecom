@@ -36,9 +36,9 @@ const MIN_GENUINE_OPEN_DELAY_MS = 15_000;
 
 export async function GET(
   _request: Request,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
-  const trackingId = context.params.id;
+  const trackingId = (await context.params).id;
   if (!trackingId) return pixelResponse();
 
   try {

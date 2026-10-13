@@ -21,7 +21,7 @@ export const runtime = "nodejs";
 
 const MAX_PER_REQUEST = 200;
 
-type Params = { params: { sequenceId: string } };
+type Params = { params: Promise<{ sequenceId: string }> };
 
 type EnrollmentRowForFields = Parameters<typeof toEnrollmentDto>[0];
 
@@ -29,7 +29,8 @@ const ENROLLMENT_COLUMNS =
   "id, email, display_name, status, current_step_order, next_run_at, first_sent_at, last_sent_at, replied_at, last_error, merge_fields, cc";
 
 /** GET /api/sequences/[id]/enrollments?status=&q= */
-export async function GET(request: Request, { params }: Params) {
+export async function GET(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 
@@ -74,7 +75,8 @@ type PostBody = {
   mergeFields?: Record<string, Record<string, string>>;
 };
 
-export async function POST(request: Request, { params }: Params) {
+export async function POST(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 

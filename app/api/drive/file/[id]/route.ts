@@ -33,10 +33,8 @@ function previewErrorHtml(message: string): string {
   </head><body><p>${message.replace(/</g, "&lt;")}</p></body></html>`;
 }
 
-export async function GET(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
@@ -204,10 +202,8 @@ export async function GET(
  * doesn't have to send it; this also handles legacy multi-parent files
  * (rare) by only swapping the first parent.
  */
-export async function PATCH(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireGmailAccessToken(request);
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
@@ -290,10 +286,8 @@ export async function PATCH(
 }
 
 /** DELETE — move a file or folder to Drive's trash. Gated by /configs "Allow delete". */
-export async function DELETE(
-  request: Request,
-  { params }: { params: { id: string } }
-) {
+export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const forbidden = await deleteForbiddenResponse();
   if (forbidden) return forbidden;
 

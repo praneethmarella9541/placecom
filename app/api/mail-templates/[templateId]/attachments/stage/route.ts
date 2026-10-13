@@ -9,7 +9,7 @@ import { createServiceSupabase } from "@/lib/supabase-service";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
-type Params = { params: { templateId: string } };
+type Params = { params: Promise<{ templateId: string }> };
 
 /**
  * POST /api/mail-templates/:id/attachments/stage
@@ -21,7 +21,8 @@ type Params = { params: { templateId: string } };
  * Drive-linked files come back as `drive` files, which compose already sends
  * as links in the body.
  */
-export async function POST(request: Request, { params }: Params) {
+export async function POST(request: Request, props: Params) {
+  const params = await props.params;
   // Staging is keyed by the signed-in user's id — the same id the send route
   // looks staged uploads up by. Only the session is needed here, not a Google
   // token, which would cost a round trip to Google on every copy.

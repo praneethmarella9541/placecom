@@ -10,7 +10,8 @@ async function requireAuth(request: Request) {
   return { supabase, user } as const;
 }
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
+export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 
@@ -56,7 +57,8 @@ export async function PATCH(request: Request, { params }: { params: { id: string
  * skipping this would strand cards with no stage at all instead of parking
  * them somewhere visible.
  */
-export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const ctx = await requireAuth(request);
   if ("error" in ctx) return ctx.error;
 

@@ -14,11 +14,12 @@ import {
 
 export const runtime = "nodejs";
 
-type Params = { params: { sequenceId: string } };
+type Params = { params: Promise<{ sequenceId: string }> };
 type Body = { action?: "publish" | "pause" | "resume" };
 
 /** POST /api/sequences/[id]/publish — enable, pause or resume sending. */
-export async function POST(request: Request, { params }: Params) {
+export async function POST(request: Request, props: Params) {
+  const params = await props.params;
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 

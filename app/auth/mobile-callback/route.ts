@@ -44,7 +44,7 @@ export async function GET(request: Request) {
     return new NextResponse("Missing authorization code", { status: 400 });
   }
 
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const cookieReturn = cookieStore.get(MOBILE_OAUTH_RETURN_COOKIE)?.value ?? "";
   const queryReturn = searchParams.get("return") ?? "";
 

@@ -16,11 +16,10 @@ const ALLOWED_STATUS = new Set([
   "partial",
 ]);
 
-type RouteContext = { params: { id: string } | Promise<{ id: string }> };
+type RouteContext = { params: Promise<{ id: string }> };
 
 async function resolveJobId(context: RouteContext): Promise<string | null> {
-  const params =
-    context.params instanceof Promise ? await context.params : context.params;
+  const params = await context.params;
   const id = params.id?.trim();
   return id || null;
 }

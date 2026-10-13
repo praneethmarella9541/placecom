@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
+import { trimSheetToData } from "@/lib/sheet-utils";
 import { getUserOr401 } from "@/lib/request-auth";
 import {
   detectBroadcastSpreadsheetKind,
@@ -56,6 +57,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ phones: [] as string[], message: "Empty workbook" });
       }
       const sheet = wb.Sheets[first];
+      trimSheetToData(sheet);
       const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null | undefined)[]>(
         sheet,
         {

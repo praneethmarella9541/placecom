@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { trimSheetToData } from "@/lib/sheet-utils";
 import { extractEmailsFromText, isValidEmail } from "@/lib/broadcast-recipients";
 import { splitCsvLine } from "@/lib/broadcast-recipients";
 import {
@@ -258,6 +259,7 @@ export function readWorkbookTable(buf: Buffer): string[][] {
   if (!first) return [];
   const sheet = wb.Sheets[first];
   if (!sheet) return [];
+  trimSheetToData(sheet);
 
   const fromJson = XLSX.utils.sheet_to_json<string[]>(sheet, {
     header: 1,

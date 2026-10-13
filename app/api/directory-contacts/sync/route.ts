@@ -5,7 +5,7 @@ import { runContactSyncBatch } from "@/lib/people-mailbox-sync";
 
 export const runtime = "nodejs";
 // A single batch pages through as much mail as fits in this budget, then returns
-// so the client can call again — same ceiling as /api/fetch-emails and /api/extract.
+// so the client can call again — same ceiling as the other long-running routes.
 export const maxDuration = 300;
 
 /**

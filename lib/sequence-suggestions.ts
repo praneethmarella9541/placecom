@@ -6,7 +6,7 @@ import type { RecipientSuggestion } from "@/components/RecipientField";
  * Recipient suggestions for the sequence enrolment box.
  *
  * Reuses the same sources the mail composer draws on — Google contacts,
- * addresses seen in past conversations, and legacy CRM recruiters — plus the
+ * and addresses seen in past conversations — plus the
  * Team Directory, the one shared, org-wide contact book every other feature
  * (SMS, the CRM board) is built on. Without it, enrolling someone
  * your team added to the directory but who Google itself has never surfaced
@@ -19,10 +19,6 @@ let inFlight: Promise<RecipientSuggestion[]> | null = null;
 type GmailContactsResponse = {
   contacts?: RecipientSuggestion[];
   photoByEmail?: Record<string, string>;
-};
-
-type RecruitersResponse = {
-  recruiters?: { email: string; name?: string; companyName?: string }[];
 };
 
 type DirectoryContactsResponse = {
@@ -52,12 +48,9 @@ export function loadRecipientSuggestions(): Promise<RecipientSuggestion[]> {
   if (inFlight) return inFlight;
 
   inFlight = (async () => {
-    const [contacts, recruiters, directory] = await Promise.all([
+    const [contacts, directory] = await Promise.all([
       fetch("/api/gmail/contacts")
         .then((r) => (r.ok ? (r.json() as Promise<GmailContactsResponse>) : null))
-        .catch(() => null),
-      fetch("/api/recruiters")
-        .then((r) => (r.ok ? (r.json() as Promise<RecruitersResponse>) : null))
         .catch(() => null),
       fetch("/api/directory-contacts")
         .then((r) => (r.ok ? (r.json() as Promise<DirectoryContactsResponse>) : null))
@@ -65,17 +58,13 @@ export function loadRecipientSuggestions(): Promise<RecipientSuggestion[]> {
     ]);
 
     const fromContacts = contacts?.contacts ?? [];
-    const fromRecruiters = (recruiters?.recruiters ?? []).map((r) => ({
-      email: r.email,
-      displayName: r.name || r.companyName,
-    }));
     // Only entries with a real email — the directory allows phone-only cards
     // (SMS contacts), which have nothing to enroll in an email sequence.
     const fromDirectory = (directory?.contacts ?? [])
       .filter((c): c is { name: string; email: string } => Boolean(c.email?.trim()))
       .map((c) => ({ email: c.email, displayName: c.name }));
 
-    cached = dedupe([fromContacts, fromRecruiters, fromDirectory]);
+    cached = dedupe([fromContacts, fromDirectory]);
     return cached;
   })().finally(() => {
     inFlight = null;

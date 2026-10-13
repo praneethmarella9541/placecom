@@ -11,10 +11,8 @@ import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
-import { hiddenFeatureSet, isFeatureVisible } from "@/lib/module-visibility";
+import { hiddenFeatureSet } from "@/lib/module-visibility";
 import { ContactPhotoProvider } from "@/components/ContactPhotoProvider";
-import { ExtractionRunProvider } from "@/components/ExtractionRunProvider";
-import { ExtractionRunBanner } from "@/components/ExtractionRunBanner";
 import { WorkspaceSidebar, workspaceNavGroups } from "@/components/WorkspaceSidebar";
 import { titleCase } from "@/lib/title-case";
 import { IconX } from "@/components/Icons";
@@ -139,10 +137,6 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
   const [actionsPortalNode, setActionsPortalNode] = useState<HTMLDivElement | null>(null);
   const { me } = useMeMailbox();
 
-  // Extraction has no nav entry of its own when switched off in /configs, and
-  // its background job check and progress banner must go with it.
-  const extractionEnabled = isFeatureVisible(me, "dashboard");
-
   // Read the saved preference after mount (not in the initializer) so the
   // server-rendered and first client-rendered markup match — avoids a
   // hydration mismatch.
@@ -256,21 +250,18 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
       )}
 
       <TopbarActionsPortalContext.Provider value={actionsPortalNode}>
-        <ExtractionRunProvider enabled={extractionEnabled}>
-          <ContactPhotoProvider>
-            <main
-              className={cn(
-                "flex-1 min-w-0 min-h-screen overflow-hidden transition-[margin-left] duration-200",
-                collapsed ? "md:ml-[72px]" : "md:ml-[220px]",
-                "md:px-6 md:pb-6",
-                "pt-[calc(56px+16px+env(safe-area-inset-top,0px))] px-4 pb-[calc(24px+env(safe-area-inset-bottom,0px))] md:pt-[80px]",
-              )}
-            >
-              {children}
-            </main>
-            {extractionEnabled && <ExtractionRunBanner />}
-          </ContactPhotoProvider>
-        </ExtractionRunProvider>
+        <ContactPhotoProvider>
+          <main
+            className={cn(
+              "flex-1 min-w-0 min-h-screen overflow-hidden transition-[margin-left] duration-200",
+              collapsed ? "md:ml-[72px]" : "md:ml-[220px]",
+              "md:px-6 md:pb-6",
+              "pt-[calc(56px+16px+env(safe-area-inset-top,0px))] px-4 pb-[calc(24px+env(safe-area-inset-bottom,0px))] md:pt-[80px]",
+            )}
+          >
+            {children}
+          </main>
+        </ContactPhotoProvider>
       </TopbarActionsPortalContext.Provider>
       <MinimizedComposeBar />
     </div>

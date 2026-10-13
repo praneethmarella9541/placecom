@@ -117,13 +117,6 @@ function meetUrlOf(ev: EventRow): string | undefined {
   return ev.hangoutLink || ev.conferenceData?.entryPoints?.find((e) => e.entryPointType === "video")?.uri || undefined;
 }
 
-type RecruiterRow = {
-  email: string;
-  name: string;
-  companyName: string;
-  source: string;
-};
-
 type SendUpdates = "all" | "externalOnly" | "none";
 
 type ViewType = "timeGridWeek" | "timeGridDay" | "dayGridMonth";
@@ -203,10 +196,7 @@ export default function CalendarPage() {
   const searchParams = useSearchParams();
 
   const [events, setEvents] = useState<EventRow[]>([]);
-  const [recruiters, setRecruiters] = useState<RecruiterRow[]>([]);
-  const [loadingRecruiters, setLoadingRecruiters] = useState(true);
-  // Google contacts — merged with recruiters to power the same
-  // autocomplete used by the Compose mail modal.
+  // Google contacts — power the same autocomplete used by the Compose mail modal.
   const [googleContacts, setGoogleContacts] = useState<RecipientSuggestion[]>([]);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -231,14 +221,13 @@ export default function CalendarPage() {
   useEffect(() => setMounted(true), []);
 
   /**
-   * This page leans on two other modules for conveniences: Mail supplies
-   * attendee autocomplete and the "notify guests" note, Extraction supplies the
-   * recruiter list. Both degrade to manual entry rather than disappearing, but
-   * their requests must not fire when the module is off — middleware 403s them.
+   * This page leans on the Mail module for conveniences: attendee autocomplete
+   * and the "notify guests" note. They degrade to manual entry rather than
+   * disappearing, but their requests must not fire when the module is off —
+   * middleware 403s them.
    */
   const { isVisible } = useModuleVisibility();
   const mailEnabled = isVisible("inbox");
-  const extractionEnabled = isVisible("dashboard");
   const [viewTitle, setViewTitle] = useState("");
   const [rangeStartIso, setRangeStartIso] = useState<string | null>(null);
   const [rangeEndIso, setRangeEndIso] = useState<string | null>(null);
@@ -293,32 +282,6 @@ export default function CalendarPage() {
   const [editIsSeriesInstance, setEditIsSeriesInstance] = useState(false);
 
   /* ── Data loading ────────────────────────────────────── */
-  const loadRecruiters = useCallback(async () => {
-    const cached = getCalendarPrefetchCache();
-    if (cached?.recruiters.length) {
-      setRecruiters(cached.recruiters as RecruiterRow[]);
-      setLoadingRecruiters(false);
-    } else {
-      setLoadingRecruiters(true);
-    }
-    try {
-      if (!extractionEnabled) {
-        setRecruiters([]);
-        setLoadingRecruiters(false);
-        return;
-      }
-      const res = await fetch("/api/recruiters");
-      const json = (await res.json()) as { recruiters?: RecruiterRow[]; error?: string };
-      if (!res.ok) throw new Error(json.error || "Failed to load recruiters");
-      const list = json.recruiters || [];
-      setRecruiters(list);
-      patchCalendarPrefetchCache({ recruiters: list });
-    } catch {
-      // Non-fatal — contacts still power suggestions.
-    } finally {
-      setLoadingRecruiters(false);
-    }
-  }, [extractionEnabled]);
 
   const loadEvents = useCallback(async (timeMin?: string, timeMax?: string) => {
     const defaults = defaultCalendarRangeIso();
@@ -394,7 +357,6 @@ export default function CalendarPage() {
     };
   }, [calendarSearchQuery]);
 
-  useEffect(() => { void loadRecruiters(); }, [loadRecruiters]);
 
   useEffect(() => {
     fetch("/api/me/mailbox")
@@ -430,24 +392,19 @@ export default function CalendarPage() {
     return () => { cancelled = true; };
   }, [mailEnabled]);
 
-  // Merge recruiters + Google contacts into the suggestion list shape that
-  // RecipientField expects. Email is the dedup key; the first encountered
-  // displayName wins (contacts have richer names than recruiters typically).
+  // Turn Google contacts into the suggestion list shape that RecipientField
+  // expects. Email is the dedup key.
   const recipientSuggestions = useMemo((): RecipientSuggestion[] => {
     const map = new Map<string, string>();
     for (const c of googleContacts) {
       const em = c.email.trim().toLowerCase();
       if (em) map.set(em, c.displayName?.trim() || em);
     }
-    for (const r of recruiters) {
-      const em = r.email.trim().toLowerCase();
-      if (em && !map.has(em)) map.set(em, r.name.trim() || em);
-    }
     return Array.from(map.entries()).map(([email, label]) => ({
       email,
       displayName: label !== email ? label : undefined,
     }));
-  }, [googleContacts, recruiters]);
+  }, [googleContacts]);
   useEffect(() => {
     void loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
   }, [loadEvents, rangeStartIso, rangeEndIso]);
@@ -729,7 +686,6 @@ export default function CalendarPage() {
       // Show it on the grid now; the refresh below brings the full details.
       const created = body.event as EventRow | undefined;
       if (created?.id) setEvents((prev) => (prev.some((e) => e.id === created.id) ? prev : [...prev, created]));
-      void loadRecruiters();
       void loadEvents(rangeStartIso || undefined, rangeEndIso || undefined);
     } catch (e) {
       const message = clientFetchFailedMessage(e);
@@ -1695,9 +1651,6 @@ export default function CalendarPage() {
                   onChange={setRecruiterEmail}
                   suggestions={recipientSuggestions}
                 />
-                {loadingRecruiters && recipientSuggestions.length === 0 && (
-                  <p className="mt-1 text-[11px] text-[var(--color-text-faint)]">Loading suggestions…</p>
-                )}
               </div>
               <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--color-text)]">
                 <input

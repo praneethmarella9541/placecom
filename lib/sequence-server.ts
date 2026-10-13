@@ -90,6 +90,9 @@ export type SequenceRecord = {
   track_opens: boolean;
   exit_on_reply: boolean;
   variable_fallbacks: Record<string, string> | null;
+  origin?: string | null;
+  merge_source?: string | null;
+  scheduled_for?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -112,6 +115,9 @@ export function toSequenceDto(row: SequenceRecord): Sequence {
     trackOpens: row.track_opens,
     exitOnReply: row.exit_on_reply,
     variableFallbacks: row.variable_fallbacks ?? {},
+    origin: row.origin === "scheduled" ? "scheduled" : "sequence",
+    mergeSource: row.merge_source === "stored" ? "stored" : "contacts",
+    scheduledFor: row.scheduled_for ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

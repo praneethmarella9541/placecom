@@ -111,6 +111,17 @@ export type GmailComposeDialogProps = {
   massSending?: boolean;
   onMassSendingChange?: (on: boolean) => void;
   massToggleDisabled?: boolean;
+  /** Scheduling switch, shown next to Mass sending once that is on. Omit to hide it. */
+  schedulingEnabled?: boolean;
+  onSchedulingChange?: (on: boolean) => void;
+  /** Strip above the subject while Scheduling is on: the email chain and its options. */
+  scheduleBar?: React.ReactNode;
+  /**
+   * While a follow-up is selected, replaces the subject and body editor with that follow-up's own
+   * editor. The footer's Variables button is pointed at it through `insertVariableOverride`.
+   */
+  scheduleStepEditor?: React.ReactNode;
+  insertVariableOverride?: () => void;
   sendLabel?: string;
   sending?: boolean;
 
@@ -195,6 +206,11 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     massSending,
     onMassSendingChange,
     massToggleDisabled,
+    schedulingEnabled,
+    onSchedulingChange,
+    scheduleBar,
+    scheduleStepEditor,
+    insertVariableOverride,
     sendLabel,
     sending,
     review,
@@ -549,6 +565,12 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               </p>
             ) : null}
 
+            {!reviewing && scheduleBar}
+
+            {!reviewing && scheduleStepEditor ? (
+              scheduleStepEditor
+            ) : (
+            <>
             {showSubject && (
               <div className="flex items-center gap-2 border-b border-[#f1f3f4] px-3 py-2.5">
                 {reviewing ? (
@@ -641,6 +663,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                 />
               </div>
             )}
+            </>
+            )}
 
           </div>
             {attachmentChips ? (
@@ -689,6 +713,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             massSending={massSending}
             onMassSendingChange={onMassSendingChange}
             massToggleDisabled={massToggleDisabled}
+            schedulingEnabled={schedulingEnabled}
+            onSchedulingChange={onSchedulingChange}
             templatesButton={templatesButton}
             labelsButton={labelsButton}
             backLabel={reviewing ? "Back to editor" : undefined}
@@ -699,7 +725,9 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             // there is no path to a merged send that skips looking at one.
             sendHidden={!!onReview && !reviewing}
             onInsertVariable={
-              variables?.length
+              insertVariableOverride && !reviewing
+                ? insertVariableOverride
+                : variables?.length
                 ? () => {
                     if (lastFocusedRef.current === "subject") subjectRef.current?.insertVariableTrigger();
                     else editorRef.current?.insertVariableTrigger();

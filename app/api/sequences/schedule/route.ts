@@ -36,6 +36,7 @@ const INSERT_CHUNK = 500;
 type FollowUpInput = {
   delayDays?: number;
   delayHours?: number;
+  delayMinutes?: number;
   /** Ignored when threading is on (the follow-up replies in the first email's thread). */
   subject?: string;
   bodyHtml?: string;
@@ -145,7 +146,8 @@ export async function POST(request: Request) {
     const f = followUps[i];
     const days = clampInt(f.delayDays, 0, MAX_DELAY_DAYS, 0);
     const hours = clampInt(f.delayHours, 0, 23, 0);
-    if (days === 0 && hours === 0) return bad(`Set a wait before follow-up ${i + 1}.`);
+    const minutes = clampInt(f.delayMinutes, 0, 59, 0);
+    if (days === 0 && hours === 0 && minutes === 0) return bad(`Set a wait before follow-up ${i + 1}.`);
     if (!(f.bodyHtml ?? "").replace(/<[^>]*>/g, "").trim()) return bad(`Follow-up ${i + 1} needs a message.`);
     if (!threadEmails && !(f.subject ?? "").trim()) return bad(`Follow-up ${i + 1} needs a subject.`);
   }
@@ -255,7 +257,7 @@ export async function POST(request: Request) {
         body_html: null,
         delay_days: clampInt(f.delayDays, 0, MAX_DELAY_DAYS, 0),
         delay_hours: clampInt(f.delayHours, 0, 23, 0),
-        delay_minutes: 0,
+        delay_minutes: clampInt(f.delayMinutes, 0, 59, 0),
       });
       stepRows.push({
         sequence_id: sequenceId,

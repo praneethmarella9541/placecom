@@ -5379,6 +5379,7 @@ export default function InboxPage() {
           followUps: scheduleFlow.followUps.map((f) => ({
             delayDays: f.delayDays,
             delayHours: f.delayHours,
+            delayMinutes: f.delayMinutes,
             subject: f.subject,
             bodyHtml: f.bodyHtml,
           })),

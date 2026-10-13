@@ -71,7 +71,18 @@ export const ScheduleFollowUpEditor = forwardRef<ScheduleFollowUpEditorHandle, P
             className={numberClass}
             aria-label="Hours to wait"
           />
-          <span>hours after the previous email, if they haven&apos;t replied</span>
+          <span>hours</span>
+          <input
+            type="number"
+            min={0}
+            max={59}
+            value={followUp.delayMinutes}
+            onChange={(e) => onChange({ delayMinutes: Math.min(59, Math.max(0, Math.floor(Number(e.target.value)) || 0)) })}
+            className={numberClass}
+            aria-label="Minutes to wait"
+          />
+          <span>minutes</span>
+          <span className="text-[#5f6368]">after the previous email, if they haven&apos;t replied</span>
           <div className="flex-1" />
           <button
             type="button"

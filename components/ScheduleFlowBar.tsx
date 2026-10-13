@@ -12,29 +12,21 @@ import {
   type ScheduleFlowState,
 } from "@/lib/schedule-flow";
 
-const TIMEZONES = [
-  "Asia/Kolkata",
-  "Asia/Dubai",
-  "Asia/Singapore",
-  "Europe/London",
-  "Europe/Berlin",
-  "America/New_York",
-  "America/Chicago",
-  "America/Los_Angeles",
-  "Australia/Sydney",
-  "UTC",
-];
-
 const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
 
-/** Start times in 15-minute steps, "09:00" with a 12-hour label. */
-const START_TIMES = Array.from({ length: 96 }, (_, i) => {
-  const h = Math.floor(i / 4);
-  const m = (i % 4) * 15;
-  const value = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-  const label = `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
-  return { value, label };
-});
+const HOURS_12 = Array.from({ length: 12 }, (_, i) => i + 1);
+const MINUTES_60 = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, "0"));
+
+/** "HH:mm" (24-hour) → the three parts the start-time dropdowns edit. */
+function splitTime(value: string): { hour12: number; minute: string; pm: boolean } {
+  const h = Number(value.slice(0, 2)) || 0;
+  return { hour12: h % 12 === 0 ? 12 : h % 12, minute: value.slice(3, 5) || "00", pm: h >= 12 };
+}
+
+function joinTime(hour12: number, minute: string, pm: boolean): string {
+  const h = (hour12 % 12) + (pm ? 12 : 0);
+  return `${String(h).padStart(2, "0")}:${minute}`;
+}
 
 function hourLabel(value: string): string {
   const h = Number(value.slice(0, 2));
@@ -42,6 +34,8 @@ function hourLabel(value: string): string {
 }
 
 // `input-field` is full-width by default; the time dropdowns want a compact fixed width.
+const timeSelectClass =
+  "input-field h-9 !w-[58px] rounded-lg px-1.5 text-[13px] text-[#202124] disabled:cursor-not-allowed disabled:opacity-60";
 const selectClass =
   "input-field h-9 !w-[116px] rounded-lg px-2 text-[13px] text-[#202124] disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -72,10 +66,12 @@ export function ScheduleFlowBar({
   disabled,
 }: Props) {
   const [optionsOpen, setOptionsOpen] = useState(false);
-  const zones = TIMEZONES.includes(flow.timezone) ? TIMEZONES : [flow.timezone, ...TIMEZONES];
   // The start is stored as one "YYYY-MM-DDTHH:mm" value; the date and time are edited separately.
   const startDate = flow.startLocal.slice(0, 10);
   const startTime = flow.startLocal.slice(11, 16) || "09:00";
+  const startParts = splitTime(startTime);
+  const setStartTime = (next: string) =>
+    onChange({ startMode: "later", startLocal: `${startDate || isoDateLocal(new Date())}T${next}` });
 
   return (
     <div className="shrink-0 border-b border-[#f1f3f4] bg-[#faf8f5]" data-testid="schedule-flow-bar">
@@ -153,20 +149,41 @@ export function ScheduleFlowBar({
                 value={startDate}
                 onChange={(d) => onChange({ startMode: "later", startLocal: `${d}T${startTime}` })}
               />
-              <select
-                value={startTime}
-                disabled={disabled}
-                onChange={(e) => {
-                  const date = startDate || isoDateLocal(new Date());
-                  onChange({ startMode: "later", startLocal: `${date}T${e.target.value}` });
-                }}
-                className={selectClass}
-                aria-label="Start time"
-              >
-                {START_TIMES.map((t) => (
-                  <option key={t.value} value={t.value}>{t.label}</option>
-                ))}
-              </select>
+              <span className="flex items-center gap-1">
+                <select
+                  value={startParts.hour12}
+                  disabled={disabled}
+                  onChange={(e) => setStartTime(joinTime(Number(e.target.value), startParts.minute, startParts.pm))}
+                  className={timeSelectClass}
+                  aria-label="Start hour"
+                >
+                  {HOURS_12.map((h) => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+                :
+                <select
+                  value={startParts.minute}
+                  disabled={disabled}
+                  onChange={(e) => setStartTime(joinTime(startParts.hour12, e.target.value, startParts.pm))}
+                  className={timeSelectClass}
+                  aria-label="Start minute"
+                >
+                  {MINUTES_60.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                <select
+                  value={startParts.pm ? "PM" : "AM"}
+                  disabled={disabled}
+                  onChange={(e) => setStartTime(joinTime(startParts.hour12, startParts.minute, e.target.value === "PM"))}
+                  className={timeSelectClass}
+                  aria-label="AM or PM"
+                >
+                  <option value="AM">AM</option>
+                  <option value="PM">PM</option>
+                </select>
+              </span>
             </label>
             <p className="text-[11px] text-[#5f6368]">
               Mails only go out inside the send window below, so a start outside it moves to the next opening.
@@ -226,17 +243,6 @@ export function ScheduleFlowBar({
                 ))}
               </select>
             </div>
-            <select
-              value={flow.timezone}
-              disabled={disabled}
-              onChange={(e) => onChange({ timezone: e.target.value })}
-              className={cn(selectClass, "!w-full")}
-              aria-label="Time zone"
-            >
-              {zones.map((z) => (
-                <option key={z} value={z}>{z}</option>
-              ))}
-            </select>
             <label className="flex items-center gap-2">
               <input
                 type="checkbox"

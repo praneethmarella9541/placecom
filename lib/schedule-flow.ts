@@ -13,6 +13,7 @@ export type FollowUpDraft = {
   id: string;
   delayDays: number;
   delayHours: number;
+  delayMinutes: number;
   /** Only used when follow-ups are not threaded; a threaded follow-up replies to the first email. */
   subject: string;
   bodyHtml: string;
@@ -55,6 +56,7 @@ export function newFollowUp(): FollowUpDraft {
     id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : String(Math.random()),
     delayDays: 3,
     delayHours: 0,
+    delayMinutes: 0,
     subject: "",
     bodyHtml: "",
   };
@@ -87,7 +89,7 @@ export function validateScheduleFlow(state: ScheduleFlowState, now = new Date())
   if (!isValidTimeZone(state.timezone)) return "That time zone isn't recognised.";
   for (let i = 0; i < state.followUps.length; i++) {
     const f = state.followUps[i];
-    if (f.delayDays <= 0 && f.delayHours <= 0) return `Set how long to wait before follow-up ${i + 1}.`;
+    if (f.delayDays <= 0 && f.delayHours <= 0 && f.delayMinutes <= 0) return `Set how long to wait before follow-up ${i + 1}.`;
     if (!textOf(f.bodyHtml)) return `Write the message for follow-up ${i + 1}, or remove it.`;
     if (!state.threadEmails && !f.subject.trim()) return `Follow-up ${i + 1} needs a subject.`;
   }
@@ -122,5 +124,5 @@ export function scheduleSummary(state: ScheduleFlowState): string {
 }
 
 export function followUpDelayLabel(f: FollowUpDraft, businessDaysOnly: boolean): string {
-  return describeDelay(f.delayDays, f.delayHours, 0, businessDaysOnly);
+  return describeDelay(f.delayDays, f.delayHours, f.delayMinutes, businessDaysOnly);
 }

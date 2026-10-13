@@ -237,6 +237,11 @@ export async function POST(request: Request) {
         kind: "email",
         subject_template: subject,
         body_html: stripVariableSpans(bodyHtml),
+        // One insert carries email and wait rows together, so every row needs every column:
+        // a missing key is sent as null, which the not-null delay columns refuse.
+        delay_days: 0,
+        delay_hours: 0,
+        delay_minutes: 0,
       },
     ];
     let order = 2;
@@ -246,6 +251,8 @@ export async function POST(request: Request) {
         mailbox_owner_id: ctx.mailboxOwnerId,
         step_order: order++,
         kind: "wait",
+        subject_template: null,
+        body_html: null,
         delay_days: clampInt(f.delayDays, 0, MAX_DELAY_DAYS, 0),
         delay_hours: clampInt(f.delayHours, 0, 23, 0),
         delay_minutes: 0,
@@ -257,6 +264,9 @@ export async function POST(request: Request) {
         kind: "email",
         subject_template: threadEmails ? "" : (f.subject ?? "").trim(),
         body_html: stripVariableSpans(f.bodyHtml ?? ""),
+        delay_days: 0,
+        delay_hours: 0,
+        delay_minutes: 0,
       });
     }
 

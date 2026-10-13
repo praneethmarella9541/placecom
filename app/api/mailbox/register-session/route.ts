@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import { getAuthedRequest } from "@/lib/api-auth";
+import { encryptToken } from "@/lib/token-crypto";
 
 export const runtime = "nodejs";
 
@@ -103,8 +104,8 @@ export async function POST(request: Request) {
     {
       owner_user_id: user.id,
       gmail_address: user.email ?? null,
-      refresh_token: effectiveRefresh,
-      access_token: access ?? null,
+      refresh_token: encryptToken(effectiveRefresh),
+      access_token: encryptToken(access ?? null),
       access_token_expires_at: googleAccessExpiresAt,
       updated_at: new Date().toISOString(),
     },

@@ -5,6 +5,7 @@ import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import type { AuthedRequest } from "@/lib/api-auth";
+import { encryptToken, decryptToken } from "@/lib/token-crypto";
 
 
 export type MailboxTokenResult =
@@ -163,7 +164,7 @@ async function resolveMailboxGoogleAccessTokenUncached(
     if (!Number.isNaN(exp) && exp > now + ACCESS_SKEW_MS) {
       return {
         ok: true,
-        accessToken: row.access_token as string,
+        accessToken: decryptToken(row.access_token as string) as string,
         sessionUserId: userId,
         mailboxOwnerId,
         gmailAddress,
@@ -171,7 +172,7 @@ async function resolveMailboxGoogleAccessTokenUncached(
     }
   }
 
-  const refresh = row?.refresh_token as string | undefined;
+  const refresh = decryptToken(row?.refresh_token as string | undefined) ?? undefined;
   if (refresh) {
     try {
       const refreshed = await refreshGoogleAccessToken(refresh);
@@ -180,7 +181,7 @@ async function resolveMailboxGoogleAccessTokenUncached(
       await svc
         .from("google_mailbox_credentials")
         .update({
-          access_token: refreshed.access_token,
+          access_token: encryptToken(refreshed.access_token),
           access_token_expires_at: expiresAt,
           updated_at: new Date().toISOString(),
         })

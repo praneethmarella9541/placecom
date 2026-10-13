@@ -2,6 +2,7 @@ import "server-only";
 
 import { ACCESS_SKEW_MS, refreshGoogleAccessToken } from "@/lib/google-oauth-refresh";
 import { createServiceSupabase } from "@/lib/supabase-service";
+import { encryptToken, decryptToken } from "@/lib/token-crypto";
 
 /**
  * Gmail access tokens resolved purely from the database, with no user session.
@@ -65,8 +66,9 @@ export async function getMailboxAccessTokenForOwner(ownerUserId: string): Promis
   if (row.access_token && row.access_token_expires_at) {
     const expiresAt = new Date(row.access_token_expires_at).getTime();
     if (!Number.isNaN(expiresAt) && expiresAt > now + ACCESS_SKEW_MS) {
-      tokenCache.set(ownerUserId, { token: row.access_token, expiresAt, gmailAddress });
-      return { ok: true, accessToken: row.access_token, gmailAddress };
+      const plainAccess = decryptToken(row.access_token) as string;
+      tokenCache.set(ownerUserId, { token: plainAccess, expiresAt, gmailAddress });
+      return { ok: true, accessToken: plainAccess, gmailAddress };
     }
   }
 
@@ -80,7 +82,7 @@ export async function getMailboxAccessTokenForOwner(ownerUserId: string): Promis
 
   let refreshed: { access_token: string; expires_in: number };
   try {
-    refreshed = await refreshGoogleAccessToken(row.refresh_token);
+    refreshed = await refreshGoogleAccessToken(decryptToken(row.refresh_token) as string);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // invalid_grant means the refresh token was revoked or expired — retrying
@@ -102,7 +104,7 @@ export async function getMailboxAccessTokenForOwner(ownerUserId: string): Promis
     await svc
       .from("google_mailbox_credentials")
       .update({
-        access_token: refreshed.access_token,
+        access_token: encryptToken(refreshed.access_token),
         access_token_expires_at: new Date(expiresAt).toISOString(),
         updated_at: new Date().toISOString(),
       })

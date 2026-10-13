@@ -1,5 +1,6 @@
 "use client";
 
+import { sanitizeHtml } from "@/lib/sanitize-html";
 import { useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -1110,7 +1111,7 @@ function SequenceStepPreviewPane({
 
             <div
               className="prose-sm max-w-none bg-[var(--color-surface)] px-4 py-4 text-[14px] text-[var(--color-text)]"
-              dangerouslySetInnerHTML={{ __html: data.html }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(data.html) }}
             />
           </div>
         )}

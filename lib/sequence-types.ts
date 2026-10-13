@@ -81,6 +81,12 @@ export type Sequence = {
   exitOnReply: boolean;
   /** Merge key → value used for recipients who have none of their own. */
   variableFallbacks: Record<string, string>;
+  /** Built in the sequence editor, or created from the composer's Scheduling toggle. */
+  origin: "sequence" | "scheduled";
+  /** Whether merge fields come from the contact book at send time or from the stored recipient fields. */
+  mergeSource: "contacts" | "stored";
+  /** Start time the user picked for a scheduled send; null when it started as soon as possible. */
+  scheduledFor: string | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -9,6 +9,8 @@ import { recordThreadResponses } from "@/lib/email-responses";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { sendMailViaGmail } from "@/lib/gmail-inbox";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-google-token";
+import { addMessageLabels } from "@/lib/gmail-labels";
+import { buildEnrollmentMergeFields } from "@/lib/sequence-variables";
 import { loadStepSendAttachments, type StepSendFiles } from "@/lib/sequence-attachments";
 import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
 import { buildStepEmail } from "@/lib/sequence-body";
@@ -80,6 +82,7 @@ type EnrollmentRow = {
   display_name: string | null;
   merge_fields: Record<string, string> | null;
   cc: string | null;
+  bcc: string | null;
   current_step_order: number;
   next_step_id: string | null;
   attempt_count: number;
@@ -102,6 +105,8 @@ type SequenceRow = {
   track_opens: boolean;
   exit_on_reply: boolean;
   variable_fallbacks: Record<string, string> | null;
+  merge_source: "contacts" | "stored" | null;
+  label_ids: string[] | null;
 };
 
 type StepRow = {
@@ -397,6 +402,7 @@ async function processEnrollment(
     const result = await sendMailViaGmail(mailbox.accessToken, {
       to: enrollment.email,
       cc: enrollment.cc || undefined,
+      bcc: enrollment.bcc || undefined,
       subject: threading ? "" : built.subject,
       textBody: built.text,
       // Files over Gmail's 25 MB travel as Drive links under the body, exactly
@@ -430,6 +436,15 @@ async function processEnrollment(
         .from("email_tracking")
         .update({ gmail_message_id: result.id })
         .eq("id", trackingId);
+    }
+
+    // Labels picked in the composer. The mail is already out, so a failure here is
+    // not worth failing the step over.
+    const labelIds = (sequence.label_ids ?? []).filter(Boolean);
+    if (labelIds.length > 0 && result.id) {
+      await addMessageLabels(mailbox.accessToken, result.id, labelIds, {
+        mailboxKey: mailbox.ownerId,
+      }).catch(() => {});
     }
 
     const plan = planNextEmailStep(
@@ -722,12 +737,18 @@ export async function runSequencesCron(
             await releaseClaim(ctx, enrollment.id);
             continue;
           }
-          await processEnrollment(ctx, enrollment, sequence, steps, mailbox, {
-            mergeFields:
-              resolvedFields.get(enrollment.email.trim().toLowerCase()) ??
-              enrollment.merge_fields ??
-              {},
-          });
+          // A spreadsheet-sourced audience keeps its own columns: the stored fields are
+          // authoritative, so the contact book cannot overwrite them at send time.
+          const mergeFields =
+            sequence.merge_source === "stored"
+              ? buildEnrollmentMergeFields(enrollment.email, {
+                  custom: enrollment.merge_fields,
+                  displayName: enrollment.display_name,
+                })
+              : resolvedFields.get(enrollment.email.trim().toLowerCase()) ??
+                enrollment.merge_fields ??
+                {};
+          await processEnrollment(ctx, enrollment, sequence, steps, mailbox, { mergeFields });
           await sleep(GAP_MS);
         }
       } catch {

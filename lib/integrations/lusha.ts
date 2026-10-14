@@ -314,6 +314,15 @@ export type LushaProspectFilters = {
   companyDomains?: string[];
   jobTitles?: string[];
   countries?: string[];
+  names?: string[];
+  departments?: string[];
+  seniorityIds?: number[];
+  existingDataPoints?: string[];
+  /** true: must have all the chosen details; false: any of them. */
+  existingDataPointsAll?: boolean;
+  locations?: Record<string, string>[];
+  /** "YYYY-MM-DD": only people who changed jobs on or after this day. */
+  jobChangedAfterDate?: string;
 };
 
 export type LushaProspectResult = {
@@ -335,6 +344,15 @@ export async function lushaProspect(
   const contactsInclude: Record<string, unknown> = {};
   if (filters.jobTitles?.length) contactsInclude.jobTitles = filters.jobTitles;
   if (filters.countries?.length) contactsInclude.countries = filters.countries;
+  if (filters.names?.length) contactsInclude.names = filters.names;
+  if (filters.departments?.length) contactsInclude.departments = filters.departments;
+  if (filters.seniorityIds?.length) contactsInclude.seniorityIds = filters.seniorityIds;
+  if (filters.locations?.length) contactsInclude.locations = filters.locations;
+  if (filters.existingDataPoints?.length) {
+    contactsInclude.existingDataPoints = filters.existingDataPoints;
+    contactsInclude.existingDataPointsCondition = filters.existingDataPointsAll ? "and" : "or";
+  }
+  if (filters.jobChangedAfterDate) contactsInclude.jobChangedAfterDate = filters.jobChangedAfterDate;
   const companiesInclude: Record<string, unknown> = {};
   if (filters.companyNames?.length) companiesInclude.names = filters.companyNames;
   if (filters.companyDomains?.length) companiesInclude.domains = filters.companyDomains;
@@ -415,6 +433,20 @@ export async function lushaCompanySuggestions(apiKey: string, query: string): Pr
     const domain = [o.domains_homepage, o.fqdn].find((d): d is string => typeof d === "string" && d.trim() !== "") ?? null;
     const logo = typeof o.logoUrl === "string" && /^https:\/\/logo\.lusha\.co\//.test(o.logoUrl) ? o.logoUrl : null;
     out.push({ name, domain: domain ? domain.replace(/^www\./, "").toLowerCase() : null, logoUrl: logo });
+  }
+  return out;
+}
+
+/** Places matching what was typed: countries, states and cities, as Lusha spells them. */
+export async function lushaLocationSuggestions(apiKey: string, query: string): Promise<Record<string, string>[]> {
+  const raw = await lushaRequest<unknown>(apiKey, `/contacts/prospecting/filters/locations?query=${encodeURIComponent(query)}`, { timeoutMs: 6_000 });
+  const top = obj(raw);
+  const out: Record<string, string>[] = [];
+  for (const v of arr("values" in top ? top.values : raw)) {
+    const o = obj(v);
+    const loc: Record<string, string> = {};
+    for (const k of ["continent", "country", "state", "city"]) if (typeof o[k] === "string" && o[k]) loc[k] = o[k] as string;
+    if (loc.country || loc.continent) out.push(loc);
   }
   return out;
 }

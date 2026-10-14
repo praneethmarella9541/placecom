@@ -4,6 +4,7 @@ import { getConnectionRow } from "@/lib/integrations/connections";
 import { estimateCredits, splitCompanies } from "@/lib/integrations/enrichment";
 import { lushaProspect, type LushaPerson } from "@/lib/integrations/lusha";
 import { logEnrichment, lushaFailure, prepareSpend } from "@/lib/integrations/lusha-spend";
+import { LUSHA_DATA_POINTS, LUSHA_SENIORITY } from "@/lib/integrations/lusha-filters";
 import { getOrgContext, isOrgError } from "@/lib/org-context";
 
 export const runtime = "nodejs";
@@ -58,8 +59,27 @@ export async function POST(request: Request) {
   const companies = splitCompanies(list(body.companies));
   const jobTitles = list(body.jobTitles);
   const countries = list(body.countries, 10);
-  if (companies.names.length + companies.domains.length === 0 && jobTitles.length === 0) {
-    return NextResponse.json({ error: "Enter a company, a job title, or both." }, { status: 400 });
+  const contactNames = list(body.names);
+  const departments = list(body.departments, 16);
+  const seniorityIds = (Array.isArray(body.seniorityIds) ? body.seniorityIds : [])
+    .map(Number)
+    .filter((n) => LUSHA_SENIORITY.some((s) => s.id === n));
+  const dataPointIds = new Set(LUSHA_DATA_POINTS.map((d) => d.id));
+  const existingDataPoints = list(body.existingDataPoints, 10).filter((d) => dataPointIds.has(d));
+  const locations = (Array.isArray(body.locations) ? body.locations : [])
+    .slice(0, 10)
+    .map((l) => {
+      const o = (l && typeof l === "object" ? l : {}) as Record<string, unknown>;
+      const loc: Record<string, string> = {};
+      for (const k of ["continent", "country", "state", "city"]) if (typeof o[k] === "string" && o[k]) loc[k] = String(o[k]).slice(0, 100);
+      return loc;
+    })
+    .filter((l) => l.country || l.continent);
+  const jobChangedAfterDate = typeof body.jobChangedAfterDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.jobChangedAfterDate) ? body.jobChangedAfterDate : undefined;
+  const hasBase =
+    companies.names.length + companies.domains.length + jobTitles.length + contactNames.length + departments.length + seniorityIds.length + locations.length + countries.length > 0;
+  if (!hasBase) {
+    return NextResponse.json({ error: "Pick at least a company, job title, name, department, seniority or location." }, { status: 400 });
   }
   const size = SIZES.includes(Number(body.size)) ? Number(body.size) : 25;
   const page = Math.max(0, Math.min(1000, Math.floor(Number(body.page) || 0)));
@@ -82,7 +102,19 @@ export async function POST(request: Request) {
   try {
     result = await lushaProspect(
       spend.apiKey,
-      { companyNames: companies.names, companyDomains: companies.domains, jobTitles, countries },
+      {
+        companyNames: companies.names,
+        companyDomains: companies.domains,
+        jobTitles,
+        countries,
+        names: contactNames,
+        departments,
+        seniorityIds,
+        locations,
+        existingDataPoints,
+        existingDataPointsAll: body.existingDataPointsAll === true,
+        jobChangedAfterDate,
+      },
       { page, size },
     );
   } catch (e) {

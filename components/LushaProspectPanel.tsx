@@ -1,9 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type React from "react";
 import { LushaMark } from "@/components/LushaLogo";
-import { ExternalLink, Loader2, Search, UserPlus } from "lucide-react";
+import { Building2, CalendarClock, ExternalLink, Loader2, MapPin, Phone, Plus, Minus, Search, UserPlus, UserRound, Users, Briefcase, Armchair } from "lucide-react";
 import { SuggestListInput, type SuggestionItem } from "@/components/SuggestListInput";
+import { SuggestChipsInput } from "@/components/SuggestChipsInput";
+import {
+  JOB_CHANGE_OPTIONS,
+  LUSHA_DATA_POINTS,
+  LUSHA_DEPARTMENTS,
+  LUSHA_SENIORITY,
+} from "@/lib/integrations/lusha-filters";
 import { JOB_TITLE_SUGGESTIONS } from "@/lib/integrations/job-title-suggestions";
 import type { ProspectPerson } from "@/app/api/integrations/lusha/prospect/route";
 import { cn } from "@/lib/utils";
@@ -17,20 +25,64 @@ type AddResult = {
   revealBlocked: string | null;
 };
 
-async function suggestFromLusha(field: "companies" | "countries", term: string): Promise<SuggestionItem[]> {
+async function suggestFromLusha(field: "companies" | "locations", term: string): Promise<SuggestionItem[]> {
   const res = await fetch(`/api/integrations/lusha/suggest?field=${field}&q=${encodeURIComponent(term)}`);
   if (!res.ok) return [];
   const json = (await res.json().catch(() => ({}))) as { values?: SuggestionItem[] };
   return json.values ?? [];
 }
 const suggestCompanies = (term: string) => suggestFromLusha("companies", term);
-const suggestCountries = (term: string) => suggestFromLusha("countries", term);
+const suggestLocations = (term: string) => suggestFromLusha("locations", term);
 const suggestTitles = async (term: string) => {
   const t = term.toLowerCase();
   return JOB_TITLE_SUGGESTIONS.filter((x) => x.toLowerCase().includes(t))
     .slice(0, 8)
     .map((x) => ({ label: x, value: x }));
 };
+
+function toggled<T>(set: Set<T>, v: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(v)) next.delete(v);
+  else next.add(v);
+  return next;
+}
+
+/** One collapsible filter row: icon, title, how many choices are set, and a +/- toggle. */
+function Section({
+  id,
+  icon: Icon,
+  title,
+  count,
+  open,
+  setOpen,
+  children,
+}: {
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  count: number;
+  open: Set<string>;
+  setOpen: (next: Set<string>) => void;
+  children: React.ReactNode;
+}) {
+  const isOpen = open.has(id);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen(toggled(open, id))}
+        aria-expanded={isOpen}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[var(--color-surface-2)]"
+      >
+        <Icon className="h-4 w-4 text-[var(--color-copper)]" />
+        <span className="flex-1 text-[13.5px] font-semibold text-[var(--color-text)]">{title}</span>
+        {count > 0 ? <span className="rounded-full bg-[var(--color-copper)] px-2 py-0.5 text-[11px] font-semibold text-white">{count}</span> : null}
+        {isOpen ? <Minus className="h-4 w-4 text-[var(--color-text-muted)]" /> : <Plus className="h-4 w-4 text-[var(--color-text-muted)]" />}
+      </button>
+      {isOpen ? <div className="space-y-2 px-4 pb-4">{children}</div> : null}
+    </div>
+  );
+}
 
 function splitList(v: string): string[] {
   return v
@@ -50,7 +102,14 @@ function splitList(v: string): string[] {
 export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const [companies, setCompanies] = useState("");
   const [titles, setTitles] = useState("");
-  const [countries, setCountries] = useState("");
+  const [names, setNames] = useState("");
+  const [locations, setLocations] = useState<SuggestionItem[]>([]);
+  const [departments, setDepartments] = useState<Set<string>>(new Set());
+  const [seniority, setSeniority] = useState<Set<number>>(new Set());
+  const [dataPoints, setDataPoints] = useState<Set<string>>(new Set());
+  const [dataAll, setDataAll] = useState(false);
+  const [jobChangeDays, setJobChangeDays] = useState(0);
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set(["company", "title"]));
   const [size, setSize] = useState(25);
   const [estimate, setEstimate] = useState<number | null>(null);
   const [searching, setSearching] = useState(false);
@@ -63,7 +122,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const [adding, setAdding] = useState(false);
   const [result, setResult] = useState<AddResult | null>(null);
 
-  const canSearch = splitList(companies).length + splitList(titles).length > 0;
+  const canSearch =
+    splitList(companies).length + splitList(titles).length + splitList(names).length + locations.length + departments.size + seniority.size > 0;
 
   // The most a search can charge, shown before it runs. Only needs the page size, so it is cheap.
   useEffect(() => {
@@ -95,7 +155,20 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
       const res = await fetch("/api/integrations/lusha/prospect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companies: splitList(companies), jobTitles: splitList(titles), countries: splitList(countries), size }),
+        body: JSON.stringify({
+          companies: splitList(companies),
+          jobTitles: splitList(titles),
+          names: splitList(names),
+          locations: locations.map((l) => JSON.parse(l.value)),
+          departments: [...departments],
+          seniorityIds: [...seniority],
+          existingDataPoints: [...dataPoints],
+          existingDataPointsAll: dataAll,
+          jobChangedAfterDate: jobChangeDays
+            ? new Date(Date.now() - jobChangeDays * 86_400_000).toISOString().slice(0, 10)
+            : undefined,
+          size,
+        }),
       });
       const json = (await res.json().catch(() => ({}))) as { people?: ProspectPerson[]; total?: number; creditsCharged?: number; error?: string };
       if (!res.ok) {
@@ -170,33 +243,83 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
             Find people with Lusha
           </h2>
           <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
-            Search by company and job title, then add the people you want to your contact book. Separate several entries with commas.
+            Narrow down by company, location, job title, department and more, then add the people you want to your contact book.
           </p>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
-            Companies
+        <div className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)]">
+          <p className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Companies</p>
+          <Section id="company" icon={Building2} title="Company name" count={splitList(companies).length} open={openSections} setOpen={setOpenSections}>
             <SuggestListInput className={inputClass} value={companies} onChange={setCompanies} placeholder="Acme, tcs.com" getSuggestions={suggestCompanies} />
-            <span className="block text-[11.5px] font-normal text-[var(--color-text-faint)]">Names or website addresses</span>
-          </label>
-          <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
-            Job titles
+            <span className="block text-[11.5px] text-[var(--color-text-faint)]">Names or website addresses. Separate several with commas.</span>
+          </Section>
+
+          <p className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Contacts</p>
+          <Section id="details" icon={Phone} title="Contact details" count={dataPoints.size} open={openSections} setOpen={setOpenSections}>
+            <p className="text-[12px] text-[var(--color-text-muted)]">Only people Lusha has these for:</p>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {LUSHA_DATA_POINTS.map((d) => (
+                <label key={d.id} className="flex items-center gap-2 text-[13px]">
+                  <input type="checkbox" checked={dataPoints.has(d.id)} onChange={() => setDataPoints((prev) => toggled(prev, d.id))} />
+                  {d.label}
+                </label>
+              ))}
+            </div>
+            {dataPoints.size > 1 ? (
+              <label className="flex items-center gap-2 text-[12.5px] text-[var(--color-text-muted)]">
+                <input type="checkbox" checked={dataAll} onChange={(e) => setDataAll(e.target.checked)} />
+                Must have all of these (otherwise any one is enough)
+              </label>
+            ) : null}
+          </Section>
+          <Section id="location" icon={MapPin} title="Contact location" count={locations.length} open={openSections} setOpen={setOpenSections}>
+            <SuggestChipsInput chips={locations} onChange={setLocations} placeholder="A country, state or city" getSuggestions={suggestLocations} />
+          </Section>
+          <Section id="title" icon={Briefcase} title="Job title" count={splitList(titles).length} open={openSections} setOpen={setOpenSections}>
             <SuggestListInput className={inputClass} value={titles} onChange={setTitles} placeholder="Talent Acquisition, HR Manager" getSuggestions={suggestTitles} />
-          </label>
-          <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
-            Countries <span className="font-normal text-[var(--color-text-faint)]">(optional)</span>
-            <SuggestListInput className={inputClass} value={countries} onChange={setCountries} placeholder="India, United Kingdom" getSuggestions={suggestCountries} />
-          </label>
-          <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
-            How many results
-            <select className={inputClass} value={size} onChange={(e) => setSize(Number(e.target.value))}>
-              {SIZES.map((n) => (
-                <option key={n} value={n}>{n} people</option>
+          </Section>
+          <Section id="name" icon={UserRound} title="Contact name" count={splitList(names).length} open={openSections} setOpen={setOpenSections}>
+            <input className={inputClass} value={names} onChange={(e) => setNames(e.target.value)} placeholder="Priya Sharma, Rahul Mehta" />
+          </Section>
+          <Section id="department" icon={Users} title="Department" count={departments.size} open={openSections} setOpen={setOpenSections}>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {LUSHA_DEPARTMENTS.map((d) => (
+                <label key={d} className="flex items-center gap-2 text-[13px]">
+                  <input type="checkbox" checked={departments.has(d)} onChange={() => setDepartments((prev) => toggled(prev, d))} />
+                  {d}
+                </label>
+              ))}
+            </div>
+          </Section>
+          <Section id="seniority" icon={Armchair} title="Seniority" count={seniority.size} open={openSections} setOpen={setOpenSections}>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {LUSHA_SENIORITY.map((d) => (
+                <label key={d.id} className="flex items-center gap-2 text-[13px]">
+                  <input type="checkbox" checked={seniority.has(d.id)} onChange={() => setSeniority((prev) => toggled(prev, d.id))} />
+                  {d.label}
+                </label>
+              ))}
+            </div>
+          </Section>
+          <Section id="jobchange" icon={CalendarClock} title="Job change" count={jobChangeDays ? 1 : 0} open={openSections} setOpen={setOpenSections}>
+            <select className={inputClass} value={jobChangeDays} onChange={(e) => setJobChangeDays(Number(e.target.value))}>
+              <option value={0}>Any time</option>
+              {JOB_CHANGE_OPTIONS.map((o) => (
+                <option key={o.days} value={o.days}>{o.label}</option>
               ))}
             </select>
-          </label>
+            <span className="block text-[11.5px] text-[var(--color-text-faint)]">People who started a new job in that time. Use it together with another filter.</span>
+          </Section>
         </div>
+
+        <label className="block max-w-xs space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
+          How many results
+          <select className={inputClass} value={size} onChange={(e) => setSize(Number(e.target.value))}>
+            {SIZES.map((n) => (
+              <option key={n} value={n}>{n} people</option>
+            ))}
+          </select>
+        </label>
 
         <div className="flex flex-wrap items-center gap-3">
           <button

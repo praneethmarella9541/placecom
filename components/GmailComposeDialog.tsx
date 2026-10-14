@@ -147,6 +147,11 @@ export type GmailComposeDialogProps = {
     /** Campaign-wide default per variable key, editable from the warning banner. */
     fallbacks?: Record<string, string>;
     onFallbackChange?: (key: string, value: string) => void;
+    /**
+     * A scheduled flow's emails, so each can be previewed: "Email 1", "Follow-up 1", … Omitted when
+     * there is only the one email.
+     */
+    steps?: { labels: string[]; active: number; onSelect: (index: number) => void };
   } | null;
   onBackToEditor?: () => void;
   /** Opens the review screen; omit to hide the button. */
@@ -566,6 +571,34 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             ) : null}
 
             {!reviewing && scheduleBar}
+
+            {reviewing && review.steps ? (
+              <div
+                className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#f1f3f4] bg-[#faf8f5] px-3 py-2"
+                role="tablist"
+                aria-label="Preview which email"
+                data-testid="review-step-tabs"
+              >
+                <span className="mr-1 text-[12px] font-semibold text-[var(--color-copper)]">Preview</span>
+                {review.steps.labels.map((label, i) => (
+                  <button
+                    key={label}
+                    type="button"
+                    role="tab"
+                    aria-selected={review.steps!.active === i}
+                    onClick={() => review.steps!.onSelect(i)}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-[12px] font-medium transition-colors",
+                      review.steps!.active === i
+                        ? "bg-[var(--color-copper)] text-white"
+                        : "border border-[#dadce0] bg-white text-[#3c4043] hover:bg-[#f1f3f4]",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
 
             {!reviewing && scheduleStepEditor ? (
               scheduleStepEditor

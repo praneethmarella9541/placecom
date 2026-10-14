@@ -11,7 +11,6 @@ import {
 } from "@/lib/sequence-attachments";
 import {
   isValidTimeZone,
-  jitteredStart,
   parseTimeToMinutes,
   planNextEmailStep,
   type SequenceStepLite,
@@ -382,10 +381,9 @@ export async function POST(request: Request) {
           )
         : { directoryByEmail: new Map(), syncedByEmail: new Map() };
 
-    // A batch's first sends are spread over up to half an hour so they don't hit Gmail in the
-    // same second; one recipient has no burst to avoid and goes out on schedule.
-    const runAtFor = () => (recipients.length > 1 ? jitteredStart(plan.runAt) : plan.runAt);
-
+    // Everyone is due at the planned time, exactly. A batch is not spread with a random delay:
+    // the runner already sends about four mails a second at most (and 60 per tick), so a large
+    // audience paces itself, and a user who picks 9:00 gets 9:00.
     const enrollmentRows = recipients.map((r) => ({
       sequence_id: sequenceId,
       mailbox_owner_id: ctx.mailboxOwnerId,
@@ -401,7 +399,7 @@ export async function POST(request: Request) {
       cc: useCopies ? cc : null,
       bcc: useCopies ? bcc : null,
       next_step_id: plan.stepId,
-      next_run_at: runAtFor().toISOString(),
+      next_run_at: plan.runAt.toISOString(),
     }));
 
     for (let i = 0; i < enrollmentRows.length; i += INSERT_CHUNK) {

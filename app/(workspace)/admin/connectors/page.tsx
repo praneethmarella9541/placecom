@@ -22,6 +22,29 @@ function actionLabel(key: string): string {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
+/**
+ * The three prices people care about, in a sentence. Lusha returns its whole price list (a couple of
+ * dozen actions); only revealing an email, revealing a phone and searching matter here.
+ */
+function priceSummary(pricing: Record<string, { credits: number; perQuantity: number }>): string | null {
+  const entries = Object.entries(pricing);
+  const find = (...res: RegExp[]) => {
+    for (const re of res) {
+      const hit = entries.find(([k]) => re.test(k));
+      if (hit) return hit[1];
+    }
+    return undefined;
+  };
+  const per = (p: { credits: number; perQuantity: number } | undefined, unit: string) =>
+    p ? `${p.credits} credit${p.credits === 1 ? "" : "s"}${p.perQuantity > 1 ? ` per ${p.perQuantity}` : ""} ${unit}` : null;
+  const parts = [
+    per(find(/reveal.?e-?mail/i, /e-?mail/i), "email revealed"),
+    per(find(/reveal.?phone/i, /phone/i), "phone number revealed"),
+    per(find(/contact.?search/i, /api.?search/i, /search/i), "people in a search"),
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export default function ConnectorsPage() {
   const { me } = useMeMailbox();
   const [connection, setConnection] = useState<PublicConnection | null>(null);
@@ -256,13 +279,8 @@ export default function ConnectorsPage() {
                       .join(" · ") || "Plan details unavailable"}
                     {" · "}checked {formatWhen(connection?.lastCheckedAt ?? null)}
                   </p>
-                  {Object.keys(usage.pricing).length > 0 ? (
-                    <p className="text-[12px] text-[var(--color-text-faint)]">
-                      Cost per reveal:{" "}
-                      {Object.entries(usage.pricing)
-                        .map(([k, v]) => `${actionLabel(k).toLowerCase()} ${v.credits} per ${v.perQuantity}`)
-                        .join(" · ")}
-                    </p>
+                  {priceSummary(usage.pricing) ? (
+                    <p className="text-[12px] text-[var(--color-text-faint)]">Costs: {priceSummary(usage.pricing)}</p>
                   ) : null}
                 </div>
               ) : null}

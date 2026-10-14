@@ -1699,6 +1699,8 @@ export default function InboxPage() {
   const [massToggleConfirm, setMassToggleConfirm] = useState<MassToggleDirection | null>(null);
   /** Email currently shown on the review screen; null means "still editing". */
   const [reviewEmail, setReviewEmail] = useState<string | null>(null);
+  // Which email of a scheduled flow the review screen is showing: 0 = the first, n = follow-up n.
+  const [reviewStep, setReviewStep] = useState(0);
   /**
    * Campaign-wide default per variable key, set from the review screen's
    * warning banner. Applies to every recipient missing that field, not just
@@ -1925,6 +1927,7 @@ export default function InboxPage() {
     setMassImportBusy(false);
     setMassToggleConfirm(null);
     setReviewEmail(null);
+    setReviewStep(0);
     setVariableFallbacks({});
   }, []);
 
@@ -5270,15 +5273,27 @@ export default function InboxPage() {
    * real data only so the review banner keeps offering a fallback after one is
    * typed. Single and mass share the report; only the row set differs.
    */
+  // What the review screen shows: the composer's own email, or — in a scheduled flow — one of its
+  // follow-ups. A threaded follow-up has no subject of its own; it goes out as a reply.
+  const reviewStepIndex =
+    massSending && scheduling ? Math.min(reviewStep, scheduleFlow.followUps.length) : 0;
+  const reviewFollowUp = reviewStepIndex > 0 ? scheduleFlow.followUps[reviewStepIndex - 1] : undefined;
+  const reviewSubjectTemplate = reviewFollowUp
+    ? scheduleFlow.threadEmails
+      ? composeSubject
+      : reviewFollowUp.subject
+    : composeSubject;
+  const reviewBodyTemplate = reviewFollowUp ? reviewFollowUp.bodyHtml : composeBody;
+
   const reviewMissing = useMemo(() => {
     if (!reviewRow) return undefined;
     return reportMissingVariables(
-      composeSubject,
-      composeBody,
+      reviewSubjectTemplate,
+      reviewBodyTemplate,
       [{ email: reviewRow.email, fields: reviewRow.baseFields }],
       massSending ? massVariables : COMPOSE_VARIABLES
     ).byRecipient.get(reviewRow.email);
-  }, [reviewRow, composeSubject, composeBody, massSending, massVariables]);
+  }, [reviewRow, reviewSubjectTemplate, reviewBodyTemplate, massSending, massVariables]);
 
   // ── Scheduling (mass sending) ───────────────────────────────────────────
   const toggleScheduling = (on: boolean) => {
@@ -7284,7 +7299,8 @@ export default function InboxPage() {
         // whenever Review exists, so offering an impossible review would leave
         // the draft with no way forward. sendCompose explains those cases.
         onReview={
-          draftUsesMergeVariables && (massSending ? massMergeRows.length > 0 : !!singleMergeRow)
+          (draftUsesMergeVariables || (massSending && scheduling && scheduleFlow.followUps.length > 0)) &&
+          (massSending ? massMergeRows.length > 0 : !!singleMergeRow)
             ? () =>
                 setReviewEmail(
                   massSending ? massMergeRows[0]?.email ?? null : singleMergeRow?.email ?? null
@@ -7392,14 +7408,25 @@ export default function InboxPage() {
           reviewRow
             ? {
                 toLabel: reviewRow.name || reviewRow.email,
-                subject: mergeTemplate(composeSubject, reviewRow.fields),
+                subject:
+                  reviewFollowUp && scheduleFlow.threadEmails
+                    ? `Re: ${mergeTemplate(composeSubject, reviewRow.fields)}`
+                    : mergeTemplate(reviewSubjectTemplate, reviewRow.fields),
                 // Tinting is an editor affordance — the review screen shows
                 // the mail exactly as the recipient will receive it.
-                bodyHtml: stripVariableSpans(mergeTemplate(composeBody, reviewRow.fields)),
+                bodyHtml: stripVariableSpans(mergeTemplate(reviewBodyTemplate, reviewRow.fields)),
                 missingKeys: reviewMissing,
-                unknownKeys: massSending ? draftUnknownKeys : undefined,
+                unknownKeys: massSending && !reviewFollowUp ? draftUnknownKeys : undefined,
                 unknownSource: massImport?.fileName,
                 noContactCard: !reviewRow.hasCard,
+                steps:
+                  massSending && scheduling && scheduleFlow.followUps.length > 0
+                    ? {
+                        labels: ["Email 1", ...scheduleFlow.followUps.map((_, i) => `Follow-up ${i + 1}`)],
+                        active: reviewStepIndex,
+                        onSelect: setReviewStep,
+                      }
+                    : undefined,
                 fallbacks: variableFallbacks,
                 onFallbackChange: (key, value) =>
                   setVariableFallbacks((prev) => {
@@ -7411,7 +7438,10 @@ export default function InboxPage() {
               }
             : null
         }
-        onBackToEditor={() => setReviewEmail(null)}
+        onBackToEditor={() => {
+          setReviewEmail(null);
+          setReviewStep(0);
+        }}
         footerNotice={
           massSending ? (
             <div className="flex shrink-0 items-center gap-2 border-t border-[#f1f3f4] bg-white px-4 py-2 text-[12px] text-[#5f6368]">

@@ -309,9 +309,62 @@ export async function lushaEnrichByIds(apiKey: string, ids: string[], reveal: Lu
   };
 }
 
+/** Company-side filters, used by both the people search and the company search. */
+export type LushaCompanyFilters = {
+  names?: string[];
+  domains?: string[];
+  locations?: Record<string, string>[];
+  mainIndustryIds?: number[];
+  subIndustryIds?: number[];
+  sizes?: { min?: number; max?: number }[];
+  revenues?: { min?: number; max?: number }[];
+  technologies?: string[];
+  /** true: uses all the chosen technologies; false: any of them. */
+  technologiesAll?: boolean;
+  foundedYear?: { min?: number; max?: number };
+  businessModel?: string[];
+  companyType?: string[];
+  keywords?: string[];
+  /** People search only: the company's funding stage. */
+  fundingRounds?: string[];
+  fundingIpo?: boolean;
+};
+
+function companyInclude(c: LushaCompanyFilters | undefined, forPeople: boolean): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!c) return out;
+  if (c.names?.length) out.names = c.names;
+  if (c.domains?.length) out.domains = c.domains;
+  if (c.locations?.length) out.locations = c.locations;
+  if (c.mainIndustryIds?.length) out.mainIndustriesIds = c.mainIndustryIds;
+  if (c.subIndustryIds?.length) out.subIndustriesIds = c.subIndustryIds;
+  if (c.sizes?.length) out.sizes = c.sizes;
+  if (c.revenues?.length) out.revenues = c.revenues;
+  if (c.technologies?.length) {
+    out.technologies = c.technologies;
+    out.technologiesCondition = c.technologiesAll ? "and" : "or";
+  }
+  if (c.foundedYear && (c.foundedYear.min !== undefined || c.foundedYear.max !== undefined)) out.foundedYear = [c.foundedYear];
+  if (c.businessModel?.length) out.businessModel = c.businessModel;
+  if (c.companyType?.length) out.companyType = c.companyType;
+  if (c.keywords?.length) out.keywords = c.keywords;
+  if (forPeople && (c.fundingRounds?.length || c.fundingIpo)) {
+    out.funding = {
+      ...(c.fundingRounds?.length ? { rounds: c.fundingRounds.map((round) => ({ coverage: "last_round", round })) } : {}),
+      ...(c.fundingIpo ? { isIpo: true } : {}),
+    };
+  }
+  return out;
+}
+
 export type LushaProspectFilters = {
-  companyNames?: string[];
-  companyDomains?: string[];
+  company?: LushaCompanyFilters;
+  /** Skills, previous job titles. */
+  skills?: string[];
+  previousJobTitles?: string[];
+  /** Caps how many people come back per company (1–20). */
+  maxPerCompany?: number;
+  excludeDnc?: boolean;
   jobTitles?: string[];
   countries?: string[];
   names?: string[];
@@ -353,9 +406,9 @@ export async function lushaProspect(
     contactsInclude.existingDataPointsCondition = filters.existingDataPointsAll ? "and" : "or";
   }
   if (filters.jobChangedAfterDate) contactsInclude.jobChangedAfterDate = filters.jobChangedAfterDate;
-  const companiesInclude: Record<string, unknown> = {};
-  if (filters.companyNames?.length) companiesInclude.names = filters.companyNames;
-  if (filters.companyDomains?.length) companiesInclude.domains = filters.companyDomains;
+  if (filters.skills?.length) contactsInclude.skills = filters.skills;
+  if (filters.previousJobTitles?.length) contactsInclude.previousJobTitle = filters.previousJobTitles;
+  const companiesInclude = companyInclude(filters.company, true);
 
   const page = Math.max(0, Math.floor(opts.page ?? 0));
   const size = Math.min(100, Math.max(10, Math.floor(opts.size ?? 25)));
@@ -367,7 +420,11 @@ export async function lushaProspect(
         ...(Object.keys(contactsInclude).length ? { contacts: { include: contactsInclude } } : {}),
         ...(Object.keys(companiesInclude).length ? { companies: { include: companiesInclude } } : {}),
       },
-      options: { includePartialProfiles: true },
+      options: {
+        includePartialProfiles: true,
+        ...(filters.excludeDnc ? { excludeDnc: true } : {}),
+        ...(filters.maxPerCompany ? { maxContactsPerCompany: filters.maxPerCompany } : {}),
+      },
     },
     timeoutMs: 30_000,
   });
@@ -438,8 +495,12 @@ export async function lushaCompanySuggestions(apiKey: string, query: string): Pr
 }
 
 /** Places matching what was typed: countries, states and cities, as Lusha spells them. */
-export async function lushaLocationSuggestions(apiKey: string, query: string): Promise<Record<string, string>[]> {
-  const raw = await lushaRequest<unknown>(apiKey, `/contacts/prospecting/filters/locations?query=${encodeURIComponent(query)}`, { timeoutMs: 6_000 });
+export async function lushaLocationSuggestions(
+  apiKey: string,
+  query: string,
+  scope: "contacts" | "companies" = "contacts",
+): Promise<Record<string, string>[]> {
+  const raw = await lushaRequest<unknown>(apiKey, `/${scope}/prospecting/filters/locations?query=${encodeURIComponent(query)}`, { timeoutMs: 6_000 });
   const top = obj(raw);
   const out: Record<string, string>[] = [];
   for (const v of arr("values" in top ? top.values : raw)) {
@@ -449,4 +510,82 @@ export async function lushaLocationSuggestions(apiKey: string, query: string): P
     if (loc.country || loc.continent) out.push(loc);
   }
   return out;
+}
+
+export type LushaCompany = {
+  id: string;
+  name: string;
+  domain: string | null;
+  industry: string | null;
+  employees: string | null;
+  location: string | null;
+  linkedin: string | null;
+};
+
+function employeeLabel(v: unknown): string | null {
+  const e = obj(v);
+  if (typeof e.exact === "number" && e.exact > 0) return e.exact.toLocaleString("en-US");
+  const min = typeof e.min === "number" ? e.min : null;
+  const max = typeof e.max === "number" ? e.max : null;
+  if (min !== null && max !== null) return `${min.toLocaleString("en-US")}–${max.toLocaleString("en-US")}`;
+  if (min !== null) return `${min.toLocaleString("en-US")}+`;
+  return null;
+}
+
+/**
+ * Search Lusha's database for companies. Previews only; Lusha charges per result returned, so
+ * `size` is also the most this call can cost.
+ */
+export async function lushaCompanyProspect(
+  apiKey: string,
+  company: LushaCompanyFilters,
+  opts: { page?: number; size?: number } = {},
+): Promise<{ companies: LushaCompany[]; total: number; page: number; billing: LushaBilling }> {
+  const page = Math.max(0, Math.floor(opts.page ?? 0));
+  const size = Math.min(100, Math.max(10, Math.floor(opts.size ?? 25)));
+  const raw = await lushaRequest<unknown>(apiKey, "/companies/prospecting", {
+    method: "POST",
+    body: {
+      pagination: { page, size },
+      filters: { companies: { include: companyInclude(company, false) } },
+      options: { includePartialProfiles: true },
+    },
+    timeoutMs: 30_000,
+  });
+  const pagination = obj(obj(raw).pagination);
+  const companies = arr(obj(raw).results).map((r): LushaCompany => {
+    const o = obj(r);
+    const loc = obj(o.location);
+    const domain = str(o.domain);
+    return {
+      id: str(o.id) ?? "",
+      name: str(o.name) ?? "",
+      domain: domain ? domain.replace(/^www\./, "").toLowerCase() : null,
+      industry: str(o.industry),
+      employees: employeeLabel(o.employeeCount),
+      location: [str(loc.city), str(loc.state), str(loc.country)].filter(Boolean).join(", ") || null,
+      linkedin: str(obj(o.socialLinks).linkedin),
+    };
+  });
+  return { companies: companies.filter((c) => c.id && c.name), total: num(pagination.total), page: num(pagination.page), billing: parseBilling(raw) };
+}
+
+export type LushaIndustry = { id: number; name: string; subs: { id: number; name: string }[] };
+
+/** Lusha's industry list: each main industry with its sub-industries. */
+export async function lushaIndustries(apiKey: string): Promise<LushaIndustry[]> {
+  const raw = await lushaRequest<unknown>(apiKey, "/companies/prospecting/filters/industriesLabels", { timeoutMs: 8_000 });
+  const top = obj(raw);
+  return arr("values" in top ? top.values : raw)
+    .map((v): LushaIndustry => {
+      const o = obj(v);
+      return {
+        id: num(o.main_industry_id),
+        name: str(o.main_industry) ?? "",
+        subs: arr(o.sub_industries)
+          .map((x) => ({ id: num(obj(x).id), name: str(obj(x).value) ?? "" }))
+          .filter((x) => x.id && x.name),
+      };
+    })
+    .filter((i) => i.id && i.name);
 }

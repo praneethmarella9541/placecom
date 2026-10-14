@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 
 import { getConnectionRow } from "@/lib/integrations/connections";
-import { estimateCredits, splitCompanies } from "@/lib/integrations/enrichment";
+import { estimateCredits } from "@/lib/integrations/enrichment";
 import { lushaProspect, type LushaPerson } from "@/lib/integrations/lusha";
 import { logEnrichment, lushaFailure, prepareSpend } from "@/lib/integrations/lusha-spend";
+import { hasCompanyFilter, parseCompanyFilters, parseLocations, strList } from "@/lib/integrations/lusha-request";
 import { LUSHA_DATA_POINTS, LUSHA_SENIORITY } from "@/lib/integrations/lusha-filters";
 import { getOrgContext, isOrgError } from "@/lib/org-context";
 
@@ -56,7 +57,10 @@ export async function POST(request: Request) {
   const ctx = orgOrError;
 
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-  const companies = splitCompanies(list(body.companies));
+  const company = parseCompanyFilters(body);
+  const skills = strList(body.skills, 10);
+  const previousJobTitles = strList(body.previousJobTitles, 10);
+  const maxPerCompany = Number.isInteger(Number(body.maxPerCompany)) && Number(body.maxPerCompany) >= 1 && Number(body.maxPerCompany) <= 20 ? Number(body.maxPerCompany) : undefined;
   const jobTitles = list(body.jobTitles);
   const countries = list(body.countries, 10);
   const contactNames = list(body.names);
@@ -66,20 +70,13 @@ export async function POST(request: Request) {
     .filter((n) => LUSHA_SENIORITY.some((s) => s.id === n));
   const dataPointIds = new Set(LUSHA_DATA_POINTS.map((d) => d.id));
   const existingDataPoints = list(body.existingDataPoints, 10).filter((d) => dataPointIds.has(d));
-  const locations = (Array.isArray(body.locations) ? body.locations : [])
-    .slice(0, 10)
-    .map((l) => {
-      const o = (l && typeof l === "object" ? l : {}) as Record<string, unknown>;
-      const loc: Record<string, string> = {};
-      for (const k of ["continent", "country", "state", "city"]) if (typeof o[k] === "string" && o[k]) loc[k] = String(o[k]).slice(0, 100);
-      return loc;
-    })
-    .filter((l) => l.country || l.continent);
+  const locations = parseLocations(body.locations);
   const jobChangedAfterDate = typeof body.jobChangedAfterDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.jobChangedAfterDate) ? body.jobChangedAfterDate : undefined;
   const hasBase =
-    companies.names.length + companies.domains.length + jobTitles.length + contactNames.length + departments.length + seniorityIds.length + locations.length + countries.length > 0;
+    hasCompanyFilter(company) ||
+    jobTitles.length + contactNames.length + departments.length + seniorityIds.length + locations.length + countries.length + skills.length + previousJobTitles.length > 0;
   if (!hasBase) {
-    return NextResponse.json({ error: "Pick at least a company, job title, name, department, seniority or location." }, { status: 400 });
+    return NextResponse.json({ error: "Pick at least one filter, such as a company, job title, location or department." }, { status: 400 });
   }
   const size = SIZES.includes(Number(body.size)) ? Number(body.size) : 25;
   const page = Math.max(0, Math.min(1000, Math.floor(Number(body.page) || 0)));
@@ -103,8 +100,11 @@ export async function POST(request: Request) {
     result = await lushaProspect(
       spend.apiKey,
       {
-        companyNames: companies.names,
-        companyDomains: companies.domains,
+        company,
+        skills,
+        previousJobTitles,
+        maxPerCompany,
+        excludeDnc: body.excludeDnc === true,
         jobTitles,
         countries,
         names: contactNames,

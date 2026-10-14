@@ -42,3 +42,41 @@ export type LushaLocation = { continent?: string; country?: string; state?: stri
 export function locationLabel(l: LushaLocation): string {
   return [l.city, l.state, l.country ?? l.continent].filter(Boolean).join(", ");
 }
+
+export type NumRange = { min?: number; max?: number };
+
+/** Employee-count and revenue bands, exactly as Lusha lists them. */
+export const LUSHA_SIZES: NumRange[] = [
+  { min: 1, max: 10 }, { min: 11, max: 50 }, { min: 51, max: 200 }, { min: 201, max: 500 }, { min: 501, max: 1000 },
+  { min: 1001, max: 5000 }, { min: 5001, max: 10000 }, { min: 10001, max: 100000 }, { min: 100001 },
+];
+
+export const LUSHA_REVENUES: NumRange[] = [
+  { min: 1, max: 1_000_000 }, { min: 1_000_000, max: 5_000_000 }, { min: 5_000_000, max: 10_000_000 },
+  { min: 10_000_000, max: 50_000_000 }, { min: 50_000_000, max: 100_000_000 }, { min: 100_000_000, max: 250_000_000 },
+  { min: 250_000_000, max: 500_000_000 }, { min: 500_000_000, max: 1_000_000_000 }, { min: 1_000_000_000, max: 10_000_000_000 },
+  { min: 10_000_000_000, max: 100_000_000_000 }, { min: 100_000_000_000 },
+];
+
+export const rangeKey = (r: NumRange) => `${r.min ?? ""}-${r.max ?? ""}`;
+
+const money = (n: number) =>
+  n >= 1e9 ? `$${n / 1e9}B` : n >= 1e6 ? `$${n / 1e6}M` : n >= 1e3 ? `$${n / 1e3}K` : `$${n}`;
+
+export function sizeLabel(r: NumRange): string {
+  return r.max === undefined ? `${(r.min ?? 0).toLocaleString("en-US")}+ employees` : `${r.min} – ${r.max.toLocaleString("en-US")} employees`;
+}
+
+export function revenueLabel(r: NumRange): string {
+  if (r.max === undefined) return `${money(r.min ?? 0)}+`;
+  return `${r.min && r.min > 1 ? money(r.min) : "Under"}${r.min && r.min > 1 ? " – " : " "}${money(r.max)}`;
+}
+
+export const LUSHA_BUSINESS_MODELS = ["B2B", "B2C", "B2G"];
+export const LUSHA_COMPANY_TYPES = ["Government", "Private Company", "Public Company", "Educational", "Nonprofit"];
+
+export const LUSHA_FUNDING_ROUNDS: { id: string; label: string }[] = [
+  { id: "pre_seed", label: "Pre-seed" }, { id: "seed", label: "Seed" }, { id: "series_a", label: "Series A" },
+  { id: "series_b", label: "Series B" }, { id: "series_c", label: "Series C" }, { id: "series_d", label: "Series D" },
+  { id: "series_e", label: "Series E or later" }, { id: "other", label: "Other" },
+];

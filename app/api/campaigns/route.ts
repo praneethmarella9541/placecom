@@ -26,29 +26,44 @@ export async function GET(request: Request) {
 
   const { data, error } = await supabase
     .from("email_tracking")
-    .select("campaign_id, campaign_name, sent_at, opened")
+    .select("campaign_id, campaign_name, sent_at, opened, to_address")
     .eq("user_id", user.id)
     .not("campaign_id", "is", null)
     .order("sent_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+  // Counted per person: a flow scheduled with follow-ups has several rows for each recipient.
+  type Row = { campaign_id: string; campaign_name: string | null; sent_at: string; opened: boolean; to_address: string };
   const byId = new Map<string, CampaignListItem>();
-  for (const row of (data ?? []) as { campaign_id: string; campaign_name: string | null; sent_at: string; opened: boolean }[]) {
+  const recipientsByCampaign = new Map<string, Map<string, boolean>>();
+  for (const row of (data ?? []) as Row[]) {
+    const recipient = row.to_address.trim().toLowerCase();
+    let people = recipientsByCampaign.get(row.campaign_id);
+    if (!people) {
+      people = new Map();
+      recipientsByCampaign.set(row.campaign_id, people);
+    }
+    people.set(recipient, (people.get(recipient) ?? false) || row.opened);
+
     const existing = byId.get(row.campaign_id);
     if (!existing) {
       byId.set(row.campaign_id, {
         campaignId: row.campaign_id,
         campaignName: row.campaign_name || "Untitled campaign",
-        sentCount: 1,
-        openedCount: row.opened ? 1 : 0,
+        sentCount: 0,
+        openedCount: 0,
         firstSentAt: row.sent_at,
       });
       continue;
     }
-    existing.sentCount += 1;
-    if (row.opened) existing.openedCount += 1;
     if (row.sent_at < existing.firstSentAt) existing.firstSentAt = row.sent_at;
+  }
+  for (const [id, people] of Array.from(recipientsByCampaign.entries())) {
+    const item = byId.get(id);
+    if (!item) continue;
+    item.sentCount = people.size;
+    item.openedCount = Array.from(people.values()).filter(Boolean).length;
   }
 
   const campaigns = Array.from(byId.values()).sort((a, b) => b.firstSentAt.localeCompare(a.firstSentAt));

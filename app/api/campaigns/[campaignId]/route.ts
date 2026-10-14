@@ -51,23 +51,39 @@ async function fetchTrackingRows(
 }
 
 function buildReport(campaignId: string, rows: TrackingRow[]): CampaignReport {
+  // One entry per person, not per email: a flow scheduled with follow-ups stamps every email it
+  // sends, so a recipient can have several rows. An instant mass send has exactly one each, so
+  // this changes nothing there.
+  const byRecipient = new Map<string, TrackingRow[]>();
+  for (const row of rows) {
+    const key = row.to_address.trim().toLowerCase();
+    const list = byRecipient.get(key);
+    if (list) list.push(row);
+    else byRecipient.set(key, [row]);
+  }
+
+  const recipients: CampaignRecipient[] = Array.from(byRecipient.values())
+    .map((list) => {
+      const openedAts = list.map((r) => r.opened_at).filter((v): v is string => !!v);
+      return {
+        email: list[0].to_address,
+        sentAt: list.map((r) => r.sent_at).sort()[0],
+        opened: list.some((r) => r.opened),
+        openedAt: openedAts.length ? openedAts.sort()[0] : null,
+        replied: list.some((r) => r.replied),
+        bounced: list.some((r) => r.bounced),
+      };
+    })
+    .sort((a, b) => a.email.localeCompare(b.email));
+
   return {
     campaignId,
     campaignName: rows[0]?.campaign_name || "Untitled campaign",
-    sent: rows.length,
-    opened: rows.filter((r) => r.opened).length,
-    replied: rows.filter((r) => r.replied).length,
-    bounced: rows.filter((r) => r.bounced).length,
-    recipients: rows
-      .map((r) => ({
-        email: r.to_address,
-        sentAt: r.sent_at,
-        opened: r.opened,
-        openedAt: r.opened_at,
-        replied: r.replied,
-        bounced: r.bounced,
-      }))
-      .sort((a, b) => a.email.localeCompare(b.email)),
+    sent: recipients.length,
+    opened: recipients.filter((r) => r.opened).length,
+    replied: recipients.filter((r) => r.replied).length,
+    bounced: recipients.filter((r) => r.bounced).length,
+    recipients,
   };
 }
 
@@ -116,7 +132,15 @@ export async function POST(request: Request, props: { params: Promise<{ campaign
     return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
   }
 
-  const pending = rows.filter((r) => !r.replied && !r.bounced && r.gmail_thread_id);
+  const pendingAll = rows.filter((r) => !r.replied && !r.bounced && r.gmail_thread_id);
+  // Follow-ups share their first email's thread, so check each thread once and apply the outcome to
+  // every row in it.
+  const seenThreads = new Set<string>();
+  const pending = pendingAll.filter((r) => {
+    if (seenThreads.has(r.gmail_thread_id!)) return false;
+    seenThreads.add(r.gmail_thread_id!);
+    return true;
+  });
   if (pending.length > 0) {
     const auth = await requireGmailAccessToken(request);
     if (auth.ok) {
@@ -144,15 +168,17 @@ export async function POST(request: Request, props: { params: Promise<{ campaign
       const now = new Date().toISOString();
       for (const { id, outcome } of results) {
         if (!outcome) continue;
-        const { error: updateErr } = await supabase
-          .from("email_tracking")
-          .update(
-            outcome === "replied" ? { replied: true, replied_at: now } : { bounced: true, bounced_at: now }
-          )
-          .eq("id", id);
-        if (updateErr) continue;
-        const row = rows.find((r) => r.id === id);
-        if (row) {
+        const checked = rows.find((r) => r.id === id);
+        // Every still-pending row in the same thread gets the same outcome.
+        const sameThread = pendingAll.filter((r) => r.gmail_thread_id === checked?.gmail_thread_id);
+        for (const row of sameThread.length ? sameThread : checked ? [checked] : []) {
+          const { error: updateErr } = await supabase
+            .from("email_tracking")
+            .update(
+              outcome === "replied" ? { replied: true, replied_at: now } : { bounced: true, bounced_at: now }
+            )
+            .eq("id", row.id);
+          if (updateErr) continue;
           if (outcome === "replied") row.replied = true;
           else row.bounced = true;
         }

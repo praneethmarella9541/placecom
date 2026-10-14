@@ -17,7 +17,12 @@ type SequenceListRow = {
   status: SequenceStatus;
   published_at: string | null;
   updated_at: string;
+  origin: string | null;
+  scheduled_for: string | null;
 };
+
+/** Emails this far past due mean the scheduler is not running (a working one defers or sends them). */
+const OVERDUE_MINUTES = 10;
 
 /** GET /api/sequences — every sequence in the caller's mailbox. */
 export async function GET(request: Request) {
@@ -26,7 +31,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await ctx.svc
     .from("sequences")
-    .select("id, name, description, status, published_at, updated_at")
+    .select("id, name, description, status, published_at, updated_at, origin, scheduled_for")
     .eq("mailbox_owner_id", ctx.mailboxOwnerId)
     .neq("status", "archived")
     .order("updated_at", { ascending: false });
@@ -36,7 +41,10 @@ export async function GET(request: Request) {
   const rows = (data ?? []) as SequenceListRow[];
   const ids = rows.map((r) => r.id);
 
-  const [counts, { data: stepRows }, { data: lastSend }] = await Promise.all([
+  const activeIds = rows.filter((r) => r.status === "active").map((r) => r.id);
+  const overdueCutoff = new Date(Date.now() - OVERDUE_MINUTES * 60_000).toISOString();
+
+  const [counts, { data: stepRows }, { data: lastSend }, nextRuns, overdue] = await Promise.all([
     countEnrollmentsBySequence(ctx.svc, ids),
     ids.length
       ? ctx.svc.from("sequence_steps").select("sequence_id, kind").in("sequence_id", ids)
@@ -48,7 +56,37 @@ export async function GET(request: Request) {
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle(),
+    // Earliest queued send per running flow — one small query each, so a flow with thousands of
+    // recipients costs the same as one with two.
+    Promise.all(
+      activeIds.map(async (id) => {
+        const { data } = await ctx.svc
+          .from("sequence_enrollments")
+          .select("next_run_at")
+          .eq("sequence_id", id)
+          .eq("status", "active")
+          .not("next_run_at", "is", null)
+          .order("next_run_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        return [id, (data as { next_run_at?: string } | null)?.next_run_at ?? null] as const;
+      }),
+    ),
+    // Due long ago on a flow that is switched on — the scheduler should have taken these already.
+    ctx.svc
+      .from("sequence_enrollments")
+      .select("id, sequences!inner(status)", { count: "exact", head: true })
+      .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+      .eq("status", "active")
+      .eq("sequences.status", "active")
+      .not("next_run_at", "is", null)
+      .lt("next_run_at", overdueCutoff)
+      // A running scheduler claims every due row each minute, which refreshes updated_at — even for
+      // one it then declines to send (a duplicate it won't resend, say). Only a row nothing has
+      // touched for the whole window points at a scheduler that is not running.
+      .lt("updated_at", overdueCutoff),
   ]);
+  const nextRunBySequence = new Map<string, string | null>(nextRuns);
 
   const emailStepCounts = new Map<string, number>();
   for (const row of (stepRows ?? []) as { sequence_id: string; kind: string }[]) {
@@ -68,6 +106,9 @@ export async function GET(request: Request) {
       status: row.status,
       publishedAt: row.published_at,
       updatedAt: row.updated_at,
+      origin: row.origin === "scheduled" ? "scheduled" : "sequence",
+      scheduledFor: row.scheduled_for ?? null,
+      nextRunAt: nextRunBySequence.get(row.id) ?? null,
       emailStepCount: emailStepCounts.get(row.id) ?? 0,
       recipientCount,
       counts: bucket,
@@ -78,6 +119,9 @@ export async function GET(request: Request) {
     sequences,
     // Lets the list page warn when the external pinger has stopped running.
     schedulerLastRunAt: (lastSend as { created_at?: string } | null)?.created_at ?? null,
+    // How many due emails the scheduler has not touched for over OVERDUE_MINUTES. Anything above
+    // zero means it is not running, which is the one failure the list can't otherwise show.
+    overdueCount: overdue.count ?? 0,
   });
 }
 

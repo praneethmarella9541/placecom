@@ -95,11 +95,13 @@ export type EnrollmentCounts = Record<EnrollmentStatus, number>;
 
 export type SequenceListItem = Pick<
   Sequence,
-  "id" | "name" | "description" | "status" | "publishedAt" | "updatedAt"
+  "id" | "name" | "description" | "status" | "publishedAt" | "updatedAt" | "origin" | "scheduledFor"
 > & {
   emailStepCount: number;
   recipientCount: number;
   counts: EnrollmentCounts;
+  /** Earliest time the scheduler will next send for this flow; null when nothing is queued. */
+  nextRunAt: string | null;
 };
 
 export type SequenceEnrollment = {

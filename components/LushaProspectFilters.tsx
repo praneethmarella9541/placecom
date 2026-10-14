@@ -319,9 +319,11 @@ export function CompanyFilters({
 // ─── Contact filters ─────────────────────────────────────────────────────────
 
 export function ContactFilters({
-  value, onChange, open, setOpen,
+  value, onChange, open, setOpen, showResultOptions,
 }: {
   value: ContactFilterState; onChange: (v: ContactFilterState) => void; open: Set<string>; setOpen: (n: Set<string>) => void;
+  /** Only the people search has these. */
+  showResultOptions: boolean;
 }) {
   const set = (patch: Partial<ContactFilterState>) => onChange({ ...value, ...patch });
   const s = { open, setOpen };
@@ -369,6 +371,7 @@ export function ContactFilters({
         </select>
         <span className={hint}>People who started a new job in that time. Use it together with another filter.</span>
       </Section>
+      {showResultOptions ? (
       <Section id="ct-options" icon={Settings2} title="Result options" count={(value.maxPerCompany ? 1 : 0) + (value.excludeDnc ? 1 : 0)} {...s}>
         <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
           People per company
@@ -384,6 +387,7 @@ export function ContactFilters({
           Leave out people on a do-not-call list
         </label>
       </Section>
+      ) : null}
     </>
   );
 }

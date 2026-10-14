@@ -357,14 +357,8 @@ function companyInclude(c: LushaCompanyFilters | undefined, forPeople: boolean):
   return out;
 }
 
-export type LushaProspectFilters = {
-  company?: LushaCompanyFilters;
-  /** Skills, previous job titles. */
-  skills?: string[];
-  previousJobTitles?: string[];
-  /** Caps how many people come back per company (1–20). */
-  maxPerCompany?: number;
-  excludeDnc?: boolean;
+/** People-side filters, used by the people search and (to find companies with matching people) the company search. */
+export type LushaContactFilters = {
   jobTitles?: string[];
   countries?: string[];
   names?: string[];
@@ -376,6 +370,34 @@ export type LushaProspectFilters = {
   locations?: Record<string, string>[];
   /** "YYYY-MM-DD": only people who changed jobs on or after this day. */
   jobChangedAfterDate?: string;
+  /** Skills, previous job titles. */
+  skills?: string[];
+  previousJobTitles?: string[];
+};
+
+function contactInclude(f: LushaContactFilters): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (f.jobTitles?.length) out.jobTitles = f.jobTitles;
+  if (f.countries?.length) out.countries = f.countries;
+  if (f.names?.length) out.names = f.names;
+  if (f.departments?.length) out.departments = f.departments;
+  if (f.seniorityIds?.length) out.seniorityIds = f.seniorityIds;
+  if (f.locations?.length) out.locations = f.locations;
+  if (f.existingDataPoints?.length) {
+    out.existingDataPoints = f.existingDataPoints;
+    out.existingDataPointsCondition = f.existingDataPointsAll ? "and" : "or";
+  }
+  if (f.jobChangedAfterDate) out.jobChangedAfterDate = f.jobChangedAfterDate;
+  if (f.skills?.length) out.skills = f.skills;
+  if (f.previousJobTitles?.length) out.previousJobTitle = f.previousJobTitles;
+  return out;
+}
+
+export type LushaProspectFilters = LushaContactFilters & {
+  company?: LushaCompanyFilters;
+  /** Caps how many people come back per company (1–20). */
+  maxPerCompany?: number;
+  excludeDnc?: boolean;
 };
 
 export type LushaProspectResult = {
@@ -394,20 +416,7 @@ export async function lushaProspect(
   filters: LushaProspectFilters,
   opts: { page?: number; size?: number } = {},
 ): Promise<LushaProspectResult> {
-  const contactsInclude: Record<string, unknown> = {};
-  if (filters.jobTitles?.length) contactsInclude.jobTitles = filters.jobTitles;
-  if (filters.countries?.length) contactsInclude.countries = filters.countries;
-  if (filters.names?.length) contactsInclude.names = filters.names;
-  if (filters.departments?.length) contactsInclude.departments = filters.departments;
-  if (filters.seniorityIds?.length) contactsInclude.seniorityIds = filters.seniorityIds;
-  if (filters.locations?.length) contactsInclude.locations = filters.locations;
-  if (filters.existingDataPoints?.length) {
-    contactsInclude.existingDataPoints = filters.existingDataPoints;
-    contactsInclude.existingDataPointsCondition = filters.existingDataPointsAll ? "and" : "or";
-  }
-  if (filters.jobChangedAfterDate) contactsInclude.jobChangedAfterDate = filters.jobChangedAfterDate;
-  if (filters.skills?.length) contactsInclude.skills = filters.skills;
-  if (filters.previousJobTitles?.length) contactsInclude.previousJobTitle = filters.previousJobTitles;
+  const contactsInclude = contactInclude(filters);
   const companiesInclude = companyInclude(filters.company, true);
 
   const page = Math.max(0, Math.floor(opts.page ?? 0));
@@ -540,14 +549,20 @@ export async function lushaCompanyProspect(
   apiKey: string,
   company: LushaCompanyFilters,
   opts: { page?: number; size?: number } = {},
+  /** Only companies that have people matching these. */
+  contact: LushaContactFilters = {},
 ): Promise<{ companies: LushaCompany[]; total: number; page: number; billing: LushaBilling }> {
+  const people = contactInclude(contact);
   const page = Math.max(0, Math.floor(opts.page ?? 0));
   const size = Math.min(100, Math.max(10, Math.floor(opts.size ?? 25)));
   const raw = await lushaRequest<unknown>(apiKey, "/companies/prospecting", {
     method: "POST",
     body: {
       pagination: { page, size },
-      filters: { companies: { include: companyInclude(company, false) } },
+      filters: {
+        companies: { include: companyInclude(company, false) },
+        ...(Object.keys(people).length ? { contacts: { include: people } } : {}),
+      },
       options: { includePartialProfiles: true },
     },
     timeoutMs: 30_000,

@@ -1,8 +1,10 @@
-import type { LushaCompanyFilters } from "@/lib/integrations/lusha";
+import type { LushaCompanyFilters, LushaContactFilters } from "@/lib/integrations/lusha";
 import { splitCompanies } from "@/lib/integrations/enrichment";
 import {
   LUSHA_BUSINESS_MODELS,
   LUSHA_COMPANY_TYPES,
+  LUSHA_DATA_POINTS,
+  LUSHA_SENIORITY,
   LUSHA_FUNDING_ROUNDS,
   LUSHA_REVENUES,
   LUSHA_SIZES,
@@ -80,5 +82,32 @@ export function hasCompanyFilter(c: LushaCompanyFilters): boolean {
     c.names?.length || c.domains?.length || c.locations?.length || c.mainIndustryIds?.length || c.subIndustryIds?.length ||
       c.sizes?.length || c.revenues?.length || c.technologies?.length || c.foundedYear || c.businessModel?.length ||
       c.companyType?.length || c.keywords?.length || c.fundingRounds?.length || c.fundingIpo,
+  );
+}
+
+/** Reads the people filters out of a request body, keeping only values Lusha accepts. */
+export function parseContactFilters(raw: unknown): LushaContactFilters {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const dataPointIds = new Set(LUSHA_DATA_POINTS.map((d) => d.id));
+  return {
+    jobTitles: strList(o.jobTitles),
+    countries: strList(o.countries, 10),
+    names: strList(o.names),
+    departments: strList(o.departments, 16),
+    seniorityIds: (Array.isArray(o.seniorityIds) ? o.seniorityIds : []).map(Number).filter((n) => LUSHA_SENIORITY.some((s) => s.id === n)),
+    existingDataPoints: strList(o.existingDataPoints, 10).filter((d) => dataPointIds.has(d)),
+    existingDataPointsAll: o.existingDataPointsAll === true,
+    locations: parseLocations(o.locations),
+    jobChangedAfterDate: typeof o.jobChangedAfterDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(o.jobChangedAfterDate) ? o.jobChangedAfterDate : undefined,
+    skills: strList(o.skills, 10),
+    previousJobTitles: strList(o.previousJobTitles, 10),
+  };
+}
+
+/** True when the people side has something to search on (a date or data-point filter alone isn't enough). */
+export function hasContactBase(c: LushaContactFilters): boolean {
+  return Boolean(
+    c.jobTitles?.length || c.countries?.length || c.names?.length || c.departments?.length || c.seniorityIds?.length ||
+      c.locations?.length || c.skills?.length || c.previousJobTitles?.length,
   );
 }

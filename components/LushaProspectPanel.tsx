@@ -57,7 +57,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
 
   const companyCount = companyFilterCount(company);
   const contactCount = contactFilterCount(contact);
-  const canSearch = tab === "companies" ? companyCount > 0 : companyCount + contactCount > 0;
+  const canSearch = companyCount + contactCount > 0;
   const endpoint = tab === "companies" ? "/api/integrations/lusha/prospect/companies" : "/api/integrations/lusha/prospect";
 
   // The most a search can charge, shown before it runs. Only needs the page size, so it is cheap.
@@ -87,7 +87,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
     setError(null);
     setResult(null);
     try {
-      const body = tab === "companies" ? { ...companyBody(company), size } : { ...companyBody(company), ...contactBody(contact), size };
+      const body = { ...companyBody(company), ...contactBody(contact), size };
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -205,13 +205,13 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">Filters</h2>
         </div>
         <div className="flex border-b border-[var(--color-border)]">
-          {tabButton("contacts", "Contacts", UserRound, contactCount)}
-          {tabButton("companies", "Companies", Building2, tab === "companies" ? companyCount : 0)}
+          {tabButton("contacts", "Contacts", UserRound, 0)}
+          {tabButton("companies", "Companies", Building2, 0)}
         </div>
 
         <div className="divide-y divide-[var(--color-border)]">
           <CompanyFilters value={company} onChange={setCompany} showFunding={tab === "contacts"} open={open} setOpen={setOpen} />
-          {tab === "contacts" ? <ContactFilters value={contact} onChange={setContact} open={open} setOpen={setOpen} /> : null}
+          <ContactFilters value={contact} onChange={setContact} open={open} setOpen={setOpen} showResultOptions={tab === "contacts"} />
         </div>
 
         <div className="space-y-3 border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] p-4">

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, Sparkles, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import {
@@ -15,6 +15,8 @@ import {
   IconWhatsAppLogo,
 } from "@/components/Icons";
 import { ContactFormModal, contactToFormInput } from "@/components/ContactFormModal";
+import { LushaRevealModal } from "@/components/LushaRevealModal";
+import { useLushaConnected } from "@/hooks/useLushaConnected";
 import { ContactDetailQuickLogger } from "@/components/ContactDetailQuickLogger";
 import { ContactActivityTimeline } from "@/components/ContactActivityTimeline";
 import { useDirectoryContact } from "@/hooks/useDirectoryContacts";
@@ -39,6 +41,8 @@ export default function ContactDetailPage() {
   const router = useRouter();
   const { contact, loading, error, reload } = useDirectoryContact(id);
   const [editOpen, setEditOpen] = useState(false);
+  const [lushaOpen, setLushaOpen] = useState(false);
+  const lushaConnected = useLushaConnected();
   const [busy, setBusy] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [lead, setLead] = useState<MatchedLead | null>(null);
@@ -143,6 +147,17 @@ export default function ContactDetailPage() {
           {titleCase("Back to directory")}
         </Link>
         <div className="flex items-center gap-2">
+          {lushaConnected ? (
+            <button
+              type="button"
+              data-testid="contact-find-lusha"
+              onClick={() => setLushaOpen(true)}
+              className="btn-ghost inline-flex items-center gap-1.5 px-3 text-[13px] font-semibold"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              {titleCase("Find email & phone")}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => setEditOpen(true)}
@@ -293,6 +308,16 @@ export default function ContactDetailPage() {
           </div>
         </div>
       </div>
+
+      {lushaOpen && (
+        <LushaRevealModal
+          contact={contact}
+          onClose={() => setLushaOpen(false)}
+          onApplied={() => {
+            void reload();
+          }}
+        />
+      )}
 
       {editOpen && (
         <ContactFormModal

@@ -167,3 +167,197 @@ export function parseLushaUsage(raw: unknown): LushaUsage {
 export async function fetchLushaUsage(apiKey: string): Promise<LushaUsage> {
   return parseLushaUsage(await lushaRequest<unknown>(apiKey, "/account/usage"));
 }
+
+// ─── Finding and revealing people ────────────────────────────────────────────
+
+export type LushaReveal = "emails" | "phones";
+
+/** How to point Lusha at one person: an id, an email, a LinkedIn URL, or name plus company. */
+export type LushaIdentifier = {
+  clientReferenceId?: string;
+  id?: string;
+  linkedinUrl?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  companyDomain?: string;
+};
+
+export type LushaEmail = { email: string; type: string; confidence: string | null };
+export type LushaPhone = { number: string; type: string; doNotCall: boolean };
+
+/** One person as Lusha returned them, reduced to what the workspace uses. */
+export type LushaPerson = {
+  /** The reference we sent, echoed back; results are not guaranteed to arrive in order. */
+  ref: string | null;
+  id: string | null;
+  fullName: string;
+  firstName: string;
+  lastName: string;
+  title: string | null;
+  company: string | null;
+  domain: string | null;
+  location: string | null;
+  linkedin: string | null;
+  emails: LushaEmail[];
+  phones: LushaPhone[];
+  /** What it would cost to reveal, per field, when the person came from a search (0 = already paid for). */
+  canReveal: { field: string; credits: number }[];
+  /** Set instead of profile data when Lusha could not find or reveal this person. */
+  error: { code: string; message: string } | null;
+};
+
+export type LushaBilling = { creditsCharged: number; resultsReturned: number };
+
+function obj(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+}
+
+function arr(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+
+/** A Lusha person record, whether from search, prospecting or enrich — they share most fields. */
+export function parseLushaPerson(raw: unknown): LushaPerson {
+  const o = obj(raw);
+  const job = obj(o.jobTitle);
+  const company = obj(o.company);
+  const loc = obj(o.location);
+  const social = obj(o.socialLinks);
+  const err = obj(o.error);
+
+  const firstName = str(o.firstName) ?? "";
+  const lastName = str(o.lastName) ?? "";
+  const place = [str(loc.city), str(loc.state), str(loc.country)].filter(Boolean).join(", ");
+
+  return {
+    ref: str(o.clientReferenceId),
+    id: o.id === undefined || o.id === null ? null : String(o.id),
+    fullName: str(o.fullName) ?? `${firstName} ${lastName}`.trim(),
+    firstName,
+    lastName,
+    title: str(job.title),
+    company: str(company.name),
+    domain: str(company.domain),
+    location: place || null,
+    linkedin: str(social.linkedin),
+    emails: arr(o.emails)
+      .map(obj)
+      .filter((e) => typeof e.email === "string" && e.email)
+      .map((e) => ({ email: String(e.email).trim().toLowerCase(), type: str(e.type) ?? "unknown", confidence: str(e.confidence) })),
+    phones: arr(o.phones)
+      .map(obj)
+      .filter((p) => typeof p.number === "string" && p.number)
+      .map((p) => ({ number: String(p.number).trim(), type: str(p.type) ?? "unknown", doNotCall: p.doNotCall === true })),
+    canReveal: arr(o.canReveal)
+      .map(obj)
+      .filter((c) => typeof c.field === "string")
+      .map((c) => ({ field: String(c.field), credits: num(c.credits) })),
+    error: str(err.code) ? { code: String(err.code), message: str(err.message) ?? "Lusha could not find this person." } : null,
+  };
+}
+
+function parseBilling(raw: unknown): LushaBilling {
+  const b = obj(obj(raw).billing);
+  return { creditsCharged: num(b.creditsCharged), resultsReturned: num(b.resultsReturned) };
+}
+
+/** What the response says about running out of credits part-way through a request. */
+function ranOutOfCredits(raw: unknown): boolean {
+  const status = str(obj(raw).status);
+  return status === "OUT_OF_CREDITS" || status === "PARTIAL_OUT_OF_CREDITS";
+}
+
+export type LushaRevealResult = { people: LushaPerson[]; billing: LushaBilling; outOfCredits: boolean };
+
+/**
+ * Find people by identifier and reveal their email and/or phone in one call (up to 100). Charges the
+ * search plus each revealed field, and reports what it charged. Anything Lusha cannot match comes
+ * back as a person with `error` set rather than failing the whole request.
+ */
+export async function lushaSearchAndEnrich(
+  apiKey: string,
+  contacts: LushaIdentifier[],
+  reveal: LushaReveal[],
+): Promise<LushaRevealResult> {
+  if (contacts.length === 0) return { people: [], billing: { creditsCharged: 0, resultsReturned: 0 }, outOfCredits: false };
+  const raw = await lushaRequest<unknown>(apiKey, "/contacts/search-and-enrich", {
+    method: "POST",
+    body: { contacts: contacts.slice(0, 100), reveal, options: { includePartialProfiles: true } },
+    timeoutMs: 45_000,
+  });
+  return {
+    people: arr(obj(raw).results).map(parseLushaPerson),
+    billing: parseBilling(raw),
+    outOfCredits: ranOutOfCredits(raw),
+  };
+}
+
+/** Reveal email and/or phone for people already found by a search (their Lusha ids), up to 100. */
+export async function lushaEnrichByIds(apiKey: string, ids: string[], reveal: LushaReveal[]): Promise<LushaRevealResult> {
+  if (ids.length === 0) return { people: [], billing: { creditsCharged: 0, resultsReturned: 0 }, outOfCredits: false };
+  const raw = await lushaRequest<unknown>(apiKey, "/contacts/enrich", {
+    method: "POST",
+    body: { ids: ids.slice(0, 100), reveal },
+    timeoutMs: 45_000,
+  });
+  return {
+    people: arr(obj(raw).results).map(parseLushaPerson),
+    billing: parseBilling(raw),
+    outOfCredits: ranOutOfCredits(raw),
+  };
+}
+
+export type LushaProspectFilters = {
+  companyNames?: string[];
+  companyDomains?: string[];
+  jobTitles?: string[];
+  countries?: string[];
+};
+
+export type LushaProspectResult = {
+  people: LushaPerson[];
+  total: number;
+  page: number;
+  billing: LushaBilling;
+};
+
+/**
+ * Search Lusha's database for people by company and job title. Returns previews only — no email or
+ * phone — and Lusha charges per result returned, so `size` is also the most this call can cost.
+ */
+export async function lushaProspect(
+  apiKey: string,
+  filters: LushaProspectFilters,
+  opts: { page?: number; size?: number } = {},
+): Promise<LushaProspectResult> {
+  const contactsInclude: Record<string, unknown> = {};
+  if (filters.jobTitles?.length) contactsInclude.jobTitles = filters.jobTitles;
+  if (filters.countries?.length) contactsInclude.countries = filters.countries;
+  const companiesInclude: Record<string, unknown> = {};
+  if (filters.companyNames?.length) companiesInclude.names = filters.companyNames;
+  if (filters.companyDomains?.length) companiesInclude.domains = filters.companyDomains;
+
+  const page = Math.max(0, Math.floor(opts.page ?? 0));
+  const size = Math.min(100, Math.max(10, Math.floor(opts.size ?? 25)));
+  const raw = await lushaRequest<unknown>(apiKey, "/contacts/prospecting", {
+    method: "POST",
+    body: {
+      pagination: { page, size },
+      filters: {
+        ...(Object.keys(contactsInclude).length ? { contacts: { include: contactsInclude } } : {}),
+        ...(Object.keys(companiesInclude).length ? { companies: { include: companiesInclude } } : {}),
+      },
+      options: { includePartialProfiles: true },
+    },
+    timeoutMs: 30_000,
+  });
+  const pagination = obj(obj(raw).pagination);
+  return {
+    people: arr(obj(raw).results).map(parseLushaPerson),
+    total: num(pagination.total),
+    page: num(pagination.page),
+    billing: parseBilling(raw),
+  };
+}

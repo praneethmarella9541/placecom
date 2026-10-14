@@ -19,6 +19,13 @@ type ConnectionRow = {
   last_checked_at: string | null;
   last_error: string | null;
   usage: LushaUsage | null;
+  settings: ConnectorSettings | null;
+};
+
+/** Per-account connector settings, kept as JSON so new ones need no migration. */
+export type ConnectorSettings = {
+  /** Most credits one non-admin may spend a month; absent or null means no cap. */
+  perUserMonthlyCap?: number | null;
 };
 
 /** What the browser may see: never the key, only whether and how it is connected. */
@@ -31,10 +38,31 @@ export type PublicConnection = {
   lastCheckedAt: string | null;
   lastError: string | null;
   usage: LushaUsage | null;
+  settings: ConnectorSettings;
 };
 
-const COLUMNS =
+const BASE_COLUMNS =
   "id, mailbox_owner_id, provider, api_key_encrypted, key_hint, status, connected_by, connected_at, last_checked_at, last_error, usage";
+
+/**
+ * `settings` arrived in migration 0079. Until an environment has it, ask for the base columns only,
+ * so a connection that was working keeps working while migrations are applied in their own time.
+ */
+let settingsColumnMissing = false;
+function columns(): string {
+  return settingsColumnMissing ? BASE_COLUMNS : `${BASE_COLUMNS}, settings`;
+}
+
+async function withColumns<T>(
+  run: (cols: string) => PromiseLike<{ data: T | null; error: { code?: string; message?: string } | null }>,
+): Promise<{ data: T | null; error: { code?: string; message?: string } | null }> {
+  let res = await run(columns());
+  if (res.error && !settingsColumnMissing && res.error.code === "42703" && /settings/i.test(res.error.message ?? "")) {
+    settingsColumnMissing = true;
+    res = await run(columns());
+  }
+  return res;
+}
 
 export function emptyConnection(provider: ConnectorProvider): PublicConnection {
   return {
@@ -46,6 +74,7 @@ export function emptyConnection(provider: ConnectorProvider): PublicConnection {
     lastCheckedAt: null,
     lastError: null,
     usage: null,
+    settings: {},
   };
 }
 
@@ -59,6 +88,7 @@ function toPublic(row: ConnectionRow): PublicConnection {
     lastCheckedAt: row.last_checked_at,
     lastError: row.last_error,
     usage: row.usage,
+    settings: row.settings ?? {},
   };
 }
 
@@ -67,13 +97,15 @@ export async function getConnectionRow(
   ownerId: string,
   provider: ConnectorProvider,
 ): Promise<ConnectionRow | null> {
-  const { data } = await svc
-    .from("integration_connections")
-    .select(COLUMNS)
-    .eq("mailbox_owner_id", ownerId)
-    .eq("provider", provider)
-    .maybeSingle();
-  return (data as ConnectionRow | null) ?? null;
+  const { data } = await withColumns<ConnectionRow>((cols) =>
+    svc
+      .from("integration_connections")
+      .select(cols)
+      .eq("mailbox_owner_id", ownerId)
+      .eq("provider", provider)
+      .maybeSingle() as unknown as PromiseLike<{ data: ConnectionRow | null; error: { code?: string; message?: string } | null }>,
+  );
+  return data ?? null;
 }
 
 export async function getPublicConnection(
@@ -105,7 +137,8 @@ export async function saveConnection(
   const encrypted = encryptToken(params.apiKey);
   if (!encrypted) throw new Error("Could not encrypt the API key.");
 
-  const { data, error } = await svc
+  const { data, error } = await withColumns<ConnectionRow>((cols) =>
+    svc
     .from("integration_connections")
     .upsert(
       {
@@ -123,10 +156,11 @@ export async function saveConnection(
       },
       { onConflict: "mailbox_owner_id,provider" },
     )
-    .select(COLUMNS)
-    .single();
+    .select(cols)
+    .single() as unknown as PromiseLike<{ data: ConnectionRow | null; error: { code?: string; message?: string } | null }>,
+  );
   if (error || !data) throw new Error(error?.message || "Could not save the connection.");
-  return toPublic(data as ConnectionRow);
+  return toPublic(data);
 }
 
 /** Record the outcome of a re-check: fresh usage on success, or why the key stopped working. */
@@ -141,14 +175,16 @@ export async function recordCheck(
     "usage" in result
       ? { status: "connected", usage: result.usage, last_error: null, last_checked_at: now, updated_at: now }
       : { status: result.status, last_error: result.error, last_checked_at: now, updated_at: now };
-  const { data } = await svc
-    .from("integration_connections")
-    .update(patch)
-    .eq("mailbox_owner_id", ownerId)
-    .eq("provider", provider)
-    .select(COLUMNS)
-    .maybeSingle();
-  return data ? toPublic(data as ConnectionRow) : null;
+  const { data } = await withColumns<ConnectionRow>((cols) =>
+    svc
+      .from("integration_connections")
+      .update(patch)
+      .eq("mailbox_owner_id", ownerId)
+      .eq("provider", provider)
+      .select(cols)
+      .maybeSingle() as unknown as PromiseLike<{ data: ConnectionRow | null; error: { code?: string; message?: string } | null }>,
+  );
+  return data ? toPublic(data) : null;
 }
 
 export async function removeConnection(
@@ -157,4 +193,55 @@ export async function removeConnection(
   provider: ConnectorProvider,
 ): Promise<void> {
   await svc.from("integration_connections").delete().eq("mailbox_owner_id", ownerId).eq("provider", provider);
+}
+
+/** Change the account's connector settings. Only the keys given are touched. */
+export async function updateSettings(
+  svc: SupabaseClient,
+  ownerId: string,
+  provider: ConnectorProvider,
+  patch: ConnectorSettings,
+): Promise<PublicConnection | null> {
+  const row = await getConnectionRow(svc, ownerId, provider);
+  if (!row) return null;
+  if (settingsColumnMissing) return null; // migration 0079 not applied yet
+  const next = { ...(row.settings ?? {}), ...patch };
+  const { data } = await withColumns<ConnectionRow>((cols) =>
+    svc
+      .from("integration_connections")
+      .update({ settings: next, updated_at: new Date().toISOString() })
+      .eq("mailbox_owner_id", ownerId)
+      .eq("provider", provider)
+      .select(cols)
+      .maybeSingle() as unknown as PromiseLike<{ data: ConnectionRow | null; error: { code?: string; message?: string } | null }>,
+  );
+  return data ? toPublic(data) : null;
+}
+
+/**
+ * After a call that spent credits, move the stored balance by what was spent, so the page shows a
+ * current figure without spending one of Lusha's five balance checks a minute on every reveal.
+ */
+export async function noteSpend(
+  svc: SupabaseClient,
+  ownerId: string,
+  provider: ConnectorProvider,
+  credits: number,
+): Promise<void> {
+  if (credits <= 0) return;
+  const row = await getConnectionRow(svc, ownerId, provider);
+  if (!row?.usage) return;
+  const usage = {
+    ...row.usage,
+    credits: {
+      ...row.usage.credits,
+      used: row.usage.credits.used + credits,
+      remaining: Math.max(0, row.usage.credits.remaining - credits),
+    },
+  };
+  await svc
+    .from("integration_connections")
+    .update({ usage, updated_at: new Date().toISOString() })
+    .eq("mailbox_owner_id", ownerId)
+    .eq("provider", provider);
 }

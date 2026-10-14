@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { CheckCircle2, Loader2, Plug, RefreshCw, TriangleAlert } from "lucide-react";
 import { AdminToast, type AdminToastState } from "@/components/AdminToast";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PasswordInput } from "@/components/PasswordInput";
+import { resetLushaConnected } from "@/hooks/useLushaConnected";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
 import { titleCase } from "@/lib/title-case";
 import type { PublicConnection } from "@/lib/integrations/connections";
@@ -28,6 +30,7 @@ export default function ConnectorsPage() {
   const [replacing, setReplacing] = useState(false);
   const [busy, setBusy] = useState<"connect" | "refresh" | "disconnect" | null>(null);
   const [toast, setToast] = useState<AdminToastState>(null);
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
 
   const isAdmin = me?.role === "admin";
 
@@ -72,6 +75,7 @@ export default function ConnectorsPage() {
         return;
       }
       setConnection(json.connection ?? null);
+      resetLushaConnected();
       setApiKey("");
       setReplacing(false);
       setToast({ message: "Lusha is connected.", variant: "success" });
@@ -91,18 +95,13 @@ export default function ConnectorsPage() {
 
   async function disconnect() {
     if (busy) return;
-    if (
-      !window.confirm(
-        "Disconnect Lusha? Your API key is deleted from this workspace and finding emails and phone numbers stops until you connect it again. Credits and data in your Lusha account are not affected.",
-      )
-    ) {
-      return;
-    }
+    setConfirmingDisconnect(false);
     setBusy("disconnect");
     try {
       const res = await fetch("/api/integrations/lusha", { method: "DELETE" });
       if (!res.ok) throw new Error();
       setConnection(null);
+      resetLushaConnected();
       setReplacing(false);
       setToast({ message: "Lusha is disconnected.", variant: "success" });
     } catch {
@@ -281,7 +280,7 @@ export default function ConnectorsPage() {
               <div className="flex-1" />
               <button
                 type="button"
-                onClick={() => void disconnect()}
+                onClick={() => setConfirmingDisconnect(true)}
                 disabled={busy !== null}
                 className="rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-60"
               >
@@ -294,7 +293,7 @@ export default function ConnectorsPage() {
             <div className="border-t border-[var(--color-border)] pt-4">
               <button
                 type="button"
-                onClick={() => void disconnect()}
+                onClick={() => setConfirmingDisconnect(true)}
                 disabled={busy !== null}
                 className="rounded-lg px-3 py-2 text-[13px] font-semibold text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10 disabled:opacity-60"
               >
@@ -304,6 +303,17 @@ export default function ConnectorsPage() {
           ) : null}
         </div>
       )}
+
+      {confirmingDisconnect ? (
+        <ConfirmDialog
+          title="Disconnect Lusha?"
+          body="Your API key is deleted from this workspace, and finding emails and phone numbers stops until you connect it again. Credits and data in your Lusha account are not affected."
+          confirmLabel="Disconnect"
+          tone="danger"
+          onConfirm={() => void disconnect()}
+          onCancel={() => setConfirmingDisconnect(false)}
+        />
+      ) : null}
 
       <AdminToast toast={toast} onDismiss={() => setToast(null)} />
     </div>

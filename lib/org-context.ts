@@ -10,7 +10,10 @@ export type OrgContext = {
   role: "admin" | "staff";
   /** The account everyone in the workspace shares: the admin's own id, or the admin a staff member is linked to. */
   mailboxOwnerId: string;
+  /** Service-role client: bypasses row-level security, so scope every query by `mailboxOwnerId`. */
   svc: SupabaseClient;
+  /** The caller's own client: row-level security keeps it inside their workspace. */
+  supabase: SupabaseClient;
 };
 
 /**
@@ -38,7 +41,7 @@ export async function getOrgContext(request: Request): Promise<OrgContext | Next
       { status: 400 },
     );
   }
-  return { userId: authed.user.id, role, mailboxOwnerId, svc };
+  return { userId: authed.user.id, role, mailboxOwnerId, svc, supabase: authed.supabase };
 }
 
 export function isOrgError(value: unknown): value is NextResponse {

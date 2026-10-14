@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { LushaMark } from "@/components/LushaLogo";
 import { ExternalLink, Loader2, Search, UserPlus } from "lucide-react";
+import { SuggestListInput } from "@/components/SuggestListInput";
+import { JOB_TITLE_SUGGESTIONS } from "@/lib/integrations/job-title-suggestions";
 import type { ProspectPerson } from "@/app/api/integrations/lusha/prospect/route";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +15,19 @@ type AddResult = {
   skippedAlreadyThere: string[];
   reveal: { found: number; updated: number; creditsCharged: number } | null;
   revealBlocked: string | null;
+};
+
+async function suggestFromLusha(field: "companies" | "countries", term: string): Promise<string[]> {
+  const res = await fetch(`/api/integrations/lusha/suggest?field=${field}&q=${encodeURIComponent(term)}`);
+  if (!res.ok) return [];
+  const json = (await res.json().catch(() => ({}))) as { values?: string[] };
+  return json.values ?? [];
+}
+const suggestCompanies = (term: string) => suggestFromLusha("companies", term);
+const suggestCountries = (term: string) => suggestFromLusha("countries", term);
+const suggestTitles = async (term: string) => {
+  const t = term.toLowerCase();
+  return JOB_TITLE_SUGGESTIONS.filter((x) => x.toLowerCase().includes(t)).slice(0, 8);
 };
 
 function splitList(v: string): string[] {
@@ -160,16 +175,16 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
             Companies
-            <input className={inputClass} value={companies} onChange={(e) => setCompanies(e.target.value)} placeholder="Acme, tcs.com" />
+            <SuggestListInput className={inputClass} value={companies} onChange={setCompanies} placeholder="Acme, tcs.com" getSuggestions={suggestCompanies} />
             <span className="block text-[11.5px] font-normal text-[var(--color-text-faint)]">Names or website addresses</span>
           </label>
           <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
             Job titles
-            <input className={inputClass} value={titles} onChange={(e) => setTitles(e.target.value)} placeholder="Talent Acquisition, HR Manager" />
+            <SuggestListInput className={inputClass} value={titles} onChange={setTitles} placeholder="Talent Acquisition, HR Manager" getSuggestions={suggestTitles} />
           </label>
           <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
             Countries <span className="font-normal text-[var(--color-text-faint)]">(optional)</span>
-            <input className={inputClass} value={countries} onChange={(e) => setCountries(e.target.value)} placeholder="India, United Kingdom" />
+            <SuggestListInput className={inputClass} value={countries} onChange={setCountries} placeholder="India, United Kingdom" getSuggestions={suggestCountries} />
           </label>
           <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
             How many results

@@ -361,3 +361,42 @@ export async function lushaProspect(
     billing: parseBilling(raw),
   };
 }
+
+/** Pulls display strings out of a filter-values answer, whose shape varies by filter type. */
+export function parseFilterValues(raw: unknown): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (v: unknown) => {
+    const s = typeof v === "string" ? v.trim() : "";
+    if (s && !seen.has(s.toLowerCase())) {
+      seen.add(s.toLowerCase());
+      out.push(s);
+    }
+  };
+  const visit = (v: unknown) => {
+    if (typeof v === "string") return add(v);
+    if (Array.isArray(v)) return v.forEach(visit);
+    const o = obj(v);
+    for (const k of ["name", "label", "displayName", "text", "value"]) {
+      if (typeof o[k] === "string") return add(o[k]);
+    }
+  };
+  const top = obj(raw);
+  visit("values" in top ? top.values : raw);
+  return out;
+}
+
+/**
+ * Valid values for one filter (company names, countries), to suggest while someone types. These
+ * lookups don't return people, so they aren't a reveal or search.
+ */
+export async function lushaFilterValues(
+  apiKey: string,
+  scope: "companies" | "contacts",
+  filterType: string,
+  query?: string,
+): Promise<string[]> {
+  const q = query ? `?query=${encodeURIComponent(query)}` : "";
+  const raw = await lushaRequest<unknown>(apiKey, `/${scope}/prospecting/filters/${filterType}${q}`, { timeoutMs: 6_000 });
+  return parseFilterValues(raw);
+}

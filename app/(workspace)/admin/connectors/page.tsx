@@ -9,6 +9,7 @@ import { resetLushaConnected } from "@/hooks/useLushaConnected";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
 import { titleCase } from "@/lib/title-case";
 import type { PublicConnection } from "@/lib/integrations/connections";
+import type { LushaUsageRow } from "@/app/api/integrations/lusha/usage/route";
 
 function formatWhen(iso: string | null): string {
   if (!iso) return "never";
@@ -31,6 +32,10 @@ export default function ConnectorsPage() {
   const [busy, setBusy] = useState<"connect" | "refresh" | "disconnect" | null>(null);
   const [toast, setToast] = useState<AdminToastState>(null);
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  // Spending controls: the monthly limit per team member, and who has spent what this month.
+  const [capInput, setCapInput] = useState("");
+  const [savingCap, setSavingCap] = useState(false);
+  const [spend, setSpend] = useState<{ totalCredits: number; rows: LushaUsageRow[] } | null>(null);
 
   const isAdmin = me?.role === "admin";
 
@@ -50,6 +55,53 @@ export default function ConnectorsPage() {
       setLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    const cap = connection?.settings?.perUserMonthlyCap;
+    setCapInput(typeof cap === "number" ? String(cap) : "");
+  }, [connection?.settings?.perUserMonthlyCap]);
+
+  const connectedOk = !!connection?.connected && connection.status === "connected";
+  useEffect(() => {
+    if (!connectedOk) {
+      setSpend(null);
+      return;
+    }
+    let live = true;
+    void fetch("/api/integrations/lusha/usage", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (live && j) setSpend({ totalCredits: j.totalCredits ?? 0, rows: j.rows ?? [] });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [connectedOk]);
+
+  async function saveCap(e: React.FormEvent) {
+    e.preventDefault();
+    if (savingCap) return;
+    setSavingCap(true);
+    try {
+      const res = await fetch("/api/integrations/lusha", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ perUserMonthlyCap: capInput.trim() === "" ? null : Number(capInput) }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { connection?: PublicConnection; error?: string };
+      if (!res.ok) {
+        setToast({ message: json.error || "Could not save the limit.", variant: "error" });
+        return;
+      }
+      setConnection(json.connection ?? null);
+      setToast({ message: capInput.trim() === "" ? "Monthly limit removed." : "Monthly limit saved.", variant: "success" });
+    } catch {
+      setToast({ message: "Could not save the limit.", variant: "error" });
+    } finally {
+      setSavingCap(false);
+    }
+  }
 
   useEffect(() => {
     if (me && me.role !== "admin") {
@@ -214,6 +266,66 @@ export default function ConnectorsPage() {
                   ) : null}
                 </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {connected && !broken ? (
+            <div className="space-y-3 border-t border-[var(--color-border)] pt-4" data-testid="lusha-spending">
+              <div>
+                <h3 className="text-[13px] font-bold text-[var(--color-text)]">Spending limits</h3>
+                <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">
+                  Everyone in your workspace spends from your Lusha credits. Set the most each team member can use in a month; admins are not limited. Before anything is revealed, people see the most it can cost.
+                </p>
+              </div>
+              <form onSubmit={saveCap} className="flex flex-wrap items-end gap-2">
+                <label className="space-y-1 text-[12.5px] font-semibold text-[var(--color-text)]">
+                  Credits per team member, per month
+                  <input
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={capInput}
+                    onChange={(e) => setCapInput(e.target.value)}
+                    placeholder="No limit"
+                    className="input-field block w-44 text-[13px]"
+                  />
+                </label>
+                <button type="submit" disabled={savingCap} className="btn-ghost px-3 py-2 text-[13px] font-semibold disabled:opacity-60">
+                  {savingCap ? "Saving…" : "Save limit"}
+                </button>
+              </form>
+
+              <div>
+                <p className="mb-1.5 text-[12px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                  Used this month{spend ? ` · ${spend.totalCredits.toLocaleString()} credits` : ""}
+                </p>
+                {spend && spend.rows.length > 0 ? (
+                  <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
+                    <table className="w-full text-left text-[13px]">
+                      <thead>
+                        <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                          <th className="px-3 py-2">Team member</th>
+                          <th className="px-3 py-2 text-right">Credits</th>
+                          <th className="px-3 py-2 text-right">Lookups</th>
+                          <th className="px-3 py-2 text-right">Searches</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {spend.rows.map((r) => (
+                          <tr key={r.userId ?? "unknown"} className="border-b border-[var(--color-border)] last:border-0">
+                            <td className="px-3 py-2 text-[var(--color-text)]">{r.name}</td>
+                            <td className="px-3 py-2 text-right font-semibold">{r.credits.toLocaleString()}</td>
+                            <td className="px-3 py-2 text-right text-[var(--color-text-muted)]">{r.reveals}</td>
+                            <td className="px-3 py-2 text-right text-[var(--color-text-muted)]">{r.searches}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-[12.5px] text-[var(--color-text-faint)]">{spend ? "No credits used yet this month." : "Loading…"}</p>
+                )}
+              </div>
             </div>
           ) : null}
 

@@ -7,6 +7,7 @@ import {
   recordCheck,
   removeConnection,
   saveConnection,
+  updateSettings,
 } from "@/lib/integrations/connections";
 import { LushaError, fetchLushaUsage } from "@/lib/integrations/lusha";
 import { createServiceSupabase } from "@/lib/supabase-service";
@@ -108,4 +109,34 @@ export async function DELETE(request: Request) {
   if ("error" in admin) return NextResponse.json({ error: admin.error }, { status: admin.status });
   await removeConnection(createServiceSupabase(), admin.userId, "lusha");
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * PATCH /api/integrations/lusha { perUserMonthlyCap } — the most credits one team member may spend a
+ * month (admins are not limited). A number sets it, null removes it. Admin only.
+ */
+export async function PATCH(request: Request) {
+  const admin = await assertAdminUserId(request);
+  if ("error" in admin) return NextResponse.json({ error: admin.error }, { status: admin.status });
+
+  const body = (await request.json().catch(() => ({}))) as { perUserMonthlyCap?: unknown };
+  const raw = body.perUserMonthlyCap;
+  let cap: number | null;
+  if (raw === null || raw === "") cap = null;
+  else {
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n) || n < 0 || n > 10_000_000) {
+      return NextResponse.json({ error: "Enter a whole number of credits, or leave it empty for no limit." }, { status: 400 });
+    }
+    cap = n;
+  }
+
+  const connection = await updateSettings(createServiceSupabase(), admin.userId, "lusha", { perUserMonthlyCap: cap });
+  if (!connection) {
+    return NextResponse.json(
+      { error: "Couldn't save the limit. Check that Lusha is connected and the latest database migration has been applied." },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json({ connection });
 }

@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 
+import { LushaMark } from "@/components/LushaLogo";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Plus, Search, Sparkles, Trash2, Upload, UserRound } from "lucide-react";
+import { ChevronDown, Plus, Search, Trash2, Upload, UserRound } from "lucide-react";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconLinkedin, IconWhatsAppLogo } from "@/components/Icons";
 import { SyncedContactsSection } from "@/components/SyncedContactsSection";
@@ -325,7 +326,7 @@ export function ContactDirectory() {
               className="btn-secondary inline-flex items-center gap-2 px-4"
               onClick={() => setLushaBulkOpen(true)}
             >
-              <Sparkles className="h-4 w-4" />
+              <LushaMark className="h-4 w-4" />
               {titleCase(`Find email & phone (${selected.size})`)}
             </button>
           ) : null}

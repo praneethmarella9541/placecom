@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { LushaMark } from "@/components/LushaLogo";
 import { ExternalLink, Loader2, Search, UserPlus } from "lucide-react";
 import type { ProspectPerson } from "@/app/api/integrations/lusha/prospect/route";
 import { cn } from "@/lib/utils";
@@ -147,7 +148,10 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
     <div className="space-y-5" data-testid="lusha-prospect-panel">
       <div className="surface-card space-y-4 p-5">
         <div>
-          <h2 className="font-display text-[15px] font-bold text-[var(--color-text)]">Find people with Lusha</h2>
+          <h2 className="flex items-center gap-2 font-display text-[15px] font-bold text-[var(--color-text)]">
+            <LushaMark className="h-5 w-5" />
+            Find people with Lusha
+          </h2>
           <p className="mt-0.5 text-[13px] text-[var(--color-text-muted)]">
             Search by company and job title, then add the people you want to your contact book. Separate several entries with commas.
           </p>

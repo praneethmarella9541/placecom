@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { CheckCircle2, Loader2, Plug, RefreshCw, TriangleAlert } from "lucide-react";
+import { LushaMark, LushaWordmark } from "@/components/LushaLogo";
+import { CheckCircle2, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 import { AdminToast, type AdminToastState } from "@/components/AdminToast";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PasswordInput } from "@/components/PasswordInput";
@@ -220,11 +221,12 @@ export default function ConnectorsPage() {
         <div className="surface-card space-y-5 p-6" data-testid="connector-lusha">
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-                <Plug className="h-5 w-5" strokeWidth={2} />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-white">
+                <LushaMark className="h-7 w-7" />
               </div>
               <div>
-                <h2 className="font-display text-[16px] font-bold text-[var(--color-text)]">Lusha</h2>
+                <h2 className="sr-only">Lusha</h2>
+                <LushaWordmark className="h-6" />
                 <p className="mt-0.5 max-w-md text-[13px] text-[var(--color-text-muted)]">
                   Find work emails and phone numbers for the people in your contacts. Revealing data uses credits
                   from your own Lusha account.

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LushaMark } from "@/components/LushaLogo";
 import { ContactDirectory } from "@/components/ContactDirectory";
 import { GoogleContactsTab } from "@/components/GoogleContactsTab";
 import { LushaProspectPanel } from "@/components/LushaProspectPanel";
@@ -63,7 +64,10 @@ export default function ContactsPage() {
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }`}
           >
-            Find people
+            <span className="inline-flex items-center justify-center gap-1.5">
+              <LushaMark className="h-4 w-4" />
+              Find people
+            </span>
           </button>
         ) : null}
       </div>

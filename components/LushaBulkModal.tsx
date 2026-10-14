@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { LushaMark } from "@/components/LushaLogo";
 import { createPortal } from "react-dom";
-import { Loader2, Sparkles, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 
 type Plan = {
   requested: number;
@@ -120,7 +121,7 @@ export function LushaBulkModal({ contactIds, onClose, onDone }: Props) {
       <div className="surface-card flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden" data-testid="lusha-bulk-modal">
         <div className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
           <div className="flex items-center gap-2.5">
-            <Sparkles className="h-5 w-5 text-[var(--color-copper)]" strokeWidth={2} />
+            <LushaMark className="h-5 w-5" />
             <div>
               <h2 className="font-display text-[16px] font-bold text-[var(--color-text)]">Find with Lusha</h2>
               <p className="text-[12.5px] text-[var(--color-text-muted)]">

@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LushaMark } from "@/components/LushaLogo";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Pencil, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import {
@@ -154,7 +155,7 @@ export default function ContactDetailPage() {
               onClick={() => setLushaOpen(true)}
               className="btn-ghost inline-flex items-center gap-1.5 px-3 text-[13px] font-semibold"
             >
-              <Sparkles className="h-3.5 w-3.5" />
+              <LushaMark className="h-3.5 w-3.5" />
               {titleCase("Find email & phone")}
             </button>
           ) : null}

@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 
+export type SuggestionItem = { label: string; value: string; sub?: string; logo?: string };
+
 type Props = {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   className?: string;
   /** Suggestions for the entry being typed (the text after the last comma). Return [] for none. */
-  getSuggestions: (term: string) => Promise<string[]>;
+  getSuggestions: (term: string) => Promise<SuggestionItem[]>;
 };
 
 /**
@@ -16,7 +18,7 @@ type Props = {
  * one replaces just that entry and starts the next. Typing anything else still works.
  */
 export function SuggestListInput({ value, onChange, placeholder, className, getSuggestions }: Props) {
-  const [items, setItems] = useState<string[]>([]);
+  const [items, setItems] = useState<SuggestionItem[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const seq = useRef(0);
@@ -32,16 +34,16 @@ export function SuggestListInput({ value, onChange, placeholder, className, getS
     }
     const mine = ++seq.current;
     const t = setTimeout(async () => {
-      let found: string[] = [];
+      let found: SuggestionItem[] = [];
       try {
         found = await getSuggestions(term);
       } catch {
         found = [];
       }
       if (mine !== seq.current) return;
-      setItems(found.filter((f) => f.toLowerCase() !== term.toLowerCase()));
+      setItems(found.filter((f) => f.value.toLowerCase() !== term.toLowerCase()));
       setActive(-1);
-    }, 250);
+    }, 400);
     return () => clearTimeout(t);
     // getSuggestions is stable per field; the term is what should retrigger a lookup.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,9 +57,9 @@ export function SuggestListInput({ value, onChange, placeholder, className, getS
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  function pick(s: string) {
+  function pick(item: SuggestionItem) {
     const head = cut >= 0 ? `${value.slice(0, cut + 1).trimEnd()} ` : "";
-    onChange(`${head}${s}, `);
+    onChange(`${head}${item.value}, `);
     setItems([]);
     setActive(-1);
   }
@@ -99,7 +101,7 @@ export function SuggestListInput({ value, onChange, placeholder, className, getS
         >
           {items.map((s, i) => (
             <li
-              key={s}
+              key={`${s.value}|${s.label}`}
               role="option"
               aria-selected={i === active}
               onMouseDown={(e) => {
@@ -108,7 +110,16 @@ export function SuggestListInput({ value, onChange, placeholder, className, getS
               }}
               className={`cursor-pointer px-3 py-1.5 text-[var(--color-text)] ${i === active ? "bg-[var(--color-surface-2)]" : "hover:bg-[var(--color-surface-2)]"}`}
             >
-              {s}
+              <span className="flex items-center gap-2.5">
+                {s.logo ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- small remote logo from Lusha
+                  <img src={s.logo} alt="" loading="lazy" className="h-7 w-7 shrink-0 rounded object-contain" />
+                ) : null}
+                <span className="min-w-0">
+                  <span className="block truncate">{s.label}</span>
+                  {s.sub ? <span className="block truncate text-[11.5px] text-[var(--color-text-faint)]">{s.sub}</span> : null}
+                </span>
+              </span>
             </li>
           ))}
         </ul>

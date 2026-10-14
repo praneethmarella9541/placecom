@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 
 import { getProviderKey } from "@/lib/integrations/connections";
-import { lushaFilterValues } from "@/lib/integrations/lusha";
+import { lushaCompanySuggestions, lushaFilterValues } from "@/lib/integrations/lusha";
 import { getOrgContext, isOrgError } from "@/lib/org-context";
 
 export const runtime = "nodejs";
 
 const TTL_MS = 10 * 60_000;
-const cache = new Map<string, { at: number; values: string[] }>();
+export type Suggestion = { label: string; value: string; sub?: string; logo?: string };
+
+const cache = new Map<string, { at: number; values: Suggestion[] }>();
 
 /**
  * GET /api/integrations/lusha/suggest?field=companies|countries&q=text
@@ -33,14 +35,22 @@ export async function GET(request: Request) {
   if (!apiKey) return NextResponse.json({ values: [] });
 
   try {
-    let values: string[];
+    let values: Suggestion[];
     if (field === "companies") {
-      values = await lushaFilterValues(apiKey, "companies", "names", q);
+      // The website is what gets searched: it pins down the exact company, where a name can match many.
+      values = (await lushaCompanySuggestions(apiKey, q)).slice(0, 8).map((c) => ({
+        label: c.name,
+        value: c.domain ?? c.name,
+        ...(c.domain ? { sub: c.domain } : {}),
+        ...(c.logoUrl ? { logo: c.logoUrl } : {}),
+      }));
     } else {
       const all = await lushaFilterValues(apiKey, "contacts", "countries");
-      values = all.filter((c) => c.toLowerCase().includes(q.toLowerCase()));
+      values = all
+        .filter((c) => c.toLowerCase().includes(q.toLowerCase()))
+        .slice(0, 8)
+        .map((c) => ({ label: c, value: c }));
     }
-    values = values.slice(0, 8);
     if (cache.size > 500) cache.clear();
     cache.set(key, { at: Date.now(), values });
     return NextResponse.json({ values });

@@ -400,3 +400,21 @@ export async function lushaFilterValues(
   const raw = await lushaRequest<unknown>(apiKey, `/${scope}/prospecting/filters/${filterType}${q}`, { timeoutMs: 6_000 });
   return parseFilterValues(raw);
 }
+
+export type LushaCompanySuggestion = { name: string; domain: string | null; logoUrl: string | null };
+
+/** Company-name lookup: name, website and logo for each match, so the screen can show them. */
+export async function lushaCompanySuggestions(apiKey: string, query: string): Promise<LushaCompanySuggestion[]> {
+  const raw = await lushaRequest<unknown>(apiKey, `/companies/prospecting/filters/names?query=${encodeURIComponent(query)}`, { timeoutMs: 6_000 });
+  const top = obj(raw);
+  const out: LushaCompanySuggestion[] = [];
+  for (const v of arr("values" in top ? top.values : raw)) {
+    const o = obj(v);
+    const name = typeof o.name === "string" ? o.name.trim() : "";
+    if (!name) continue;
+    const domain = [o.domains_homepage, o.fqdn].find((d): d is string => typeof d === "string" && d.trim() !== "") ?? null;
+    const logo = typeof o.logoUrl === "string" && /^https:\/\/logo\.lusha\.co\//.test(o.logoUrl) ? o.logoUrl : null;
+    out.push({ name, domain: domain ? domain.replace(/^www\./, "").toLowerCase() : null, logoUrl: logo });
+  }
+  return out;
+}

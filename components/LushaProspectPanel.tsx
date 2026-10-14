@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { LushaMark } from "@/components/LushaLogo";
 import { ExternalLink, Loader2, Search, UserPlus } from "lucide-react";
-import { SuggestListInput } from "@/components/SuggestListInput";
+import { SuggestListInput, type SuggestionItem } from "@/components/SuggestListInput";
 import { JOB_TITLE_SUGGESTIONS } from "@/lib/integrations/job-title-suggestions";
 import type { ProspectPerson } from "@/app/api/integrations/lusha/prospect/route";
 import { cn } from "@/lib/utils";
@@ -17,17 +17,19 @@ type AddResult = {
   revealBlocked: string | null;
 };
 
-async function suggestFromLusha(field: "companies" | "countries", term: string): Promise<string[]> {
+async function suggestFromLusha(field: "companies" | "countries", term: string): Promise<SuggestionItem[]> {
   const res = await fetch(`/api/integrations/lusha/suggest?field=${field}&q=${encodeURIComponent(term)}`);
   if (!res.ok) return [];
-  const json = (await res.json().catch(() => ({}))) as { values?: string[] };
+  const json = (await res.json().catch(() => ({}))) as { values?: SuggestionItem[] };
   return json.values ?? [];
 }
 const suggestCompanies = (term: string) => suggestFromLusha("companies", term);
 const suggestCountries = (term: string) => suggestFromLusha("countries", term);
 const suggestTitles = async (term: string) => {
   const t = term.toLowerCase();
-  return JOB_TITLE_SUGGESTIONS.filter((x) => x.toLowerCase().includes(t)).slice(0, 8);
+  return JOB_TITLE_SUGGESTIONS.filter((x) => x.toLowerCase().includes(t))
+    .slice(0, 8)
+    .map((x) => ({ label: x, value: x }));
 };
 
 function splitList(v: string): string[] {

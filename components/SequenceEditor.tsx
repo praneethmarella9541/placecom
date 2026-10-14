@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Check, ChevronLeft, Loader2, Mail, Save, Settings2, Trash2, Users } from "lucide-react";
+import { CalendarClock, Check, ChevronLeft, Loader2, Mail, Save, Settings2, Trash2, Users } from "lucide-react";
 import { SequenceStatusPill } from "@/components/SequenceStatusPill";
 import { sendsAsDriveLink } from "@/lib/gmail-draft-limits";
 import { uploadToSignedUrl } from "@/lib/upload-to-signed-url";
@@ -675,7 +675,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
           className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-copper)]"
         >
           <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2} />
-          {titleCase("All sequences")}
+          {titleCase("Scheduled")}
         </Link>
         <p className="text-[13px] text-[var(--color-danger)]">
           {error || titleCase("Sequence not found.")}
@@ -693,7 +693,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
         className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-text-muted)] hover:text-[var(--color-copper)]"
       >
         <ChevronLeft className="h-3.5 w-3.5" strokeWidth={2} />
-        {titleCase("All sequences")}
+        {titleCase("Scheduled")}
       </Link>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -716,6 +716,15 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
               the pill is kept only for the two states it can't express. */}
           {sequence.status === "draft" || sequence.status === "archived" ? (
             <SequenceStatusPill status={sequence.status} />
+          ) : null}
+          {sequence.origin === "scheduled" ? (
+            <span
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[var(--color-surface-2)] px-2.5 py-0.5 text-[11.5px] font-medium text-[var(--color-text-muted)]"
+              title="Created from Compose with the Scheduling toggle"
+            >
+              <CalendarClock className="h-3.5 w-3.5" strokeWidth={2} />
+              Scheduled send
+            </span>
           ) : null}
         </div>
         <div className="flex items-center gap-2">

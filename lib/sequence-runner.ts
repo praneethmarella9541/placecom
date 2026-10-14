@@ -93,6 +93,9 @@ type EnrollmentRow = {
 
 type SequenceRow = {
   id: string;
+  name: string;
+  origin: "sequence" | "scheduled" | null;
+  created_by: string | null;
   mailbox_owner_id: string;
   timezone: string;
   send_window_start: string;
@@ -160,6 +163,29 @@ async function releaseClaim(
     .from("sequence_enrollments")
     .update({ claimed_at: null, claim_token: null, updated_at: new Date().toISOString(), ...patch })
     .eq("id", enrollmentId);
+}
+
+/**
+ * Mirror a reply or bounce onto the recipient's campaign rows, so the Campaigns report is current
+ * without anyone pressing Refresh. Only for flows scheduled from the composer — those are campaigns.
+ */
+async function markCampaignOutcome(
+  ctx: RunContext,
+  sequence: SequenceRow,
+  email: string,
+  outcome: "replied" | "bounced",
+): Promise<void> {
+  if (sequence.origin !== "scheduled" || ctx.dryRun) return;
+  const now = new Date().toISOString();
+  try {
+    await ctx.svc
+      .from("email_tracking")
+      .update(outcome === "replied" ? { replied: true, replied_at: now } : { bounced: true, bounced_at: now })
+      .eq("campaign_id", sequence.id)
+      .eq("to_address", email);
+  } catch {
+    /* best-effort: the report's Refresh still checks Gmail directly */
+  }
 }
 
 async function finishEnrollment(
@@ -255,6 +281,7 @@ async function processEnrollment(
     }
     if (outcome === "replied") {
       ctx.summary.replied += 1;
+      await markCampaignOutcome(ctx, sequence, enrollment.email, "replied");
       await finishEnrollment(ctx, enrollment.id, "replied", {
         replied_at: now.toISOString(),
         reply_checked_at: now.toISOString(),
@@ -263,6 +290,7 @@ async function processEnrollment(
     }
     if (outcome === "bounced") {
       ctx.summary.bounced += 1;
+      await markCampaignOutcome(ctx, sequence, enrollment.email, "bounced");
       await finishEnrollment(ctx, enrollment.id, "bounced", {
         reply_checked_at: now.toISOString(),
         last_error: "Delivery failed — the address bounced.",
@@ -360,13 +388,19 @@ async function processEnrollment(
   let trackingPixelUrl: string | undefined;
   if (sequence.track_opens) {
     try {
+      // A send scheduled from the composer is a campaign, like an immediate mass send: every
+      // recipient and step is stamped with the flow's id so the Campaigns report groups them. It is
+      // credited to whoever scheduled it, because Campaigns shows a person their own rows; a
+      // classic sequence keeps recording against the mailbox owner as before.
+      const asCampaign = sequence.origin === "scheduled";
       const { data: trackRow } = await ctx.svc
         .from("email_tracking")
         .insert({
-          user_id: sequence.mailbox_owner_id,
+          user_id: asCampaign ? sequence.created_by ?? sequence.mailbox_owner_id : sequence.mailbox_owner_id,
           gmail_message_id: "__pending__",
           to_address: enrollment.email,
           subject: built.subject || null,
+          ...(asCampaign ? { campaign_id: sequence.id, campaign_name: sequence.name } : {}),
         })
         .select("id")
         .single();
@@ -434,7 +468,8 @@ async function processEnrollment(
     if (trackingId) {
       await ctx.svc
         .from("email_tracking")
-        .update({ gmail_message_id: result.id })
+        // The thread id is what lets the campaign report check this recipient for a reply or bounce.
+        .update({ gmail_message_id: result.id, gmail_thread_id: result.threadId })
         .eq("id", trackingId);
     }
 

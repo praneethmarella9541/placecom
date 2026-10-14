@@ -2863,16 +2863,29 @@ export default function InboxPage() {
     return () => clearTimeout(t);
   }, [mailSearchInput, mailSearchSuggesting, mailSearchScope]);
 
-  const loadTracking = useCallback(async () => {
+  /**
+   * Tracking chips (Opened / Replied / Bounced / Campaign) for sent mail.
+   *
+   * With no ids it loads the latest sends. With ids it asks for exactly those messages — an open
+   * thread passes its own, so a mail sent months ago, or one of thousands in a mass send, still
+   * gets its chip. Results are merged in, never replacing, so one thread's lookup can't wipe
+   * another's.
+   */
+  const loadTracking = useCallback(async (messageIds?: string[]) => {
     try {
-      const res = await fetch("/api/gmail/tracking");
+      const ids = (messageIds ?? []).filter(Boolean);
+      const res = await fetch(
+        ids.length > 0 ? `/api/gmail/tracking?messageIds=${encodeURIComponent(ids.join(","))}` : "/api/gmail/tracking"
+      );
       const data = (await res.json()) as { tracking?: TrackingRow[] };
       if (data.tracking) {
-        const map: Record<string, TrackingRow> = {};
-        for (const t of data.tracking) {
-          map[t.gmail_message_id] = t;
-        }
-        setTrackingMap(map);
+        setTrackingMap((prev) => {
+          const map: Record<string, TrackingRow> = { ...prev };
+          for (const t of data.tracking ?? []) {
+            map[t.gmail_message_id] = t;
+          }
+          return map;
+        });
       }
     } catch {
       // non-critical
@@ -4105,7 +4118,8 @@ export default function InboxPage() {
       if (activeThreadLoadRef.current !== threadId) return;
       setMessages(data.messages);
       setThreadLabelIds((prev) => mergeThreadLabelIds(prev, data.labelIds, rowLabelIds));
-      void loadTracking();
+      // This thread's own messages, so each gets its chip however old or however large the send was.
+      void loadTracking(data.messages.map((m) => m.id));
     } catch (e) {
       if (activeThreadLoadRef.current !== threadId) return;
       setThreadError(e instanceof Error ? e.message : "Error");

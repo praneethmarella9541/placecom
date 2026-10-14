@@ -43,7 +43,7 @@ const configsLink = { href: "/configs", label: "Configs", Icon: SlidersHorizonta
 
 const commsNav = [
   { href: "/inbox", label: "Mail", Icon: Mail },
-  { href: "/sequences", label: "Sequences", Icon: Workflow },
+  { href: "/sequences", label: "Scheduled", Icon: Workflow },
   { href: "/campaigns", label: "Campaigns", Icon: Megaphone },
   // Broadcasting renders only the WhatsApp broadcast panel, so it maps to the
   // whatsapp feature and appears and disappears with it.

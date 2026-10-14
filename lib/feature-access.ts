@@ -22,7 +22,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   forms: "Forms",
   sheets: "Sheets",
   docs: "Docs",
-  sequences: "Sequences",
+  sequences: "Scheduled",
   crm: "CRM",
   calendar: "Calendar",
   sms: "SMS",

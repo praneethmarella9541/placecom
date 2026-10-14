@@ -77,6 +77,32 @@ export function estimateCredits(
   return Math.ceil(perPerson * people);
 }
 
+/** Cost of revealing fields for people already found by a search, which has already paid for finding them. */
+export function estimateRevealOnly(
+  pricing: LushaUsage["pricing"] | undefined,
+  reveal: LushaReveal[],
+  people = 1,
+): number {
+  let perPerson = 0;
+  if (reveal.includes("emails")) perPerson += unitCost(pricing, /e-?mail/i, DEFAULT_UNIT.email);
+  if (reveal.includes("phones")) perPerson += unitCost(pricing, /phone/i, DEFAULT_UNIT.phone);
+  return Math.ceil(perPerson * people);
+}
+
+/** Companies typed as free text: anything that looks like a web address is a domain, the rest are names. */
+export function splitCompanies(items: string[]): { names: string[]; domains: string[] } {
+  const names: string[] = [];
+  const domains: string[] = [];
+  for (const raw of items) {
+    const t = raw.trim();
+    if (!t) continue;
+    const bare = t.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/.*$/, "");
+    if (/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(bare)) domains.push(bare.toLowerCase());
+    else names.push(t);
+  }
+  return { names, domains };
+}
+
 // ─── What to write back to the contact ──────────────────────────────────────
 
 export type ProposalField = "email" | "phone" | "title" | "company" | "linkedin_url" | "location";
@@ -226,4 +252,63 @@ export async function applyProposals(
     .eq("id", contactId);
   if (error) return { ok: false, status: 500, error: error.message };
   return { ok: true, applied: Object.keys(updates) as ProposalField[] };
+}
+
+// ─── Planning a bulk run ─────────────────────────────────────────────────────
+
+export type BulkSkip = { id: string; name: string; reason: string };
+export type BulkJob = { contact: EnrichableContact; identifier: LushaIdentifier; reveal: LushaReveal[] };
+export type BulkPlan = {
+  skipped: BulkSkip[];
+  /** Contacts whose earlier, already-paid reveal can fill them in for nothing. */
+  reuse: { contact: EnrichableContact; person: LushaPerson }[];
+  /** Contacts to ask Lusha about, grouped by which fields each is missing (one Lusha call per group). */
+  groups: Map<string, BulkJob[]>;
+};
+
+/**
+ * Decide, before any credit is spent, what a bulk run will do with each contact. Someone who already
+ * has what is being asked for is skipped; so is someone Lusha could not identify from their card; a
+ * contact revealed earlier is filled in from that stored result instead of being paid for again.
+ */
+export function planBulk(
+  contacts: EnrichableContact[],
+  wanted: LushaReveal[],
+  prior: Map<string, { person: LushaPerson }>,
+): BulkPlan {
+  const skipped: BulkSkip[] = [];
+  const reuse: BulkPlan["reuse"] = [];
+  const groups = new Map<string, BulkJob[]>();
+
+  for (const contact of contacts) {
+    const reveal: LushaReveal[] = [];
+    if (wanted.includes("emails") && !contact.email) reveal.push("emails");
+    if (wanted.includes("phones") && !contact.phone) reveal.push("phones");
+    if (reveal.length === 0) {
+      skipped.push({ id: contact.id, name: contact.name, reason: "Already has what you asked for" });
+      continue;
+    }
+    const earlier = prior.get(contact.id);
+    if (earlier && fillBlanksOnly(proposeUpdates(contact, earlier.person)).length > 0) {
+      reuse.push({ contact, person: earlier.person });
+      continue;
+    }
+    const identified = identifierFromContact(contact);
+    if ("reason" in identified) {
+      skipped.push({ id: contact.id, name: contact.name, reason: identified.reason });
+      continue;
+    }
+    const key = [...reveal].sort().join("+");
+    const job: BulkJob = { contact, identifier: { ...identified.identifier, clientReferenceId: contact.id }, reveal };
+    groups.set(key, [...(groups.get(key) ?? []), job]);
+  }
+  return { skipped, reuse, groups };
+}
+
+/** Share a batch's total charge across its people so the per-person log adds back up to the total. */
+export function splitCredits(total: number, people: number): number[] {
+  if (people <= 0) return [];
+  const base = Math.floor(total / people);
+  let extra = total - base * people;
+  return Array.from({ length: people }, () => base + (extra-- > 0 ? 1 : 0));
 }

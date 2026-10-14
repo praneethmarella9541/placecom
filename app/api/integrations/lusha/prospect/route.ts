@@ -12,14 +12,6 @@ export const maxDuration = 60;
 
 const SIZES = [10, 25, 50];
 
-function list(v: unknown, max = 20): string[] {
-  return (Array.isArray(v) ? v : [])
-    .filter((x): x is string => typeof x === "string")
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .slice(0, max);
-}
-
 /** A search result, as the screen needs it: who they are and what revealing them would cost. */
 export type ProspectPerson = {
   id: string;

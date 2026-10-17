@@ -253,6 +253,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                 : `Showing ${companies.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credits charged for this search`}
             </div>
             {companies.length > 0 ? (
+              <div className="overflow-x-auto">
               <table className="w-full text-left text-[13px]">
                 <thead>
                   <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
@@ -307,6 +308,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                   ))}
                 </tbody>
               </table>
+            </div>
             ) : null}
             {pickedCompanies.size > 0 ? (
               <div className="flex flex-wrap items-center gap-3 border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3">
@@ -349,7 +351,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           </div>
 
           {people.length > 0 ? (
-            <table className="w-full text-left text-[13px]">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-[13px]">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
                   <th className="w-10 px-4 py-2.5">
@@ -404,6 +407,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                 ))}
               </tbody>
             </table>
+            </div>
           ) : null}
 
           {chosen.length > 0 ? (

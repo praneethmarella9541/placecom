@@ -31,11 +31,11 @@ export default function ContactsPage() {
         </h1>
       </div>
 
-      <div className="flex max-w-2xl gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1">
+      <div className="flex max-w-2xl gap-1 overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1">
         <button
           type="button"
           onClick={() => setTab("directory")}
-          className={`flex-1 rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
+          className={`flex-1 shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
             tab === "directory"
               ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
               : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -46,7 +46,7 @@ export default function ContactsPage() {
         <button
           type="button"
           onClick={() => setTab("google")}
-          className={`flex-1 rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
+          className={`flex-1 shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
             tab === "google"
               ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
               : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -59,7 +59,7 @@ export default function ContactsPage() {
             type="button"
             data-testid="contacts-find-tab"
             onClick={() => setTab("find")}
-            className={`flex-1 rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
+            className={`flex-1 shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
               tab === "find"
                 ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -76,7 +76,7 @@ export default function ContactsPage() {
             type="button"
             data-testid="contacts-enrich-tab"
             onClick={() => setTab("enrich")}
-            className={`flex-1 rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
+            className={`flex-1 shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-[13px] font-semibold transition-colors ${
               tab === "enrich"
                 ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
                 : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"

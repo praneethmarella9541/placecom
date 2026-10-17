@@ -6002,7 +6002,7 @@ export default function InboxPage() {
 
           {/* Advanced filter panel — dropdown anchored under the topbar search field */}
           {filterOpen && (
-            <div className="absolute right-[124px] top-[calc(100%+8px)] z-40 max-h-[80vh] w-[440px] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
+            <div className="absolute right-3 top-[calc(100%+8px)] z-40 max-h-[80vh] w-[min(440px,calc(100vw-24px))] md:right-[124px] overflow-y-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-lg">
               <div className="grid gap-3.5 px-4 py-4">
                 {/* From / To use the same RecipientField as Compose so the
                     typeahead behaviour is identical — narrows the dropdown

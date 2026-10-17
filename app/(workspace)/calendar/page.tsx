@@ -412,6 +412,12 @@ export default function CalendarPage() {
   /* ── Calendar API helpers ────────────────────────────── */
   const getApi = () => calendarRef.current?.getApi();
 
+  // A week is seven columns, too narrow to read on a phone: open on a single day there.
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 767px)").matches) goView("timeGridDay");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function goView(v: ViewType) {
     setCurrentView(v);
     getApi()?.changeView(v);

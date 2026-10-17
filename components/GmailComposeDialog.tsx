@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2, Eye, Mails } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
-import { COMPOSE_MODAL_SIZE } from "@/lib/compose-modal-size";
+import { COMPOSE_MODAL_SIZE, COMPOSE_SIZE_CLASS, composeSizeVars } from "@/lib/compose-modal-size";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
@@ -374,12 +374,13 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               ? cn(
                   // Full-bleed sheet on mobile, centered modal from lg up.
                   "bottom-0 left-0 right-0 max-h-[92vh] rounded-t-2xl border-x border-t",
+                  COMPOSE_SIZE_CLASS,
                   "lg:bottom-auto lg:left-1/2 lg:right-auto lg:top-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl lg:border",
                   GMAIL_COMPOSE_DIALOG_BORDER,
                   "shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:shadow-[0_24px_48px_rgba(0,0,0,0.32)]"
                 )
               : cn(
-                  "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t lg:bottom-6 lg:left-auto lg:right-6 lg:rounded-t-lg lg:border",
+                  "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t w-full h-[92dvh] lg:h-[var(--cm-h)] lg:max-h-[var(--cm-mh)] lg:w-[var(--cm-w)] lg:bottom-6 lg:left-auto lg:right-6 lg:rounded-t-lg lg:border",
                   GMAIL_COMPOSE_DIALOG_BORDER,
                   "shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:shadow-[0_8px_10px_1px_rgba(60,64,67,0.12),0_3px_14px_2px_rgba(60,64,67,0.12)]"
                 )
@@ -387,19 +388,18 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           style={
             !fullscreen
               ? centered
-                ? {
-                    // Always the mass-sending width, recipient rail or not, so
-                    // switching mass sending on or off never resizes the window.
-                    // Shared with the templates modal (COMPOSE_MODAL_SIZE).
+                ? // Always the mass-sending width, recipient rail or not, so switching mass
+                  // sending on or off never resizes the window. Shared with the templates modal.
+                  composeSizeVars({
                     width: resizeW ?? COMPOSE_MODAL_SIZE.width,
                     maxWidth: COMPOSE_MODAL_SIZE.maxWidth,
                     height: resizeH ?? COMPOSE_MODAL_SIZE.height,
-                  }
+                  })
                 : {
-                    width: resizeW ?? 560,
-                    height: resizeH ?? undefined,
-                    maxHeight: resizeH ?? "min(640px, calc(100vh - 96px))",
-                  }
+                    "--cm-w": `${resizeW ?? 560}px`,
+                    "--cm-h": resizeH ? `${resizeH}px` : "auto",
+                    "--cm-mh": resizeH ? `${resizeH}px` : "min(640px, calc(100vh - 96px))",
+                  } as React.CSSProperties
               : undefined
           }
           role="dialog"
@@ -466,11 +466,12 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             </button>
           </div>
 
-          <div className="flex min-h-0 flex-1">
+          {/* Editor and recipients sit side by side on a wide screen and stack on a phone. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
           {/* Attachments sit outside the scrolling area, pinned to the bottom of
               the column — on the review screen the whole mail scrolls above
               them, and they would otherwise ride along wherever it ends. */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white max-lg:min-h-[380px]">
           <div className="scrollbar-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 
             {/* Read-only sender identity. Sends always go from the connected

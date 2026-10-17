@@ -182,7 +182,7 @@ export function MassRecipientsPanel({
   }
 
   return (
-    <aside className="flex w-[280px] shrink-0 flex-col border-l border-[#e0e0e0] bg-white">
+    <aside className="flex w-full shrink-0 flex-col border-t border-[#e0e0e0] bg-white lg:w-[280px] lg:border-l lg:border-t-0">
       {!readOnly && (
         <div className="shrink-0 p-3">
           <div

@@ -466,11 +466,12 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             </button>
           </div>
 
-          <div className="flex min-h-0 flex-1">
+          {/* Editor and recipients sit side by side on a wide screen and stack on a phone. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
           {/* Attachments sit outside the scrolling area, pinned to the bottom of
               the column — on the review screen the whole mail scrolls above
               them, and they would otherwise ride along wherever it ends. */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white max-lg:min-h-[380px]">
           <div className="scrollbar-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 
             {/* Read-only sender identity. Sends always go from the connected

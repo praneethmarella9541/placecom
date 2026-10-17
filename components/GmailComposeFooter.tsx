@@ -73,7 +73,7 @@ export function GmailComposeFooter({
 
   return (
     <div className="shrink-0 border-t border-[#e8eaed] bg-[#f8f9fa]">
-      <div className="flex items-center gap-1 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-y-1.5 px-3 py-2 sm:flex-nowrap">
         {onBack ? (
           <button
             type="button"
@@ -116,7 +116,7 @@ export function GmailComposeFooter({
           </>
         )}
 
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
 
         {showMassToggle && (
           <FooterToggle
@@ -138,6 +138,8 @@ export function GmailComposeFooter({
           />
         )}
 
+        {/* Kept together so Send never falls off the edge on a phone: the rest wraps onto its own rows. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1">
         <FooterBtn title="Discard draft" onClick={onDiscard}>
           <TrashIcon />
         </FooterBtn>
@@ -167,6 +169,7 @@ export function GmailComposeFooter({
             {label}
           </button>
         )}
+        </div>
       </div>
     </div>
   );

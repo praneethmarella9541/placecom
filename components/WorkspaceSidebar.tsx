@@ -442,7 +442,12 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     setPendingHref(null);
   }, [pathname]);
 
+  // Close the mobile drawer once the page has actually changed. Running this on mount would shut
+  // the drawer the instant it opens, since the drawer mounts this component when it opens.
+  const shownPathname = useRef(pathname);
   useEffect(() => {
+    if (shownPathname.current === pathname) return;
+    shownPathname.current = pathname;
     onCloseMobile?.();
   }, [pathname, onCloseMobile]);
 

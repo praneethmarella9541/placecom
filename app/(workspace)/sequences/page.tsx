@@ -327,8 +327,8 @@ export default function ScheduledPage() {
                         )}
                       </div>
                       <div className="min-w-0">
-                        <p className="flex items-center gap-2 truncate text-[14.5px] font-semibold text-[var(--color-text)]">
-                          <span className="truncate">{s.name?.trim() || titleCase("Untitled")}</span>
+                        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14.5px] font-semibold text-[var(--color-text)] sm:flex-nowrap sm:truncate">
+                          <span className="min-w-0 break-words sm:truncate">{s.name?.trim() || titleCase("Untitled")}</span>
                           <span className="shrink-0 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">
                             {scheduled ? "Scheduled send" : "Sequence"}
                           </span>

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { getAuthedRequest } from "@/lib/api-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
-import { countEmailsByMember, type Outcomes, type ResponseRow, type SequenceSendRow, type TrackingRow } from "@/lib/analytics-emails";
+import { resolveCompanyNames } from "@/lib/company-enrichment";
+import { personalEmailCompanyLabel } from "@/lib/personal-email-domains";
+import { countEmailsByCompany, countEmailsByMember, type Outcomes, type ResponseRow, type SequenceSendRow, type TrackingRow, type CompanyEmailCounts } from "@/lib/analytics-emails";
 
 export const runtime = "nodejs";
 
@@ -113,6 +115,9 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const requestedUserId = searchParams.get("userId") || null;
+  // One member's emails by recipient company — only with userId, so the team
+  // request never waits on company-name lookups.
+  const wantCompanies = !!requestedUserId && searchParams.get("breakdown") === "companies";
   const allTime = searchParams.get("allTime") === "1";
 
   // Window: `?from=YYYY-MM-DD&to=YYYY-MM-DD` (both UTC midnights, inclusive).
@@ -241,8 +246,8 @@ export async function GET(request: Request) {
           .order("id", { ascending: true })
           .range(from, to) as unknown as PromiseLike<{ data: TrackingRow[] | null; error: { message: string } | null }>
       );
-    const full = await page("id, user_id, sent_at, opened, bounced, to_address, cc_address, bcc_address, bounced_recipients");
-    return full.error && /column|42703/i.test(full.error) ? page("id, user_id, sent_at, opened, bounced") : full;
+    const full = await page("id, user_id, sent_at, gmail_thread_id, opened, bounced, to_address, cc_address, bcc_address, bounced_recipients");
+    return full.error && /column|42703/i.test(full.error) ? page("id, user_id, sent_at, gmail_thread_id, opened, bounced") : full;
   };
 
   // Paged: PostgREST silently stops at 1,000 rows per request, and sequences
@@ -267,7 +272,7 @@ export async function GET(request: Request) {
     fetchAllRows<SequenceSendRow>((from, to) =>
       svc
         .from("sequence_sends")
-        .select("id, enrollment_id, created_at, tracking_id, sequence_enrollments(enrolled_by, status, last_sent_at), sequences(created_by), email_tracking(opened)")
+        .select("id, enrollment_id, created_at, tracking_id, gmail_thread_id, sequence_enrollments(enrolled_by, status, last_sent_at, email), sequences(created_by), email_tracking(opened)")
         .eq("mailbox_owner_id", adminId)
         .eq("status", "sent")
         .gte("created_at", sinceIso)
@@ -281,7 +286,7 @@ export async function GET(request: Request) {
     fetchAllRows<ResponseRow & { id: string }>((from, to) =>
       svc
         .from("email_responses")
-        .select("id, user_id, received_at")
+        .select("id, user_id, received_at, gmail_thread_id, from_address")
         .in("user_id", userIdsForQuery)
         .gte("received_at", sinceIso)
         .lt("received_at", queryUpperIso)
@@ -422,9 +427,22 @@ export async function GET(request: Request) {
   );
 
   lap("compute");
+  const breakdown = wantCompanies
+    ? countEmailsByCompany({
+        userId: requestedUserId as string,
+        mailboxOwnerId: adminId,
+        tracking: emailsRes.data,
+        sequenceSends: seqRes.data,
+        responses: responsesRes.data,
+        windowEndIso: queryUpperIso,
+      })
+    : null;
+  const companies = breakdown ? await companyBreakdown(svc, breakdown.companies) : undefined;
+  if (wantCompanies) lap("companies");
   return NextResponse.json(
     {
       users: result,
+      ...(breakdown ? { companies, companyEmails: breakdown.emails, multiCompanyEmails: breakdown.multiCompanyEmails } : {}),
       accountTotals,
       windowDays,
       allTime,
@@ -441,4 +459,41 @@ export async function GET(request: Request) {
       },
     }
   );
+}
+
+type CompanyBreakdownRow = CompanyEmailCounts & { name: string; logoUrl: string | null; personal: boolean };
+
+/**
+ * Names each recipient domain: the shared domain -> company cache first, then
+ * logo.dev, then a guess from the domain (lib/company-enrichment.ts, which
+ * caches what it finds). Webmail domains are labelled "Gmail (personal)" and
+ * never looked up — they aren't a company.
+ */
+async function companyBreakdown(
+  svc: ReturnType<typeof createServiceSupabase>,
+  counts: CompanyEmailCounts[]
+): Promise<CompanyBreakdownRow[]> {
+  const orgDomains = counts
+    .map((c) => c.domain)
+    .filter((d): d is string => !!d && !personalEmailCompanyLabel(d));
+  const names = await resolveCompanyNames(svc, orgDomains);
+
+  const logos = new Map<string, string>();
+  for (let i = 0; i < orgDomains.length; i += 100) {
+    const { data } = await svc
+      .from("company_enrichment_cache")
+      .select("domain, logo_url")
+      .in("domain", orgDomains.slice(i, i + 100));
+    for (const row of data ?? []) if (row.logo_url) logos.set(row.domain as string, row.logo_url as string);
+  }
+
+  return counts.map((c) => {
+    const personal = c.domain ? personalEmailCompanyLabel(c.domain) : null;
+    return {
+      ...c,
+      name: c.domain ? personal ?? names.get(c.domain) ?? c.domain : "Unknown recipient",
+      logoUrl: c.domain ? logos.get(c.domain) ?? null : null,
+      personal: !!personal,
+    };
+  });
 }

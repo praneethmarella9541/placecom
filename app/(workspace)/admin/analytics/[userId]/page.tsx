@@ -8,6 +8,7 @@ import { DateRangePicker, rangeDayCount, rangeEndingToday, type DateRange } from
 import { SHOW_SPEND, SHOW_TOKENS } from "@/lib/analytics-flags";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { EmailsChart } from "@/components/analytics/EmailsChart";
+import { MemberCompanies } from "@/components/analytics/MemberCompanies";
 import { fetchAnalytics } from "@/lib/analytics-prefetch";
 import { InfoTip, METRIC_HELP } from "@/components/analytics/InfoTip";
 import { apiSeriesToPoints, percent, relativeDay, teamAveragePoints, type ApiDayPoint } from "@/lib/analytics-chart";
@@ -270,6 +271,8 @@ export default function AdminUserAnalyticsPage() {
           reference={teamAverage ? { label: "Team average", points: teamAverage } : undefined}
         />
       )}
+
+      {user && userId && <MemberCompanies userId={userId} range={range} />}
     </div>
   );
 }

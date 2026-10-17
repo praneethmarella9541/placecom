@@ -229,7 +229,7 @@ export default function CampaignReportPage() {
                 />
               </div>
             </div>
-            <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+            <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">

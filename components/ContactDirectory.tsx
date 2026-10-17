@@ -481,12 +481,12 @@ export function ContactDirectory() {
                     </th>
                   ) : null}
                   <th className="px-4 py-3">{titleCase("Full name")}</th>
-                  <th className="px-4 py-3">{titleCase("Company")}</th>
-                  <th className="px-4 py-3">{titleCase("Designation")}</th>
-                  <th className="px-4 py-3">{titleCase("Email")}</th>
-                  <th className="px-4 py-3">{titleCase("Status")}</th>
+                  <th className="hidden px-4 py-3 md:table-cell">{titleCase("Company")}</th>
+                  <th className="hidden px-4 py-3 md:table-cell">{titleCase("Designation")}</th>
+                  <th className="hidden px-4 py-3 md:table-cell">{titleCase("Email")}</th>
+                  <th className="hidden px-4 py-3 md:table-cell">{titleCase("Status")}</th>
                   {/* "Last contacted" column hidden for now; the data and sort option remain. */}
-                  <th className="px-4 py-3">{titleCase("Links")}</th>
+                  <th className="hidden px-4 py-3 md:table-cell">{titleCase("Links")}</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
@@ -521,13 +521,19 @@ export function ContactDirectory() {
                           {c.phone && (
                             <p className="truncate text-[12px] text-[var(--color-text-muted)]">{formatPhone(c.phone)}</p>
                           )}
+                          {/* The company and email columns are hidden on phones, so they sit under the name. */}
+                          {c.company || c.email ? (
+                            <p className="truncate text-[12px] text-[var(--color-text-muted)] md:hidden">
+                              {[c.company, c.email].filter(Boolean).join(" · ")}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.company || "—"}</td>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.title || "—"}</td>
-                    <td className="px-4 py-3 text-[var(--color-text-muted)]">{c.email || "—"}</td>
-                    <td className="whitespace-nowrap px-4 py-3">
+                    <td className="hidden px-4 py-3 text-[var(--color-text-muted)] md:table-cell">{c.company || "—"}</td>
+                    <td className="hidden px-4 py-3 text-[var(--color-text-muted)] md:table-cell">{c.title || "—"}</td>
+                    <td className="hidden px-4 py-3 text-[var(--color-text-muted)] md:table-cell">{c.email || "—"}</td>
+                    <td className="hidden whitespace-nowrap px-4 py-3 md:table-cell">
                       {/* inline-block + nowrap: as an inline element the chip
                           wrapped across two lines in a narrow column, which
                           fragments the rounded background into two offset
@@ -542,7 +548,7 @@ export function ContactDirectory() {
                         {statusLabel(c)}
                       </span>
                     </td>
-                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <td className="hidden px-4 py-3 md:table-cell" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <a
                           href={c.linkedin_url || contactLinkedInSearchUrl(c)}

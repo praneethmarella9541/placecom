@@ -316,7 +316,7 @@ export default function ScheduledPage() {
                 >
                   <Link
                     href={`/sequences/${encodeURIComponent(s.id)}`}
-                    className="flex min-w-0 flex-1 items-center justify-between gap-4 py-4 pl-5 pr-3"
+                    className="flex min-w-0 flex-1 flex-col gap-2.5 py-4 pl-4 pr-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:pl-5 sm:pr-3"
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3.5">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
@@ -346,7 +346,7 @@ export default function ScheduledPage() {
                         </p>
                       </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-4">
+                    <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1.5 pl-[54px] sm:pl-0">
                       <span
                         className="flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-text-muted)]"
                         title={`${s.recipientCount} recipients, ${waiting} still waiting`}

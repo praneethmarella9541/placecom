@@ -317,7 +317,7 @@ export default function ConnectorsPage() {
                   Used this month{spend ? ` · ${spend.totalCredits.toLocaleString()} credits` : ""}
                 </p>
                 {spend && spend.rows.length > 0 ? (
-                  <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
+                  <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
                     <table className="w-full text-left text-[13px]">
                       <thead>
                         <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">

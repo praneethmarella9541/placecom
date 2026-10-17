@@ -94,6 +94,7 @@ We do not sell personal data, and we do not use personal data processed on behal
 We may share personal data with:
 
 - **Infrastructure and service providers.** Providers who host our application, provide database and authentication services, deliver push notifications, and support the calling, SMS, and WhatsApp features of the Service, each acting under instructions from us and, where applicable, from the relevant customer.
+- **Contact data provider (only if your organization connects one).** If your administrator connects the organization's own Lusha account, the name, employer, LinkedIn link or email address of a contact you choose to look up is sent to Lusha, using your organization's API key, to find that person's work email address and phone number. What Lusha returns is saved on the contact. We do not send Lusha data to our AI processing provider, and we do not use it to train any AI or machine-learning model. Your organization's credits, plan and Lusha account remain its own; disconnecting Lusha deletes the stored key.
 - **AI processing provider.** OpenAI, which processes content only to provide the AI-assisted features you choose to use, such as CRM pipeline stage suggestions (see Section 4).
 - **Professional advisors.** Lawyers, accountants, or consultants, where necessary to obtain advice or services.
 - **Legal and safety.** Where required by law, legal process, or a valid governmental request, or where necessary to protect the rights, safety, or property of The Nucleus, our customers, or others.

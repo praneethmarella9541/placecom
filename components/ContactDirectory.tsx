@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { LushaMark } from "@/components/LushaLogo";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, Plus, Search, Trash2, Upload, UserRound } from "lucide-react";
@@ -11,6 +12,8 @@ import { SyncedContactsSection } from "@/components/SyncedContactsSection";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { ContactFormModal, contactToFormInput, emptyContactForm } from "@/components/ContactFormModal";
 import { ContactImportModal } from "@/components/ContactImportModal";
+import { LushaBulkModal } from "@/components/LushaBulkModal";
+import { useLushaConnected } from "@/hooks/useLushaConnected";
 import { useDirectoryContacts, type DirectoryContactInput } from "@/hooks/useDirectoryContacts";
 import { armSyncedContactsInvalidation, warmSyncedContacts } from "@/lib/synced-contacts-prefetch";
 import { useModuleVisibility } from "@/lib/module-visibility";
@@ -127,6 +130,10 @@ export function ContactDirectory() {
   const [editingContact, setEditingContact] = useState<DirectoryContact | null>(null);
   const [formPrefill, setFormPrefill] = useState<DirectoryContactInput>(emptyContactForm);
   const [importOpen, setImportOpen] = useState(false);
+  // Lusha: pick contacts with the checkboxes, then find their emails and phones in one go.
+  const lushaConnected = useLushaConnected();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [lushaBulkOpen, setLushaBulkOpen] = useState(false);
   /** Contact awaiting delete confirmation. */
   const [pendingDelete, setPendingDelete] = useState<DirectoryContact | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -234,6 +241,27 @@ export function ContactDirectory() {
   const pageStart = (currentPage - 1) * PAGE_SIZE;
   const visible = useMemo(() => sorted.slice(pageStart, pageStart + PAGE_SIZE), [sorted, pageStart]);
 
+  /** The most one Lusha run takes (matches the server's limit). */
+  const LUSHA_MAX = 300;
+  const withoutEmail = useMemo(() => sorted.filter((c) => !c.email), [sorted]);
+  const allVisibleSelected = visible.length > 0 && visible.every((c) => selected.has(c.id));
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function toggleVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visible.forEach((c) => next.delete(c.id));
+      else visible.forEach((c) => next.add(c.id));
+      return next;
+    });
+  }
+
   // A new query starts at its first page, not wherever the last one was left.
   useEffect(() => {
     setPage(1);
@@ -290,7 +318,18 @@ export function ContactDirectory() {
             className="input-field w-full pl-9 text-[13px]"
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {lushaConnected && selected.size > 0 ? (
+            <button
+              data-testid="directory-lusha-btn"
+              type="button"
+              className="btn-secondary inline-flex items-center gap-2 px-4"
+              onClick={() => setLushaBulkOpen(true)}
+            >
+              <LushaMark className="h-4 w-4" />
+              {titleCase(`Find email & phone (${selected.size})`)}
+            </button>
+          ) : null}
           <button
             data-testid="directory-import-btn"
             type="button"
@@ -406,9 +445,41 @@ export function ContactDirectory() {
                 <Pager current={currentPage} total={totalPages} onChange={setPage} />
               </div>
             )}
+            {lushaConnected && withoutEmail.length > 0 ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-2 text-[12.5px] text-[var(--color-text-muted)]">
+                <span>
+                  {selected.size > 0 ? `${selected.size} selected. ` : ""}
+                  {withoutEmail.length.toLocaleString()} contact{withoutEmail.length === 1 ? "" : "s"} here {withoutEmail.length === 1 ? "has" : "have"} no email.
+                </span>
+                <span className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="font-semibold text-[var(--color-copper)] hover:underline"
+                    onClick={() => setSelected(new Set(withoutEmail.slice(0, LUSHA_MAX).map((c) => c.id)))}
+                  >
+                    Select {Math.min(withoutEmail.length, LUSHA_MAX)} without an email
+                  </button>
+                  {selected.size > 0 ? (
+                    <button type="button" className="font-semibold hover:underline" onClick={() => setSelected(new Set())}>
+                      Clear selection
+                    </button>
+                  ) : null}
+                </span>
+              </div>
+            ) : null}
             <table className="w-full text-left text-[13px]">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                  {lushaConnected ? (
+                    <th className="w-10 px-4 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all on this page"
+                        checked={allVisibleSelected}
+                        onChange={toggleVisible}
+                      />
+                    </th>
+                  ) : null}
                   <th className="px-4 py-3">{titleCase("Full name")}</th>
                   <th className="px-4 py-3">{titleCase("Company")}</th>
                   <th className="px-4 py-3">{titleCase("Designation")}</th>
@@ -432,6 +503,16 @@ export function ContactDirectory() {
                     }}
                     className="cursor-pointer border-b border-[var(--color-border)] last:border-b-0"
                   >
+                    {lushaConnected ? (
+                      <td className="w-10 px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${c.name}`}
+                          checked={selected.has(c.id)}
+                          onChange={() => toggleOne(c.id)}
+                        />
+                      </td>
+                    ) : null}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <GmailAvatar seed={c.email || c.id} name={c.name} size={36} />
@@ -547,6 +628,16 @@ export function ContactDirectory() {
         />
       )}
 
+      {lushaBulkOpen ? (
+        <LushaBulkModal
+          contactIds={Array.from(selected).slice(0, LUSHA_MAX)}
+          onClose={() => setLushaBulkOpen(false)}
+          onDone={() => {
+            setSelected(new Set());
+            void reload();
+          }}
+        />
+      ) : null}
       {importOpen && (
         // The dialog reports the outcome itself; the table just needs the new rows.
         <ContactImportModal existing={contacts} onClose={() => setImportOpen(false)} onImported={() => void reload()} />

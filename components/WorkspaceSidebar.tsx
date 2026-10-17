@@ -19,6 +19,7 @@ import {
   Megaphone,
   MessageCircle,
   MessageSquare,
+  Plug,
   Radio,
   SlidersHorizontal,
   UserRound,
@@ -39,6 +40,7 @@ import { GmailAvatar } from "@/components/GmailAvatar";
 import { formatPhone } from "@/lib/phone-contacts-display";
 
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
+const connectorsLink = { href: "/admin/connectors", label: "Connectors", Icon: Plug } as const;
 const configsLink = { href: "/configs", label: "Configs", Icon: SlidersHorizontal } as const;
 
 const commsNav = [
@@ -468,7 +470,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
    */
   const systemItems = useMemo<NavGroupLinks["items"]>(() => {
     const items: NavGroupLinks["items"] = [];
-    if (me?.role === "admin") items.push({ ...adminLink });
+    if (me?.role === "admin") items.push({ ...adminLink }, { ...connectorsLink });
     if (me?.isConfigsAdmin) items.push({ ...configsLink });
     return items;
   }, [me?.role, me?.isConfigsAdmin]);

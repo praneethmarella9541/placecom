@@ -459,6 +459,27 @@
     box-shadow: 0 0 0 3px var(--color-copper-tint);
   }
 
+  /* Search boxes: a visible neutral border so they read as a field, copper on
+     hover and focus like every other input. Size, radius and left padding for
+     the icon stay with each box; pair with a copper icon (text-[var(--color-copper)]). */
+  .search-field {
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-text);
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  }
+  .search-field::placeholder {
+    color: var(--color-text-muted);
+  }
+  .search-field:hover:not(:focus) {
+    border-color: rgba(196, 92, 26, 0.35);
+  }
+  .search-field:focus {
+    border-color: var(--color-copper);
+    box-shadow: 0 0 0 3px var(--color-copper-tint);
+  }
+
   /* ── Badges (status pills) ─────────────────────────────────── */
   .badge {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;

@@ -158,7 +158,7 @@ export function CrmImportContactsModal({
 
         <div className="shrink-0 space-y-2 px-6 pb-3">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-copper)]" />
             <input
               type="search"
               value={search}

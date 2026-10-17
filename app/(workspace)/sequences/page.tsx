@@ -245,7 +245,7 @@ export default function ScheduledPage() {
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <div className="relative w-full max-w-sm">
             <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-text-faint)]"
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--color-copper)]"
               strokeWidth={2}
             />
             <input
@@ -254,7 +254,7 @@ export default function ScheduledPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={titleCase("Search by name")}
-              className="h-10 w-full rounded-xl border border-transparent bg-[var(--color-surface-2)] pl-9 pr-4 text-[13px] text-[var(--color-text)] outline-none transition-colors placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)]"
+              className="h-10 w-full rounded-xl pl-9 pr-4 text-[13px] outline-none search-field"
               autoComplete="off"
             />
           </div>

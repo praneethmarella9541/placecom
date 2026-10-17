@@ -217,7 +217,7 @@ export default function CampaignReportPage() {
               </h2>
               <div className="relative w-56">
                 <Search
-                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]"
+                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-copper)]"
                   strokeWidth={2}
                 />
                 <input
@@ -225,7 +225,7 @@ export default function CampaignReportPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={titleCase("Search recipients")}
-                  className="h-8 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-3 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)]"
+                  className="h-8 w-full rounded-lg pl-8 pr-3 text-[12.5px] outline-none search-field"
                 />
               </div>
             </div>

@@ -11,8 +11,8 @@ const MAX_BAR = 24;
 /** Surface-coloured gap between touching marks (stacked segments, neighbouring bars). */
 const GAP = 2;
 const RADIUS = 4;
-/** Tooltip width (11.5rem) and its distance from the hovered column. */
-const TIP_W = 184;
+/** Tooltip width (13rem) and its distance from the hovered column. */
+const TIP_W = 208;
 const TIP_GAP = 12;
 
 /**
@@ -332,7 +332,7 @@ export function EmailsChart({
             {hovered && grandTotal > 0 && (
               <div
                 role="status"
-                className="pointer-events-none absolute z-10 w-[11.5rem] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-lg"
+                className="pointer-events-none absolute z-10 w-[13rem] rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 shadow-lg"
                 style={{ left: tipLeft, top: 0 }}
               >
                 <p className="text-[12px] font-semibold text-[var(--color-text)]">{hovered.rangeLabel}</p>

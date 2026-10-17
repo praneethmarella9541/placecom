@@ -268,7 +268,7 @@ export default function AdminUserAnalyticsPage() {
           points={memberPoints}
           loading={loading}
           scopeLabel="by this member"
-          reference={teamAverage ? { label: "Team average", points: teamAverage } : undefined}
+          reference={teamAverage ? { label: "Team average activity", points: teamAverage } : undefined}
         />
       )}
 

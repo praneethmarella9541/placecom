@@ -31,6 +31,7 @@ type UserAnalytics = {
   email: string | null;
   displayUsername: string | null;
   role: string;
+  groupName?: string | null;
   totals: Totals;
   series?: ApiDayPoint[];
 };
@@ -162,7 +163,7 @@ export default function AdminUserAnalyticsPage() {
                   {user.displayUsername || user.email || titleCase("User Analytics")}
                 </h1>
                 <p className="truncate text-sm text-[var(--color-text-muted)]">
-                  {user.email ?? "—"} · {user.role} · {range.allTime ? "All time" : `${rangeDayCount(range)} day${rangeDayCount(range) === 1 ? "" : "s"}`}
+                  {user.email ?? "—"} · {user.groupName || user.role} · {range.allTime ? "All time" : `${rangeDayCount(range)} day${rangeDayCount(range) === 1 ? "" : "s"}`}
                   {loading && (
                     <span className="ml-2 inline-flex items-center gap-1 text-[var(--color-text-faint)]" role="status">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden />

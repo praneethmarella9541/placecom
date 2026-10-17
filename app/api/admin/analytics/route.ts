@@ -34,6 +34,8 @@ type UserAnalytics = {
   email: string | null;
   displayUsername: string | null;
   role: string;
+  /** The member's access group, when one is assigned (team_groups.name). */
+  groupName: string | null;
   totals: {
     emailsSent: number;
     /** Of emailsSent: opened and bounced; `openTracked` = those whose opens can be measured (the open rate's base). `replied` = replies received in the range (each message). */
@@ -151,11 +153,20 @@ export async function GET(request: Request) {
   // For the per-user `?userId=…` request we still allow the admin's own
   // userId so the admin can drill into themselves if they go via direct URL.
   lap("setup");
-  const { data: profiles, error: profileErr } = await svc
-    .from("profiles")
-    .select("id, role, display_username, mailbox_owner_id")
-    .or(`id.eq.${adminId},mailbox_owner_id.eq.${adminId}`)
-    .order("created_at", { ascending: true });
+  const roster = (columns: string) =>
+    svc
+      .from("profiles")
+      .select(columns)
+      .or(`id.eq.${adminId},mailbox_owner_id.eq.${adminId}`)
+      .order("created_at", { ascending: true }) as unknown as PromiseLike<{
+        data: Record<string, unknown>[] | null;
+        error: { message: string } | null;
+      }>;
+  // group_id arrives with migration 0032; read without it before that.
+  let { data: profiles, error: profileErr } = await roster("id, role, display_username, mailbox_owner_id, group_id");
+  if (profileErr && /group_id/i.test(profileErr.message ?? "")) {
+    ({ data: profiles, error: profileErr } = await roster("id, role, display_username, mailbox_owner_id"));
+  }
   if (profileErr) {
     return NextResponse.json({ error: profileErr.message }, { status: 500 });
   }
@@ -200,6 +211,17 @@ export async function GET(request: Request) {
       .then((r) => [uid, r.data.user?.email ?? null] as const)
       .catch(() => [uid, null] as const)
   );
+
+  // Access group names, so the table shows each member's group rather than
+  // their bare role. Runs alongside the activity queries below.
+  const groupIds = Array.from(
+    new Set(teamProfiles.map((p) => p.group_id as string | null).filter(Boolean))
+  ) as string[];
+  const groupNamesPromise: Promise<Map<string, string>> = groupIds.length
+    ? Promise.resolve(svc.from("team_groups").select("id, name").in("id", groupIds)).then(
+        ({ data }) => new Map((data ?? []).map((g) => [g.id as string, g.name as string]))
+      )
+    : Promise.resolve(new Map());
 
   // Pull activity rows scoped to the team window. We do per-query .in() filters
   // so RLS-bypass (service role) is targeted, not table-wide. Upper bound
@@ -287,6 +309,7 @@ export async function GET(request: Request) {
     ({ windowDays } = windowBounds());
   }
   const emailById = new Map<string, string | null>(emailEntries);
+  const groupNameById = await groupNamesPromise;
 
   // Surface the first hard error if any; missing tables (e.g. migration not
   // applied) give a friendlier message than a 500.
@@ -370,6 +393,7 @@ export async function GET(request: Request) {
       email: emailById.get(uid) ?? null,
       displayUsername: (profile?.display_username as string | null) ?? null,
       role: (profile?.role as string) ?? "staff",
+      groupName: groupNameById.get(profile?.group_id as string) ?? null,
       totals,
       series,
     };

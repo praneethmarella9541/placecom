@@ -53,6 +53,7 @@ type UserAnalytics = {
   email: string | null;
   displayUsername: string | null;
   role: string;
+  groupName?: string | null;
   totals: Totals;
   series: ApiDayPoint[];
 };
@@ -258,14 +259,14 @@ export default function AdminAnalyticsPage() {
 
   /** Downloads what the table shows, for the selected range. Built in the browser from the data already loaded. */
   function exportCsv() {
-    const header = ["Member", "Email", "Role", "Emails sent", "Opened", "Responded", "Bounced", "Last email"];
+    const header = ["Member", "Email", "Access group", "Emails sent", "Opened", "Responded", "Bounced", "Last email"];
     if (SHOW_TOKENS) header.push("AI tokens");
     if (SHOW_SPEND) header.push("API cost (USD)");
     const rows = sorted.map((u) => {
       const row: (string | number | null)[] = [
         u.displayUsername || u.email || u.userId,
         u.email,
-        u.role,
+        u.groupName || u.role,
         u.totals.emailsSent,
         u.totals.opened,
         u.totals.replied,
@@ -539,7 +540,7 @@ export default function AdminAnalyticsPage() {
                           <div className="min-w-0">
                             <div className="truncate font-medium text-[var(--color-text)]">{displayName}</div>
                             <div className="truncate text-[11.5px] text-[var(--color-text-muted)]">
-                              {u.email ?? "—"} · {u.role}
+                              {u.email ?? "—"} · {u.groupName || u.role}
                             </div>
                           </div>
                         </Link>

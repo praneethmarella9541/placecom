@@ -10,6 +10,16 @@ export const COMPOSE_MODAL_SIZE = {
 } as const;
 
 /**
+ * The window while Scheduling is on: the timeline (start, email cards, waits) shares the column
+ * with the editor, so it needs more room than a plain compose to leave the editor a usable height.
+ */
+export const COMPOSE_SCHEDULING_SIZE = {
+  width: 1240,
+  maxWidth: "calc(100vw - 48px)",
+  height: "min(920px, calc(100vh - 48px))",
+} as const;
+
+/**
  * The same size as CSS variables, so it only applies from `lg` up: on a phone an inline width and
  * max-width would beat the full-bleed classes and leave the window short of the screen's edge.
  * Pair `composeSizeVars()` (style) with `COMPOSE_SIZE_CLASS` (className).

@@ -2,20 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { AlertTriangle, CalendarClock, Loader2, Pause, Play, Plus, Search, Trash2, Users, Workflow } from "lucide-react";
-import { cn, formatDate } from "@/lib/utils";
+import { AlertTriangle, CalendarClock, Loader2, Pause, Play, Search, Trash2, Users } from "lucide-react";
+import { formatDate } from "@/lib/utils";
 import { Skeleton } from "@/components/Skeleton";
 import { titleCase } from "@/lib/title-case";
-import { CreateNamePopup } from "@/components/CreateNamePopup";
 import { SequenceStatusPill } from "@/components/SequenceStatusPill";
 import type { SequenceListItem } from "@/lib/sequence-types";
 import {
   getSequencesPrefetchCache,
   setSequencesPrefetchCache,
 } from "@/lib/workspace-feature-prefetch";
-
-type Filter = "all" | "scheduled" | "sequence";
 
 /** "Wed, 14 Oct, 9:00 am" in the viewer's own time zone. */
 function formatNextSend(iso: string): string {
@@ -29,28 +25,32 @@ function formatNextSend(iso: string): string {
   }).format(new Date(iso));
 }
 
+/**
+ * This page lists sends scheduled from Compose. Flows built from scratch in the old sequence editor
+ * (origin "sequence") are no longer offered here, so they are left out of the list.
+ */
+function onlyScheduled(list: SequenceListItem[]): SequenceListItem[] {
+  return list.filter((s) => s.origin === "scheduled");
+}
+
 /** Everyone is done and nothing is queued — the flow ran its course. */
 function isFinished(s: SequenceListItem): boolean {
   return s.status === "active" && s.recipientCount > 0 && s.counts.active === 0 && s.counts.paused === 0;
 }
 
 export default function ScheduledPage() {
-  const router = useRouter();
   const [sequences, setSequences] = useState<SequenceListItem[]>([]);
   const [overdueCount, setOverdueCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [showCreatePopup, setShowCreatePopup] = useState(false);
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const cached = getSequencesPrefetchCache();
     if (cached?.sequences.length) {
-      setSequences(cached.sequences as SequenceListItem[]);
+      setSequences(onlyScheduled(cached.sequences as SequenceListItem[]));
       setLoading(false);
     } else {
       setLoading(true);
@@ -65,7 +65,7 @@ export default function ScheduledPage() {
         overdueCount?: number;
       };
       if (!res.ok) throw new Error(data.error || "Failed to load scheduled emails");
-      setSequences(data.sequences || []);
+      setSequences(onlyScheduled(data.sequences || []));
       setOverdueCount(data.overdueCount ?? 0);
       setSequencesPrefetchCache({
         sequences: data.sequences || [],
@@ -81,28 +81,6 @@ export default function ScheduledPage() {
   useEffect(() => {
     void load();
   }, [load]);
-
-  async function handleCreate(name: string) {
-    if (creating) return;
-    setCreating(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/sequences", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const data = (await res.json()) as { error?: string; id?: string };
-      if (!res.ok) throw new Error(data.error || "Could not create sequence");
-      if (!data.id) throw new Error("Invalid response");
-      setShowCreatePopup(false);
-      router.push(`/sequences/${encodeURIComponent(data.id)}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
-    } finally {
-      setCreating(false);
-    }
-  }
 
   async function handleDelete(s: SequenceListItem) {
     if (deletingId) return;
@@ -155,23 +133,10 @@ export default function ScheduledPage() {
     }
   }
 
-  const counts = useMemo(
-    () => ({
-      all: sequences.length,
-      scheduled: sequences.filter((s) => s.origin === "scheduled").length,
-      sequence: sequences.filter((s) => s.origin !== "scheduled").length,
-    }),
-    [sequences],
-  );
-
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return sequences.filter((s) => {
-      if (filter === "scheduled" && s.origin !== "scheduled") return false;
-      if (filter === "sequence" && s.origin === "scheduled") return false;
-      return !q || s.name.toLowerCase().includes(q);
-    });
-  }, [sequences, search, filter]);
+    return sequences.filter((s) => !q || s.name.toLowerCase().includes(q));
+  }, [sequences, search]);
 
   const empty = !loading && sequences.length === 0;
 
@@ -187,37 +152,7 @@ export default function ScheduledPage() {
             sending, then Scheduling.
           </p>
         </div>
-        <button
-          data-testid="sequences-create-btn"
-          type="button"
-          title="Build a multi-step sequence from scratch"
-          onClick={() => {
-            setError(null);
-            setShowCreatePopup(true);
-          }}
-          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-[var(--color-copper)] px-5 text-[14px] font-semibold text-white transition-colors hover:bg-[var(--color-copper-hover)]"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2} />
-          {titleCase("New sequence")}
-        </button>
       </div>
-
-      {showCreatePopup ? (
-        <CreateNamePopup
-          icon={<Workflow className="h-5 w-5" strokeWidth={2} />}
-          title="New sequence"
-          placeholder="Sequence name, e.g. Recruiter Outreach"
-          creating={creating}
-          error={error}
-          onSubmit={(name) => void handleCreate(name)}
-          onClose={() => {
-            if (!creating) {
-              setShowCreatePopup(false);
-              setError(null);
-            }
-          }}
-        />
-      ) : null}
 
       {overdueCount > 0 ? (
         <div
@@ -235,7 +170,7 @@ export default function ScheduledPage() {
         </div>
       ) : null}
 
-      {error && !showCreatePopup ? (
+      {error ? (
         <div className="rounded-[var(--radius-md)] border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3 text-[13px] text-[var(--color-danger)]">
           {error}
         </div>
@@ -258,31 +193,6 @@ export default function ScheduledPage() {
               autoComplete="off"
             />
           </div>
-          <div className="flex items-center gap-1.5" role="tablist" aria-label="Filter">
-            {(
-              [
-                ["all", "All"],
-                ["scheduled", "Scheduled sends"],
-                ["sequence", "Sequences"],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={filter === key}
-                onClick={() => setFilter(key)}
-                className={cn(
-                  "rounded-full px-3 py-1.5 text-[12.5px] font-medium transition-colors",
-                  filter === key
-                    ? "bg-[var(--color-copper)] text-white"
-                    : "bg-[var(--color-surface-2)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]",
-                )}
-              >
-                {label} <span className="opacity-70">{counts[key]}</span>
-              </button>
-            ))}
-          </div>
         </div>
 
         {loading ? (
@@ -294,7 +204,7 @@ export default function ScheduledPage() {
         ) : empty ? (
           <p className="rounded-2xl border border-dashed border-[var(--color-border)] px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]">
             {titleCase(
-              "Nothing scheduled yet. In Compose, turn on Mass sending and Scheduling to queue emails with follow-ups, or create a sequence here.",
+              "Nothing scheduled yet. In Compose, turn on Mass sending and Scheduling to queue emails with follow-ups.",
             )}
           </p>
         ) : filtered.length === 0 ? (
@@ -304,7 +214,6 @@ export default function ScheduledPage() {
         ) : (
           <ul className="divide-y divide-[var(--color-border)] rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)]">
             {filtered.map((s) => {
-              const scheduled = s.origin === "scheduled";
               const finished = isFinished(s);
               const waiting = s.counts.active + s.counts.paused;
               const canToggle = s.status === "active" || s.status === "paused";
@@ -320,18 +229,11 @@ export default function ScheduledPage() {
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-3.5">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--color-surface-2)] text-[var(--color-text-muted)]">
-                        {scheduled ? (
-                          <CalendarClock className="h-[18px] w-[18px]" strokeWidth={2} />
-                        ) : (
-                          <Workflow className="h-[18px] w-[18px]" strokeWidth={2} />
-                        )}
+                        <CalendarClock className="h-[18px] w-[18px]" strokeWidth={2} />
                       </div>
                       <div className="min-w-0">
                         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[14.5px] font-semibold text-[var(--color-text)] sm:flex-nowrap sm:truncate">
                           <span className="min-w-0 break-words sm:truncate">{s.name?.trim() || titleCase("Untitled")}</span>
-                          <span className="shrink-0 rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">
-                            {scheduled ? "Scheduled send" : "Sequence"}
-                          </span>
                         </p>
                         <p className="font-mono mt-0.5 text-[11.5px] text-[var(--color-text-faint)]">
                           {s.emailStepCount} {s.emailStepCount === 1 ? "email" : "emails"}

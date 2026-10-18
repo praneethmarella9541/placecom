@@ -5,7 +5,12 @@ import { createPortal } from "react-dom";
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2, Eye, Mails } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
-import { COMPOSE_MODAL_SIZE, COMPOSE_SIZE_CLASS, composeSizeVars } from "@/lib/compose-modal-size";
+import {
+  COMPOSE_MODAL_SIZE,
+  COMPOSE_SCHEDULING_SIZE,
+  COMPOSE_SIZE_CLASS,
+  composeSizeVars,
+} from "@/lib/compose-modal-size";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
@@ -121,6 +126,10 @@ export type GmailComposeDialogProps = {
    * editor. The footer's Variables button is pointed at it through `insertVariableOverride`.
    */
   scheduleStepEditor?: React.ReactNode;
+  /** Under the editor while Scheduling is on: the rest of the flow's timeline. */
+  scheduleAfter?: React.ReactNode;
+  /** Draw the editor as the open card of the scheduled timeline (header above, tail below). */
+  scheduleCard?: boolean;
   insertVariableOverride?: () => void;
   sendLabel?: string;
   sending?: boolean;
@@ -215,6 +224,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     onSchedulingChange,
     scheduleBar,
     scheduleStepEditor,
+    scheduleAfter,
+    scheduleCard,
     insertVariableOverride,
     sendLabel,
     sending,
@@ -390,10 +401,11 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               ? centered
                 ? // Always the mass-sending width, recipient rail or not, so switching mass
                   // sending on or off never resizes the window. Shared with the templates modal.
+                  // Scheduling is the one exception: its timeline needs the larger window.
                   composeSizeVars({
-                    width: resizeW ?? COMPOSE_MODAL_SIZE.width,
+                    width: resizeW ?? (schedulingEnabled ? COMPOSE_SCHEDULING_SIZE : COMPOSE_MODAL_SIZE).width,
                     maxWidth: COMPOSE_MODAL_SIZE.maxWidth,
-                    height: resizeH ?? COMPOSE_MODAL_SIZE.height,
+                    height: resizeH ?? (schedulingEnabled ? COMPOSE_SCHEDULING_SIZE : COMPOSE_MODAL_SIZE).height,
                   })
                 : {
                     "--cm-w": `${resizeW ?? 560}px`,
@@ -601,6 +613,23 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               </div>
             ) : null}
 
+            {/* While Scheduling is on, the open email is a card of the timeline: the bar above draws its
+                header, and these two wrappers give the editor the matching border and the cream
+                backdrop. `contents` keeps the editor a direct child of the column otherwise. */}
+            <div
+              className={
+                scheduleCard && !reviewing
+                  ? "flex min-h-[340px] flex-1 flex-col bg-[#faf8f5] px-3"
+                  : "contents"
+              }
+            >
+            <div
+              className={
+                scheduleCard && !reviewing
+                  ? "flex min-h-[340px] flex-1 flex-col overflow-hidden rounded-b-2xl border border-t-0 border-[var(--color-copper)] bg-white"
+                  : "contents"
+              }
+            >
             {!reviewing && scheduleStepEditor ? (
               scheduleStepEditor
             ) : (
@@ -699,6 +728,10 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             )}
             </>
             )}
+            </div>
+            </div>
+
+            {!reviewing && scheduleAfter}
 
           </div>
             {attachmentChips ? (

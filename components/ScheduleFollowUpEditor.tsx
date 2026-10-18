@@ -1,7 +1,9 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useRef } from "react";
-import { Trash2 } from "lucide-react";
+import { forwardRef, useImperativeHandle, useRef, useState } from "react";
+import { Clock, Trash2 } from "lucide-react";
+import { DelayControl } from "@/components/SequenceStepList";
+import { describeDelay } from "@/lib/sequence-schedule";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { SubjectWithVariables, type SubjectHandle } from "@/components/SubjectWithVariables";
 import type { ComposeVariable, UnknownPlaceholderMode } from "@/lib/compose-variables";
@@ -46,48 +48,41 @@ export const ScheduleFollowUpEditor = forwardRef<ScheduleFollowUpEditorHandle, P
       },
     }));
 
-    const numberClass = "w-16 rounded border border-[#dadce0] px-2 py-1 text-[13px] text-[#202124]";
+    // Open on arrival so the wait is plainly editable; the pill folds it back to a sentence.
+    const [delayOpen, setDelayOpen] = useState(true);
 
     return (
       <div className="flex min-h-0 flex-1 flex-col" data-testid={`schedule-followup-${index + 1}`}>
-        <div className="flex flex-wrap items-center gap-2 border-b border-[#f1f3f4] px-3 py-2.5 text-[13px] text-[#3c4043]">
-          <span>Send this</span>
-          <input
-            type="number"
-            min={0}
-            max={90}
-            value={followUp.delayDays}
-            onChange={(e) => onChange({ delayDays: Math.min(90, Math.max(0, Math.floor(Number(e.target.value)) || 0)) })}
-            className={numberClass}
-            aria-label="Days to wait"
+        <div className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-[#f1f3f4] bg-[#faf8f5] px-3 py-3">
+          <DelayControl
+            testId={`schedule-followup-${index + 1}-delay`}
+            icon={Clock}
+            align="start"
+            open={delayOpen}
+            onToggle={() => setDelayOpen((o) => !o)}
+            days={followUp.delayDays}
+            hours={followUp.delayHours}
+            minutes={followUp.delayMinutes}
+            businessDaysOnly={businessDaysOnly}
+            onChange={(delayDays, delayHours, delayMinutes) => onChange({ delayDays, delayHours, delayMinutes })}
+            summary={
+              <>
+                Send{" "}
+                <b className="font-semibold text-[var(--color-text)]">
+                  {describeDelay(followUp.delayDays, followUp.delayHours, followUp.delayMinutes, businessDaysOnly)}
+                </b>{" "}
+                after the previous email
+              </>
+            }
           />
-          <span>{businessDaysOnly ? "business days" : "days"}</span>
-          <input
-            type="number"
-            min={0}
-            max={23}
-            value={followUp.delayHours}
-            onChange={(e) => onChange({ delayHours: Math.min(23, Math.max(0, Math.floor(Number(e.target.value)) || 0)) })}
-            className={numberClass}
-            aria-label="Hours to wait"
-          />
-          <span>hours</span>
-          <input
-            type="number"
-            min={0}
-            max={59}
-            value={followUp.delayMinutes}
-            onChange={(e) => onChange({ delayMinutes: Math.min(59, Math.max(0, Math.floor(Number(e.target.value)) || 0)) })}
-            className={numberClass}
-            aria-label="Minutes to wait"
-          />
-          <span>minutes</span>
-          <span className="text-[#5f6368]">after the previous email, if they haven&apos;t replied</span>
+          <p className="order-last basis-full text-[12px] text-[var(--color-text-muted)] sm:order-none sm:basis-auto sm:self-center">
+            Only if they haven&apos;t replied.
+          </p>
           <div className="flex-1" />
           <button
             type="button"
             onClick={onRemove}
-            className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium text-[#c5221f] hover:bg-[#fce8e6]"
+            className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[12px] font-medium text-[#c5221f] hover:bg-[#fce8e6]"
           >
             <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
             Remove follow-up

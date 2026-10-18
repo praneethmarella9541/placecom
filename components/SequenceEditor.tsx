@@ -55,6 +55,8 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
   const [sequence, setSequence] = useState<Sequence | null>(null);
   const [steps, setSteps] = useState<SequenceStepInput[]>([]);
   const [savedSteps, setSavedSteps] = useState<string>("[]");
+  // Settings-tab edits wait here until Save, like step edits, rather than saving silently on change.
+  const [settingsDraft, setSettingsDraft] = useState<Partial<Sequence>>({});
   const [counts, setCounts] = useState<EnrollmentCounts>(emptyEnrollmentCounts());
   const [tab, setTab] = useState<Tab>("editor");
   const [loading, setLoading] = useState(true);
@@ -167,6 +169,8 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
   }, [loadRecipients]);
 
   const stepsDirty = useMemo(() => JSON.stringify(steps) !== savedSteps, [steps, savedSteps]);
+  const settingsDirty = Object.keys(settingsDraft).length > 0;
+  const dirty = stepsDirty || settingsDirty;
   /**
    * Guards every in-app exit, not just the back link — the sidebar, the header
    * logo, anything rendering an <a>.
@@ -178,7 +182,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
    * Scoped to a dirty editor, so nothing is intercepted the rest of the time.
    */
   useEffect(() => {
-    if (!stepsDirty) return;
+    if (!dirty) return;
 
     /** The in-app path this event would navigate to, or null to let it through. */
     function destinationFor(e: Event): string | null {
@@ -225,20 +229,20 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
       document.removeEventListener("pointerdown", onPointerDownCapture, true);
       document.removeEventListener("click", onClickCapture, true);
     };
-  }, [stepsDirty]);
+  }, [dirty]);
 
   // Covers the exits React cannot intercept — tab close, reload, typing a new
   // URL. The browser shows its own generic wording here; the in-app dialog is
   // what handles the case we can actually phrase ourselves.
   useEffect(() => {
-    if (!stepsDirty) return;
+    if (!dirty) return;
     function onBeforeUnload(e: BeforeUnloadEvent) {
       e.preventDefault();
       e.returnValue = "";
     }
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [stepsDirty]);
+  }, [dirty]);
 
   const previewRecipients = useMemo<PreviewRecipient[]>(
     () =>
@@ -326,10 +330,38 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     }
   }
 
+  /** Saves whatever is unsaved: Settings-tab edits first (steps depend on them), then the steps. */
+  async function saveAll(): Promise<boolean> {
+    if (saving) return false;
+    if (settingsDirty) {
+      setSaving(true);
+      setError(null);
+      setNotice(null);
+      try {
+        const res = await fetch(`/api/sequences/${encodeURIComponent(sequenceId)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(settingsDraft),
+        });
+        const data = (await res.json()) as { error?: string; sequence?: Sequence };
+        if (!res.ok) throw new Error(data.error || "Could not save settings");
+        if (data.sequence) setSequence(data.sequence);
+        setSettingsDraft({});
+        if (!stepsDirty) setNotice("Saved.");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Could not save settings");
+        return false;
+      } finally {
+        setSaving(false);
+      }
+    }
+    return stepsDirty ? saveSteps() : true;
+  }
+
   async function saveAndLeave() {
     const destination = pendingLeaveTo;
     if (!destination) return;
-    if (!(await saveSteps())) {
+    if (!(await saveAll())) {
       // Close the guard so the error banner underneath is actually readable,
       // and stay put — the edits are still here and still unsaved.
       setPendingLeaveTo(null);
@@ -345,6 +377,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     // Drop the edits before navigating so the beforeunload guard cannot fire
     // on the way out and ask about work the user just chose to throw away.
     setSteps(JSON.parse(savedSteps) as SequenceStepInput[]);
+    setSettingsDraft({});
     setPendingLeaveTo(null);
     router.push(destination);
   }
@@ -378,7 +411,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
       // Unsaved step edits would not be part of what gets published — and a
       // save that failed must not publish the stale server-side copy behind
       // the user's back.
-      if (stepsDirty && !(await saveSteps())) return;
+      if (dirty && !(await saveAll())) return;
       const res = await fetch(`/api/sequences/${encodeURIComponent(sequenceId)}/publish`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -684,6 +717,9 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
     );
   }
 
+  // What the editor shows: the saved sequence with any unsaved Settings-tab edits on top.
+  const viewSequence = { ...sequence, ...settingsDraft };
+  const scheduledOrigin = sequence.origin === "scheduled";
   const isActive = sequence.status === "active";
 
   return (
@@ -735,28 +771,28 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
           <button
             data-testid="sequence-save-btn"
             type="button"
-            onClick={() => void saveSteps()}
-            disabled={!stepsDirty || saving}
+            onClick={() => void saveAll()}
+            disabled={!dirty || saving}
             title={
-              stepsDirty
-                ? titleCase("Save the changes to these steps")
+              dirty
+                ? titleCase("Save your changes")
                 : titleCase("No unsaved changes")
             }
             className={cn(
               "inline-flex h-11 items-center gap-2 rounded-xl px-4 text-[14px] font-semibold transition-colors",
-              stepsDirty || saving
+              dirty || saving
                 ? "bg-[var(--color-copper)] text-white hover:bg-[var(--color-copper-hover)] disabled:opacity-70"
                 : "cursor-default border border-[var(--color-border)] text-[var(--color-text-faint)]",
             )}
           >
             {saving ? (
               <Loader2 className="h-4 w-4 animate-spin" />
-            ) : stepsDirty ? (
+            ) : dirty ? (
               <Save className="h-4 w-4" strokeWidth={2} />
             ) : (
               <Check className="h-4 w-4" strokeWidth={2.5} />
             )}
-            {titleCase(saving ? "Saving…" : stepsDirty ? "Save changes" : "Saved")}
+            {titleCase(saving ? "Saving…" : dirty ? "Save changes" : "Saved")}
           </button>
           {/* One switch instead of the old Enable/Pause button: the control
               shows the state it is in ("Enabled"/"Disabled") rather than the
@@ -856,8 +892,9 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
       {tab === "editor" ? (
         <SequenceStepList
           steps={steps}
-          businessDaysOnly={sequence.businessDaysOnly}
-          threadEmails={sequence.threadEmails}
+          businessDaysOnly={viewSequence.businessDaysOnly}
+          threadEmails={viewSequence.threadEmails}
+          hideStartDelay={scheduledOrigin}
           disabled={saving}
           onChange={setSteps}
           onPreview={openPreview}
@@ -893,9 +930,10 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
 
       {tab === "settings" ? (
         <SequenceSettingsTab
-          sequence={sequence}
+          sequence={viewSequence}
+          scheduled={scheduledOrigin}
           saving={saving}
-          onChange={(patch) => void patchSequence(patch)}
+          onChange={(patch) => setSettingsDraft((d) => ({ ...d, ...patch }))}
         />
       ) : null}
 

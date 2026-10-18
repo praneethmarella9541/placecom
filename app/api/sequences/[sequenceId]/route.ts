@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 
 import { normalizeMergeFieldKey } from "@/lib/mail-merge";
 import { purgeAttachmentsForSteps } from "@/lib/sequence-attachments";
-import { isValidTimeZone, parseTimeToMinutes } from "@/lib/sequence-schedule";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+import { isValidTimeZone, nextSendSlot, parseTimeToMinutes, planNextEmailStep } from "@/lib/sequence-schedule";
 import {
   countEnrollmentsBySequence,
   getSequenceContext,
@@ -11,6 +13,8 @@ import {
   notFound,
   toSequenceDto,
   toStepDto,
+  toStepLite,
+  windowFromSequenceRow,
   withStepAttachments,
 } from "@/lib/sequence-server";
 import { emptyEnrollmentCounts } from "@/lib/sequence-types";
@@ -144,7 +148,62 @@ export async function PATCH(request: Request, props: Params) {
     return NextResponse.json({ error: error?.message || "Could not save" }, { status: 500 });
   }
 
+  // Send times are stored per recipient when they are enrolled, so a changed window or weekday
+  // rule does nothing to a recipient already waiting for their turn until it is re-planned here.
+  const windowChanged = ["send_window_start", "send_window_end", "business_days_only", "timezone"].some(
+    (k) => k in patch && patch[k] !== (sequence as unknown as Record<string, unknown>)[k],
+  );
+  if (windowChanged) {
+    try {
+      await replanWaitingEnrollments(ctx.svc, data);
+    } catch (e) {
+      console.error("[sequences] could not re-plan waiting recipients", e);
+    }
+  }
+
   return NextResponse.json({ sequence: toSequenceDto(data) });
+}
+
+/**
+ * Re-plans active recipients against the sequence's current window. Someone whose first email has
+ * not gone out is planned afresh from now (or the scheduled start, if later); someone part-way
+ * through keeps their wait and is only moved to the next slot that fits the new window.
+ */
+async function replanWaitingEnrollments(
+  svc: SupabaseClient,
+  sequence: Parameters<typeof windowFromSequenceRow>[0] & { id: string; scheduled_for?: string | null },
+) {
+  const window = windowFromSequenceRow(sequence);
+  const [{ data: stepRows }, { data: enrollments }] = await Promise.all([
+    svc.from("sequence_steps").select("*").eq("sequence_id", sequence.id),
+    svc
+      .from("sequence_enrollments")
+      .select("id, current_step_order, next_run_at")
+      .eq("sequence_id", sequence.id)
+      .eq("status", "active")
+      .not("next_run_at", "is", null),
+  ]);
+  if (!enrollments?.length) return;
+
+  const lite = (stepRows ?? []).map((r) => toStepLite(toStepDto(r)));
+  const now = new Date();
+  const scheduledFor = sequence.scheduled_for ? new Date(sequence.scheduled_for) : null;
+  const firstFrom = scheduledFor && scheduledFor > now ? scheduledFor : now;
+
+  for (const e of enrollments as { id: string; current_step_order: number; next_run_at: string }[]) {
+    let runAt: Date | null;
+    if (e.current_step_order === 0) {
+      runAt = planNextEmailStep(lite, 0, firstFrom, window)?.runAt ?? null;
+    } else {
+      const due = new Date(e.next_run_at);
+      runAt = nextSendSlot(due > now ? due : now, window);
+    }
+    if (!runAt || runAt.getTime() === new Date(e.next_run_at).getTime()) continue;
+    await svc
+      .from("sequence_enrollments")
+      .update({ next_run_at: runAt.toISOString(), updated_at: now.toISOString() })
+      .eq("id", e.id);
+  }
 }
 
 /** Archives the sequence; only an unsent draft is deleted outright. */

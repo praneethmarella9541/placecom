@@ -7403,6 +7403,7 @@ export default function InboxPage() {
             />
           ) : undefined
         }
+        scheduleCard={massSending && scheduling && scheduleTab === "editor"}
         scheduleAfter={
           massSending && scheduling && scheduleTab === "editor" ? (
             <ScheduleFlowTail

@@ -123,6 +123,8 @@ export type GmailComposeDialogProps = {
   scheduleStepEditor?: React.ReactNode;
   /** Under the editor while Scheduling is on: the rest of the flow's timeline. */
   scheduleAfter?: React.ReactNode;
+  /** Draw the editor as the open card of the scheduled timeline (header above, tail below). */
+  scheduleCard?: boolean;
   insertVariableOverride?: () => void;
   sendLabel?: string;
   sending?: boolean;
@@ -218,6 +220,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     scheduleBar,
     scheduleStepEditor,
     scheduleAfter,
+    scheduleCard,
     insertVariableOverride,
     sendLabel,
     sending,
@@ -604,6 +607,23 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               </div>
             ) : null}
 
+            {/* While Scheduling is on, the open email is a card of the timeline: the bar above draws its
+                header, and these two wrappers give the editor the matching border and the cream
+                backdrop. `contents` keeps the editor a direct child of the column otherwise. */}
+            <div
+              className={
+                scheduleCard && !reviewing
+                  ? "flex min-h-0 flex-1 flex-col bg-[#faf8f5] px-3"
+                  : "contents"
+              }
+            >
+            <div
+              className={
+                scheduleCard && !reviewing
+                  ? "flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-2xl border border-t-0 border-[var(--color-copper)] bg-white"
+                  : "contents"
+              }
+            >
             {!reviewing && scheduleStepEditor ? (
               scheduleStepEditor
             ) : (
@@ -702,6 +722,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             )}
             </>
             )}
+            </div>
+            </div>
 
             {!reviewing && scheduleAfter}
 

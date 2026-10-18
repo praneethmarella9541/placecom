@@ -59,7 +59,10 @@ export function ScheduleFlowBar(props: BarProps) {
   const { flow, activeStep, onSelectStep, tab, onTabChange, warnings = [], disabled } = props;
 
   return (
-    <div className="shrink-0 border-b border-[#f1f3f4] bg-[#faf8f5]" data-testid="schedule-flow-bar">
+    <div
+      className={cn("shrink-0 bg-[#faf8f5]", tab === "settings" && "border-b border-[#f1f3f4]")}
+      data-testid="schedule-flow-bar"
+    >
       <div className="flex items-center gap-1 border-b border-[var(--color-border)] px-3" role="tablist">
         {(
           [

@@ -359,21 +359,46 @@ async function loadCompleteBuffer(
   }
 }
 
+/**
+ * The metadata for an upload, from whichever source says it is complete.
+ *
+ * This instance's memory and disk only know the chunks this instance handled. When the chunks of
+ * one file were spread over several instances, a copy here can say "4 MB of 13 MB" long after the
+ * whole file reached Supabase, so a copy that looks incomplete is not trusted: the next source is
+ * asked, and the most complete answer wins. Supabase is last because it costs a round trip.
+ */
 async function resolveMeta(userId: string, uploadId: string): Promise<StagedMeta | null> {
-  const mem = memStore.get(uploadId);
-  if (mem && mem.userId === userId) {
-    return {
-      userId: mem.userId,
-      filename: mem.filename,
-      mimeType: mem.mimeType,
-      totalSize: mem.totalSize,
-      received: mem.received,
-      createdAt: mem.createdAt,
-    };
+  const candidates: (() => Promise<StagedMeta | null>)[] = [
+    async () => {
+      const mem = memStore.get(uploadId);
+      if (!mem || mem.userId !== userId) return null;
+      return {
+        userId: mem.userId,
+        filename: mem.filename,
+        mimeType: mem.mimeType,
+        totalSize: mem.totalSize,
+        received: mem.received,
+        createdAt: mem.createdAt,
+      };
+    },
+    async () => {
+      const disk = await readMetaDisk(userId, uploadId);
+      return disk && disk.userId === userId ? disk : null;
+    },
+    async () => {
+      const remote = await supabaseReadMeta(userId, uploadId);
+      return remote && remote.userId === userId ? remote : null;
+    },
+  ];
+
+  let best: StagedMeta | null = null;
+  for (const load of candidates) {
+    const meta = await load();
+    if (!meta) continue;
+    if (meta.received >= meta.totalSize) return meta;
+    if (!best || meta.received > best.received) best = meta;
   }
-  const disk = await readMetaDisk(userId, uploadId);
-  if (disk && disk.userId === userId) return disk;
-  return supabaseReadMeta(userId, uploadId);
+  return best;
 }
 
 /** Read staged bytes without deleting — safe if autosave runs twice before release. */

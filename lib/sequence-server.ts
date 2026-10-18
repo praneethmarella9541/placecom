@@ -137,6 +137,7 @@ type StepRecord = {
   delay_days: number;
   delay_hours: number;
   delay_minutes: number;
+  send_at?: string | null;
 };
 
 export function toStepDto(row: StepRecord): SequenceStep {
@@ -149,6 +150,7 @@ export function toStepDto(row: StepRecord): SequenceStep {
     delayDays: row.delay_days,
     delayHours: row.delay_hours,
     delayMinutes: row.delay_minutes ?? 0,
+    sendAt: row.send_at ?? null,
   };
 }
 
@@ -398,5 +400,6 @@ export function toStepLite(step: SequenceStep) {
     delayDays: step.delayDays,
     delayHours: step.delayHours,
     delayMinutes: step.delayMinutes ?? 0,
+    sendAt: step.sendAt ?? null,
   };
 }

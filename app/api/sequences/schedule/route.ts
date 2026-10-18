@@ -21,6 +21,7 @@ import {
   loadContactSources,
   windowFromSequenceRow,
 } from "@/lib/sequence-server";
+import { runSequencesCron } from "@/lib/sequence-runner";
 import { buildEnrollmentMergeFields } from "@/lib/sequence-variables";
 
 export const runtime = "nodejs";
@@ -31,11 +32,12 @@ const MAX_RECIPIENTS = 5000;
 const MAX_FOLLOW_UPS = 10;
 const MAX_DELAY_DAYS = 90;
 const INSERT_CHUNK = 500;
+/** Time the request spends sending a "Starts now" flow before leaving the rest to the scheduler (route limit is 120s). */
+const IMMEDIATE_SEND_BUDGET_MS = 100_000;
 
 type FollowUpInput = {
-  delayDays?: number;
-  delayHours?: number;
-  delayMinutes?: number;
+  /** When this follow-up goes out: an ISO instant. */
+  sendAt?: string;
   /** Ignored when threading is on (the follow-up replies in the first email's thread). */
   subject?: string;
   bodyHtml?: string;
@@ -143,10 +145,7 @@ export async function POST(request: Request) {
   if (followUps.length > MAX_FOLLOW_UPS) return bad(`Add at most ${MAX_FOLLOW_UPS} follow-ups.`);
   for (let i = 0; i < followUps.length; i++) {
     const f = followUps[i];
-    const days = clampInt(f.delayDays, 0, MAX_DELAY_DAYS, 0);
-    const hours = clampInt(f.delayHours, 0, 23, 0);
-    const minutes = clampInt(f.delayMinutes, 0, 59, 0);
-    if (days === 0 && hours === 0 && minutes === 0) return bad(`Set a wait before follow-up ${i + 1}.`);
+    if (!f.sendAt) return bad(`Pick when follow-up ${i + 1} goes out.`);
     if (!(f.bodyHtml ?? "").replace(/<[^>]*>/g, "").trim()) return bad(`Follow-up ${i + 1} needs a message.`);
     if (!threadEmails && !(f.subject ?? "").trim()) return bad(`Follow-up ${i + 1} needs a subject.`);
   }
@@ -179,6 +178,22 @@ export async function POST(request: Request) {
     if (startAt.getTime() < now.getTime() - 60_000) return bad("The start time is in the past.");
   }
   const from = startAt && startAt.getTime() > now.getTime() ? startAt : now;
+
+  // Each follow-up has its own date and time: in the future, and after the email
+  // before it (the first email's start, or now when it goes straight away).
+  const followUpTimes: Date[] = [];
+  let previousAt = from;
+  const horizon = now.getTime() + MAX_DELAY_DAYS * 24 * 60 * 60_000;
+  for (let i = 0; i < followUps.length; i++) {
+    const at = new Date(followUps[i].sendAt ?? "");
+    if (Number.isNaN(at.getTime())) return bad(`Follow-up ${i + 1} has no valid send time.`);
+    if (at.getTime() <= previousAt.getTime()) {
+      return bad(`Follow-up ${i + 1} has to go out after ${i === 0 ? "the first email" : `follow-up ${i}`}.`);
+    }
+    if (at.getTime() > horizon) return bad(`Follow-up ${i + 1} is more than ${MAX_DELAY_DAYS} days away.`);
+    followUpTimes.push(at);
+    previousAt = at;
+  }
 
   const mergeSource = body.mergeSource === "stored" ? "stored" : "contacts";
   const name = (body.name?.trim() || subject).slice(0, 120);
@@ -243,10 +258,11 @@ export async function POST(request: Request) {
         delay_days: 0,
         delay_hours: 0,
         delay_minutes: 0,
+        send_at: null,
       },
     ];
     let order = 2;
-    for (const f of followUps) {
+    for (const [fi, f] of followUps.entries()) {
       stepRows.push({
         sequence_id: sequenceId,
         mailbox_owner_id: ctx.mailboxOwnerId,
@@ -254,9 +270,10 @@ export async function POST(request: Request) {
         kind: "wait",
         subject_template: null,
         body_html: null,
-        delay_days: clampInt(f.delayDays, 0, MAX_DELAY_DAYS, 0),
-        delay_hours: clampInt(f.delayHours, 0, 23, 0),
-        delay_minutes: clampInt(f.delayMinutes, 0, 59, 0),
+        delay_days: 0,
+        delay_hours: 0,
+        delay_minutes: 0,
+        send_at: followUpTimes[fi].toISOString(),
       });
       stepRows.push({
         sequence_id: sequenceId,
@@ -268,13 +285,14 @@ export async function POST(request: Request) {
         delay_days: 0,
         delay_hours: 0,
         delay_minutes: 0,
+        send_at: null,
       });
     }
 
     const { data: insertedSteps, error: stepsError } = await ctx.svc
       .from("sequence_steps")
       .insert(stepRows)
-      .select("id, step_order, kind, delay_days, delay_hours, delay_minutes");
+      .select("id, step_order, kind, delay_days, delay_hours, delay_minutes, send_at");
     if (stepsError || !insertedSteps) throw new Error(stepsError?.message || "Could not save the steps.");
 
     const steps = insertedSteps as {
@@ -284,6 +302,7 @@ export async function POST(request: Request) {
       delay_days: number;
       delay_hours: number;
       delay_minutes: number;
+      send_at: string | null;
     }[];
     const firstStep = steps.find((s) => s.step_order === 1);
     if (!firstStep) throw new Error("Could not save the first email.");
@@ -367,6 +386,7 @@ export async function POST(request: Request) {
       delayDays: s.delay_days,
       delayHours: s.delay_hours,
       delayMinutes: s.delay_minutes ?? 0,
+      sendAt: s.send_at ?? null,
     }));
     const window = windowFromSequenceRow(created);
     const plan = planNextEmailStep(lite, 0, from, window);
@@ -382,8 +402,10 @@ export async function POST(request: Request) {
         : { directoryByEmail: new Map(), syncedByEmail: new Map() };
 
     // Everyone is due at the planned time, exactly. A batch is not spread with a random delay:
-    // the runner already sends about four mails a second at most (and 60 per tick), so a large
-    // audience paces itself, and a user who picks 9:00 gets 9:00.
+    // the runner paces itself (about four mails a second at most), and a user who picks 9:00 gets
+    // 9:00. "Starts now" is due right now — it ignores the sending window and is sent below, in
+    // this request, rather than waiting for the next scheduler tick.
+    const firstRunAt = startAt ? plan.runAt : new Date();
     const enrollmentRows = recipients.map((r) => ({
       sequence_id: sequenceId,
       mailbox_owner_id: ctx.mailboxOwnerId,
@@ -399,7 +421,7 @@ export async function POST(request: Request) {
       cc: useCopies ? cc : null,
       bcc: useCopies ? bcc : null,
       next_step_id: plan.stepId,
-      next_run_at: plan.runAt.toISOString(),
+      next_run_at: firstRunAt.toISOString(),
     }));
 
     for (let i = 0; i < enrollmentRows.length; i += INSERT_CHUNK) {
@@ -409,10 +431,30 @@ export async function POST(request: Request) {
 
     if (stagedIds.length > 0) void releaseStagedAttachments(ctx.userId, stagedIds).catch(() => {});
 
+    // "Starts now": send the first emails here and now instead of waiting for the scheduler. The
+    // runner leases each recipient, so a scheduler tick running at the same moment cannot send
+    // the same email twice. Anything this pass does not finish (a Gmail error, the time budget)
+    // stays due and the scheduler takes it from there, so a failure here never fails the schedule.
+    let sentNow = 0;
+    if (!startAt) {
+      try {
+        const summary = await runSequencesCron({
+          sequenceId,
+          immediate: true,
+          deadlineMs: IMMEDIATE_SEND_BUDGET_MS,
+          maxSends: MAX_RECIPIENTS,
+        });
+        sentNow = summary.sent;
+      } catch (e) {
+        console.error("[schedule] immediate send failed; the scheduler will pick the emails up", e);
+      }
+    }
+
     return NextResponse.json({
       sequenceId,
       scheduled: enrollmentRows.length,
-      firstRunAt: plan.runAt.toISOString(),
+      sentNow,
+      firstRunAt: firstRunAt.toISOString(),
     });
   } catch (e) {
     await rollback();

@@ -225,6 +225,8 @@ export type SequenceStepLite = {
   delayHours: number;
   /** Testing aid — see the 0060 migration header. */
   delayMinutes: number;
+  /** Wait steps: hold the next email until this instant (ISO) rather than for a duration. */
+  sendAt?: string | null;
 };
 
 /**
@@ -244,21 +246,29 @@ export function planNextEmailStep(
   let waitDays = 0;
   let waitHours = 0;
   let waitMinutes = 0;
+  // A wait that names a time: the next email is not sent before it (and never before `from`, so a
+  // follow-up whose time has already passed goes out at the next slot after the previous email).
+  let waitUntil: Date | null = null;
 
   for (const step of ordered) {
     if (step.stepOrder <= afterOrder) continue;
 
     if (step.kind === "wait") {
+      if (step.sendAt) {
+        const at = new Date(step.sendAt);
+        if (!Number.isNaN(at.getTime()) && (!waitUntil || at > waitUntil)) waitUntil = at;
+      }
       waitDays += step.delayDays;
       waitHours += step.delayHours;
       waitMinutes += step.delayMinutes ?? 0;
       continue;
     }
 
+    const base = waitUntil && waitUntil > from ? waitUntil : from;
     const runAt =
       waitDays > 0 || waitHours > 0 || waitMinutes > 0
-        ? addDelay(from, waitDays, waitHours, waitMinutes, window)
-        : nextSendSlot(from, window);
+        ? addDelay(base, waitDays, waitHours, waitMinutes, window)
+        : nextSendSlot(base, window);
     return { stepId: step.id, runAt };
   }
 

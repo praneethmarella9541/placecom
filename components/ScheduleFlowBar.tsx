@@ -3,7 +3,7 @@
 import { ArrowDown, ChevronDown, Clock, Mail, Plus, Settings2, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { scheduleStartLabel } from "@/components/ScheduleSettingsPanel";
-import { MAX_FOLLOW_UPS, followUpDelayLabel, type ScheduleFlowState } from "@/lib/schedule-flow";
+import { MAX_FOLLOW_UPS, followUpSendLabel, type ScheduleFlowState } from "@/lib/schedule-flow";
 
 export type ScheduleTab = "editor" | "settings";
 
@@ -182,11 +182,11 @@ function WaitPill({
       type="button"
       onClick={() => onSelectStep(step)}
       className="inline-flex max-w-full items-center gap-2 rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-[13px] transition-colors hover:bg-[var(--color-surface-offset)]"
-      title="Open this follow-up to change the wait"
+      title="Open this follow-up to change when it goes out"
     >
       <Clock className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
       <span className="truncate text-[var(--color-text-muted)]">
-        Wait <b className="font-semibold text-[var(--color-text)]">{followUpDelayLabel(f, flow.businessDaysOnly)}</b>
+        Send <b className="font-semibold text-[var(--color-text)]">{followUpSendLabel(flow, step - 1)}</b>
       </span>
     </button>
   );

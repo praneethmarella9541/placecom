@@ -1,9 +1,9 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useRef, useState } from "react";
-import { Clock, Trash2 } from "lucide-react";
-import { DelayControl } from "@/components/SequenceStepList";
-import { describeDelay } from "@/lib/sequence-schedule";
+import { forwardRef, useImperativeHandle, useRef } from "react";
+import { Trash2 } from "lucide-react";
+import { GmailDatePicker } from "@/components/GmailDatePicker";
+import { TimeFields } from "@/components/TimeFields";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { SubjectWithVariables, type SubjectHandle } from "@/components/SubjectWithVariables";
 import type { ComposeVariable, UnknownPlaceholderMode } from "@/lib/compose-variables";
@@ -21,6 +21,7 @@ type Props = {
   firstSubject: string;
   threadEmails: boolean;
   businessDaysOnly: boolean;
+  timezone: string;
   variables: ComposeVariable[];
   unknownPlaceholders?: UnknownPlaceholderMode;
   onChange: (patch: Partial<FollowUpDraft>) => void;
@@ -34,7 +35,7 @@ type Props = {
  */
 export const ScheduleFollowUpEditor = forwardRef<ScheduleFollowUpEditorHandle, Props>(
   function ScheduleFollowUpEditor(
-    { index, followUp, firstSubject, threadEmails, businessDaysOnly, variables, unknownPlaceholders, onChange, onRemove },
+    { index, followUp, firstSubject, threadEmails, businessDaysOnly, timezone, variables, unknownPlaceholders, onChange, onRemove },
     ref,
   ) {
     const editorRef = useRef<RichTextEditorHandle>(null);
@@ -48,35 +49,26 @@ export const ScheduleFollowUpEditor = forwardRef<ScheduleFollowUpEditorHandle, P
       },
     }));
 
-    // Open on arrival so the wait is plainly editable; the pill folds it back to a sentence.
-    const [delayOpen, setDelayOpen] = useState(true);
+    const sendDate = followUp.sendLocal.slice(0, 10);
+    const sendTime = followUp.sendLocal.slice(11, 16) || "09:00";
+    const setSend = (date: string, time: string) => onChange({ sendLocal: `${date}T${time}` });
+    const [y, m, d] = sendDate.split("-").map(Number);
+    const weekday = sendDate ? new Date(Date.UTC(y, m - 1, d)).getUTCDay() : -1;
+    const onWeekend = businessDaysOnly && (weekday === 0 || weekday === 6);
 
     return (
       <div className="flex min-h-0 flex-1 flex-col" data-testid={`schedule-followup-${index + 1}`}>
-        <div className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-[#f1f3f4] bg-[#faf8f5] px-3 py-3">
-          <DelayControl
-            testId={`schedule-followup-${index + 1}-delay`}
-            icon={Clock}
-            align="start"
-            open={delayOpen}
-            onToggle={() => setDelayOpen((o) => !o)}
-            days={followUp.delayDays}
-            hours={followUp.delayHours}
-            minutes={followUp.delayMinutes}
-            businessDaysOnly={businessDaysOnly}
-            onChange={(delayDays, delayHours, delayMinutes) => onChange({ delayDays, delayHours, delayMinutes })}
-            summary={
-              <>
-                Send{" "}
-                <b className="font-semibold text-[var(--color-text)]">
-                  {describeDelay(followUp.delayDays, followUp.delayHours, followUp.delayMinutes, businessDaysOnly)}
-                </b>{" "}
-                after the previous email
-              </>
-            }
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-[#f1f3f4] bg-[#faf8f5] px-3 py-3">
+          <span className="text-[13px] font-medium text-[var(--color-text)]">Send on</span>
+          <GmailDatePicker
+            className="w-full sm:w-[170px]"
+            value={sendDate}
+            onChange={(date) => setSend(date, sendTime)}
           />
-          <p className="order-last basis-full text-[12px] text-[var(--color-text-muted)] sm:order-none sm:basis-auto sm:self-center">
-            Only if they haven&apos;t replied.
+          <span className="text-[13px] text-[var(--color-text-muted)]">at</span>
+          <TimeFields value={sendTime} onChange={(time) => setSend(sendDate, time)} />
+          <p className="order-last basis-full text-[12px] text-[var(--color-text-muted)] sm:order-none sm:basis-auto">
+            Only if they haven&apos;t replied. {timezone.split("/").pop()?.replace(/_/g, " ")} time.
           </p>
           <div className="flex-1" />
           <button
@@ -87,6 +79,11 @@ export const ScheduleFollowUpEditor = forwardRef<ScheduleFollowUpEditorHandle, P
             <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
             Remove follow-up
           </button>
+          {onWeekend && (
+            <p className="basis-full text-[12px] text-[#b06000]">
+              That day is a weekend and weekends are skipped, so it will go out on the next weekday.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-2 border-b border-[#f1f3f4] px-3 py-2.5">

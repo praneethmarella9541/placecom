@@ -22,6 +22,7 @@ import {
   zonedTimeToUtc,
 } from "@/lib/sequence-schedule";
 import { resolveEnrollmentMergeFields, windowFromSequenceRow } from "@/lib/sequence-server";
+import { CLAIM_LEASE_SECONDS } from "@/lib/sequence-due-check";
 import { createServiceSupabase } from "@/lib/supabase-service";
 
 /**
@@ -50,10 +51,16 @@ const DEFAULT_DEADLINE_MS = 20_000;
 const MAX_DEADLINE_MS = 240_000;
 const MIN_DEADLINE_MS = 5_000;
 const BATCH_SIZE = 25;
-const MAX_SENDS_PER_RUN = 60;
+/**
+ * Per-tick ceiling. The deadline (DEFAULT_DEADLINE_MS) is the real brake — a tick stops when its
+ * time is up — so this only stops a very long override from sending without end. It used to be 60,
+ * which capped a tick well below what a 20-second budget can send and left a big audience waiting
+ * for the next tick.
+ */
+const MAX_SENDS_PER_RUN = 300;
 /** Same pacing as app/api/broadcast/email/route.ts. */
 const GAP_MS = 250;
-const LEASE_SECONDS = 300;
+const LEASE_SECONDS = CLAIM_LEASE_SECONDS;
 const TOKEN_BACKOFF_MS = 15 * 60_000;
 /** A send stuck mid-flight past this is assumed dead and released for retry. */
 const STUCK_SEND_MINUTES = 15;
@@ -122,6 +129,7 @@ type StepRow = {
   delay_days: number;
   delay_hours: number;
   delay_minutes: number;
+  send_at?: string | null;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -143,6 +151,13 @@ function startOfLocalDay(now: Date, timezone: string): Date {
 type RunContext = {
   svc: SupabaseClient;
   dryRun: boolean;
+  /**
+   * The immediate pass of a "Starts now" schedule, run inside the user's own request: it sends
+   * regardless of the sending window and on Gmail's interactive lane (about one mail a second,
+   * like mass sending), where the background lane the cron uses allows one every five seconds.
+   * The cron never sets this, so the window and the slow lane still govern every later email.
+   */
+  immediate: boolean;
   summary: CronSummary;
   /**
    * Step id → its files, base64'd, downloaded at most once per run. Every
@@ -205,6 +220,15 @@ type MailboxContext = {
   sentTodayBySequence: Map<string, number>;
 };
 
+/**
+ * Which Gmail lane this recipient's calls use. Anything scheduled from Compose is mail a person
+ * asked for and expects on time, so it gets the same fast lane as a mass send; only a hand-built
+ * sequence (origin "sequence", none left in use) stays on the slow background lane.
+ */
+function gmailLane(ctx: RunContext, sequence: SequenceRow): "interactive" | "batch" {
+  return ctx.immediate || sequence.origin === "scheduled" ? "interactive" : "batch";
+}
+
 async function processEnrollment(
   ctx: RunContext,
   enrollment: EnrollmentRow,
@@ -228,6 +252,7 @@ async function processEnrollment(
         delayDays: s.delay_days,
         delayHours: s.delay_hours,
         delayMinutes: s.delay_minutes ?? 0,
+        sendAt: s.send_at ?? null,
       })),
       enrollment.current_step_order,
       now,
@@ -254,7 +279,7 @@ async function processEnrollment(
         mailboxAddress: mailbox.mailboxAddress,
         firstSentAt,
         mailboxKey: mailbox.ownerId,
-        priority: "batch",
+        priority: gmailLane(ctx, sequence),
         // Store every reply in the thread for analytics' "Responded" count,
         // from the messages this check fetches anyway.
         onMessages: (messages) =>
@@ -275,7 +300,7 @@ async function processEnrollment(
       const bounced = await searchForBounceNotification(mailbox.accessToken, enrollment.email, {
         sinceMs: firstSentAt,
         mailboxKey: mailbox.ownerId,
-        priority: "batch",
+        priority: gmailLane(ctx, sequence),
       }).catch(() => false);
       if (bounced) outcome = "bounced";
     }
@@ -301,7 +326,7 @@ async function processEnrollment(
 
   // 2. The window is authoritative at send time, not at schedule time — settings
   //    may have changed since next_run_at was written.
-  if (!isWithinSendWindow(now, window)) {
+  if (!ctx.immediate && !isWithinSendWindow(now, window)) {
     await releaseClaim(ctx, enrollment.id, {
       next_run_at: nextSendSlot(now, window).toISOString(),
       reply_checked_at: now.toISOString(),
@@ -447,7 +472,7 @@ async function processEnrollment(
       trackingPixelUrl,
       attachments: attachments.length > 0 ? attachments : undefined,
       mailboxKey: mailbox.ownerId,
-      priority: "batch",
+      priority: gmailLane(ctx, sequence),
     });
 
     const sentAt = new Date().toISOString();
@@ -490,6 +515,7 @@ async function processEnrollment(
         delayDays: s.delay_days,
         delayHours: s.delay_hours,
         delayMinutes: s.delay_minutes ?? 0,
+        sendAt: s.send_at ?? null,
       })),
       step.step_order,
       new Date(),
@@ -589,6 +615,8 @@ async function claimDueSequenceEnrollments(
   svc: SupabaseClient,
   limit: number,
   leaseSeconds: number,
+  /** Only this flow's recipients — the immediate pass after scheduling. */
+  sequenceId?: string,
 ): Promise<EnrollmentRow[]> {
   const nowIso = new Date().toISOString();
   const staleCutoffIso = new Date(Date.now() - leaseSeconds * 1000).toISOString();
@@ -597,14 +625,16 @@ async function claimDueSequenceEnrollments(
   // already-fresh (and get skipped) by the time its update runs.
   const claimableFilter = `claimed_at.is.null,claimed_at.lt.${staleCutoffIso}`;
 
-  const { data: candidates, error: selectError } = await svc
+  let candidateQuery = svc
     .from("sequence_enrollments")
     .select("id, sequences!inner(status)")
     .eq("status", "active")
     .eq("sequences.status", "active")
     .not("next_run_at", "is", null)
     .lte("next_run_at", nowIso)
-    .or(claimableFilter)
+    .or(claimableFilter);
+  if (sequenceId) candidateQuery = candidateQuery.eq("sequence_id", sequenceId);
+  const { data: candidates, error: selectError } = await candidateQuery
     .order("next_run_at", { ascending: true })
     .limit(limit);
 
@@ -629,7 +659,16 @@ async function claimDueSequenceEnrollments(
 }
 
 export async function runSequencesCron(
-  options: { dryRun?: boolean; deadlineMs?: number } = {},
+  options: {
+    dryRun?: boolean;
+    deadlineMs?: number;
+    /** Work only this flow's due recipients (the immediate pass after scheduling). */
+    sequenceId?: string;
+    /** The immediate pass of a "Starts now" schedule — see RunContext.immediate. */
+    immediate?: boolean;
+    /** Override the per-run send ceiling. */
+    maxSends?: number;
+  } = {},
 ): Promise<CronSummary> {
   const startedAt = Date.now();
   const deadlineMs = Math.min(
@@ -650,9 +689,11 @@ export async function runSequencesCron(
     durationMs: 0,
   };
 
+  const maxSends = Math.max(1, Math.trunc(options.maxSends ?? MAX_SENDS_PER_RUN));
   const ctx: RunContext = {
     svc,
     dryRun: Boolean(options.dryRun),
+    immediate: Boolean(options.immediate),
     summary,
     attachmentCache: new Map(),
     attachmentCacheBytes: 0,
@@ -672,8 +713,8 @@ export async function runSequencesCron(
   // loop would spin until the deadline making no progress.
   const handled = new Set<string>();
 
-  while (Date.now() - startedAt < deadlineMs && summary.sent < MAX_SENDS_PER_RUN) {
-    const claimedRows = await claimDueSequenceEnrollments(svc, BATCH_SIZE, LEASE_SECONDS);
+  while (Date.now() - startedAt < deadlineMs && summary.sent < maxSends) {
+    const claimedRows = await claimDueSequenceEnrollments(svc, BATCH_SIZE, LEASE_SECONDS, options.sequenceId);
     if (claimedRows.length === 0) break;
 
     const rows = claimedRows.filter((row) => !handled.has(row.id));
@@ -762,7 +803,7 @@ export async function runSequencesCron(
 
       try {
         for (const enrollment of enrollments) {
-          if (Date.now() - startedAt > deadlineMs || summary.sent >= MAX_SENDS_PER_RUN) {
+          if (Date.now() - startedAt > deadlineMs || summary.sent >= maxSends) {
             await releaseClaim(ctx, enrollment.id);
             continue;
           }

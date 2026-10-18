@@ -35,9 +35,11 @@ import { markTemplateCopy } from "@/hooks/useMailTemplates";
 import { uploadInlineImage } from "@/lib/upload-inline-image";
 import { MailTemplatesButton } from "@/components/MailTemplatesModal";
 import { titleCase } from "@/lib/title-case";
+import { GmailDatePicker } from "@/components/GmailDatePicker";
+import { TimeFields } from "@/components/TimeFields";
 import { cn } from "@/lib/utils";
 import { listPlaceholdersInTemplate } from "@/lib/mail-merge";
-import { describeDelay } from "@/lib/sequence-schedule";
+import { describeDelay, zonedParts, zonedTimeToUtc } from "@/lib/sequence-schedule";
 import { SEQUENCE_VARIABLES } from "@/lib/sequence-variables";
 import type { SequenceStepAttachment, SequenceStepInput } from "@/lib/sequence-types";
 import type { ComposeVariable } from "@/lib/compose-variables";
@@ -58,6 +60,8 @@ type Props = {
   steps: SequenceStepInput[];
   businessDaysOnly: boolean;
   threadEmails: boolean;
+  /** Time zone for waits that end at a chosen time (a scheduled send's follow-ups). */
+  timezone?: string;
   /** Hide the "start after enrollment" pill — a scheduled send starts at its own time, not after enrollment. */
   hideStartDelay?: boolean;
   disabled?: boolean;
@@ -106,6 +110,7 @@ export function SequenceStepList({
   steps,
   businessDaysOnly,
   threadEmails,
+  timezone = "Asia/Kolkata",
   hideStartDelay,
   disabled,
   onChange,
@@ -243,6 +248,17 @@ export function SequenceStepList({
           return (
             <div key={index} className="flex flex-col items-center gap-2">
               <ArrowDown className="h-4 w-4 text-[var(--color-text-faint)]" strokeWidth={2} />
+              {step.sendAt ? (
+                <SendAtControl
+                  testId={`sequence-step-${index}`}
+                  sendAt={step.sendAt}
+                  timezone={timezone}
+                  open={openDelay === index}
+                  onToggle={() => setOpenDelay(openDelay === index ? null : index)}
+                  disabled={disabled}
+                  onChange={(sendAt) => patch(index, { sendAt })}
+                />
+              ) : (
               <DelayControl
                 testId={`sequence-step-${index}`}
                 icon={Clock}
@@ -271,6 +287,7 @@ export function SequenceStepList({
                   </>
                 }
               />
+              )}
             </div>
           );
         }
@@ -1124,6 +1141,83 @@ function SequenceStepPreviewPane({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * A wait that ends at a chosen time — a follow-up of a scheduled send. Shown as "Send on Thu, 23
+ * Oct, 10:00 AM" and edited with a date and a time, in the sequence's own time zone.
+ */
+function SendAtControl({
+  testId,
+  sendAt,
+  timezone,
+  open,
+  onToggle,
+  disabled,
+  onChange,
+}: {
+  testId: string;
+  sendAt: string;
+  timezone: string;
+  open: boolean;
+  onToggle: () => void;
+  disabled?: boolean;
+  onChange: (sendAt: string) => void;
+}) {
+  const at = new Date(sendAt);
+  const parts = zonedParts(at, timezone);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const date = `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
+  const time = `${pad(parts.hour)}:${pad(parts.minute)}`;
+  const label = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(at);
+  const set = (nextDate: string, nextTime: string) => {
+    const [y, m, d] = nextDate.split("-").map(Number);
+    const [hh, mm] = nextTime.split(":").map(Number);
+    onChange(zonedTimeToUtc({ year: y, month: m, day: d, hour: hh, minute: mm }, timezone).toISOString());
+  };
+
+  return (
+    <div className="flex w-full flex-col items-center gap-2">
+      <button
+        data-testid={`${testId}-pill`}
+        type="button"
+        onClick={onToggle}
+        disabled={disabled}
+        aria-expanded={open}
+        className={cn(
+          "inline-flex max-w-full items-center gap-2 rounded-full border px-4 py-2 text-[13px] transition-colors disabled:opacity-50",
+          open
+            ? "border-[var(--color-copper)] bg-[var(--color-copper-tint)]"
+            : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-surface-offset)]",
+        )}
+      >
+        <Clock className={cn("h-3.5 w-3.5 shrink-0", open ? "text-[var(--color-copper)]" : "text-[var(--color-text-muted)]")} strokeWidth={2} />
+        <span className="truncate text-[var(--color-text-muted)]">
+          Send <b className="font-semibold text-[var(--color-text)]">{label}</b>
+        </span>
+        <ChevronDown
+          className={cn("h-3.5 w-3.5 shrink-0 text-[var(--color-text-faint)] transition-transform", open && "rotate-180")}
+          strokeWidth={2}
+        />
+      </button>
+      {open ? (
+        <div className="flex flex-wrap items-center justify-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+          <span className="text-[13px] text-[var(--color-text-muted)]">Send on</span>
+          <GmailDatePicker className="w-[170px]" value={date} onChange={(d) => set(d, time)} />
+          <span className="text-[13px] text-[var(--color-text-muted)]">at</span>
+          <TimeFields value={time} disabled={disabled} onChange={(t) => set(date, t)} />
+        </div>
+      ) : null}
     </div>
   );
 }

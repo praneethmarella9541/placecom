@@ -55,6 +55,7 @@ import { ScheduleSettingsPanel } from "@/components/ScheduleSettingsPanel";
 import { ScheduleFollowUpEditor, type ScheduleFollowUpEditorHandle } from "@/components/ScheduleFollowUpEditor";
 import {
   defaultScheduleFlow,
+  followUpSendDate,
   newFollowUp,
   scheduleStartDate,
   validateScheduleFlow,
@@ -5317,7 +5318,7 @@ export default function InboxPage() {
     setScheduleFlow((prev) => ({ ...prev, ...patch }));
 
   const addScheduleFollowUp = () => {
-    setScheduleFlow((prev) => ({ ...prev, followUps: [...prev.followUps, newFollowUp()] }));
+    setScheduleFlow((prev) => ({ ...prev, followUps: [...prev.followUps, newFollowUp(prev)] }));
     setScheduleStep(scheduleFlow.followUps.length + 1);
     setScheduleTab("editor");
   };
@@ -5410,10 +5411,8 @@ export default function InboxPage() {
         body: JSON.stringify({
           subject: snapshot.subject,
           bodyHtml: snapshot.body,
-          followUps: scheduleFlow.followUps.map((f) => ({
-            delayDays: f.delayDays,
-            delayHours: f.delayHours,
-            delayMinutes: f.delayMinutes,
+          followUps: scheduleFlow.followUps.map((f, i) => ({
+            sendAt: followUpSendDate(scheduleFlow, i)?.toISOString(),
             subject: f.subject,
             bodyHtml: f.bodyHtml,
           })),
@@ -5447,11 +5446,13 @@ export default function InboxPage() {
         error?: string;
         scheduled?: number;
         sequenceId?: string;
+        sentNow?: number;
         firstRunAt?: string;
       };
       if (!res.ok) throw new Error(data.error || "Could not schedule this send.");
 
       const count = data.scheduled ?? rows.length;
+      const sentNow = data.sentNow ?? 0;
       const first = data.firstRunAt
         ? new Intl.DateTimeFormat("en-GB", {
             timeZone: scheduleFlow.timezone,
@@ -5467,7 +5468,10 @@ export default function InboxPage() {
       showSendSnack(
         {
           phase: "sent",
-          message: `Scheduled ${count} email${count === 1 ? "" : "s"}${first ? ` — first send ${first}` : ""}. It runs even when you're away.`,
+          message:
+            sentNow > 0
+              ? `Sent ${sentNow} of ${count} email${count === 1 ? "" : "s"} now${sentNow < count ? "; the rest follow shortly" : ""}. Follow-ups run on their own, even when you're away.`
+              : `Scheduled ${count} email${count === 1 ? "" : "s"}${first ? ` — first send ${first}` : ""}. It runs even when you're away.`,
         },
         6000
       );
@@ -7396,6 +7400,7 @@ export default function InboxPage() {
               firstSubject={composeSubject}
               threadEmails={scheduleFlow.threadEmails}
               businessDaysOnly={scheduleFlow.businessDaysOnly}
+              timezone={scheduleFlow.timezone}
               variables={editorVariables}
               unknownPlaceholders={unknownPlaceholders}
               onChange={(patch) => patchFollowUp(scheduleStep - 1, patch)}

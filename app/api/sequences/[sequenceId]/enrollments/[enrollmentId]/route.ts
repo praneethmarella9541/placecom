@@ -79,7 +79,7 @@ export async function PATCH(request: Request, props: Params) {
     const restart = body.action === "restart";
     const { data: stepRows } = await ctx.svc
       .from("sequence_steps")
-      .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours, delay_minutes")
+      .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours, delay_minutes, send_at")
       .eq("sequence_id", sequence.id)
       .order("step_order");
 

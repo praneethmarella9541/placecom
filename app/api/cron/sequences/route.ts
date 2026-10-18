@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-import { runSequencesCron } from "@/lib/sequence-runner";
+import { hasDueSequenceWork } from "@/lib/sequence-due-check";
+import { createServiceSupabase } from "@/lib/supabase-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,6 +52,25 @@ export async function GET(request: Request) {
   };
 
   try {
+    // Most ticks find nothing due. Ask first, with one small query, and only then load the sender
+    // (a heavy import) and run it — an empty tick costs a fraction of a full one.
+    if (!(await hasDueSequenceWork(createServiceSupabase()))) {
+      return NextResponse.json({
+        ok: true,
+        idle: true,
+        dryRun,
+        claimed: 0,
+        sent: 0,
+        skipped: 0,
+        replied: 0,
+        bounced: 0,
+        failed: 0,
+        mailboxes: 0,
+        durationMs: 0,
+        build,
+      });
+    }
+    const { runSequencesCron } = await import("@/lib/sequence-runner");
     const summary = await runSequencesCron({ dryRun, deadlineMs });
     return NextResponse.json({ ...summary, build });
   } catch (err) {

@@ -22,6 +22,7 @@ import {
   zonedTimeToUtc,
 } from "@/lib/sequence-schedule";
 import { resolveEnrollmentMergeFields, windowFromSequenceRow } from "@/lib/sequence-server";
+import { CLAIM_LEASE_SECONDS } from "@/lib/sequence-due-check";
 import { createServiceSupabase } from "@/lib/supabase-service";
 
 /**
@@ -59,7 +60,7 @@ const BATCH_SIZE = 25;
 const MAX_SENDS_PER_RUN = 300;
 /** Same pacing as app/api/broadcast/email/route.ts. */
 const GAP_MS = 250;
-const LEASE_SECONDS = 300;
+const LEASE_SECONDS = CLAIM_LEASE_SECONDS;
 const TOKEN_BACKOFF_MS = 15 * 60_000;
 /** A send stuck mid-flight past this is assumed dead and released for retry. */
 const STUCK_SEND_MINUTES = 15;

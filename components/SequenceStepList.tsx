@@ -60,6 +60,8 @@ type Props = {
   steps: SequenceStepInput[];
   businessDaysOnly: boolean;
   threadEmails: boolean;
+  /** Scheduled sends: "Add delay" adds a wait that ends at a chosen date and time, not a number of days. */
+  dateWaits?: boolean;
   /** Time zone for waits that end at a chosen time (a scheduled send's follow-ups). */
   timezone?: string;
   /** Hide the "start after enrollment" pill — a scheduled send starts at its own time, not after enrollment. */
@@ -111,6 +113,7 @@ export function SequenceStepList({
   businessDaysOnly,
   threadEmails,
   timezone = "Asia/Kolkata",
+  dateWaits,
   hideStartDelay,
   disabled,
   onChange,
@@ -160,7 +163,9 @@ export function SequenceStepList({
       ...steps,
       kind === "email"
         ? { kind: "email", subjectTemplate: "", bodyHtml: "" }
-        : { kind: "wait", delayDays: 3, delayHours: 0, delayMinutes: 0 },
+        : dateWaits
+          ? { kind: "wait", sendAt: tomorrowMorning(timezone) }
+          : { kind: "wait", delayDays: 3, delayHours: 0, delayMinutes: 0 },
     ]);
   }
 
@@ -1143,6 +1148,15 @@ function SequenceStepPreviewPane({
       </div>
     </div>
   );
+}
+
+/** Tomorrow at 9:00 AM in `timezone`, as an instant: where a new date-based wait starts. */
+function tomorrowMorning(timezone: string): string {
+  const today = zonedParts(new Date(), timezone);
+  return zonedTimeToUtc(
+    { year: today.year, month: today.month, day: today.day + 1, hour: 9, minute: 0 },
+    timezone,
+  ).toISOString();
 }
 
 /**

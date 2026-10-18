@@ -133,8 +133,10 @@ export async function POST(request: Request) {
   const timezone = settingsIn.timezone?.trim() || "Asia/Kolkata";
   if (!isValidTimeZone(timezone)) return bad("That time zone isn't recognised.");
 
-  const sendWindowStart = settingsIn.sendWindowStart?.trim() || "09:00";
-  const sendWindowEnd = settingsIn.sendWindowEnd?.trim() || "17:00";
+  // The composer no longer offers a sending window: mail goes out at the times the sender picks, so
+  // a send is created with an all-day window unless a caller names one.
+  const sendWindowStart = settingsIn.sendWindowStart?.trim() || "00:00";
+  const sendWindowEnd = settingsIn.sendWindowEnd?.trim() || "23:59";
   const timeShape = /^([01]?\d|2[0-3]):[0-5]\d$/;
   if (!timeShape.test(sendWindowStart) || !timeShape.test(sendWindowEnd)) {
     return bad("The send window times aren't valid.");
@@ -218,7 +220,7 @@ export async function POST(request: Request) {
       timezone,
       send_window_start: sendWindowStart,
       send_window_end: sendWindowEnd,
-      business_days_only: settingsIn.businessDaysOnly !== false,
+      business_days_only: settingsIn.businessDaysOnly === true,
       daily_send_limit: clampInt(settingsIn.dailySendLimit, 1, 2000, 200),
       thread_emails: threadEmails,
       include_signature: settingsIn.includeSignature === true,

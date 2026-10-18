@@ -42,9 +42,10 @@ export function defaultScheduleFlow(): ScheduleFlowState {
     followUps: [],
     exitOnReply: true,
     timezone: DEFAULT_SCHEDULE_TIMEZONE,
-    windowStart: "09:00",
-    windowEnd: "17:00",
-    businessDaysOnly: true,
+    // No sending window and weekends allowed: the times people pick are the times mail goes out.
+    windowStart: "00:00",
+    windowEnd: "23:59",
+    businessDaysOnly: false,
     dailyLimit: 200,
     threadEmails: true,
   };

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getConnectionRow } from "@/lib/integrations/connections";
-import { estimateCredits } from "@/lib/integrations/enrichment";
+import { estimateCredits, searchCreditsCharged, searchRate } from "@/lib/integrations/enrichment";
 import { lushaProspect, type LushaPerson } from "@/lib/integrations/lusha";
 import { logEnrichment, lushaFailure, prepareSpend } from "@/lib/integrations/lusha-spend";
 import { hasCompanyFilter, hasContactBase, parseCompanyFilters, parseContactFilters } from "@/lib/integrations/lusha-request";
@@ -27,6 +27,9 @@ export type ProspectPerson = {
   revealCost: { emails: number | null; phones: number | null };
   /** Set when this person is already a contact, so the screen can say so. */
   inContactId: string | null;
+  /** The email and phone already on that contact card, so the table can show them without a reveal. */
+  contactEmail: string | null;
+  contactPhone: string | null;
 };
 
 function cost(p: LushaPerson, field: string): number | null {
@@ -66,7 +69,7 @@ export async function POST(request: Request) {
   }
   // The most a search can charge: its price per result, for every result on the page.
   const estimate = estimateCredits(connection.usage?.pricing, [], size);
-  if (body.dryRun === true) return NextResponse.json({ size, estimatedCredits: estimate });
+  if (body.dryRun === true) return NextResponse.json({ size, estimatedCredits: estimate, rate: searchRate(connection.usage?.pricing, "contact") });
 
   const spend = await prepareSpend(ctx, estimate);
   if (!spend.ok) return NextResponse.json({ error: spend.error, code: spend.code }, { status: spend.status });
@@ -93,7 +96,7 @@ export async function POST(request: Request) {
     contactId: null,
     kind: "search",
     outcome: result.people.length > 0 ? "found" : "not_found",
-    creditsCharged: result.billing.creditsCharged,
+    creditsCharged: searchCreditsCharged(result.billing.creditsCharged),
     revealed: null,
   });
 
@@ -101,11 +104,22 @@ export async function POST(request: Request) {
   const links = result.people.map((p) => p.linkedin).filter((v): v is string => !!v);
   const names = result.people.map((p) => p.fullName).filter(Boolean);
   const [byLink, byName] = await Promise.all([
-    links.length ? ctx.supabase.from("directory_contacts").select("id, linkedin_url").in("linkedin_url", links) : Promise.resolve({ data: [] }),
-    names.length ? ctx.supabase.from("directory_contacts").select("id, name, company").in("name", names) : Promise.resolve({ data: [] }),
+    links.length ? ctx.supabase.from("directory_contacts").select("id, linkedin_url, email, phone").in("linkedin_url", links) : Promise.resolve({ data: [] }),
+    names.length ? ctx.supabase.from("directory_contacts").select("id, name, company, email, phone").in("name", names) : Promise.resolve({ data: [] }),
   ]);
-  const linkIndex = new Map(((byLink.data ?? []) as { id: string; linkedin_url: string }[]).map((c) => [c.linkedin_url.replace(/\/+$/, "").toLowerCase(), c.id]));
-  const nameIndex = new Map(((byName.data ?? []) as { id: string; name: string; company: string | null }[]).map((c) => [`${c.name.toLowerCase()}|${(c.company ?? "").toLowerCase()}`, c.id]));
+  type Known = { id: string; email: string | null; phone: string | null };
+  const linkIndex = new Map<string, Known>(
+    ((byLink.data ?? []) as { id: string; linkedin_url: string; email: string | null; phone: string | null }[]).map((c) => [
+      c.linkedin_url.replace(/\/+$/, "").toLowerCase(),
+      { id: c.id, email: c.email, phone: c.phone },
+    ]),
+  );
+  const nameIndex = new Map<string, Known>(
+    ((byName.data ?? []) as { id: string; name: string; company: string | null; email: string | null; phone: string | null }[]).map((c) => [
+      `${c.name.toLowerCase()}|${(c.company ?? "").toLowerCase()}`,
+      { id: c.id, email: c.email, phone: c.phone },
+    ]),
+  );
 
   const people: ProspectPerson[] = result.people
     .filter((p) => !p.error && p.id)
@@ -120,11 +134,17 @@ export async function POST(request: Request) {
       location: p.location,
       linkedin: p.linkedin,
       revealCost: { emails: cost(p, "emails"), phones: cost(p, "phones") },
-      inContactId:
-        (p.linkedin ? linkIndex.get(p.linkedin.replace(/\/+$/, "").toLowerCase()) : undefined) ??
-        nameIndex.get(`${p.fullName.toLowerCase()}|${(p.company ?? "").toLowerCase()}`) ??
-        null,
+      ...(() => {
+        const known =
+          (p.linkedin ? linkIndex.get(p.linkedin.replace(/\/+$/, "").toLowerCase()) : undefined) ??
+          nameIndex.get(`${p.fullName.toLowerCase()}|${(p.company ?? "").toLowerCase()}`);
+        return {
+          inContactId: known?.id ?? null,
+          contactEmail: known?.email?.trim() || null,
+          contactPhone: known?.phone?.trim() || null,
+        };
+      })(),
     }));
 
-  return NextResponse.json({ people, total: result.total, page: result.page, size, creditsCharged: result.billing.creditsCharged });
+  return NextResponse.json({ people, total: result.total, page: result.page, size, creditsCharged: searchCreditsCharged(result.billing.creditsCharged) });
 }

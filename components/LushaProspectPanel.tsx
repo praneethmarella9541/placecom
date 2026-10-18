@@ -461,78 +461,78 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           </div>
 
           {people.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1240px] table-fixed text-left text-[13px]">
-              <colgroup>
-                <col className="w-[44px]" />
-                <col className="w-[210px]" />
-                <col className="w-[200px]" />
-                <col className="w-[150px]" />
-                <col className="w-[190px]" />
-                <col className="w-[260px]" />
-                <col className="w-[160px]" />
-                <col className="w-[40px]" />
-              </colgroup>
-              <thead>
-                <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="w-10 px-4 py-2.5">
-                    <input
-                      type="checkbox"
-                      aria-label="Select everyone"
-                      checked={people.length > 0 && people.every((p) => picked.has(p.id))}
-                      onChange={(e) => setPicked(e.target.checked ? new Set(people.map((p) => p.id)) : new Set())}
-                    />
-                  </th>
-                  <th className="whitespace-nowrap px-4 py-2.5">Name</th>
-                  <th className="px-4 py-2.5">Title</th>
-                  <th className="px-4 py-2.5">Company</th>
-                  <th className="px-4 py-2.5">Location</th>
-                  <th className="px-4 py-2.5">Email</th>
-                  <th className="px-4 py-2.5">Phone</th>
-                  <th className="px-4 py-2.5" />
-                </tr>
-              </thead>
-              <tbody>
-                {people.map((p) => (
-                  <tr key={p.id} className="border-b border-[var(--color-border)] last:border-b-0">
-                    <td className="px-4 py-2.5">
+            <>
+              {/* Wide screens: one row per person. Title and company sit under the name so there is room for
+                  the details people came to reveal — a phone number is never cut off, and nothing scrolls sideways. */}
+              <table className="hidden w-full table-auto text-left text-[13px] md:table">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <th className="w-10 px-4 py-2.5">
                       <input
                         type="checkbox"
-                        aria-label={`Select ${p.fullName}`}
-                        checked={picked.has(p.id)}
-                        onChange={(e) =>
-                          setPicked((prev) => {
-                            const next = new Set(prev);
-                            if (e.target.checked) next.add(p.id);
-                            else next.delete(p.id);
-                            return next;
-                          })
-                        }
+                        aria-label="Select everyone"
+                        checked={people.length > 0 && people.every((p) => picked.has(p.id))}
+                        onChange={(e) => setPicked(e.target.checked ? new Set(people.map((p) => p.id)) : new Set())}
                       />
-                    </td>
-                    <td className="px-4 py-2.5 font-semibold text-[var(--color-text)]">
-                      <div className="flex items-center gap-2">
-                        <span className="min-w-0 truncate" title={p.fullName}>{p.fullName}</span>
-                        {p.inContactId ? <span className="shrink-0 whitespace-nowrap rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">In contacts</span> : null}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]"><div className="line-clamp-2" title={p.title ?? undefined}>{p.title || "—"}</div></td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]"><div className="line-clamp-2" title={p.company ?? undefined}>{p.company || "—"}</div></td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]"><div className="line-clamp-2" title={p.location ?? undefined}>{p.location || "—"}</div></td>
-                    <RevealedCell person={revealed[p.id]} values={shownValues(p, "emails")} field="emails" />
-                    <RevealedCell person={revealed[p.id]} values={shownValues(p, "phones")} field="phones" />
-                    <td className="px-4 py-2.5">
-                      {p.linkedin ? (
-                        <a href={p.linkedin} target="_blank" rel="noopener noreferrer" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="LinkedIn" aria-label={`${p.fullName} on LinkedIn`}>
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
-                      ) : null}
-                    </td>
+                    </th>
+                    <th className="px-4 py-2.5">Person</th>
+                    <th className="px-4 py-2.5">Location</th>
+                    <th className="px-4 py-2.5">Email</th>
+                    <th className="px-4 py-2.5">Phone</th>
+                    <th className="w-10 px-4 py-2.5" />
                   </tr>
+                </thead>
+                <tbody>
+                  {people.map((p) => (
+                    <tr key={p.id} className="border-b border-[var(--color-border)] align-top last:border-b-0">
+                      <td className="px-4 py-3">
+                        <PickBox person={p} picked={picked} setPicked={setPicked} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <PersonLine person={p} />
+                      </td>
+                      <td className="min-w-[130px] px-4 py-3 text-[var(--color-text-muted)]">{p.location || "—"}</td>
+                      <td className="min-w-[210px] px-4 py-3">
+                        <RevealedValues person={revealed[p.id]} values={shownValues(p, "emails")} field="emails" />
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <RevealedValues person={revealed[p.id]} values={shownValues(p, "phones")} field="phones" />
+                      </td>
+                      <td className="px-4 py-3">
+                        <LinkedInLink person={p} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Narrow screens: one card per person, everything stacked, no sideways scrolling. */}
+              <ul className="divide-y divide-[var(--color-border)] md:hidden">
+                <li className="flex items-center gap-3 px-4 py-2.5 text-[12px] font-semibold text-[var(--color-text-muted)]">
+                  <input
+                    type="checkbox"
+                    aria-label="Select everyone"
+                    checked={people.length > 0 && people.every((p) => picked.has(p.id))}
+                    onChange={(e) => setPicked(e.target.checked ? new Set(people.map((p) => p.id)) : new Set())}
+                  />
+                  Select everyone
+                </li>
+                {people.map((p) => (
+                  <li key={p.id} className="flex gap-3 px-4 py-3 text-[13px]">
+                    <PickBox person={p} picked={picked} setPicked={setPicked} />
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <PersonLine person={p} />
+                        <LinkedInLink person={p} />
+                      </div>
+                      {p.location ? <p className="text-[var(--color-text-muted)]">{p.location}</p> : null}
+                      <RevealedValues person={revealed[p.id]} values={shownValues(p, "emails")} field="emails" />
+                      <RevealedValues person={revealed[p.id]} values={shownValues(p, "phones")} field="phones" />
+                    </div>
+                  </li>
                 ))}
-              </tbody>
-            </table>
-            </div>
+              </ul>
+            </>
           ) : null}
 
           {pickedPeople.length > 0 ? (
@@ -592,29 +592,75 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
 
 
 /** A revealed email or phone in the results table, or a quiet dash while nothing has been revealed. */
-function RevealedCell({ person, values, field }: { person: Shown | undefined; values: string[]; field: "emails" | "phones" }) {
+function RevealedValues({ person, values, field }: { person: Shown | undefined; values: string[]; field: "emails" | "phones" }) {
   if (values.length > 0) {
     const Icon = field === "emails" ? Mail : Phone;
     return (
-      <td className="px-4 py-2.5 text-[var(--color-text)]">
-        <div className="space-y-1">
-          {values.map((v) => (
-            <div key={v} className="flex min-w-0 items-center gap-1.5">
-              <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
-              {field === "emails" ? (
-                <a href={`mailto:${v}`} className="min-w-0 truncate hover:underline" title={v}>{v}</a>
-              ) : (
-                <span className="min-w-0 truncate" title={v}>{v}</span>
-              )}
-            </div>
-          ))}
-        </div>
-      </td>
+      <div className="space-y-1 text-[var(--color-text)]">
+        {values.map((v) => (
+          <div key={v} className="flex items-start gap-1.5">
+            <Icon className="mt-[3px] h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
+            {field === "emails" ? (
+              <a href={`mailto:${v}`} className="min-w-0 break-all hover:underline">{v}</a>
+            ) : (
+              <span className="whitespace-nowrap">{v}</span>
+            )}
+          </div>
+        ))}
+      </div>
     );
   }
+  const asked = person && (field === "emails" ? person.askedEmails : person.askedPhones);
+  return <span className="text-[var(--color-text-faint)]">{asked ? "Not found" : "—"}</span>;
+}
+
+/** A person's name with the "In contacts" badge, and their title and company underneath. */
+function PersonLine({ person: p }: { person: ProspectPerson }) {
+  const sub = [p.title, p.company].filter(Boolean).join(" · ");
   return (
-    <td className="px-4 py-2.5 text-[var(--color-text-faint)]">
-      {person && (field === "emails" ? person.askedEmails : person.askedPhones) ? "Not found" : "—"}
-    </td>
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold text-[var(--color-text)]">
+        <span>{p.fullName}</span>
+        {p.inContactId ? (
+          <span className="whitespace-nowrap rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">In contacts</span>
+        ) : null}
+      </div>
+      {sub ? <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{sub}</p> : null}
+    </div>
+  );
+}
+
+function PickBox({
+  person: p,
+  picked,
+  setPicked,
+}: {
+  person: ProspectPerson;
+  picked: Set<string>;
+  setPicked: React.Dispatch<React.SetStateAction<Set<string>>>;
+}) {
+  return (
+    <input
+      type="checkbox"
+      aria-label={`Select ${p.fullName}`}
+      checked={picked.has(p.id)}
+      onChange={(e) =>
+        setPicked((prev) => {
+          const next = new Set(prev);
+          if (e.target.checked) next.add(p.id);
+          else next.delete(p.id);
+          return next;
+        })
+      }
+    />
+  );
+}
+
+function LinkedInLink({ person: p }: { person: ProspectPerson }) {
+  if (!p.linkedin) return null;
+  return (
+    <a href={p.linkedin} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="LinkedIn" aria-label={`${p.fullName} on LinkedIn`}>
+      <ExternalLink className="h-3.5 w-3.5" />
+    </a>
   );
 }

@@ -20,16 +20,18 @@ export function apiSeriesToPoints(series: ApiDayPoint[]): DayPoint[] {
   }));
 }
 
-/** Average emails per member for each day (in `sent`) — the reference line on a member's chart. */
+/** Average per member for each day — the reference line on a member's chart, on the same measure as a column (opened + responded + bounced). */
 export function teamAveragePoints(memberSeries: ApiDayPoint[][]): DayPoint[] {
   const first = memberSeries[0];
   if (!first || memberSeries.length === 0) return [];
+  const average = (i: number, field: "messages" | "opened" | "replied" | "bounced") =>
+    memberSeries.reduce((n, series) => n + (series[i]?.[field] ?? 0), 0) / memberSeries.length;
   return first.map((d, i) => ({
     date: d.date,
-    sent: memberSeries.reduce((n, series) => n + (series[i]?.messages ?? 0), 0) / memberSeries.length,
-    opened: 0,
-    replied: 0,
-    bounced: 0,
+    sent: average(i, "messages"),
+    opened: average(i, "opened"),
+    replied: average(i, "replied"),
+    bounced: average(i, "bounced"),
   }));
 }
 

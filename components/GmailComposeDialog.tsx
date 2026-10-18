@@ -5,7 +5,12 @@ import { createPortal } from "react-dom";
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2, Eye, Mails } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
-import { COMPOSE_MODAL_SIZE } from "@/lib/compose-modal-size";
+import {
+  COMPOSE_MODAL_SIZE,
+  COMPOSE_SCHEDULING_SIZE,
+  COMPOSE_SIZE_CLASS,
+  composeSizeVars,
+} from "@/lib/compose-modal-size";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
@@ -111,6 +116,21 @@ export type GmailComposeDialogProps = {
   massSending?: boolean;
   onMassSendingChange?: (on: boolean) => void;
   massToggleDisabled?: boolean;
+  /** Scheduling switch, shown next to Mass sending once that is on. Omit to hide it. */
+  schedulingEnabled?: boolean;
+  onSchedulingChange?: (on: boolean) => void;
+  /** Strip above the subject while Scheduling is on: the email chain and its options. */
+  scheduleBar?: React.ReactNode;
+  /**
+   * While a follow-up is selected, replaces the subject and body editor with that follow-up's own
+   * editor. The footer's Variables button is pointed at it through `insertVariableOverride`.
+   */
+  scheduleStepEditor?: React.ReactNode;
+  /** Under the editor while Scheduling is on: the rest of the flow's timeline. */
+  scheduleAfter?: React.ReactNode;
+  /** Draw the editor as the open card of the scheduled timeline (header above, tail below). */
+  scheduleCard?: boolean;
+  insertVariableOverride?: () => void;
   sendLabel?: string;
   sending?: boolean;
 
@@ -136,6 +156,11 @@ export type GmailComposeDialogProps = {
     /** Campaign-wide default per variable key, editable from the warning banner. */
     fallbacks?: Record<string, string>;
     onFallbackChange?: (key: string, value: string) => void;
+    /**
+     * A scheduled flow's emails, so each can be previewed: "Email 1", "Follow-up 1", … Omitted when
+     * there is only the one email.
+     */
+    steps?: { labels: string[]; active: number; onSelect: (index: number) => void };
   } | null;
   onBackToEditor?: () => void;
   /** Opens the review screen; omit to hide the button. */
@@ -195,6 +220,13 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     massSending,
     onMassSendingChange,
     massToggleDisabled,
+    schedulingEnabled,
+    onSchedulingChange,
+    scheduleBar,
+    scheduleStepEditor,
+    scheduleAfter,
+    scheduleCard,
+    insertVariableOverride,
     sendLabel,
     sending,
     review,
@@ -353,12 +385,13 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               ? cn(
                   // Full-bleed sheet on mobile, centered modal from lg up.
                   "bottom-0 left-0 right-0 max-h-[92vh] rounded-t-2xl border-x border-t",
+                  COMPOSE_SIZE_CLASS,
                   "lg:bottom-auto lg:left-1/2 lg:right-auto lg:top-1/2 lg:-translate-x-1/2 lg:-translate-y-1/2 lg:rounded-xl lg:border",
                   GMAIL_COMPOSE_DIALOG_BORDER,
                   "shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:shadow-[0_24px_48px_rgba(0,0,0,0.32)]"
                 )
               : cn(
-                  "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t lg:bottom-6 lg:left-auto lg:right-6 lg:rounded-t-lg lg:border",
+                  "bottom-0 left-0 right-0 max-h-[90vh] rounded-t-2xl border-x border-t w-full h-[92dvh] lg:h-[var(--cm-h)] lg:max-h-[var(--cm-mh)] lg:w-[var(--cm-w)] lg:bottom-6 lg:left-auto lg:right-6 lg:rounded-t-lg lg:border",
                   GMAIL_COMPOSE_DIALOG_BORDER,
                   "shadow-[0_-8px_24px_rgba(60,64,67,0.18)] lg:shadow-[0_8px_10px_1px_rgba(60,64,67,0.12),0_3px_14px_2px_rgba(60,64,67,0.12)]"
                 )
@@ -366,19 +399,19 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
           style={
             !fullscreen
               ? centered
-                ? {
-                    // Always the mass-sending width, recipient rail or not, so
-                    // switching mass sending on or off never resizes the window.
-                    // Shared with the templates modal (COMPOSE_MODAL_SIZE).
-                    width: resizeW ?? COMPOSE_MODAL_SIZE.width,
+                ? // Always the mass-sending width, recipient rail or not, so switching mass
+                  // sending on or off never resizes the window. Shared with the templates modal.
+                  // Scheduling is the one exception: its timeline needs the larger window.
+                  composeSizeVars({
+                    width: resizeW ?? (schedulingEnabled ? COMPOSE_SCHEDULING_SIZE : COMPOSE_MODAL_SIZE).width,
                     maxWidth: COMPOSE_MODAL_SIZE.maxWidth,
-                    height: resizeH ?? COMPOSE_MODAL_SIZE.height,
-                  }
+                    height: resizeH ?? (schedulingEnabled ? COMPOSE_SCHEDULING_SIZE : COMPOSE_MODAL_SIZE).height,
+                  })
                 : {
-                    width: resizeW ?? 560,
-                    height: resizeH ?? undefined,
-                    maxHeight: resizeH ?? "min(640px, calc(100vh - 96px))",
-                  }
+                    "--cm-w": `${resizeW ?? 560}px`,
+                    "--cm-h": resizeH ? `${resizeH}px` : "auto",
+                    "--cm-mh": resizeH ? `${resizeH}px` : "min(640px, calc(100vh - 96px))",
+                  } as React.CSSProperties
               : undefined
           }
           role="dialog"
@@ -445,11 +478,12 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             </button>
           </div>
 
-          <div className="flex min-h-0 flex-1">
+          {/* Editor and recipients sit side by side on a wide screen and stack on a phone. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible">
           {/* Attachments sit outside the scrolling area, pinned to the bottom of
               the column — on the review screen the whole mail scrolls above
               them, and they would otherwise ride along wherever it ends. */}
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-white max-lg:min-h-[380px]">
           <div className="scrollbar-thin flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
 
             {/* Read-only sender identity. Sends always go from the connected
@@ -549,6 +583,57 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               </p>
             ) : null}
 
+            {!reviewing && scheduleBar}
+
+            {reviewing && review.steps ? (
+              <div
+                className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[#f1f3f4] bg-[#faf8f5] px-3 py-2"
+                role="tablist"
+                aria-label="Preview which email"
+                data-testid="review-step-tabs"
+              >
+                <span className="mr-1 text-[12px] font-semibold text-[var(--color-copper)]">Preview</span>
+                {review.steps.labels.map((label, i) => (
+                  <button
+                    key={label}
+                    type="button"
+                    role="tab"
+                    aria-selected={review.steps!.active === i}
+                    onClick={() => review.steps!.onSelect(i)}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-[12px] font-medium transition-colors",
+                      review.steps!.active === i
+                        ? "bg-[var(--color-copper)] text-white"
+                        : "border border-[#dadce0] bg-white text-[#3c4043] hover:bg-[#f1f3f4]",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            {/* While Scheduling is on, the open email is a card of the timeline: the bar above draws its
+                header, and these two wrappers give the editor the matching border and the cream
+                backdrop. `contents` keeps the editor a direct child of the column otherwise. */}
+            <div
+              className={
+                scheduleCard && !reviewing
+                  ? "flex min-h-[340px] flex-1 flex-col bg-[#faf8f5] px-3"
+                  : "contents"
+              }
+            >
+            <div
+              className={
+                scheduleCard && !reviewing
+                  ? "flex min-h-[340px] flex-1 flex-col overflow-hidden rounded-b-2xl border border-t-0 border-[var(--color-copper)] bg-white"
+                  : "contents"
+              }
+            >
+            {!reviewing && scheduleStepEditor ? (
+              scheduleStepEditor
+            ) : (
+            <>
             {showSubject && (
               <div className="flex items-center gap-2 border-b border-[#f1f3f4] px-3 py-2.5">
                 {reviewing ? (
@@ -641,6 +726,12 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
                 />
               </div>
             )}
+            </>
+            )}
+            </div>
+            </div>
+
+            {!reviewing && scheduleAfter}
 
           </div>
             {attachmentChips ? (
@@ -689,6 +780,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             massSending={massSending}
             onMassSendingChange={onMassSendingChange}
             massToggleDisabled={massToggleDisabled}
+            schedulingEnabled={schedulingEnabled}
+            onSchedulingChange={onSchedulingChange}
             templatesButton={templatesButton}
             labelsButton={labelsButton}
             backLabel={reviewing ? "Back to editor" : undefined}
@@ -699,7 +792,9 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             // there is no path to a merged send that skips looking at one.
             sendHidden={!!onReview && !reviewing}
             onInsertVariable={
-              variables?.length
+              insertVariableOverride && !reviewing
+                ? insertVariableOverride
+                : variables?.length
                 ? () => {
                     if (lastFocusedRef.current === "subject") subjectRef.current?.insertVariableTrigger();
                     else editorRef.current?.insertVariableTrigger();

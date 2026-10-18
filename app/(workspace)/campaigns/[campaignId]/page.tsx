@@ -6,7 +6,42 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, Check, AlertTriangle, Minus, RefreshCw, Search } from "lucide-react";
 import { formatDate } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
-import type { CampaignReport } from "@/app/api/campaigns/[campaignId]/route";
+import type { CampaignRecipient, CampaignReport } from "@/app/api/campaigns/[campaignId]/route";
+
+/** "Thu, 15 Oct, 9:00 am" in the viewer's own time zone. */
+function formatDue(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(iso));
+}
+
+/** Where one person is in the flow, in a few words: what has gone, what is due, or why it stopped. */
+function progressLabel(r: CampaignRecipient, emailsPerPerson: number): string {
+  const sent = `${r.emailsSent} of ${emailsPerPerson} sent`;
+  switch (r.progress?.state) {
+    case "waiting":
+      return r.progress.nextRunAt ? `${sent} · next ${formatDue(r.progress.nextRunAt)}` : `${sent} · queued`;
+    case "finished":
+      return `${emailsPerPerson} of ${emailsPerPerson} sent`;
+    case "replied":
+      return `${sent} · stopped, replied`;
+    case "bounced":
+      return `${sent} · stopped, bounced`;
+    case "needs_attention":
+      return `${sent} · skipped, a merge field was empty`;
+    case "paused":
+      return `${sent} · paused`;
+    case "failed":
+      return `${sent} · failed`;
+    default:
+      return sent;
+  }
+}
 
 const METRICS: { key: "opened" | "replied" | "bounced"; label: string; barClass: string }[] = [
   { key: "opened", label: "Opened", barClass: "bg-[var(--color-copper)]" },
@@ -117,8 +152,43 @@ export default function CampaignReportPage() {
           </div>
 
           <p className="text-[15px] font-semibold text-[var(--color-text)]">
-            {titleCase("Sent")}: {report.sent} {report.sent === 1 ? "email" : "emails"}
+            {titleCase("Sent")}: {report.sent}{" "}
+            {report.flow ? (report.sent === 1 ? "person" : "people") : report.sent === 1 ? "email" : "emails"}
           </p>
+
+          {report.flow ? (
+            <div
+              data-testid="campaign-queue-summary"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3 text-[13px] text-[var(--color-text)]"
+            >
+              <p>
+                {report.flow.status !== "active" ? (
+                  <>
+                    <strong className="font-semibold">Paused.</strong> Nothing more goes out until it is resumed.
+                  </>
+                ) : report.flow.waiting > 0 ? (
+                  <>
+                    <strong className="font-semibold">
+                      In queue: {report.flow.waiting} {report.flow.waiting === 1 ? "person" : "people"} waiting.
+                    </strong>{" "}
+                    {report.flow.nextRunAt ? `Next send ${formatDue(report.flow.nextRunAt)}. ` : ""}
+                    Each person gets up to {report.flow.emailsPerPerson}{" "}
+                    {report.flow.emailsPerPerson === 1 ? "email" : "emails"}; follow-ups stop when someone replies.
+                  </>
+                ) : (
+                  <>
+                    <strong className="font-semibold">Everything has been sent.</strong> Nothing is waiting in the queue.
+                  </>
+                )}
+              </p>
+              <Link
+                href={`/sequences/${encodeURIComponent(report.flow.sequenceId)}`}
+                className="shrink-0 text-[12.5px] font-semibold text-[var(--color-copper)] hover:underline"
+              >
+                {titleCase("Manage in Scheduled")}
+              </Link>
+            </div>
+          ) : null}
 
           <div className="space-y-5">
             {METRICS.map(({ key, label, barClass }) => {
@@ -147,7 +217,7 @@ export default function CampaignReportPage() {
               </h2>
               <div className="relative w-56">
                 <Search
-                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]"
+                  className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-copper)]"
                   strokeWidth={2}
                 />
                 <input
@@ -155,15 +225,16 @@ export default function CampaignReportPage() {
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={titleCase("Search recipients")}
-                  className="h-8 w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-3 text-[12.5px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)]"
+                  className="h-8 w-full rounded-lg pl-8 pr-3 text-[12.5px] outline-none search-field"
                 />
               </div>
             </div>
-            <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+            <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-offset)] text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">
                     <th className="px-3 py-2">{titleCase("Recipient")}</th>
+                    {report.flow ? <th className="px-3 py-2">{titleCase("Progress")}</th> : null}
                     <th className="px-3 py-2 text-center">{titleCase("Opened")}</th>
                     <th className="px-3 py-2 text-center">{titleCase("Responded")}</th>
                     <th className="px-3 py-2 text-center">{titleCase("Bounced")}</th>
@@ -172,7 +243,7 @@ export default function CampaignReportPage() {
                 <tbody>
                   {filteredRecipients.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="px-3 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
+                      <td colSpan={report.flow ? 5 : 4} className="px-3 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]">
                         {titleCase("No recipients match that search.")}
                       </td>
                     </tr>
@@ -182,9 +253,14 @@ export default function CampaignReportPage() {
                         <td className="min-w-0 px-3 py-2">
                           <span className="block truncate text-[var(--color-text)]">{r.email}</span>
                           <span className="block text-[11px] text-[var(--color-text-faint)]">
-                            {formatDate(r.sentAt)}
+                            {r.sentAt ? formatDate(r.sentAt) : titleCase("Queued")}
                           </span>
                         </td>
+                        {report.flow ? (
+                          <td className="px-3 py-2 text-[12px] text-[var(--color-text-muted)]">
+                            {progressLabel(r, report.flow.emailsPerPerson)}
+                          </td>
+                        ) : null}
                         <td className="px-3 py-2 text-center" title={r.openedAt ? formatDate(r.openedAt) : undefined}>
                           <StatusIcon on={r.opened} />
                         </td>

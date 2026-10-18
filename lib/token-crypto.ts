@@ -30,6 +30,19 @@ function getKey(): Buffer | null {
   return key;
 }
 
+/**
+ * True when a valid encryption key is configured. Google tokens tolerate its absence (they are
+ * stored as-is with a warning rather than taking the mailbox down); a third-party API key a customer
+ * pastes in should not be — callers that store one refuse instead of writing it in the clear.
+ */
+export function isTokenEncryptionConfigured(): boolean {
+  try {
+    return getKey() !== null;
+  } catch {
+    return false;
+  }
+}
+
 export function isEncryptedToken(value: string): boolean {
   return value.startsWith(PREFIX);
 }

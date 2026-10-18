@@ -32,6 +32,11 @@ export type SequenceContext = {
   userId: string;
   /** Tenancy key — admins own their mailbox, staff inherit the linked admin's. */
   mailboxOwnerId: string;
+  /**
+   * Admins own the mailbox and see every send on it; everyone else sees only the sends they
+   * created. Applied by loadOwnedSequence and the list route — see `created_by` on sequences.
+   */
+  isAdmin: boolean;
   svc: SupabaseClient;
 };
 
@@ -66,7 +71,7 @@ export async function getSequenceContext(
     );
   }
 
-  return { userId: authed.user.id, mailboxOwnerId, svc };
+  return { userId: authed.user.id, mailboxOwnerId, isAdmin: role === "admin", svc };
 }
 
 export function isErrorResponse(value: unknown): value is NextResponse {
@@ -90,6 +95,9 @@ export type SequenceRecord = {
   track_opens: boolean;
   exit_on_reply: boolean;
   variable_fallbacks: Record<string, string> | null;
+  origin?: string | null;
+  merge_source?: string | null;
+  scheduled_for?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -112,6 +120,9 @@ export function toSequenceDto(row: SequenceRecord): Sequence {
     trackOpens: row.track_opens,
     exitOnReply: row.exit_on_reply,
     variableFallbacks: row.variable_fallbacks ?? {},
+    origin: row.origin === "scheduled" ? "scheduled" : "sequence",
+    mergeSource: row.merge_source === "stored" ? "stored" : "contacts",
+    scheduledFor: row.scheduled_for ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -126,6 +137,7 @@ type StepRecord = {
   delay_days: number;
   delay_hours: number;
   delay_minutes: number;
+  send_at?: string | null;
 };
 
 export function toStepDto(row: StepRecord): SequenceStep {
@@ -138,6 +150,7 @@ export function toStepDto(row: StepRecord): SequenceStep {
     delayDays: row.delay_days,
     delayHours: row.delay_hours,
     delayMinutes: row.delay_minutes ?? 0,
+    sendAt: row.send_at ?? null,
   };
 }
 
@@ -349,12 +362,15 @@ export async function loadOwnedSequence(
   ctx: SequenceContext,
   sequenceId: string,
 ): Promise<SequenceRecord | null> {
-  const { data } = await ctx.svc
+  let query = ctx.svc
     .from("sequences")
     .select("*")
     .eq("id", sequenceId)
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
-    .maybeSingle();
+    .eq("mailbox_owner_id", ctx.mailboxOwnerId);
+  // Not an admin: only their own. Every /api/sequences/[sequenceId]/* route loads the sequence
+  // through here, so this one line keeps all of them private.
+  if (!ctx.isAdmin) query = query.eq("created_by", ctx.userId);
+  const { data } = await query.maybeSingle();
   return (data as SequenceRecord | null) ?? null;
 }
 
@@ -384,5 +400,6 @@ export function toStepLite(step: SequenceStep) {
     delayDays: step.delayDays,
     delayHours: step.delayHours,
     delayMinutes: step.delayMinutes ?? 0,
+    sendAt: step.sendAt ?? null,
   };
 }

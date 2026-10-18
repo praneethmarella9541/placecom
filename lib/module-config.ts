@@ -14,7 +14,7 @@ import { FEATURE_KEYS, FEATURE_LABELS, type FeatureKey } from "@/lib/feature-acc
  * only offers modules this config leaves on.
  */
 
-export type ModuleGroupKey = "comms" | "pipeline" | "ops";
+export type ModuleGroupKey = "comms" | "pipeline" | "ops" | "connectors";
 
 export type ModuleGroup = {
   key: ModuleGroupKey;
@@ -33,7 +33,7 @@ export const MODULE_GROUPS: readonly ModuleGroup[] = [
     key: "comms",
     label: "Comms",
     description:
-      "Mail, saved templates, outbound sequences, campaign reporting, the contact book, SMS, and WhatsApp.",
+      "Mail, saved templates, scheduled sends and sequences, campaign reporting, the contact book, SMS, and WhatsApp.",
     modules: [
       "inbox",
       "mailTemplates",
@@ -56,6 +56,13 @@ export const MODULE_GROUPS: readonly ModuleGroup[] = [
     description: "Google Workspace surfaces — Drive, Calendar, Forms, Sheets, and Docs.",
     modules: ["drive", "calendar", "forms", "sheets", "docs"],
   },
+  {
+    key: "connectors",
+    label: "Connectors",
+    description:
+      "Third-party services the workspace connects to with an API key. A connector switched off here is unavailable to everyone, whether or not it is connected.",
+    modules: ["lusha"],
+  },
 ] as const;
 
 /** Short per-module blurb for the /configs rows. */
@@ -63,7 +70,7 @@ export const MODULE_DESCRIPTIONS: Record<FeatureKey, string> = {
   inbox: "Gmail-backed mail client, composer, and mass send.",
   mailTemplates:
     "Saved subject + body templates, inserted from the composer and sequence step editors. No page of its own — switching this off removes the Templates button everywhere.",
-  sequences: "Multi-step automated outbound email with scheduling.",
+  sequences: "Scheduled sends and multi-step sequences: queued email with follow-ups that sends on its own, with pause, cancel, and per-recipient status.",
   campaigns: "Open/click reporting for mail sent from the composer.",
   contacts: "Team directory and synced Google Contacts.",
   sms: "Two-way SMS threads over Exotel.",
@@ -75,6 +82,8 @@ export const MODULE_DESCRIPTIONS: Record<FeatureKey, string> = {
   forms: "Form builder and response collection.",
   sheets: "Embedded Google Sheets editor.",
   docs: "Embedded Google Docs editor with link sharing.",
+  lusha:
+    "Lusha contact enrichment: find and reveal emails and phone numbers, prospect by company, and enrich a CSV. Switching it off removes the Lusha buttons from Contacts and the Connectors page; a saved connection is kept and works again when it is switched back on.",
 };
 
 const GROUP_KEYS = new Set<string>(MODULE_GROUPS.map((g) => g.key));

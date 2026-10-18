@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LushaMark } from "@/components/LushaLogo";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
@@ -15,6 +16,8 @@ import {
   IconWhatsAppLogo,
 } from "@/components/Icons";
 import { ContactFormModal, contactToFormInput } from "@/components/ContactFormModal";
+import { LushaRevealModal } from "@/components/LushaRevealModal";
+import { useLushaConnected } from "@/hooks/useLushaConnected";
 import { ContactDetailQuickLogger } from "@/components/ContactDetailQuickLogger";
 import { ContactActivityTimeline } from "@/components/ContactActivityTimeline";
 import { useDirectoryContact } from "@/hooks/useDirectoryContacts";
@@ -39,6 +42,8 @@ export default function ContactDetailPage() {
   const router = useRouter();
   const { contact, loading, error, reload } = useDirectoryContact(id);
   const [editOpen, setEditOpen] = useState(false);
+  const [lushaOpen, setLushaOpen] = useState(false);
+  const lushaConnected = useLushaConnected();
   const [busy, setBusy] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [lead, setLead] = useState<MatchedLead | null>(null);
@@ -134,7 +139,7 @@ export default function ContactDetailPage() {
 
   return (
     <div className="mx-auto max-w-[1400px] space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <Link
           href="/contacts"
           className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
@@ -142,11 +147,22 @@ export default function ContactDetailPage() {
           <ArrowLeft className="h-4 w-4" />
           {titleCase("Back to directory")}
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-1 sm:gap-2">
+          {lushaConnected ? (
+            <button
+              type="button"
+              data-testid="contact-find-lusha"
+              onClick={() => setLushaOpen(true)}
+              className="btn-ghost inline-flex items-center gap-1.5 whitespace-nowrap px-3 text-[13px] font-semibold"
+            >
+              <LushaMark className="h-3.5 w-3.5" />
+              {titleCase("Find email & phone")}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => setEditOpen(true)}
-            className="btn-ghost inline-flex items-center gap-1.5 px-3 text-[13px] font-semibold"
+            className="btn-ghost inline-flex items-center gap-1.5 whitespace-nowrap px-3 text-[13px] font-semibold"
           >
             <Pencil className="h-3.5 w-3.5" />
             {titleCase("Edit profile")}
@@ -155,7 +171,7 @@ export default function ContactDetailPage() {
             type="button"
             disabled={busy}
             onClick={() => setConfirmingDelete(true)}
-            className="btn-ghost inline-flex items-center gap-1.5 px-3 text-[13px] font-semibold text-[var(--color-danger)]"
+            className="btn-ghost inline-flex items-center gap-1.5 whitespace-nowrap px-3 text-[13px] font-semibold text-[var(--color-danger)]"
           >
             <Trash2 className="h-3.5 w-3.5" />
             {titleCase("Delete")}
@@ -293,6 +309,16 @@ export default function ContactDetailPage() {
           </div>
         </div>
       </div>
+
+      {lushaOpen && (
+        <LushaRevealModal
+          contact={contact}
+          onClose={() => setLushaOpen(false)}
+          onApplied={() => {
+            void reload();
+          }}
+        />
+      )}
 
       {editOpen && (
         <ContactFormModal

@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { Braces, FileText, ImageIcon, Loader2, Paperclip, Plus, Search, Trash2, X } from "lucide-react";
 
 import { AttachmentUploadRow } from "@/components/AttachmentUploadRow";
-import { COMPOSE_MODAL_SIZE } from "@/lib/compose-modal-size";
+import { COMPOSE_MODAL_SIZE, COMPOSE_SIZE_CLASS, composeSizeVars } from "@/lib/compose-modal-size";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { uploadInlineImage } from "@/lib/upload-inline-image";
 import { SubjectWithVariables, type SubjectHandle } from "@/components/SubjectWithVariables";
@@ -542,9 +542,9 @@ export function MailTemplatesButton({
                 role="dialog"
                 aria-modal="true"
                 aria-label="Mail templates"
-                className="card flex flex-col overflow-hidden p-0 shadow-[var(--shadow-lg)]"
+                className={`card flex flex-col overflow-hidden p-0 shadow-[var(--shadow-lg)] ${COMPOSE_SIZE_CLASS}`}
                 // Same size as the compose window it opens from.
-                style={COMPOSE_MODAL_SIZE}
+                style={composeSizeVars(COMPOSE_MODAL_SIZE) as React.CSSProperties}
               >
                 <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-border)] px-5 py-3.5">
                   <div>

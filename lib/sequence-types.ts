@@ -48,6 +48,8 @@ export type SequenceStep = {
   delayHours: number;
   /** Testing aid — see the 0060 migration header. */
   delayMinutes: number;
+  /** Wait steps: hold the next email until this instant (ISO) instead of for a duration. */
+  sendAt: string | null;
   /** Files sent with this step. Absent on responses that don't join them. */
   attachments?: SequenceStepAttachment[];
 };
@@ -61,6 +63,7 @@ export type SequenceStepInput = {
   delayDays?: number;
   delayHours?: number;
   delayMinutes?: number;
+  sendAt?: string | null;
 };
 
 export type Sequence = {
@@ -81,6 +84,12 @@ export type Sequence = {
   exitOnReply: boolean;
   /** Merge key → value used for recipients who have none of their own. */
   variableFallbacks: Record<string, string>;
+  /** Built in the sequence editor, or created from the composer's Scheduling toggle. */
+  origin: "sequence" | "scheduled";
+  /** Whether merge fields come from the contact book at send time or from the stored recipient fields. */
+  mergeSource: "contacts" | "stored";
+  /** Start time the user picked for a scheduled send; null when it started as soon as possible. */
+  scheduledFor: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -89,11 +98,13 @@ export type EnrollmentCounts = Record<EnrollmentStatus, number>;
 
 export type SequenceListItem = Pick<
   Sequence,
-  "id" | "name" | "description" | "status" | "publishedAt" | "updatedAt"
+  "id" | "name" | "description" | "status" | "publishedAt" | "updatedAt" | "origin" | "scheduledFor"
 > & {
   emailStepCount: number;
   recipientCount: number;
   counts: EnrollmentCounts;
+  /** Earliest time the scheduler will next send for this flow; null when nothing is queued. */
+  nextRunAt: string | null;
 };
 
 export type SequenceEnrollment = {

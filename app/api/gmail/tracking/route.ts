@@ -20,7 +20,9 @@ export async function GET(request: Request) {
   const run = (columns: string) => {
     let q = supabase.from("email_tracking").select(columns).eq("user_id", user.id).order("sent_at", { ascending: false });
     if (ids.length > 0) q = q.in("gmail_message_id", ids);
-    return q.limit(200);
+    // Asked for specific messages: return every one of them. The 200-row cap only exists to bound
+    // the "latest sends" listing used when no ids are given.
+    return q.limit(ids.length > 0 ? Math.min(Math.max(ids.length, 200), 1000) : 200);
   };
 
   const BASE =

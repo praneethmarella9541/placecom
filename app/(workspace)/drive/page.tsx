@@ -2094,14 +2094,14 @@ export default function DrivePage() {
     ? createPortal(
         <>
           <div className="relative hidden w-[260px] md:block">
-            <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-faint)]" />
+            <IconSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-copper)]" />
             <input
               data-testid="drive-search-input"
               type="search"
               value={driveSearchInput}
               onChange={(e) => setDriveSearchInput(e.target.value)}
               placeholder={titleCase("Search Drive")}
-              className="h-9 w-full rounded-[10px] border border-transparent bg-[var(--color-surface-2)] pl-8 pr-3 text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-faint)] focus:border-[var(--color-copper)] focus:bg-[var(--color-surface)]"
+              className="h-9 w-full rounded-[10px] pl-8 pr-3 text-[13px] outline-none search-field"
               autoComplete="off"
             />
           </div>

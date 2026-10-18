@@ -459,6 +459,27 @@
     box-shadow: 0 0 0 3px var(--color-copper-tint);
   }
 
+  /* Search boxes: a visible neutral border so they read as a field, copper on
+     hover and focus like every other input. Size, radius and left padding for
+     the icon stay with each box; pair with a copper icon (text-[var(--color-copper)]). */
+  .search-field {
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-surface);
+    color: var(--color-text);
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  }
+  .search-field::placeholder {
+    color: var(--color-text-muted);
+  }
+  .search-field:hover:not(:focus) {
+    border-color: rgba(196, 92, 26, 0.35);
+  }
+  .search-field:focus {
+    border-color: var(--color-copper);
+    box-shadow: 0 0 0 3px var(--color-copper-tint);
+  }
+
   /* ── Badges (status pills) ─────────────────────────────────── */
   .badge {
     @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
@@ -1095,15 +1116,21 @@
 }
 
 
-/* Analytics chart series colours — categorical slots 1 and 2 of the data-viz
+/* Analytics chart series colours — categorical slots 1 to 3 of the data-viz
    palette, validated for colour-blind separation and contrast on this surface.
    The app has no dark theme, so the dark steps apply only if one is switched on
    explicitly with data-theme="dark" (never from the OS setting alone). */
 .viz-emails {
   --viz-series-1: #2a78d6;
   --viz-series-2: #eb6834;
+  --viz-series-3: #1baf7a;
+  /* By meaning: opened is the good aqua, responded blue, bounced the warning orange. */
+  --viz-opened: var(--viz-series-3);
+  --viz-bounced: var(--viz-series-2);
+  --viz-replied: var(--viz-series-1);
 }
 :root[data-theme="dark"] .viz-emails {
   --viz-series-1: #3987e5;
   --viz-series-2: #d95926;
+  --viz-series-3: #199e70;
 }

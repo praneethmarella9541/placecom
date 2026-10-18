@@ -682,25 +682,25 @@ export default function AdminTeamPage() {
                   {titleCase("View member analytics")}
                 </Link>
               </div>
-              <div className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] px-6 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] px-4 py-4 sm:px-6">
                 <button
                   data-testid={`team-delete-member-${editingMember.id}`}
                   type="button"
                   onClick={() => void deleteMember(editingMember)}
                   disabled={memberBusy}
-                  className="btn-danger px-3"
+                  className="btn-danger whitespace-nowrap px-3"
                 >
                   {deletingMemberId === editingMember.id ? titleCase("Removing…") : titleCase("Remove from team")}
                 </button>
-                <div className="flex gap-2">
-                  <button type="button" className="btn-ghost px-4" disabled={memberBusy} onClick={closeEdit}>
+                <div className="ml-auto flex gap-2">
+                  <button type="button" className="btn-ghost whitespace-nowrap px-4" disabled={memberBusy} onClick={closeEdit}>
                     Cancel
                   </button>
                   <button
                     data-testid={`team-save-member-${editingMember.id}`}
                     type="submit"
                     disabled={memberBusy}
-                    className="btn-primary-copper px-4"
+                    className="btn-primary-copper whitespace-nowrap px-4"
                   >
                     {savingMemberId === editingMember.id ? titleCase("Saving...") : titleCase("Save changes")}
                   </button>
@@ -829,15 +829,15 @@ export default function AdminTeamPage() {
                   </>
                 )}
               </div>
-              <div className="flex justify-end gap-2 border-t border-[var(--color-border)] px-6 py-4">
-                <button type="button" className="btn-ghost px-4" disabled={busy} onClick={() => setAddOpen(false)}>
+              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--color-border)] px-4 py-4 sm:px-6">
+                <button type="button" className="btn-ghost whitespace-nowrap px-4" disabled={busy} onClick={() => setAddOpen(false)}>
                   Cancel
                 </button>
                 <button
                   data-testid="team-create-staff-btn"
                   type="submit"
                   disabled={busy || !email.trim() || password.length < 8}
-                  className="btn-primary-copper px-4"
+                  className="btn-primary-copper whitespace-nowrap px-4"
                 >
                   {busy ? titleCase("Creating…") : titleCase("Create staff account")}
                 </button>

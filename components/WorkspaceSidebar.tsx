@@ -19,6 +19,7 @@ import {
   Megaphone,
   MessageCircle,
   MessageSquare,
+  Plug,
   Radio,
   SlidersHorizontal,
   UserRound,
@@ -29,7 +30,7 @@ import { createClient } from "@/lib/supabase";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { clearSecondaryFeaturePrefetchCache } from "@/lib/workspace-feature-prefetch";
 import { pathToFeature } from "@/lib/feature-access";
-import { hiddenFeatureSet } from "@/lib/module-visibility";
+import { hiddenFeatureSet, isPathVisible } from "@/lib/module-visibility";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo, PlacecomMark } from "@/components/PlacecomLogo";
@@ -39,11 +40,12 @@ import { GmailAvatar } from "@/components/GmailAvatar";
 import { formatPhone } from "@/lib/phone-contacts-display";
 
 const adminLink = { href: "/admin/team", label: "Team", Icon: Users } as const;
+const connectorsLink = { href: "/admin/connectors", label: "Connectors", Icon: Plug } as const;
 const configsLink = { href: "/configs", label: "Configs", Icon: SlidersHorizontal } as const;
 
 const commsNav = [
   { href: "/inbox", label: "Mail", Icon: Mail },
-  { href: "/sequences", label: "Sequences", Icon: Workflow },
+  { href: "/sequences", label: "Scheduled", Icon: Workflow },
   { href: "/campaigns", label: "Campaigns", Icon: Megaphone },
   // Broadcasting renders only the WhatsApp broadcast panel, so it maps to the
   // whatsapp feature and appears and disappears with it.
@@ -440,7 +442,12 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
     setPendingHref(null);
   }, [pathname]);
 
+  // Close the mobile drawer once the page has actually changed. Running this on mount would shut
+  // the drawer the instant it opens, since the drawer mounts this component when it opens.
+  const shownPathname = useRef(pathname);
   useEffect(() => {
+    if (shownPathname.current === pathname) return;
+    shownPathname.current = pathname;
     onCloseMobile?.();
   }, [pathname, onCloseMobile]);
 
@@ -469,9 +476,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   const systemItems = useMemo<NavGroupLinks["items"]>(() => {
     const items: NavGroupLinks["items"] = [];
     if (me?.role === "admin") items.push({ ...adminLink });
+    if (me?.role === "admin" && isPathVisible(me, connectorsLink.href)) items.push({ ...connectorsLink });
     if (me?.isConfigsAdmin) items.push({ ...configsLink });
     return items;
-  }, [me?.role, me?.isConfigsAdmin]);
+  }, [me]);
 
   useEffect(() => {
     // Only reachable routes — prefetching a hidden module just buys a redirect.

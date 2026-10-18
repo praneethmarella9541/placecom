@@ -8,6 +8,7 @@ import { DateRangePicker, rangeDayCount, rangeEndingToday, type DateRange } from
 import { SHOW_SPEND, SHOW_TOKENS } from "@/lib/analytics-flags";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { EmailsChart } from "@/components/analytics/EmailsChart";
+import { MemberCompanies } from "@/components/analytics/MemberCompanies";
 import { fetchAnalytics } from "@/lib/analytics-prefetch";
 import { InfoTip, METRIC_HELP } from "@/components/analytics/InfoTip";
 import { apiSeriesToPoints, percent, relativeDay, teamAveragePoints, type ApiDayPoint } from "@/lib/analytics-chart";
@@ -31,6 +32,7 @@ type UserAnalytics = {
   email: string | null;
   displayUsername: string | null;
   role: string;
+  groupName?: string | null;
   totals: Totals;
   series?: ApiDayPoint[];
 };
@@ -162,7 +164,7 @@ export default function AdminUserAnalyticsPage() {
                   {user.displayUsername || user.email || titleCase("User Analytics")}
                 </h1>
                 <p className="truncate text-sm text-[var(--color-text-muted)]">
-                  {user.email ?? "—"} · {user.role} · {range.allTime ? "All time" : `${rangeDayCount(range)} day${rangeDayCount(range) === 1 ? "" : "s"}`}
+                  {user.email ?? "—"} · {user.groupName || user.role} · {range.allTime ? "All time" : `${rangeDayCount(range)} day${rangeDayCount(range) === 1 ? "" : "s"}`}
                   {loading && (
                     <span className="ml-2 inline-flex items-center gap-1 text-[var(--color-text-faint)]" role="status">
                       <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
@@ -266,9 +268,11 @@ export default function AdminUserAnalyticsPage() {
           points={memberPoints}
           loading={loading}
           scopeLabel="by this member"
-          reference={teamAverage ? { label: "Team average", points: teamAverage } : undefined}
+          reference={teamAverage ? { label: "Team average activity", points: teamAverage } : undefined}
         />
       )}
+
+      {user && userId && <MemberCompanies userId={userId} range={range} />}
     </div>
   );
 }

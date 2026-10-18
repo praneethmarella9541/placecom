@@ -9,6 +9,8 @@ import { recordThreadResponses } from "@/lib/email-responses";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { sendMailViaGmail } from "@/lib/gmail-inbox";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-google-token";
+import { addMessageLabels } from "@/lib/gmail-labels";
+import { buildEnrollmentMergeFields } from "@/lib/sequence-variables";
 import { loadStepSendAttachments, type StepSendFiles } from "@/lib/sequence-attachments";
 import { appendDriveLinksToHtml } from "@/lib/gmail-drive-links";
 import { buildStepEmail } from "@/lib/sequence-body";
@@ -20,6 +22,7 @@ import {
   zonedTimeToUtc,
 } from "@/lib/sequence-schedule";
 import { resolveEnrollmentMergeFields, windowFromSequenceRow } from "@/lib/sequence-server";
+import { CLAIM_LEASE_SECONDS } from "@/lib/sequence-due-check";
 import { createServiceSupabase } from "@/lib/supabase-service";
 
 /**
@@ -48,10 +51,16 @@ const DEFAULT_DEADLINE_MS = 20_000;
 const MAX_DEADLINE_MS = 240_000;
 const MIN_DEADLINE_MS = 5_000;
 const BATCH_SIZE = 25;
-const MAX_SENDS_PER_RUN = 60;
+/**
+ * Per-tick ceiling. The deadline (DEFAULT_DEADLINE_MS) is the real brake — a tick stops when its
+ * time is up — so this only stops a very long override from sending without end. It used to be 60,
+ * which capped a tick well below what a 20-second budget can send and left a big audience waiting
+ * for the next tick.
+ */
+const MAX_SENDS_PER_RUN = 300;
 /** Same pacing as app/api/broadcast/email/route.ts. */
 const GAP_MS = 250;
-const LEASE_SECONDS = 300;
+const LEASE_SECONDS = CLAIM_LEASE_SECONDS;
 const TOKEN_BACKOFF_MS = 15 * 60_000;
 /** A send stuck mid-flight past this is assumed dead and released for retry. */
 const STUCK_SEND_MINUTES = 15;
@@ -80,6 +89,7 @@ type EnrollmentRow = {
   display_name: string | null;
   merge_fields: Record<string, string> | null;
   cc: string | null;
+  bcc: string | null;
   current_step_order: number;
   next_step_id: string | null;
   attempt_count: number;
@@ -90,6 +100,9 @@ type EnrollmentRow = {
 
 type SequenceRow = {
   id: string;
+  name: string;
+  origin: "sequence" | "scheduled" | null;
+  created_by: string | null;
   mailbox_owner_id: string;
   timezone: string;
   send_window_start: string;
@@ -102,6 +115,8 @@ type SequenceRow = {
   track_opens: boolean;
   exit_on_reply: boolean;
   variable_fallbacks: Record<string, string> | null;
+  merge_source: "contacts" | "stored" | null;
+  label_ids: string[] | null;
 };
 
 type StepRow = {
@@ -114,6 +129,7 @@ type StepRow = {
   delay_days: number;
   delay_hours: number;
   delay_minutes: number;
+  send_at?: string | null;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -135,6 +151,13 @@ function startOfLocalDay(now: Date, timezone: string): Date {
 type RunContext = {
   svc: SupabaseClient;
   dryRun: boolean;
+  /**
+   * The immediate pass of a "Starts now" schedule, run inside the user's own request: it sends
+   * regardless of the sending window and on Gmail's interactive lane (about one mail a second,
+   * like mass sending), where the background lane the cron uses allows one every five seconds.
+   * The cron never sets this, so the window and the slow lane still govern every later email.
+   */
+  immediate: boolean;
   summary: CronSummary;
   /**
    * Step id → its files, base64'd, downloaded at most once per run. Every
@@ -157,6 +180,29 @@ async function releaseClaim(
     .eq("id", enrollmentId);
 }
 
+/**
+ * Mirror a reply or bounce onto the recipient's campaign rows, so the Campaigns report is current
+ * without anyone pressing Refresh. Only for flows scheduled from the composer — those are campaigns.
+ */
+async function markCampaignOutcome(
+  ctx: RunContext,
+  sequence: SequenceRow,
+  email: string,
+  outcome: "replied" | "bounced",
+): Promise<void> {
+  if (sequence.origin !== "scheduled" || ctx.dryRun) return;
+  const now = new Date().toISOString();
+  try {
+    await ctx.svc
+      .from("email_tracking")
+      .update(outcome === "replied" ? { replied: true, replied_at: now } : { bounced: true, bounced_at: now })
+      .eq("campaign_id", sequence.id)
+      .eq("to_address", email);
+  } catch {
+    /* best-effort: the report's Refresh still checks Gmail directly */
+  }
+}
+
 async function finishEnrollment(
   ctx: RunContext,
   enrollmentId: string,
@@ -173,6 +219,15 @@ type MailboxContext = {
   mailboxAddress?: string;
   sentTodayBySequence: Map<string, number>;
 };
+
+/**
+ * Which Gmail lane this recipient's calls use. Anything scheduled from Compose is mail a person
+ * asked for and expects on time, so it gets the same fast lane as a mass send; only a hand-built
+ * sequence (origin "sequence", none left in use) stays on the slow background lane.
+ */
+function gmailLane(ctx: RunContext, sequence: SequenceRow): "interactive" | "batch" {
+  return ctx.immediate || sequence.origin === "scheduled" ? "interactive" : "batch";
+}
 
 async function processEnrollment(
   ctx: RunContext,
@@ -197,6 +252,7 @@ async function processEnrollment(
         delayDays: s.delay_days,
         delayHours: s.delay_hours,
         delayMinutes: s.delay_minutes ?? 0,
+        sendAt: s.send_at ?? null,
       })),
       enrollment.current_step_order,
       now,
@@ -223,7 +279,7 @@ async function processEnrollment(
         mailboxAddress: mailbox.mailboxAddress,
         firstSentAt,
         mailboxKey: mailbox.ownerId,
-        priority: "batch",
+        priority: gmailLane(ctx, sequence),
         // Store every reply in the thread for analytics' "Responded" count,
         // from the messages this check fetches anyway.
         onMessages: (messages) =>
@@ -244,12 +300,13 @@ async function processEnrollment(
       const bounced = await searchForBounceNotification(mailbox.accessToken, enrollment.email, {
         sinceMs: firstSentAt,
         mailboxKey: mailbox.ownerId,
-        priority: "batch",
+        priority: gmailLane(ctx, sequence),
       }).catch(() => false);
       if (bounced) outcome = "bounced";
     }
     if (outcome === "replied") {
       ctx.summary.replied += 1;
+      await markCampaignOutcome(ctx, sequence, enrollment.email, "replied");
       await finishEnrollment(ctx, enrollment.id, "replied", {
         replied_at: now.toISOString(),
         reply_checked_at: now.toISOString(),
@@ -258,6 +315,7 @@ async function processEnrollment(
     }
     if (outcome === "bounced") {
       ctx.summary.bounced += 1;
+      await markCampaignOutcome(ctx, sequence, enrollment.email, "bounced");
       await finishEnrollment(ctx, enrollment.id, "bounced", {
         reply_checked_at: now.toISOString(),
         last_error: "Delivery failed — the address bounced.",
@@ -268,7 +326,7 @@ async function processEnrollment(
 
   // 2. The window is authoritative at send time, not at schedule time — settings
   //    may have changed since next_run_at was written.
-  if (!isWithinSendWindow(now, window)) {
+  if (!ctx.immediate && !isWithinSendWindow(now, window)) {
     await releaseClaim(ctx, enrollment.id, {
       next_run_at: nextSendSlot(now, window).toISOString(),
       reply_checked_at: now.toISOString(),
@@ -355,13 +413,19 @@ async function processEnrollment(
   let trackingPixelUrl: string | undefined;
   if (sequence.track_opens) {
     try {
+      // A send scheduled from the composer is a campaign, like an immediate mass send: every
+      // recipient and step is stamped with the flow's id so the Campaigns report groups them. It is
+      // credited to whoever scheduled it, because Campaigns shows a person their own rows; a
+      // classic sequence keeps recording against the mailbox owner as before.
+      const asCampaign = sequence.origin === "scheduled";
       const { data: trackRow } = await ctx.svc
         .from("email_tracking")
         .insert({
-          user_id: sequence.mailbox_owner_id,
+          user_id: asCampaign ? sequence.created_by ?? sequence.mailbox_owner_id : sequence.mailbox_owner_id,
           gmail_message_id: "__pending__",
           to_address: enrollment.email,
           subject: built.subject || null,
+          ...(asCampaign ? { campaign_id: sequence.id, campaign_name: sequence.name } : {}),
         })
         .select("id")
         .single();
@@ -397,6 +461,7 @@ async function processEnrollment(
     const result = await sendMailViaGmail(mailbox.accessToken, {
       to: enrollment.email,
       cc: enrollment.cc || undefined,
+      bcc: enrollment.bcc || undefined,
       subject: threading ? "" : built.subject,
       textBody: built.text,
       // Files over Gmail's 25 MB travel as Drive links under the body, exactly
@@ -407,7 +472,7 @@ async function processEnrollment(
       trackingPixelUrl,
       attachments: attachments.length > 0 ? attachments : undefined,
       mailboxKey: mailbox.ownerId,
-      priority: "batch",
+      priority: gmailLane(ctx, sequence),
     });
 
     const sentAt = new Date().toISOString();
@@ -428,8 +493,18 @@ async function processEnrollment(
     if (trackingId) {
       await ctx.svc
         .from("email_tracking")
-        .update({ gmail_message_id: result.id })
+        // The thread id is what lets the campaign report check this recipient for a reply or bounce.
+        .update({ gmail_message_id: result.id, gmail_thread_id: result.threadId })
         .eq("id", trackingId);
+    }
+
+    // Labels picked in the composer. The mail is already out, so a failure here is
+    // not worth failing the step over.
+    const labelIds = (sequence.label_ids ?? []).filter(Boolean);
+    if (labelIds.length > 0 && result.id) {
+      await addMessageLabels(mailbox.accessToken, result.id, labelIds, {
+        mailboxKey: mailbox.ownerId,
+      }).catch(() => {});
     }
 
     const plan = planNextEmailStep(
@@ -440,6 +515,7 @@ async function processEnrollment(
         delayDays: s.delay_days,
         delayHours: s.delay_hours,
         delayMinutes: s.delay_minutes ?? 0,
+        sendAt: s.send_at ?? null,
       })),
       step.step_order,
       new Date(),
@@ -539,6 +615,8 @@ async function claimDueSequenceEnrollments(
   svc: SupabaseClient,
   limit: number,
   leaseSeconds: number,
+  /** Only this flow's recipients — the immediate pass after scheduling. */
+  sequenceId?: string,
 ): Promise<EnrollmentRow[]> {
   const nowIso = new Date().toISOString();
   const staleCutoffIso = new Date(Date.now() - leaseSeconds * 1000).toISOString();
@@ -547,14 +625,16 @@ async function claimDueSequenceEnrollments(
   // already-fresh (and get skipped) by the time its update runs.
   const claimableFilter = `claimed_at.is.null,claimed_at.lt.${staleCutoffIso}`;
 
-  const { data: candidates, error: selectError } = await svc
+  let candidateQuery = svc
     .from("sequence_enrollments")
     .select("id, sequences!inner(status)")
     .eq("status", "active")
     .eq("sequences.status", "active")
     .not("next_run_at", "is", null)
     .lte("next_run_at", nowIso)
-    .or(claimableFilter)
+    .or(claimableFilter);
+  if (sequenceId) candidateQuery = candidateQuery.eq("sequence_id", sequenceId);
+  const { data: candidates, error: selectError } = await candidateQuery
     .order("next_run_at", { ascending: true })
     .limit(limit);
 
@@ -579,7 +659,16 @@ async function claimDueSequenceEnrollments(
 }
 
 export async function runSequencesCron(
-  options: { dryRun?: boolean; deadlineMs?: number } = {},
+  options: {
+    dryRun?: boolean;
+    deadlineMs?: number;
+    /** Work only this flow's due recipients (the immediate pass after scheduling). */
+    sequenceId?: string;
+    /** The immediate pass of a "Starts now" schedule — see RunContext.immediate. */
+    immediate?: boolean;
+    /** Override the per-run send ceiling. */
+    maxSends?: number;
+  } = {},
 ): Promise<CronSummary> {
   const startedAt = Date.now();
   const deadlineMs = Math.min(
@@ -600,9 +689,11 @@ export async function runSequencesCron(
     durationMs: 0,
   };
 
+  const maxSends = Math.max(1, Math.trunc(options.maxSends ?? MAX_SENDS_PER_RUN));
   const ctx: RunContext = {
     svc,
     dryRun: Boolean(options.dryRun),
+    immediate: Boolean(options.immediate),
     summary,
     attachmentCache: new Map(),
     attachmentCacheBytes: 0,
@@ -622,8 +713,8 @@ export async function runSequencesCron(
   // loop would spin until the deadline making no progress.
   const handled = new Set<string>();
 
-  while (Date.now() - startedAt < deadlineMs && summary.sent < MAX_SENDS_PER_RUN) {
-    const claimedRows = await claimDueSequenceEnrollments(svc, BATCH_SIZE, LEASE_SECONDS);
+  while (Date.now() - startedAt < deadlineMs && summary.sent < maxSends) {
+    const claimedRows = await claimDueSequenceEnrollments(svc, BATCH_SIZE, LEASE_SECONDS, options.sequenceId);
     if (claimedRows.length === 0) break;
 
     const rows = claimedRows.filter((row) => !handled.has(row.id));
@@ -712,7 +803,7 @@ export async function runSequencesCron(
 
       try {
         for (const enrollment of enrollments) {
-          if (Date.now() - startedAt > deadlineMs || summary.sent >= MAX_SENDS_PER_RUN) {
+          if (Date.now() - startedAt > deadlineMs || summary.sent >= maxSends) {
             await releaseClaim(ctx, enrollment.id);
             continue;
           }
@@ -722,12 +813,18 @@ export async function runSequencesCron(
             await releaseClaim(ctx, enrollment.id);
             continue;
           }
-          await processEnrollment(ctx, enrollment, sequence, steps, mailbox, {
-            mergeFields:
-              resolvedFields.get(enrollment.email.trim().toLowerCase()) ??
-              enrollment.merge_fields ??
-              {},
-          });
+          // A spreadsheet-sourced audience keeps its own columns: the stored fields are
+          // authoritative, so the contact book cannot overwrite them at send time.
+          const mergeFields =
+            sequence.merge_source === "stored"
+              ? buildEnrollmentMergeFields(enrollment.email, {
+                  custom: enrollment.merge_fields,
+                  displayName: enrollment.display_name,
+                })
+              : resolvedFields.get(enrollment.email.trim().toLowerCase()) ??
+                enrollment.merge_fields ??
+                {};
+          await processEnrollment(ctx, enrollment, sequence, steps, mailbox, { mergeFields });
           await sleep(GAP_MS);
         }
       } catch {

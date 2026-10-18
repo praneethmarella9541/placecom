@@ -249,7 +249,7 @@ export function ContactImportModal({
                 </div>
 
                 <section>
-                  <div className="overflow-hidden rounded-xl border border-[var(--color-border)]">
+                  <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
                     <table className="w-full text-left text-[13px]">
                       <thead>
                         <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">

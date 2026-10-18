@@ -188,6 +188,25 @@ async function supabaseReadFile(userId: string, uploadId: string, totalSize: num
   return out;
 }
 
+/**
+ * Bytes of this upload already stored as parts, read from Supabase itself. This is the one source
+ * every server instance agrees on, which the in-memory counter is not.
+ */
+async function supabaseReceivedBytes(userId: string, uploadId: string): Promise<number> {
+  const supabase = createServiceSupabase();
+  const { data: listed, error } = await supabase.storage
+    .from(STORAGE_BUCKET)
+    .list(storagePrefix(userId, uploadId), { limit: 1000 });
+  if (error || !listed) return 0;
+  let total = 0;
+  for (const f of listed) {
+    if (!f.name?.endsWith(".part")) continue;
+    const size = (f.metadata as { size?: number } | null)?.size;
+    if (typeof size === "number") total += size;
+  }
+  return total;
+}
+
 async function supabaseRemove(userId: string, uploadId: string): Promise<void> {
   const supabase = createServiceSupabase();
   const prefix = storagePrefix(userId, uploadId);
@@ -224,6 +243,25 @@ const supabaseConfigured = Boolean(
   process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+/** Append one chunk using only what is stored in Supabase — no help from this instance's memory. */
+async function appendChunkViaSupabase(
+  userId: string,
+  uploadId: string,
+  offset: number,
+  chunk: Buffer
+): Promise<{ done: boolean; received: number }> {
+  const stored = await supabaseReadMeta(userId, uploadId);
+  if (!stored || stored.userId !== userId) throw new Error("Upload session not found");
+
+  const have = await supabaseReceivedBytes(userId, uploadId);
+  if (offset !== have) throw new Error("Unexpected chunk offset");
+
+  await supabaseUploadPart(userId, uploadId, offset, chunk);
+  const received = have + chunk.length;
+  await supabaseWriteMeta(userId, uploadId, { ...stored, received });
+  return { done: received >= stored.totalSize, received };
+}
+
 /**
  * Append a chunk. Chunks live in memory (fast) and are written to disk/Supabase
  * in the background. On the final chunk, we await the durable copy to guarantee
@@ -238,11 +276,16 @@ export async function appendStagedChunk(
 ): Promise<{ done: boolean; received: number }> {
   pruneMem();
   const entry = memStore.get(uploadId);
-  if (!entry || entry.userId !== userId) {
-    throw new Error("Upload session not found");
-  }
-  if (offset !== entry.received) {
-    throw new Error("Unexpected chunk offset");
+  // The session is only in this instance's memory when this instance saw the earlier chunks.
+  // On a serverless platform the next chunk can land on another instance, or on this one after
+  // others handled some chunks, so a missing or behind entry is not an error: the parts stored in
+  // Supabase are the record every instance shares.
+  if (!entry || entry.userId !== userId || entry.received !== offset) {
+    if (!supabaseConfigured) {
+      if (!entry || entry.userId !== userId) throw new Error("Upload session not found");
+      throw new Error("Unexpected chunk offset");
+    }
+    return appendChunkViaSupabase(userId, uploadId, offset, chunk);
   }
   entry.chunks.push(chunk);
   entry.received += chunk.length;

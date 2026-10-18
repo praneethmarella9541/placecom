@@ -465,6 +465,9 @@ export async function POST(request: Request) {
       firstRunAt: firstRunAt.toISOString(),
     });
   } catch (e) {
+    // Logged with the stack, so a failure that reaches the user as a bare "could not schedule" can
+    // still be traced in the deployment logs.
+    console.error("[schedule] failed", e);
     await rollback();
     const err = e as Error & { status?: number };
     return bad(err.message || "Could not schedule this send.", err.status ?? 500);

@@ -5449,7 +5449,10 @@ export default function InboxPage() {
         sendingNow?: boolean;
         firstRunAt?: string;
       };
-      if (!res.ok) throw new Error(data.error || "Could not schedule this send.");
+      if (!res.ok) {
+        // A reply with no message of ours (a timeout or a platform error page) still says which status came back.
+        throw new Error(data.error || `Could not schedule this send (the server answered ${res.status}).`);
+      }
 
       const count = data.scheduled ?? rows.length;
       const sendingNow = data.sendingNow === true;

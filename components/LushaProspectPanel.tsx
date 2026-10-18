@@ -265,8 +265,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           <div className="surface-card overflow-hidden" data-testid="lusha-company-results">
             <div className="border-b border-[var(--color-border)] px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">
               {companies.length === 0
-                ? "No companies matched. Try fewer or broader filters."
-                : `Showing ${companies.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credits charged for this search`}
+                ? "No companies matched. Try fewer or broader filters. Lusha still charges 1 credit for a search that finds nothing."
+                : `Showing ${companies.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credit${searchInfo?.creditsCharged === 1 ? "" : "s"} charged for this search`}
             </div>
             {companies.length > 0 ? (
               <div className="overflow-x-auto">
@@ -361,8 +361,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">
             <span>
               {people.length === 0
-                ? "No one matched. Try a broader title or another company."
-                : `Showing ${people.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credits charged for this search`}
+                ? `No one matched. Try a broader title or another company. Lusha still charges 1 credit for a search that finds nothing.${company.locations.length > 0 ? " Tip: \"HQ company location\" is where a company's head office is, so it hides companies headquartered elsewhere. To find people who live in a country, use the location under Contact filters instead." : ""}`
+                : `Showing ${people.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credit${searchInfo?.creditsCharged === 1 ? "" : "s"} charged for this search`}
             </span>
           </div>
 

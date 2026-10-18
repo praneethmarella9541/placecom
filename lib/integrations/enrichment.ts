@@ -62,6 +62,16 @@ function unitCost(pricing: LushaUsage["pricing"] | undefined, pattern: RegExp, f
 }
 
 /**
+ * Credits a search really cost. Lusha deducts at least 1 credit for every search request, even one
+ * that finds nobody, but its reply then says `creditsCharged: 0` (checked on a real account: a search
+ * with no results moved the balance by 1 while the reply reported 0). Trust a figure above zero;
+ * otherwise a search cost the minimum, so spend tracking and the monthly cap do not undercount.
+ */
+export function searchCreditsCharged(reported: number): number {
+  return Math.max(reported, 1);
+}
+
+/**
  * What the plan's price list says a search costs, e.g. { credits: 1, perQuantity: 25 } for "1 credit
  * per 25 results". Read from the exact `contactSearch` / `companySearch` entry, not the first key that
  * happens to contain "search". Null when the list has no such entry.

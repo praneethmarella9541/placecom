@@ -462,7 +462,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
 
           {people.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-[13px]">
+              <table className="w-full min-w-[1040px] text-left text-[13px]">
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
                   <th className="w-10 px-4 py-2.5">
@@ -473,7 +473,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                       onChange={(e) => setPicked(e.target.checked ? new Set(people.map((p) => p.id)) : new Set())}
                     />
                   </th>
-                  <th className="px-4 py-2.5">Name</th>
+                  <th className="whitespace-nowrap px-4 py-2.5">Name</th>
                   <th className="px-4 py-2.5">Title</th>
                   <th className="px-4 py-2.5">Company</th>
                   <th className="px-4 py-2.5">Location</th>
@@ -500,9 +500,9 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                         }
                       />
                     </td>
-                    <td className="px-4 py-2.5 font-semibold text-[var(--color-text)]">
+                    <td className="whitespace-nowrap px-4 py-2.5 font-semibold text-[var(--color-text)]">
                       {p.fullName}
-                      {p.inContactId ? <span className="ml-2 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">In contacts</span> : null}
+                      {p.inContactId ? <span className="ml-2 whitespace-nowrap rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">In contacts</span> : null}
                     </td>
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.title || "—"}</td>
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.company || "—"}</td>
@@ -584,7 +584,7 @@ function RevealedCell({ person, values, field }: { person: Shown | undefined; va
   if (values.length > 0) {
     const Icon = field === "emails" ? Mail : Phone;
     return (
-      <td className="px-4 py-2.5 text-[var(--color-text)]">
+      <td className="whitespace-nowrap px-4 py-2.5 text-[var(--color-text)]">
         <span className="inline-flex items-center gap-1.5">
           <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
           {field === "emails" ? (
@@ -598,7 +598,7 @@ function RevealedCell({ person, values, field }: { person: Shown | undefined; va
     );
   }
   return (
-    <td className="px-4 py-2.5 text-[var(--color-text-faint)]">
+    <td className="whitespace-nowrap px-4 py-2.5 text-[var(--color-text-faint)]">
       {person && (field === "emails" ? person.askedEmails : person.askedPhones) ? "Not found" : "—"}
     </td>
   );

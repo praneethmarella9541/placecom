@@ -5,7 +5,12 @@ import { createPortal } from "react-dom";
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Minus, Maximize, Minimize, Maximize2, Eye, Mails } from "lucide-react";
 import { RecipientField, type RecipientSuggestion } from "@/components/RecipientField";
-import { COMPOSE_MODAL_SIZE, COMPOSE_SIZE_CLASS, composeSizeVars } from "@/lib/compose-modal-size";
+import {
+  COMPOSE_MODAL_SIZE,
+  COMPOSE_SCHEDULING_SIZE,
+  COMPOSE_SIZE_CLASS,
+  composeSizeVars,
+} from "@/lib/compose-modal-size";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { ComposeDraftSaveIndicator } from "@/components/ComposeDraftSaveIndicator";
 import { GmailComposeFooter } from "@/components/GmailComposeFooter";
@@ -396,10 +401,11 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
               ? centered
                 ? // Always the mass-sending width, recipient rail or not, so switching mass
                   // sending on or off never resizes the window. Shared with the templates modal.
+                  // Scheduling is the one exception: its timeline needs the larger window.
                   composeSizeVars({
-                    width: resizeW ?? COMPOSE_MODAL_SIZE.width,
+                    width: resizeW ?? (schedulingEnabled ? COMPOSE_SCHEDULING_SIZE : COMPOSE_MODAL_SIZE).width,
                     maxWidth: COMPOSE_MODAL_SIZE.maxWidth,
-                    height: resizeH ?? COMPOSE_MODAL_SIZE.height,
+                    height: resizeH ?? (schedulingEnabled ? COMPOSE_SCHEDULING_SIZE : COMPOSE_MODAL_SIZE).height,
                   })
                 : {
                     "--cm-w": `${resizeW ?? 560}px`,
@@ -613,14 +619,14 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             <div
               className={
                 scheduleCard && !reviewing
-                  ? "flex min-h-0 flex-1 flex-col bg-[#faf8f5] px-3"
+                  ? "flex min-h-[340px] flex-1 flex-col bg-[#faf8f5] px-3"
                   : "contents"
               }
             >
             <div
               className={
                 scheduleCard && !reviewing
-                  ? "flex min-h-0 flex-1 flex-col overflow-hidden rounded-b-2xl border border-t-0 border-[var(--color-copper)] bg-white"
+                  ? "flex min-h-[340px] flex-1 flex-col overflow-hidden rounded-b-2xl border border-t-0 border-[var(--color-copper)] bg-white"
                   : "contents"
               }
             >

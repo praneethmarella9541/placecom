@@ -462,7 +462,17 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
 
           {people.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1040px] text-left text-[13px]">
+              <table className="w-full min-w-[1240px] table-fixed text-left text-[13px]">
+              <colgroup>
+                <col className="w-[44px]" />
+                <col className="w-[210px]" />
+                <col className="w-[200px]" />
+                <col className="w-[150px]" />
+                <col className="w-[190px]" />
+                <col className="w-[260px]" />
+                <col className="w-[160px]" />
+                <col className="w-[40px]" />
+              </colgroup>
               <thead>
                 <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
                   <th className="w-10 px-4 py-2.5">
@@ -500,13 +510,15 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                         }
                       />
                     </td>
-                    <td className="whitespace-nowrap px-4 py-2.5 font-semibold text-[var(--color-text)]">
-                      {p.fullName}
-                      {p.inContactId ? <span className="ml-2 whitespace-nowrap rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">In contacts</span> : null}
+                    <td className="px-4 py-2.5 font-semibold text-[var(--color-text)]">
+                      <div className="flex items-center gap-2">
+                        <span className="min-w-0 truncate" title={p.fullName}>{p.fullName}</span>
+                        {p.inContactId ? <span className="shrink-0 whitespace-nowrap rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">In contacts</span> : null}
+                      </div>
                     </td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.title || "—"}</td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.company || "—"}</td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.location || "—"}</td>
+                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]"><div className="line-clamp-2" title={p.title ?? undefined}>{p.title || "—"}</div></td>
+                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]"><div className="line-clamp-2" title={p.company ?? undefined}>{p.company || "—"}</div></td>
+                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]"><div className="line-clamp-2" title={p.location ?? undefined}>{p.location || "—"}</div></td>
                     <RevealedCell person={revealed[p.id]} values={shownValues(p, "emails")} field="emails" />
                     <RevealedCell person={revealed[p.id]} values={shownValues(p, "phones")} field="phones" />
                     <td className="px-4 py-2.5">
@@ -584,21 +596,24 @@ function RevealedCell({ person, values, field }: { person: Shown | undefined; va
   if (values.length > 0) {
     const Icon = field === "emails" ? Mail : Phone;
     return (
-      <td className="whitespace-nowrap px-4 py-2.5 text-[var(--color-text)]">
-        <span className="inline-flex items-center gap-1.5">
-          <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
-          {field === "emails" ? (
-            <a href={`mailto:${values[0]}`} className="hover:underline">{values[0]}</a>
-          ) : (
-            <span>{values[0]}</span>
-          )}
-          {values.length > 1 ? <span className="text-[11px] text-[var(--color-text-faint)]">+{values.length - 1}</span> : null}
-        </span>
+      <td className="px-4 py-2.5 text-[var(--color-text)]">
+        <div className="space-y-1">
+          {values.map((v) => (
+            <div key={v} className="flex min-w-0 items-center gap-1.5">
+              <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
+              {field === "emails" ? (
+                <a href={`mailto:${v}`} className="min-w-0 truncate hover:underline" title={v}>{v}</a>
+              ) : (
+                <span className="min-w-0 truncate" title={v}>{v}</span>
+              )}
+            </div>
+          ))}
+        </div>
       </td>
     );
   }
   return (
-    <td className="whitespace-nowrap px-4 py-2.5 text-[var(--color-text-faint)]">
+    <td className="px-4 py-2.5 text-[var(--color-text-faint)]">
       {person && (field === "emails" ? person.askedEmails : person.askedPhones) ? "Not found" : "—"}
     </td>
   );

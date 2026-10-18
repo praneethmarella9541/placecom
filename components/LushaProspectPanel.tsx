@@ -32,9 +32,10 @@ type Tab = "contacts" | "companies";
  * Find people and companies with the workspace's Lusha account, and add the people you want to the
  * contact book. Two tabs, like Lusha: Contacts (company and contact filters) and Companies.
  *
- * Lusha charges for every result a search returns, so the size you pick is the most a search can
- * cost and is shown on the button. Adding people costs nothing; revealing their email or phone is
- * optional, per person, and priced beforehand.
+ * A search is charged at the plan's search rate (the price list, e.g. 1 credit per 25 results), so the
+ * size you pick sets the most it can cost, shown on the button; the exact charge comes back after the
+ * search. Adding people costs nothing; revealing their email or phone is optional, per person, and
+ * priced beforehand.
  */
 export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const [tab, setTab] = useState<Tab>("contacts");
@@ -43,6 +44,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState<Set<string>>(new Set(["co-name", "ct-title"]));
   const [size, setSize] = useState(25);
   const [estimate, setEstimate] = useState<number | null>(null);
+  // The plan's search price, e.g. 1 credit per 25 results, as the price list states it.
+  const [rate, setRate] = useState<{ credits: number; perQuantity: number } | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [people, setPeople] = useState<ProspectPerson[] | null>(null);
@@ -70,10 +73,19 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ companies: ["probe.com"], size, dryRun: true }),
         });
-        const json = (await res.json().catch(() => ({}))) as { estimatedCredits?: number };
-        if (live) setEstimate(res.ok ? (json.estimatedCredits ?? null) : null);
+        const json = (await res.json().catch(() => ({}))) as {
+          estimatedCredits?: number;
+          rate?: { credits: number; perQuantity: number } | null;
+        };
+        if (live) {
+          setEstimate(res.ok ? (json.estimatedCredits ?? null) : null);
+          setRate(res.ok ? (json.rate ?? null) : null);
+        }
       } catch {
-        if (live) setEstimate(null);
+        if (live) {
+          setEstimate(null);
+          setRate(null);
+        }
       }
     })();
     return () => {
@@ -230,9 +242,13 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
             className="btn-primary inline-flex w-full items-center justify-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
           >
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            {searching ? "Searching…" : estimate !== null ? `Search (up to ${estimate} credits)` : "Search"}
+            {searching ? "Searching…" : estimate !== null ? `Search (up to ${estimate} credit${estimate === 1 ? "" : "s"})` : "Search"}
           </button>
-          <p className="text-[11.5px] text-[var(--color-text-faint)]">Lusha charges for each result it shows, so the number of results is the most a search can cost.</p>
+          <p className="text-[11.5px] text-[var(--color-text-faint)]">
+            {rate
+              ? `Your Lusha plan prices a search at ${rate.credits} credit${rate.credits === 1 ? "" : "s"} per ${rate.perQuantity} results, so this is the most it can cost. The exact charge is shown after the search. Adding people is free; revealing an email or phone is charged separately.`
+              : "The cost shown is the most this search can charge. The exact charge is shown after the search. Adding people is free; revealing an email or phone is charged separately."}
+          </p>
           {error ? <p className="rounded-lg bg-[var(--color-danger)]/5 px-3 py-2 text-[13px] text-[var(--color-danger)]">{error}</p> : null}
         </div>
       </div>

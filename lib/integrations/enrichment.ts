@@ -62,6 +62,19 @@ function unitCost(pricing: LushaUsage["pricing"] | undefined, pattern: RegExp, f
 }
 
 /**
+ * What the plan's price list says a search costs, e.g. { credits: 1, perQuantity: 25 } for "1 credit
+ * per 25 results". Read from the exact `contactSearch` / `companySearch` entry, not the first key that
+ * happens to contain "search". Null when the list has no such entry.
+ */
+export function searchRate(
+  pricing: LushaUsage["pricing"] | undefined,
+  kind: "contact" | "company",
+): { credits: number; perQuantity: number } | null {
+  const entry = pricing?.[kind === "contact" ? "contactSearch" : "companySearch"];
+  return entry && entry.credits > 0 && entry.perQuantity > 0 ? { credits: entry.credits, perQuantity: entry.perQuantity } : null;
+}
+
+/**
  * The most a reveal for this many people should cost, from the plan's own price list. Lusha only
  * charges for what it finds, so the real figure is often lower — which is why this is shown as
  * "up to" and the actual charge is reported afterwards.

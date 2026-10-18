@@ -409,7 +409,8 @@ export type LushaProspectResult = {
 
 /**
  * Search Lusha's database for people by company and job title. Returns previews only — no email or
- * phone — and Lusha charges per result returned, so `size` is also the most this call can cost.
+ * phone. Lusha charges at the plan's search rate (see searchRate in enrichment.ts), so `size` sets the
+ * most this call can cost; the exact figure is in `billing` on the way back.
  */
 export async function lushaProspect(
   apiKey: string,

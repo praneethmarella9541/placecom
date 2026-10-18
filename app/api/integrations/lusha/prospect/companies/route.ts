@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getConnectionRow } from "@/lib/integrations/connections";
-import { estimateCredits } from "@/lib/integrations/enrichment";
+import { estimateCredits, searchRate } from "@/lib/integrations/enrichment";
 import { lushaCompanyProspect } from "@/lib/integrations/lusha";
 import { logEnrichment, lushaFailure, prepareSpend } from "@/lib/integrations/lusha-spend";
 import { hasCompanyFilter, hasContactBase, parseCompanyFilters, parseContactFilters } from "@/lib/integrations/lusha-request";
@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     );
   }
   const estimate = estimateCredits(connection.usage?.pricing, [], size);
-  if (body.dryRun === true) return NextResponse.json({ size, estimatedCredits: estimate });
+  if (body.dryRun === true) return NextResponse.json({ size, estimatedCredits: estimate, rate: searchRate(connection.usage?.pricing, "company") });
   if (!hasCompanyFilter(company) && !hasContactBase(contact)) {
     return NextResponse.json({ error: "Pick at least one filter, such as a name, location, industry or job title." }, { status: 400 });
   }

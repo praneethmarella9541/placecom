@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { stripVariableSpans } from "@/lib/compose-variables";
@@ -25,15 +25,18 @@ import { runSequencesCron } from "@/lib/sequence-runner";
 import { buildEnrollmentMergeFields } from "@/lib/sequence-variables";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 /** Same ceiling the immediate mass send has in practice; far above any real campaign. */
 const MAX_RECIPIENTS = 5000;
 const MAX_FOLLOW_UPS = 10;
 const MAX_DELAY_DAYS = 90;
 const INSERT_CHUNK = 500;
-/** Time the request spends sending a "Starts now" flow before leaving the rest to the scheduler (route limit is 120s). */
-const IMMEDIATE_SEND_BUDGET_MS = 100_000;
+/**
+ * How long a "Starts now" flow keeps sending in the background after the response has gone back
+ * (route limit is 300s). Whatever it does not finish stays due for the scheduler.
+ */
+const IMMEDIATE_SEND_BUDGET_MS = 240_000;
 
 type FollowUpInput = {
   /** When this follow-up goes out: an ISO instant. */
@@ -431,29 +434,32 @@ export async function POST(request: Request) {
 
     if (stagedIds.length > 0) void releaseStagedAttachments(ctx.userId, stagedIds).catch(() => {});
 
-    // "Starts now": send the first emails here and now instead of waiting for the scheduler. The
-    // runner leases each recipient, so a scheduler tick running at the same moment cannot send
-    // the same email twice. Anything this pass does not finish (a Gmail error, the time budget)
-    // stays due and the scheduler takes it from there, so a failure here never fails the schedule.
-    let sentNow = 0;
-    if (!startAt) {
-      try {
-        const summary = await runSequencesCron({
-          sequenceId,
-          immediate: true,
-          deadlineMs: IMMEDIATE_SEND_BUDGET_MS,
-          maxSends: MAX_RECIPIENTS,
-        });
-        sentNow = summary.sent;
-      } catch (e) {
-        console.error("[schedule] immediate send failed; the scheduler will pick the emails up", e);
-      }
+    // "Starts now": send the first emails straight away, but after the response has gone back, so
+    // the composer is not held open while a big audience sends. The runner leases each recipient,
+    // so a scheduler tick running at the same moment cannot send the same email twice. Whatever
+    // this pass does not finish (a Gmail error, the time budget) stays due and the scheduler
+    // takes it from there, so a failure here never undoes the schedule.
+    const sendingNow = !startAt;
+    if (sendingNow) {
+      after(async () => {
+        try {
+          const summary = await runSequencesCron({
+            sequenceId,
+            immediate: true,
+            deadlineMs: IMMEDIATE_SEND_BUDGET_MS,
+            maxSends: MAX_RECIPIENTS,
+          });
+          console.log("[schedule] immediate pass", JSON.stringify(summary));
+        } catch (e) {
+          console.error("[schedule] immediate send failed; the scheduler will pick the emails up", e);
+        }
+      });
     }
 
     return NextResponse.json({
       sequenceId,
       scheduled: enrollmentRows.length,
-      sentNow,
+      sendingNow,
       firstRunAt: firstRunAt.toISOString(),
     });
   } catch (e) {

@@ -34,9 +34,8 @@ const MAX_DELAY_DAYS = 90;
 const INSERT_CHUNK = 500;
 
 type FollowUpInput = {
-  delayDays?: number;
-  delayHours?: number;
-  delayMinutes?: number;
+  /** When this follow-up goes out: an ISO instant, on the hour in the flow's time zone. */
+  sendAt?: string;
   /** Ignored when threading is on (the follow-up replies in the first email's thread). */
   subject?: string;
   bodyHtml?: string;
@@ -144,10 +143,7 @@ export async function POST(request: Request) {
   if (followUps.length > MAX_FOLLOW_UPS) return bad(`Add at most ${MAX_FOLLOW_UPS} follow-ups.`);
   for (let i = 0; i < followUps.length; i++) {
     const f = followUps[i];
-    const days = clampInt(f.delayDays, 0, MAX_DELAY_DAYS, 0);
-    const hours = clampInt(f.delayHours, 0, 23, 0);
-    const minutes = clampInt(f.delayMinutes, 0, 59, 0);
-    if (days === 0 && hours === 0 && minutes === 0) return bad(`Set a wait before follow-up ${i + 1}.`);
+    if (!f.sendAt) return bad(`Pick when follow-up ${i + 1} goes out.`);
     if (!(f.bodyHtml ?? "").replace(/<[^>]*>/g, "").trim()) return bad(`Follow-up ${i + 1} needs a message.`);
     if (!threadEmails && !(f.subject ?? "").trim()) return bad(`Follow-up ${i + 1} needs a subject.`);
   }
@@ -184,6 +180,25 @@ export async function POST(request: Request) {
     if (startParts.minute !== 0) return bad("The start time has to be on the hour, like 9:00 AM or 10:00 AM.");
   }
   const from = startAt && startAt.getTime() > now.getTime() ? startAt : now;
+
+  // Each follow-up has its own date and hour: on the hour, in the future, and after the email
+  // before it (the first email's start, or now when it goes straight away).
+  const followUpTimes: Date[] = [];
+  let previousAt = from;
+  const horizon = now.getTime() + MAX_DELAY_DAYS * 24 * 60 * 60_000;
+  for (let i = 0; i < followUps.length; i++) {
+    const at = new Date(followUps[i].sendAt ?? "");
+    if (Number.isNaN(at.getTime())) return bad(`Follow-up ${i + 1} has no valid send time.`);
+    if (zonedParts(at, timezone).minute !== 0) {
+      return bad(`Follow-up ${i + 1} has to go out on the hour, like 9:00 AM or 10:00 AM.`);
+    }
+    if (at.getTime() <= previousAt.getTime()) {
+      return bad(`Follow-up ${i + 1} has to go out after ${i === 0 ? "the first email" : `follow-up ${i}`}.`);
+    }
+    if (at.getTime() > horizon) return bad(`Follow-up ${i + 1} is more than ${MAX_DELAY_DAYS} days away.`);
+    followUpTimes.push(at);
+    previousAt = at;
+  }
 
   const mergeSource = body.mergeSource === "stored" ? "stored" : "contacts";
   const name = (body.name?.trim() || subject).slice(0, 120);
@@ -248,10 +263,11 @@ export async function POST(request: Request) {
         delay_days: 0,
         delay_hours: 0,
         delay_minutes: 0,
+        send_at: null,
       },
     ];
     let order = 2;
-    for (const f of followUps) {
+    for (const [fi, f] of followUps.entries()) {
       stepRows.push({
         sequence_id: sequenceId,
         mailbox_owner_id: ctx.mailboxOwnerId,
@@ -259,9 +275,10 @@ export async function POST(request: Request) {
         kind: "wait",
         subject_template: null,
         body_html: null,
-        delay_days: clampInt(f.delayDays, 0, MAX_DELAY_DAYS, 0),
-        delay_hours: clampInt(f.delayHours, 0, 23, 0),
-        delay_minutes: clampInt(f.delayMinutes, 0, 59, 0),
+        delay_days: 0,
+        delay_hours: 0,
+        delay_minutes: 0,
+        send_at: followUpTimes[fi].toISOString(),
       });
       stepRows.push({
         sequence_id: sequenceId,
@@ -273,13 +290,14 @@ export async function POST(request: Request) {
         delay_days: 0,
         delay_hours: 0,
         delay_minutes: 0,
+        send_at: null,
       });
     }
 
     const { data: insertedSteps, error: stepsError } = await ctx.svc
       .from("sequence_steps")
       .insert(stepRows)
-      .select("id, step_order, kind, delay_days, delay_hours, delay_minutes");
+      .select("id, step_order, kind, delay_days, delay_hours, delay_minutes, send_at");
     if (stepsError || !insertedSteps) throw new Error(stepsError?.message || "Could not save the steps.");
 
     const steps = insertedSteps as {
@@ -289,6 +307,7 @@ export async function POST(request: Request) {
       delay_days: number;
       delay_hours: number;
       delay_minutes: number;
+      send_at: string | null;
     }[];
     const firstStep = steps.find((s) => s.step_order === 1);
     if (!firstStep) throw new Error("Could not save the first email.");
@@ -372,6 +391,7 @@ export async function POST(request: Request) {
       delayDays: s.delay_days,
       delayHours: s.delay_hours,
       delayMinutes: s.delay_minutes ?? 0,
+      sendAt: s.send_at ?? null,
     }));
     const window = windowFromSequenceRow(created);
     const plan = planNextEmailStep(lite, 0, from, window);

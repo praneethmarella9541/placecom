@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { listPlaceholdersInTemplate } from "@/lib/mail-merge";
 import { purgeAttachmentsForSteps } from "@/lib/sequence-attachments";
-import { planNextEmailStep } from "@/lib/sequence-schedule";
+import { planNextEmailStep, zonedParts } from "@/lib/sequence-schedule";
 import {
   getSequenceContext,
   isErrorResponse,
@@ -69,7 +69,24 @@ export async function PUT(request: Request, props: Params) {
     const delayHours = Math.max(0, Math.min(23, Math.round(step.delayHours ?? 0)));
     const delayMinutes = Math.max(0, Math.min(59, Math.round(step.delayMinutes ?? 0)));
 
-    if (isWait && delayDays + delayHours + delayMinutes === 0) {
+    // A wait can end at a chosen time (a scheduled send's follow-up) instead of lasting a while.
+    // That time is on the hour in the sequence's own zone; anything else is refused.
+    let sendAt: string | null = null;
+    if (isWait && step.sendAt) {
+      const at = new Date(step.sendAt);
+      if (Number.isNaN(at.getTime())) {
+        return NextResponse.json({ error: "A send time isn't valid" }, { status: 400 });
+      }
+      if (zonedParts(at, sequence.timezone).minute !== 0) {
+        return NextResponse.json(
+          { error: "A send time has to be on the hour, like 9:00 AM or 10:00 AM." },
+          { status: 400 },
+        );
+      }
+      sendAt = at.toISOString();
+    }
+
+    if (isWait && !sendAt && delayDays + delayHours + delayMinutes === 0) {
       return NextResponse.json({ error: "A delay step needs a duration" }, { status: 400 });
     }
 
@@ -80,9 +97,10 @@ export async function PUT(request: Request, props: Params) {
       kind: step.kind,
       subject_template: isWait ? null : (step.subjectTemplate ?? ""),
       body_html: isWait ? null : (step.bodyHtml ?? ""),
-      delay_days: isWait ? delayDays : 0,
-      delay_hours: isWait ? delayHours : 0,
-      delay_minutes: isWait ? delayMinutes : 0,
+      delay_days: isWait && !sendAt ? delayDays : 0,
+      delay_hours: isWait && !sendAt ? delayHours : 0,
+      delay_minutes: isWait && !sendAt ? delayMinutes : 0,
+      send_at: sendAt,
       updated_at: now,
     };
 
@@ -112,7 +130,7 @@ export async function PUT(request: Request, props: Params) {
 
   const { data: savedRows } = await ctx.svc
     .from("sequence_steps")
-    .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours, delay_minutes")
+    .select("id, step_order, kind, subject_template, body_html, delay_days, delay_hours, delay_minutes, send_at")
     .eq("sequence_id", sequence.id)
     .order("step_order");
 

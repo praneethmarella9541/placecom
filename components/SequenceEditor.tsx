@@ -124,6 +124,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
         delayDays: s.delayDays,
         delayHours: s.delayHours,
         delayMinutes: s.delayMinutes,
+        sendAt: s.sendAt ?? null,
       }));
       setSteps(incoming);
       setSavedSteps(JSON.stringify(incoming));
@@ -291,6 +292,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
       const payload = steps.filter(
         (s) =>
           s.kind !== "wait" ||
+          !!s.sendAt ||
           (s.delayDays ?? 0) + (s.delayHours ?? 0) + (s.delayMinutes ?? 0) > 0,
       );
       const res = await fetch(`/api/sequences/${encodeURIComponent(sequenceId)}/steps`, {
@@ -313,6 +315,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
         delayDays: s.delayDays,
         delayHours: s.delayHours,
         delayMinutes: s.delayMinutes,
+        sendAt: s.sendAt ?? null,
       }));
       setSteps(saved);
       setSavedSteps(JSON.stringify(saved));
@@ -894,6 +897,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
           steps={steps}
           businessDaysOnly={viewSequence.businessDaysOnly}
           threadEmails={viewSequence.threadEmails}
+          timezone={viewSequence.timezone}
           hideStartDelay={scheduledOrigin}
           disabled={saving}
           onChange={setSteps}

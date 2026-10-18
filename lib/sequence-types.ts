@@ -48,6 +48,8 @@ export type SequenceStep = {
   delayHours: number;
   /** Testing aid — see the 0060 migration header. */
   delayMinutes: number;
+  /** Wait steps: hold the next email until this instant (ISO) instead of for a duration. */
+  sendAt: string | null;
   /** Files sent with this step. Absent on responses that don't join them. */
   attachments?: SequenceStepAttachment[];
 };
@@ -61,6 +63,7 @@ export type SequenceStepInput = {
   delayDays?: number;
   delayHours?: number;
   delayMinutes?: number;
+  sendAt?: string | null;
 };
 
 export type Sequence = {

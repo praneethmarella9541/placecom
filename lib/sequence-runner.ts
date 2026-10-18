@@ -122,6 +122,7 @@ type StepRow = {
   delay_days: number;
   delay_hours: number;
   delay_minutes: number;
+  send_at?: string | null;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -228,6 +229,7 @@ async function processEnrollment(
         delayDays: s.delay_days,
         delayHours: s.delay_hours,
         delayMinutes: s.delay_minutes ?? 0,
+        sendAt: s.send_at ?? null,
       })),
       enrollment.current_step_order,
       now,
@@ -490,6 +492,7 @@ async function processEnrollment(
         delayDays: s.delay_days,
         delayHours: s.delay_hours,
         delayMinutes: s.delay_minutes ?? 0,
+        sendAt: s.send_at ?? null,
       })),
       step.step_order,
       new Date(),

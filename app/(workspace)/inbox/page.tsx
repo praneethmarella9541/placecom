@@ -55,6 +55,7 @@ import { ScheduleSettingsPanel } from "@/components/ScheduleSettingsPanel";
 import { ScheduleFollowUpEditor, type ScheduleFollowUpEditorHandle } from "@/components/ScheduleFollowUpEditor";
 import {
   defaultScheduleFlow,
+  followUpSendDate,
   newFollowUp,
   scheduleStartDate,
   validateScheduleFlow,
@@ -5317,7 +5318,7 @@ export default function InboxPage() {
     setScheduleFlow((prev) => ({ ...prev, ...patch }));
 
   const addScheduleFollowUp = () => {
-    setScheduleFlow((prev) => ({ ...prev, followUps: [...prev.followUps, newFollowUp()] }));
+    setScheduleFlow((prev) => ({ ...prev, followUps: [...prev.followUps, newFollowUp(prev)] }));
     setScheduleStep(scheduleFlow.followUps.length + 1);
     setScheduleTab("editor");
   };
@@ -5410,10 +5411,8 @@ export default function InboxPage() {
         body: JSON.stringify({
           subject: snapshot.subject,
           bodyHtml: snapshot.body,
-          followUps: scheduleFlow.followUps.map((f) => ({
-            delayDays: f.delayDays,
-            delayHours: f.delayHours,
-            delayMinutes: f.delayMinutes,
+          followUps: scheduleFlow.followUps.map((f, i) => ({
+            sendAt: followUpSendDate(scheduleFlow, i)?.toISOString(),
             subject: f.subject,
             bodyHtml: f.bodyHtml,
           })),
@@ -7396,6 +7395,7 @@ export default function InboxPage() {
               firstSubject={composeSubject}
               threadEmails={scheduleFlow.threadEmails}
               businessDaysOnly={scheduleFlow.businessDaysOnly}
+              timezone={scheduleFlow.timezone}
               variables={editorVariables}
               unknownPlaceholders={unknownPlaceholders}
               onChange={(patch) => patchFollowUp(scheduleStep - 1, patch)}

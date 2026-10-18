@@ -11,6 +11,7 @@ import {
 } from "@/lib/sequence-attachments";
 import {
   isValidTimeZone,
+  zonedParts,
   parseTimeToMinutes,
   planNextEmailStep,
   type SequenceStepLite,
@@ -177,6 +178,10 @@ export async function POST(request: Request) {
     startAt = new Date(body.startAt);
     if (Number.isNaN(startAt.getTime())) return bad("The start time isn't valid.");
     if (startAt.getTime() < now.getTime() - 60_000) return bad("The start time is in the past.");
+    // Starts are on the hour (9:00, 10:00 …) in the flow's own zone. The composer only offers
+    // whole hours; this refuses anything else sent straight to the API.
+    const startParts = zonedParts(startAt, timezone);
+    if (startParts.minute !== 0) return bad("The start time has to be on the hour, like 9:00 AM or 10:00 AM.");
   }
   const from = startAt && startAt.getTime() > now.getTime() ? startAt : now;
 

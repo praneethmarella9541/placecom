@@ -84,6 +84,7 @@ export function validateScheduleFlow(state: ScheduleFlowState, now = new Date())
     const start = scheduleStartDate(state);
     if (!start) return "Pick the date and time to start sending.";
     if (start.getTime() < now.getTime() + 60_000) return "The start time has to be in the future.";
+    if (!state.startLocal.endsWith(":00")) return "The start time has to be on the hour, like 9:00 AM or 10:00 AM.";
   }
   if (!(state.windowStart < state.windowEnd)) return "The send window has to end after it starts.";
   if (!isValidTimeZone(state.timezone)) return "That time zone isn't recognised.";

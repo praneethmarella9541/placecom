@@ -4,6 +4,8 @@ import { isValidEmail } from "@/lib/broadcast-recipients";
 import { stripVariableSpans } from "@/lib/compose-variables";
 import { getStagedAttachment, releaseStagedAttachments } from "@/lib/draft-attachment-staging";
 import { GMAIL_ATTACHMENT_MAX_BYTES } from "@/lib/gmail-draft-limits";
+import { GMAIL_COST, fetchGmail } from "@/lib/gmail-quota";
+import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-google-token";
 import {
   purgeAttachmentsForSteps,
   removeStepAttachmentFile,
@@ -80,6 +82,11 @@ type ScheduleBody = {
   labelIds?: string[];
   /** Small files the browser already holds as base64. */
   attachments?: { filename?: string; mimeType?: string; base64Data?: string }[];
+  /**
+   * Files already attached to the composer's Gmail draft (an autosave moves a staged upload there).
+   * Named, not sent: the server reads the bytes from Gmail so the request stays small.
+   */
+  savedAttachments?: { messageId?: string; attachmentId?: string; filename?: string; mimeType?: string }[];
   /** Larger files uploaded in chunks to the draft staging area. */
   stagedUploadIds?: string[];
   /** Files over Gmail's limit, kept on Drive and sent as a link. */
@@ -327,6 +334,33 @@ export async function POST(request: Request) {
         mimeType: a.mimeType || "application/octet-stream",
         buffer: Buffer.from(a.base64Data, "base64"),
       });
+    }
+    // Files that already sit on the composer's Gmail draft: read them from Gmail here.
+    const savedList = (body.savedAttachments ?? []).filter((a) => a.messageId && a.attachmentId);
+    if (savedList.length > 0) {
+      const token = await getMailboxAccessTokenForOwner(ctx.mailboxOwnerId);
+      if (!token.ok) {
+        throw Object.assign(new Error(`Couldn't read the attachment from Gmail: ${token.message}`), { status: 409 });
+      }
+      for (const a of savedList) {
+        const res = await fetchGmail(
+          `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(a.messageId!)}/attachments/${encodeURIComponent(a.attachmentId!)}`,
+          { headers: { Authorization: `Bearer ${token.accessToken}` } },
+          { mailboxKey: ctx.mailboxOwnerId, cost: GMAIL_COST.attachmentsGet },
+        );
+        const payload = res.ok ? ((await res.json().catch(() => null)) as { data?: string } | null) : null;
+        if (!payload?.data) {
+          throw Object.assign(
+            new Error(`Couldn't read "${a.filename || "an attachment"}" from Gmail. Remove it, attach it again, and schedule again.`),
+            { status: 409 },
+          );
+        }
+        files.push({
+          filename: a.filename || "attachment",
+          mimeType: a.mimeType || "application/octet-stream",
+          buffer: Buffer.from(payload.data.replace(/-/g, "+").replace(/_/g, "/"), "base64"),
+        });
+      }
     }
     const stagedIds = (body.stagedUploadIds ?? []).filter((id): id is string => typeof id === "string" && !!id);
     for (const uploadId of stagedIds) {

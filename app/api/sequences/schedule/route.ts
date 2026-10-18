@@ -22,6 +22,7 @@ import {
   loadContactSources,
   windowFromSequenceRow,
 } from "@/lib/sequence-server";
+import { runSequencesCron } from "@/lib/sequence-runner";
 import { buildEnrollmentMergeFields } from "@/lib/sequence-variables";
 
 export const runtime = "nodejs";
@@ -32,6 +33,8 @@ const MAX_RECIPIENTS = 5000;
 const MAX_FOLLOW_UPS = 10;
 const MAX_DELAY_DAYS = 90;
 const INSERT_CHUNK = 500;
+/** Time the request spends sending a "Starts now" flow before leaving the rest to the scheduler (route limit is 120s). */
+const IMMEDIATE_SEND_BUDGET_MS = 100_000;
 
 type FollowUpInput = {
   /** When this follow-up goes out: an ISO instant, on the hour in the flow's time zone. */
@@ -407,8 +410,10 @@ export async function POST(request: Request) {
         : { directoryByEmail: new Map(), syncedByEmail: new Map() };
 
     // Everyone is due at the planned time, exactly. A batch is not spread with a random delay:
-    // the runner already sends about four mails a second at most (and 60 per tick), so a large
-    // audience paces itself, and a user who picks 9:00 gets 9:00.
+    // the runner paces itself (about four mails a second at most), and a user who picks 9:00 gets
+    // 9:00. "Starts now" is due right now — it ignores the sending window and is sent below, in
+    // this request, rather than waiting for the next scheduler tick.
+    const firstRunAt = startAt ? plan.runAt : new Date();
     const enrollmentRows = recipients.map((r) => ({
       sequence_id: sequenceId,
       mailbox_owner_id: ctx.mailboxOwnerId,
@@ -424,7 +429,7 @@ export async function POST(request: Request) {
       cc: useCopies ? cc : null,
       bcc: useCopies ? bcc : null,
       next_step_id: plan.stepId,
-      next_run_at: plan.runAt.toISOString(),
+      next_run_at: firstRunAt.toISOString(),
     }));
 
     for (let i = 0; i < enrollmentRows.length; i += INSERT_CHUNK) {
@@ -434,10 +439,30 @@ export async function POST(request: Request) {
 
     if (stagedIds.length > 0) void releaseStagedAttachments(ctx.userId, stagedIds).catch(() => {});
 
+    // "Starts now": send the first emails here and now instead of waiting for the scheduler. The
+    // runner leases each recipient, so a scheduler tick running at the same moment cannot send
+    // the same email twice. Anything this pass does not finish (a Gmail error, the time budget)
+    // stays due and the scheduler takes it from there, so a failure here never fails the schedule.
+    let sentNow = 0;
+    if (!startAt) {
+      try {
+        const summary = await runSequencesCron({
+          sequenceId,
+          immediate: true,
+          deadlineMs: IMMEDIATE_SEND_BUDGET_MS,
+          maxSends: MAX_RECIPIENTS,
+        });
+        sentNow = summary.sent;
+      } catch (e) {
+        console.error("[schedule] immediate send failed; the scheduler will pick the emails up", e);
+      }
+    }
+
     return NextResponse.json({
       sequenceId,
       scheduled: enrollmentRows.length,
-      firstRunAt: plan.runAt.toISOString(),
+      sentNow,
+      firstRunAt: firstRunAt.toISOString(),
     });
   } catch (e) {
     await rollback();

@@ -5446,11 +5446,13 @@ export default function InboxPage() {
         error?: string;
         scheduled?: number;
         sequenceId?: string;
+        sentNow?: number;
         firstRunAt?: string;
       };
       if (!res.ok) throw new Error(data.error || "Could not schedule this send.");
 
       const count = data.scheduled ?? rows.length;
+      const sentNow = data.sentNow ?? 0;
       const first = data.firstRunAt
         ? new Intl.DateTimeFormat("en-GB", {
             timeZone: scheduleFlow.timezone,
@@ -5466,7 +5468,10 @@ export default function InboxPage() {
       showSendSnack(
         {
           phase: "sent",
-          message: `Scheduled ${count} email${count === 1 ? "" : "s"}${first ? ` — first send ${first}` : ""}. It runs even when you're away.`,
+          message:
+            sentNow > 0
+              ? `Sent ${sentNow} of ${count} email${count === 1 ? "" : "s"} now${sentNow < count ? "; the rest follow shortly" : ""}. Follow-ups run on their own, even when you're away.`
+              : `Scheduled ${count} email${count === 1 ? "" : "s"}${first ? ` — first send ${first}` : ""}. It runs even when you're away.`,
         },
         6000
       );

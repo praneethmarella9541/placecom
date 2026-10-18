@@ -898,6 +898,7 @@ export function SequenceEditor({ sequenceId }: { sequenceId: string }) {
           businessDaysOnly={viewSequence.businessDaysOnly}
           threadEmails={viewSequence.threadEmails}
           timezone={viewSequence.timezone}
+          dateWaits={scheduledOrigin}
           hideStartDelay={scheduledOrigin}
           disabled={saving}
           onChange={setSteps}

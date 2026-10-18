@@ -29,6 +29,7 @@ type Props = {
 export function SequenceSettingsTab({ sequence, scheduled, saving, onChange }: Props) {
   return (
     <div className="space-y-5">
+      {scheduled ? null : (
       <Section title="Delivery">
         <Row
           label="Sending window"
@@ -93,6 +94,7 @@ export function SequenceSettingsTab({ sequence, scheduled, saving, onChange }: P
           </Row>
         )}
       </Section>
+      )}
 
       <Section title="Email">
         <Toggle

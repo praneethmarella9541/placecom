@@ -3,17 +3,10 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { GmailDatePicker } from "@/components/GmailDatePicker";
-import { Row, Section, Select, Toggle } from "@/components/SettingsControls";
+import { Section, Toggle } from "@/components/SettingsControls";
 import { TimeFields } from "@/components/TimeFields";
 import { isoDateLocal } from "@/lib/gmail-search-query";
 import { scheduleSummary, type ScheduleFlowState } from "@/lib/schedule-flow";
-
-const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")}:00`);
-
-function hourLabel(value: string): string {
-  const h = Number(value.slice(0, 2));
-  return `${h % 12 === 0 ? 12 : h % 12}:00 ${h < 12 ? "AM" : "PM"}`;
-}
 
 /** Today's date as "YYYY-MM-DD" on the wall clock of `timeZone`. */
 function todayIn(timeZone: string): string {
@@ -71,7 +64,6 @@ export function ScheduleSettingsPanel({ flow, onChange, disabled }: Props) {
   const showCustom = customOpen || startChoice === "custom";
   const setStartTime = (next: string) =>
     onChange({ startMode: "later", startLocal: `${startDate || isoDateLocal(new Date())}T${next}` });
-  const hourOptions = HOURS.map((h) => ({ value: h, label: hourLabel(h) }));
 
   return (
     <div className="space-y-4 bg-[#faf8f5] p-4" data-testid="schedule-settings">
@@ -127,39 +119,6 @@ export function ScheduleSettingsPanel({ flow, onChange, disabled }: Props) {
             <TimeFields value={startTime} disabled={disabled} onChange={setStartTime} />
           </div>
         )}
-        <p className="text-[12px] text-[var(--color-text-muted)]">
-          Emails only go out inside the sending window, so a start outside it moves to the next opening.
-        </p>
-      </Section>
-
-      <Section title="Delivery">
-        <Row label="Sending window" hint="Emails only go out inside this window.">
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              testId="schedule-window-start"
-              value={flow.windowStart}
-              options={hourOptions}
-              disabled={disabled}
-              onChange={(v) => onChange({ windowStart: v })}
-            />
-            <span className="text-[13px] text-[var(--color-text-faint)]">–</span>
-            <Select
-              testId="schedule-window-end"
-              value={flow.windowEnd}
-              options={hourOptions}
-              disabled={disabled}
-              onChange={(v) => onChange({ windowEnd: v })}
-            />
-          </div>
-        </Row>
-        <Toggle
-          testId="schedule-business-days"
-          label="Business days only"
-          hint="Skip weekends. Waits between follow-ups are then counted in business days too."
-          checked={flow.businessDaysOnly}
-          disabled={disabled}
-          onChange={(v) => onChange({ businessDaysOnly: v })}
-        />
       </Section>
 
       <Section title="Replies">

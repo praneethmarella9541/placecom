@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { listPlaceholdersInTemplate } from "@/lib/mail-merge";
 import { purgeAttachmentsForSteps } from "@/lib/sequence-attachments";
-import { planNextEmailStep, zonedParts } from "@/lib/sequence-schedule";
+import { planNextEmailStep } from "@/lib/sequence-schedule";
 import {
   getSequenceContext,
   isErrorResponse,
@@ -70,18 +70,11 @@ export async function PUT(request: Request, props: Params) {
     const delayMinutes = Math.max(0, Math.min(59, Math.round(step.delayMinutes ?? 0)));
 
     // A wait can end at a chosen time (a scheduled send's follow-up) instead of lasting a while.
-    // That time is on the hour in the sequence's own zone; anything else is refused.
     let sendAt: string | null = null;
     if (isWait && step.sendAt) {
       const at = new Date(step.sendAt);
       if (Number.isNaN(at.getTime())) {
         return NextResponse.json({ error: "A send time isn't valid" }, { status: 400 });
-      }
-      if (zonedParts(at, sequence.timezone).minute !== 0) {
-        return NextResponse.json(
-          { error: "A send time has to be on the hour, like 9:00 AM or 10:00 AM." },
-          { status: 400 },
-        );
       }
       sendAt = at.toISOString();
     }

@@ -11,7 +11,6 @@ import {
 } from "@/lib/sequence-attachments";
 import {
   isValidTimeZone,
-  zonedParts,
   parseTimeToMinutes,
   planNextEmailStep,
   type SequenceStepLite,
@@ -37,7 +36,7 @@ const INSERT_CHUNK = 500;
 const IMMEDIATE_SEND_BUDGET_MS = 100_000;
 
 type FollowUpInput = {
-  /** When this follow-up goes out: an ISO instant, on the hour in the flow's time zone. */
+  /** When this follow-up goes out: an ISO instant. */
   sendAt?: string;
   /** Ignored when threading is on (the follow-up replies in the first email's thread). */
   subject?: string;
@@ -177,14 +176,10 @@ export async function POST(request: Request) {
     startAt = new Date(body.startAt);
     if (Number.isNaN(startAt.getTime())) return bad("The start time isn't valid.");
     if (startAt.getTime() < now.getTime() - 60_000) return bad("The start time is in the past.");
-    // Starts are on the hour (9:00, 10:00 …) in the flow's own zone. The composer only offers
-    // whole hours; this refuses anything else sent straight to the API.
-    const startParts = zonedParts(startAt, timezone);
-    if (startParts.minute !== 0) return bad("The start time has to be on the hour, like 9:00 AM or 10:00 AM.");
   }
   const from = startAt && startAt.getTime() > now.getTime() ? startAt : now;
 
-  // Each follow-up has its own date and hour: on the hour, in the future, and after the email
+  // Each follow-up has its own date and time: in the future, and after the email
   // before it (the first email's start, or now when it goes straight away).
   const followUpTimes: Date[] = [];
   let previousAt = from;
@@ -192,9 +187,6 @@ export async function POST(request: Request) {
   for (let i = 0; i < followUps.length; i++) {
     const at = new Date(followUps[i].sendAt ?? "");
     if (Number.isNaN(at.getTime())) return bad(`Follow-up ${i + 1} has no valid send time.`);
-    if (zonedParts(at, timezone).minute !== 0) {
-      return bad(`Follow-up ${i + 1} has to go out on the hour, like 9:00 AM or 10:00 AM.`);
-    }
     if (at.getTime() <= previousAt.getTime()) {
       return bad(`Follow-up ${i + 1} has to go out after ${i === 0 ? "the first email" : `follow-up ${i}`}.`);
     }

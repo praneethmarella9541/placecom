@@ -36,7 +36,7 @@ import { uploadInlineImage } from "@/lib/upload-inline-image";
 import { MailTemplatesButton } from "@/components/MailTemplatesModal";
 import { titleCase } from "@/lib/title-case";
 import { GmailDatePicker } from "@/components/GmailDatePicker";
-import { Select } from "@/components/SettingsControls";
+import { TimeFields } from "@/components/TimeFields";
 import { cn } from "@/lib/utils";
 import { listPlaceholdersInTemplate } from "@/lib/mail-merge";
 import { describeDelay, zonedParts, zonedTimeToUtc } from "@/lib/sequence-schedule";
@@ -1145,14 +1145,9 @@ function SequenceStepPreviewPane({
   );
 }
 
-const SEND_HOURS = Array.from({ length: 24 }, (_, h) => {
-  const value = String(h).padStart(2, "0");
-  return { value, label: `${h % 12 === 0 ? 12 : h % 12}:00 ${h < 12 ? "AM" : "PM"}` };
-});
-
 /**
  * A wait that ends at a chosen time — a follow-up of a scheduled send. Shown as "Send on Thu, 23
- * Oct, 10:00 AM" and edited with a date and an hour, in the sequence's own time zone.
+ * Oct, 10:00 AM" and edited with a date and a time, in the sequence's own time zone.
  */
 function SendAtControl({
   testId,
@@ -1175,7 +1170,7 @@ function SendAtControl({
   const parts = zonedParts(at, timezone);
   const pad = (n: number) => String(n).padStart(2, "0");
   const date = `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
-  const hour = pad(parts.hour);
+  const time = `${pad(parts.hour)}:${pad(parts.minute)}`;
   const label = new Intl.DateTimeFormat("en-GB", {
     timeZone: timezone,
     weekday: "short",
@@ -1185,9 +1180,10 @@ function SendAtControl({
     minute: "2-digit",
     hour12: true,
   }).format(at);
-  const set = (nextDate: string, nextHour: string) => {
+  const set = (nextDate: string, nextTime: string) => {
     const [y, m, d] = nextDate.split("-").map(Number);
-    onChange(zonedTimeToUtc({ year: y, month: m, day: d, hour: Number(nextHour), minute: 0 }, timezone).toISOString());
+    const [hh, mm] = nextTime.split(":").map(Number);
+    onChange(zonedTimeToUtc({ year: y, month: m, day: d, hour: hh, minute: mm }, timezone).toISOString());
   };
 
   return (
@@ -1217,9 +1213,9 @@ function SendAtControl({
       {open ? (
         <div className="flex flex-wrap items-center justify-center gap-2.5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
           <span className="text-[13px] text-[var(--color-text-muted)]">Send on</span>
-          <GmailDatePicker className="w-[170px]" value={date} onChange={(d) => set(d, hour)} />
+          <GmailDatePicker className="w-[170px]" value={date} onChange={(d) => set(d, time)} />
           <span className="text-[13px] text-[var(--color-text-muted)]">at</span>
-          <Select testId={`${testId}-hour`} value={hour} options={SEND_HOURS} disabled={disabled} onChange={(h) => set(date, h)} />
+          <TimeFields value={time} disabled={disabled} onChange={(t) => set(date, t)} />
         </div>
       ) : null}
     </div>

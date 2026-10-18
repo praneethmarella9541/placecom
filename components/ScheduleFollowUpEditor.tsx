@@ -3,11 +3,11 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import { Trash2 } from "lucide-react";
 import { GmailDatePicker } from "@/components/GmailDatePicker";
-import { Select } from "@/components/SettingsControls";
+import { TimeFields } from "@/components/TimeFields";
 import { RichTextEditor, type RichTextEditorHandle } from "@/components/RichTextEditor";
 import { SubjectWithVariables, type SubjectHandle } from "@/components/SubjectWithVariables";
 import type { ComposeVariable, UnknownPlaceholderMode } from "@/lib/compose-variables";
-import { HOUR_OPTIONS, type FollowUpDraft } from "@/lib/schedule-flow";
+import type { FollowUpDraft } from "@/lib/schedule-flow";
 
 export type ScheduleFollowUpEditorHandle = {
   /** Opens the `{` variable picker in whichever field the caret is in (body by default). */
@@ -50,9 +50,8 @@ export const ScheduleFollowUpEditor = forwardRef<ScheduleFollowUpEditorHandle, P
     }));
 
     const sendDate = followUp.sendLocal.slice(0, 10);
-    // Always the top of an hour, whatever an older draft carried.
-    const sendHour = `${followUp.sendLocal.slice(11, 13) || "09"}:00`;
-    const setSend = (date: string, hour: string) => onChange({ sendLocal: `${date}T${hour}` });
+    const sendTime = followUp.sendLocal.slice(11, 16) || "09:00";
+    const setSend = (date: string, time: string) => onChange({ sendLocal: `${date}T${time}` });
     const [y, m, d] = sendDate.split("-").map(Number);
     const weekday = sendDate ? new Date(Date.UTC(y, m - 1, d)).getUTCDay() : -1;
     const onWeekend = businessDaysOnly && (weekday === 0 || weekday === 6);
@@ -64,15 +63,10 @@ export const ScheduleFollowUpEditor = forwardRef<ScheduleFollowUpEditorHandle, P
           <GmailDatePicker
             className="w-full sm:w-[170px]"
             value={sendDate}
-            onChange={(date) => setSend(date, sendHour)}
+            onChange={(date) => setSend(date, sendTime)}
           />
           <span className="text-[13px] text-[var(--color-text-muted)]">at</span>
-          <Select
-            testId={`schedule-followup-${index + 1}-hour`}
-            value={sendHour}
-            options={HOUR_OPTIONS}
-            onChange={(hour) => setSend(sendDate, hour)}
-          />
+          <TimeFields value={sendTime} onChange={(time) => setSend(sendDate, time)} />
           <p className="order-last basis-full text-[12px] text-[var(--color-text-muted)] sm:order-none sm:basis-auto">
             Only if they haven&apos;t replied. {timezone.split("/").pop()?.replace(/_/g, " ")} time.
           </p>

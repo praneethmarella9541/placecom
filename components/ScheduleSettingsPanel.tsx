@@ -4,6 +4,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { GmailDatePicker } from "@/components/GmailDatePicker";
 import { Row, Section, Select, Toggle } from "@/components/SettingsControls";
+import { TimeFields } from "@/components/TimeFields";
 import { isoDateLocal } from "@/lib/gmail-search-query";
 import { scheduleSummary, type ScheduleFlowState } from "@/lib/schedule-flow";
 
@@ -55,8 +56,7 @@ type Props = {
 export function ScheduleSettingsPanel({ flow, onChange, disabled }: Props) {
   // The start is stored as one "YYYY-MM-DDTHH:mm" value; the date and time are edited separately.
   const startDate = flow.startLocal.slice(0, 10);
-  // Starts are whole hours: any stored minute is shown (and written back) as :00.
-  const startTime = `${flow.startLocal.slice(11, 13) || "09"}:00`;
+  const startTime = flow.startLocal.slice(11, 16) || "09:00";
   const presets = startPresets(flow.timezone);
   const startChoice: "now" | "tomorrow" | "monday" | "custom" =
     flow.startMode === "now"
@@ -112,7 +112,7 @@ export function ScheduleSettingsPanel({ flow, onChange, disabled }: Props) {
               setCustomOpen(true);
               onChange({
                 startMode: "later",
-                startLocal: flow.startLocal ? `${flow.startLocal.slice(0, 13)}:00` : presets.tomorrow,
+                startLocal: flow.startLocal || presets.tomorrow,
               });
             }}
           />
@@ -124,17 +124,11 @@ export function ScheduleSettingsPanel({ flow, onChange, disabled }: Props) {
               value={startDate}
               onChange={(d) => onChange({ startMode: "later", startLocal: `${d}T${startTime}` })}
             />
-            <Select
-              testId="schedule-start-hour"
-              value={startTime}
-              options={hourOptions}
-              disabled={disabled}
-              onChange={setStartTime}
-            />
+            <TimeFields value={startTime} disabled={disabled} onChange={setStartTime} />
           </div>
         )}
         <p className="text-[12px] text-[var(--color-text-muted)]">
-          Starts are on the hour. Emails only go out inside the sending window, so a start outside it moves to the next opening.
+          Emails only go out inside the sending window, so a start outside it moves to the next opening.
         </p>
       </Section>
 

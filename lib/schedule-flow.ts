@@ -11,7 +11,7 @@ export const MAX_FOLLOW_UPS = 10;
 export type FollowUpDraft = {
   /** Local key only — the server numbers steps itself. */
   id: string;
-  /** When it goes out: wall-clock "YYYY-MM-DDTHH:00" in the flow's time zone, always on the hour. */
+  /** When it goes out: wall-clock "YYYY-MM-DDTHH:mm" in the flow's time zone. */
   sendLocal: string;
   /** Only used when follow-ups are not threaded; a threaded follow-up replies to the first email. */
   subject: string;
@@ -65,15 +65,15 @@ function addDaysIso(isoDate: string, days: number): string {
 }
 
 /**
- * Where a new follow-up starts: three days after the email before it, at the same hour (9:00 AM
- * when that one goes straight away). The user then picks the date and hour they actually want.
+ * Where a new follow-up starts: three days after the email before it, at the same time (9:00 AM
+ * when that one goes straight away). The user then picks the date and time they actually want.
  */
 function defaultFollowUpLocal(state: ScheduleFlowState): string {
   const last = state.followUps[state.followUps.length - 1];
   const previous = last?.sendLocal || (state.startMode === "later" ? state.startLocal : "");
   const date = previous.slice(0, 10) || todayInZone(state.timezone);
-  const hour = previous.slice(11, 13) || "09";
-  return `${addDaysIso(date, 3)}T${hour}:00`;
+  const time = previous.slice(11, 16) || "09:00";
+  return `${addDaysIso(date, 3)}T${time}`;
 }
 
 export function newFollowUp(state: ScheduleFlowState): FollowUpDraft {
@@ -84,18 +84,6 @@ export function newFollowUp(state: ScheduleFlowState): FollowUpDraft {
     bodyHtml: "",
   };
 }
-
-/** "9:00 AM" for an "HH:mm" value. */
-export function hourLabel(value: string): string {
-  const h = Number(value.slice(0, 2)) || 0;
-  return `${h % 12 === 0 ? 12 : h % 12}:${value.slice(3, 5) || "00"} ${h < 12 ? "AM" : "PM"}`;
-}
-
-/** The 24 whole hours, as select options. */
-export const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => {
-  const value = `${String(h).padStart(2, "0")}:00`;
-  return { value, label: hourLabel(value) };
-});
 
 /** A follow-up's chosen time as an instant, or null while it is missing or unreadable. */
 export function followUpSendDate(state: ScheduleFlowState, index: number): Date | null {
@@ -146,7 +134,6 @@ export function validateScheduleFlow(state: ScheduleFlowState, now = new Date())
     const start = scheduleStartDate(state);
     if (!start) return "Pick the date and time to start sending.";
     if (start.getTime() < now.getTime() + 60_000) return "The start time has to be in the future.";
-    if (!state.startLocal.endsWith(":00")) return "The start time has to be on the hour, like 9:00 AM or 10:00 AM.";
   }
   if (!(state.windowStart < state.windowEnd)) return "The send window has to end after it starts.";
   if (!isValidTimeZone(state.timezone)) return "That time zone isn't recognised.";
@@ -154,7 +141,6 @@ export function validateScheduleFlow(state: ScheduleFlowState, now = new Date())
     const f = state.followUps[i];
     const at = followUpSendDate(state, i);
     if (!at) return `Pick when follow-up ${i + 1} goes out.`;
-    if (!f.sendLocal.endsWith(":00")) return `Follow-up ${i + 1} has to go out on the hour, like 9:00 AM or 10:00 AM.`;
     const before = i === 0 ? scheduleStartDate(state) ?? now : followUpSendDate(state, i - 1);
     const floor = before && before.getTime() > now.getTime() ? before : now;
     if (at.getTime() <= floor.getTime()) {

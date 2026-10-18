@@ -30,7 +30,7 @@ import { createClient } from "@/lib/supabase";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { clearSecondaryFeaturePrefetchCache } from "@/lib/workspace-feature-prefetch";
 import { pathToFeature } from "@/lib/feature-access";
-import { hiddenFeatureSet } from "@/lib/module-visibility";
+import { hiddenFeatureSet, isPathVisible } from "@/lib/module-visibility";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo, PlacecomMark } from "@/components/PlacecomLogo";
@@ -475,10 +475,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
    */
   const systemItems = useMemo<NavGroupLinks["items"]>(() => {
     const items: NavGroupLinks["items"] = [];
-    if (me?.role === "admin") items.push({ ...adminLink }, { ...connectorsLink });
+    if (me?.role === "admin") items.push({ ...adminLink });
+    if (me?.role === "admin" && isPathVisible(me, connectorsLink.href)) items.push({ ...connectorsLink });
     if (me?.isConfigsAdmin) items.push({ ...configsLink });
     return items;
-  }, [me?.role, me?.isConfigsAdmin]);
+  }, [me]);
 
   useEffect(() => {
     // Only reachable routes — prefetching a hidden module just buys a redirect.

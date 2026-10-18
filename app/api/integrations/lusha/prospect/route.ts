@@ -27,6 +27,9 @@ export type ProspectPerson = {
   revealCost: { emails: number | null; phones: number | null };
   /** Set when this person is already a contact, so the screen can say so. */
   inContactId: string | null;
+  /** The email and phone already on that contact card, so the table can show them without a reveal. */
+  contactEmail: string | null;
+  contactPhone: string | null;
 };
 
 function cost(p: LushaPerson, field: string): number | null {
@@ -101,11 +104,22 @@ export async function POST(request: Request) {
   const links = result.people.map((p) => p.linkedin).filter((v): v is string => !!v);
   const names = result.people.map((p) => p.fullName).filter(Boolean);
   const [byLink, byName] = await Promise.all([
-    links.length ? ctx.supabase.from("directory_contacts").select("id, linkedin_url").in("linkedin_url", links) : Promise.resolve({ data: [] }),
-    names.length ? ctx.supabase.from("directory_contacts").select("id, name, company").in("name", names) : Promise.resolve({ data: [] }),
+    links.length ? ctx.supabase.from("directory_contacts").select("id, linkedin_url, email, phone").in("linkedin_url", links) : Promise.resolve({ data: [] }),
+    names.length ? ctx.supabase.from("directory_contacts").select("id, name, company, email, phone").in("name", names) : Promise.resolve({ data: [] }),
   ]);
-  const linkIndex = new Map(((byLink.data ?? []) as { id: string; linkedin_url: string }[]).map((c) => [c.linkedin_url.replace(/\/+$/, "").toLowerCase(), c.id]));
-  const nameIndex = new Map(((byName.data ?? []) as { id: string; name: string; company: string | null }[]).map((c) => [`${c.name.toLowerCase()}|${(c.company ?? "").toLowerCase()}`, c.id]));
+  type Known = { id: string; email: string | null; phone: string | null };
+  const linkIndex = new Map<string, Known>(
+    ((byLink.data ?? []) as { id: string; linkedin_url: string; email: string | null; phone: string | null }[]).map((c) => [
+      c.linkedin_url.replace(/\/+$/, "").toLowerCase(),
+      { id: c.id, email: c.email, phone: c.phone },
+    ]),
+  );
+  const nameIndex = new Map<string, Known>(
+    ((byName.data ?? []) as { id: string; name: string; company: string | null; email: string | null; phone: string | null }[]).map((c) => [
+      `${c.name.toLowerCase()}|${(c.company ?? "").toLowerCase()}`,
+      { id: c.id, email: c.email, phone: c.phone },
+    ]),
+  );
 
   const people: ProspectPerson[] = result.people
     .filter((p) => !p.error && p.id)
@@ -120,10 +134,16 @@ export async function POST(request: Request) {
       location: p.location,
       linkedin: p.linkedin,
       revealCost: { emails: cost(p, "emails"), phones: cost(p, "phones") },
-      inContactId:
-        (p.linkedin ? linkIndex.get(p.linkedin.replace(/\/+$/, "").toLowerCase()) : undefined) ??
-        nameIndex.get(`${p.fullName.toLowerCase()}|${(p.company ?? "").toLowerCase()}`) ??
-        null,
+      ...(() => {
+        const known =
+          (p.linkedin ? linkIndex.get(p.linkedin.replace(/\/+$/, "").toLowerCase()) : undefined) ??
+          nameIndex.get(`${p.fullName.toLowerCase()}|${(p.company ?? "").toLowerCase()}`);
+        return {
+          inContactId: known?.id ?? null,
+          contactEmail: known?.email?.trim() || null,
+          contactPhone: known?.phone?.trim() || null,
+        };
+      })(),
     }));
 
   return NextResponse.json({ people, total: result.total, page: result.page, size, creditsCharged: searchCreditsCharged(result.billing.creditsCharged) });

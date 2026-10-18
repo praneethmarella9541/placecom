@@ -148,19 +148,37 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const chosen = useMemo(() => addable.filter((p) => picked.has(p.id)), [addable, picked]);
   // Most a reveal can cost, counting only what is still missing. Lusha charges each data point once,
   // so someone already revealed for that field adds nothing.
-  const revealEstimate = useMemo(
+  // Who still has nothing on screen for what is ticked. A reveal for them can cost nothing — Lusha says 0
+  // when this account has paid for that person before — and it should still run, to bring it in.
+  const missing = useMemo(
     () =>
-      pickedPeople.reduce((sum, p) => {
-        const got = revealed[p.id];
-        const needEmail = revealEmails && !(got && got.status !== "not_found" && got.emails.length > 0);
-        const needPhone = revealPhones && !(got && got.status !== "not_found" && got.phones.length > 0);
-        return sum + (needEmail ? (p.revealCost.emails ?? 1) : 0) + (needPhone ? (p.revealCost.phones ?? 5) : 0);
-      }, 0),
+      pickedPeople.filter((p) => {
+        const noEmail = revealEmails && (revealed[p.id]?.emails.length ?? 0) === 0 && !p.contactEmail;
+        const noPhone = revealPhones && (revealed[p.id]?.phones.length ?? 0) === 0 && !p.contactPhone;
+        return noEmail || noPhone;
+      }),
     [pickedPeople, revealed, revealEmails, revealPhones],
   );
+  const revealEstimate = useMemo(
+    () =>
+      missing.reduce((sum, p) => {
+        const noEmail = revealEmails && (revealed[p.id]?.emails.length ?? 0) === 0 && !p.contactEmail;
+        const noPhone = revealPhones && (revealed[p.id]?.phones.length ?? 0) === 0 && !p.contactPhone;
+        return sum + (noEmail ? (p.revealCost.emails ?? 1) : 0) + (noPhone ? (p.revealCost.phones ?? 5) : 0);
+      }, 0),
+    [missing, revealed, revealEmails, revealPhones],
+  );
+
+  /** What the table shows for this person and field: revealed here, else what the contact card holds. */
+  function shownValues(p: ProspectPerson, field: "emails" | "phones"): string[] {
+    const fromReveal = revealed[p.id]?.[field] ?? [];
+    if (fromReveal.length > 0) return fromReveal;
+    const card = field === "emails" ? p.contactEmail : p.contactPhone;
+    return card ? [card] : [];
+  }
 
   async function reveal() {
-    if (pickedPeople.length === 0 || revealing || (!revealEmails && !revealPhones)) return;
+    if (missing.length === 0 || revealing || (!revealEmails && !revealPhones)) return;
     setRevealing(true);
     setError(null);
     setRevealNote(null);
@@ -169,7 +187,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ids: pickedPeople.map((p) => p.id),
+          ids: missing.map((p) => p.id),
           reveal: [...(revealEmails ? ["emails"] : []), ...(revealPhones ? ["phones"] : [])],
         }),
       });
@@ -489,8 +507,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.title || "—"}</td>
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.company || "—"}</td>
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.location || "—"}</td>
-                    <RevealedCell person={revealed[p.id]} field="emails" />
-                    <RevealedCell person={revealed[p.id]} field="phones" />
+                    <RevealedCell person={revealed[p.id]} values={shownValues(p, "emails")} field="emails" />
+                    <RevealedCell person={revealed[p.id]} values={shownValues(p, "phones")} field="phones" />
                     <td className="px-4 py-2.5">
                       {p.linkedin ? (
                         <a href={p.linkedin} target="_blank" rel="noopener noreferrer" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="LinkedIn" aria-label={`${p.fullName} on LinkedIn`}>
@@ -520,18 +538,20 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                 <button
                   type="button"
                   onClick={() => void reveal()}
-                  disabled={revealing || (!revealEmails && !revealPhones) || revealEstimate === 0}
+                  disabled={revealing || (!revealEmails && !revealPhones) || missing.length === 0}
                   className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
                 >
                   {revealing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
-                  {revealing ? "Revealing…" : revealEstimate > 0 ? `Reveal (up to ${revealEstimate} credit${revealEstimate === 1 ? "" : "s"})` : "Reveal"}
+                  {revealing ? "Revealing…" : missing.length > 0 && revealEstimate === 0 ? "Show (no charge)" : revealEstimate > 0 ? `Reveal (up to ${revealEstimate} credit${revealEstimate === 1 ? "" : "s"})` : "Reveal"}
                 </button>
                 <span className="text-[12px] text-[var(--color-text-muted)]">
                   {!revealEmails && !revealPhones
                     ? "Tick email and/or phone to reveal them here. 1 credit per email, 5 per phone, only when Lusha finds one."
-                    : revealEstimate === 0
-                      ? "Already revealed for the people selected."
-                      : "Charged only for what Lusha finds."}
+                    : missing.length === 0
+                      ? "Everything you ticked is already showing in the table."
+                      : revealEstimate === 0
+                        ? "Your Lusha account has already paid for these, so showing them costs no credits."
+                        : "Charged only for what Lusha finds."}
                 </span>
               </div>
               {revealNote ? <p className="text-[12px] text-[var(--color-text-muted)]">{revealNote}</p> : null}
@@ -560,8 +580,7 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
 
 
 /** A revealed email or phone in the results table, or a quiet dash while nothing has been revealed. */
-function RevealedCell({ person, field }: { person: Shown | undefined; field: "emails" | "phones" }) {
-  const values = person?.[field] ?? [];
+function RevealedCell({ person, values, field }: { person: Shown | undefined; values: string[]; field: "emails" | "phones" }) {
   if (values.length > 0) {
     const Icon = field === "emails" ? Mail : Phone;
     return (

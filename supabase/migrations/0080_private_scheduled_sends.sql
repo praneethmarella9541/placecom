@@ -107,14 +107,22 @@ create policy "sequence_sends_select_team" on public.sequence_sends
     and exists (select 1 from public.sequences s where s.id = sequence_sends.sequence_id)
   );
 
-drop policy if exists sequence_step_attachments_rw on public.sequence_step_attachments;
-create policy sequence_step_attachments_rw on public.sequence_step_attachments
-  for all
-  using (
-    mailbox_owner_id = (select public.current_mailbox_owner_id())
-    and exists (select 1 from public.sequences s where s.id = sequence_step_attachments.sequence_id)
-  )
-  with check (
-    mailbox_owner_id = (select public.current_mailbox_owner_id())
-    and exists (select 1 from public.sequences s where s.id = sequence_step_attachments.sequence_id)
-  );
+-- The attachments table arrived in migration 0059. An environment that has not run it has nothing
+-- to protect here, so this part is skipped rather than failing the whole migration.
+do $$
+begin
+  if to_regclass('public.sequence_step_attachments') is not null then
+    drop policy if exists sequence_step_attachments_rw on public.sequence_step_attachments;
+    create policy sequence_step_attachments_rw on public.sequence_step_attachments
+      for all
+      using (
+        mailbox_owner_id = (select public.current_mailbox_owner_id())
+        and exists (select 1 from public.sequences s where s.id = sequence_step_attachments.sequence_id)
+      )
+      with check (
+        mailbox_owner_id = (select public.current_mailbox_owner_id())
+        and exists (select 1 from public.sequences s where s.id = sequence_step_attachments.sequence_id)
+      );
+  end if;
+end
+$$;

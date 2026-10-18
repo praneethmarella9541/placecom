@@ -50,7 +50,8 @@ import {
   type UnknownPlaceholderMode,
 } from "@/lib/compose-variables";
 import { listPlaceholdersInTemplate, mergeTemplate, validateMergeTemplates, type MailMergeRow } from "@/lib/mail-merge";
-import { ScheduleFlowBar } from "@/components/ScheduleFlowBar";
+import { ScheduleFlowBar, ScheduleFlowTail, type ScheduleTab } from "@/components/ScheduleFlowBar";
+import { ScheduleSettingsPanel } from "@/components/ScheduleSettingsPanel";
 import { ScheduleFollowUpEditor, type ScheduleFollowUpEditorHandle } from "@/components/ScheduleFollowUpEditor";
 import {
   defaultScheduleFlow,
@@ -1674,6 +1675,7 @@ export default function InboxPage() {
   const [scheduling, setScheduling] = useState(false);
   const [scheduleFlow, setScheduleFlow] = useState<ScheduleFlowState>(() => defaultScheduleFlow());
   const [scheduleStep, setScheduleStep] = useState(0);
+  const [scheduleTab, setScheduleTab] = useState<ScheduleTab>("editor");
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const followUpEditorRef = useRef<ScheduleFollowUpEditorHandle>(null);
   const [massRecipients, setMassRecipients] = useState<MassRecipient[]>([]);
@@ -1919,6 +1921,7 @@ export default function InboxPage() {
     setMassSending(false);
     setScheduling(false);
     setScheduleStep(0);
+    setScheduleTab("editor");
     setScheduleFlow(defaultScheduleFlow());
     setMassRecipients([]);
     setMassSource("contacts");
@@ -5306,6 +5309,7 @@ export default function InboxPage() {
     }
     setScheduling(on);
     setScheduleStep(0);
+    setScheduleTab("editor");
     if (on) setScheduleFlow(defaultScheduleFlow());
   };
 
@@ -5315,6 +5319,7 @@ export default function InboxPage() {
   const addScheduleFollowUp = () => {
     setScheduleFlow((prev) => ({ ...prev, followUps: [...prev.followUps, newFollowUp()] }));
     setScheduleStep(scheduleFlow.followUps.length + 1);
+    setScheduleTab("editor");
   };
 
   const patchFollowUp = (index: number, patch: Partial<ScheduleFlowState["followUps"][number]>) =>
@@ -7365,17 +7370,24 @@ export default function InboxPage() {
           massSending && scheduling ? (
             <ScheduleFlowBar
               flow={scheduleFlow}
-              onChange={patchScheduleFlow}
               activeStep={scheduleStep}
-              onSelectStep={setScheduleStep}
-              onAddFollowUp={addScheduleFollowUp}
+              onSelectStep={(step) => {
+                setScheduleStep(step);
+                setScheduleTab("editor");
+              }}
+              tab={scheduleTab}
+              onTabChange={setScheduleTab}
+              firstSubject={composeSubject}
+              firstBodyHtml={composeBody}
               warnings={scheduleWarnings}
               disabled={scheduleBusy}
             />
           ) : undefined
         }
         scheduleStepEditor={
-          massSending && scheduling && scheduleStep > 0 && scheduleFlow.followUps[scheduleStep - 1] ? (
+          massSending && scheduling && scheduleTab === "settings" ? (
+            <ScheduleSettingsPanel flow={scheduleFlow} onChange={patchScheduleFlow} disabled={scheduleBusy} />
+          ) : massSending && scheduling && scheduleStep > 0 && scheduleFlow.followUps[scheduleStep - 1] ? (
             <ScheduleFollowUpEditor
               ref={followUpEditorRef}
               key={scheduleFlow.followUps[scheduleStep - 1].id}
@@ -7388,6 +7400,19 @@ export default function InboxPage() {
               unknownPlaceholders={unknownPlaceholders}
               onChange={(patch) => patchFollowUp(scheduleStep - 1, patch)}
               onRemove={() => removeFollowUp(scheduleStep - 1)}
+            />
+          ) : undefined
+        }
+        scheduleAfter={
+          massSending && scheduling && scheduleTab === "editor" ? (
+            <ScheduleFlowTail
+              flow={scheduleFlow}
+              activeStep={scheduleStep}
+              onSelectStep={setScheduleStep}
+              onAddFollowUp={addScheduleFollowUp}
+              firstSubject={composeSubject}
+              firstBodyHtml={composeBody}
+              disabled={scheduleBusy}
             />
           ) : undefined
         }

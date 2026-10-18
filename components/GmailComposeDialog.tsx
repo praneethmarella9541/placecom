@@ -121,6 +121,8 @@ export type GmailComposeDialogProps = {
    * editor. The footer's Variables button is pointed at it through `insertVariableOverride`.
    */
   scheduleStepEditor?: React.ReactNode;
+  /** Under the editor while Scheduling is on: the rest of the flow's timeline. */
+  scheduleAfter?: React.ReactNode;
   insertVariableOverride?: () => void;
   sendLabel?: string;
   sending?: boolean;
@@ -215,6 +217,7 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
     onSchedulingChange,
     scheduleBar,
     scheduleStepEditor,
+    scheduleAfter,
     insertVariableOverride,
     sendLabel,
     sending,
@@ -699,6 +702,8 @@ export function GmailComposeDialog(props: GmailComposeDialogProps) {
             )}
             </>
             )}
+
+            {!reviewing && scheduleAfter}
 
           </div>
             {attachmentChips ? (

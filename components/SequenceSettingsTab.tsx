@@ -20,17 +20,23 @@ const HOURS = Array.from({ length: 24 }, (_, h) => `${String(h).padStart(2, "0")
 
 type Props = {
   sequence: Sequence;
+  /** A send scheduled from Compose: it has no time zone, daily limit, signature or open tracking to set. */
+  scheduled?: boolean;
   saving: boolean;
   onChange: (patch: Partial<Sequence>) => void;
 };
 
-export function SequenceSettingsTab({ sequence, saving, onChange }: Props) {
+export function SequenceSettingsTab({ sequence, scheduled, saving, onChange }: Props) {
   return (
     <div className="space-y-5">
       <Section title="Delivery">
         <Row
           label="Sending window"
-          hint="Emails only go out inside this window, in the timezone below."
+          hint={
+            scheduled
+              ? "Emails only go out inside this window."
+              : "Emails only go out inside this window, in the timezone below."
+          }
         >
           <div className="flex flex-wrap items-center gap-2">
             <Select
@@ -48,13 +54,15 @@ export function SequenceSettingsTab({ sequence, saving, onChange }: Props) {
               disabled={saving}
               onChange={(v) => onChange({ sendWindowEnd: v })}
             />
-            <Select
-              testId="sequence-timezone"
-              value={sequence.timezone}
-              options={TIMEZONES}
-              disabled={saving}
-              onChange={(v) => onChange({ timezone: v })}
-            />
+            {scheduled ? null : (
+              <Select
+                testId="sequence-timezone"
+                value={sequence.timezone}
+                options={TIMEZONES}
+                disabled={saving}
+                onChange={(v) => onChange({ timezone: v })}
+              />
+            )}
           </div>
         </Row>
 
@@ -67,21 +75,23 @@ export function SequenceSettingsTab({ sequence, saving, onChange }: Props) {
           onChange={(v) => onChange({ businessDaysOnly: v })}
         />
 
-        <Row
-          label="Daily send limit"
-          hint="Caps how many emails this sequence sends per day. Gmail's quota is shared with the rest of the app."
-        >
-          <input
-            data-testid="sequence-daily-limit"
-            type="number"
-            min={1}
-            max={2000}
-            value={sequence.dailySendLimit}
-            disabled={saving}
-            onChange={(e) => onChange({ dailySendLimit: Number(e.target.value) })}
-            className="h-10 w-28 rounded-xl border border-transparent bg-[var(--color-surface-2)] px-3 text-[13px] text-[var(--color-text)] outline-none focus:border-[var(--color-copper)]"
-          />
-        </Row>
+        {scheduled ? null : (
+          <Row
+            label="Daily send limit"
+            hint="Caps how many emails this sequence sends per day. Gmail's quota is shared with the rest of the app."
+          >
+            <input
+              data-testid="sequence-daily-limit"
+              type="number"
+              min={1}
+              max={2000}
+              value={sequence.dailySendLimit}
+              disabled={saving}
+              onChange={(e) => onChange({ dailySendLimit: Number(e.target.value) })}
+              className="h-10 w-28 rounded-xl border border-transparent bg-[var(--color-surface-2)] px-3 text-[13px] text-[var(--color-text)] outline-none focus:border-[var(--color-copper)]"
+            />
+          </Row>
+        )}
       </Section>
 
       <Section title="Email">
@@ -93,6 +103,7 @@ export function SequenceSettingsTab({ sequence, saving, onChange }: Props) {
           disabled={saving}
           onChange={(v) => onChange({ threadEmails: v })}
         />
+        {scheduled ? null : (
         <Toggle
           testId="sequence-include-signature"
           label="Include signature"
@@ -101,7 +112,8 @@ export function SequenceSettingsTab({ sequence, saving, onChange }: Props) {
           disabled={saving}
           onChange={(v) => onChange({ includeSignature: v })}
         />
-        {sequence.includeSignature ? (
+        )}
+        {!scheduled && sequence.includeSignature ? (
           <Row label="Signature" hint="Basic HTML is allowed.">
             <textarea
               data-testid="sequence-signature"
@@ -113,6 +125,7 @@ export function SequenceSettingsTab({ sequence, saving, onChange }: Props) {
             />
           </Row>
         ) : null}
+        {scheduled ? null : (
         <Toggle
           testId="sequence-track-opens"
           label="Track opens"
@@ -121,6 +134,7 @@ export function SequenceSettingsTab({ sequence, saving, onChange }: Props) {
           disabled={saving}
           onChange={(v) => onChange({ trackOpens: v })}
         />
+        )}
       </Section>
 
       <Section title="Exit criteria">

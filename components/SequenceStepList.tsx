@@ -58,6 +58,8 @@ type Props = {
   steps: SequenceStepInput[];
   businessDaysOnly: boolean;
   threadEmails: boolean;
+  /** Hide the "start after enrollment" pill — a scheduled send starts at its own time, not after enrollment. */
+  hideStartDelay?: boolean;
   disabled?: boolean;
   onChange: (steps: SequenceStepInput[]) => void;
   onPreview: (index: number) => void;
@@ -104,6 +106,7 @@ export function SequenceStepList({
   steps,
   businessDaysOnly,
   threadEmails,
+  hideStartDelay,
   disabled,
   onChange,
   onPreview,
@@ -193,43 +196,45 @@ export function SequenceStepList({
 
   return (
     <div className="space-y-3">
-      <DelayControl
-        testId="sequence-start-delay"
-        icon={Target}
-        disabled={disabled}
-        open={openDelay === START_DELAY}
-        onToggle={() => setOpenDelay(openDelay === START_DELAY ? null : START_DELAY)}
-        days={leadingWait?.delayDays ?? 0}
-        hours={leadingWait?.delayHours ?? 0}
-        minutes={leadingWait?.delayMinutes ?? 0}
-        businessDaysOnly={businessDaysOnly}
-        onChange={setStartDelay}
-        onCommit={(days, hours, minutes) => {
-          if (leadingWait) commitDelay(0, days, hours, minutes);
-        }}
-        summary={
-          leadingWait ? (
-            <>
-              {titleCase("Start")}{" "}
-              <b className="font-semibold text-[var(--color-text)]">
-                {describeDelay(
-                  leadingWait.delayDays ?? 0,
-                  leadingWait.delayHours ?? 0,
-                  leadingWait.delayMinutes ?? 0,
-                  businessDaysOnly,
-                )}
-              </b>{" "}
-              {titleCase("after enrollment")}
-            </>
-          ) : (
-            <>
-              {titleCase("Start")}{" "}
-              <b className="font-semibold text-[var(--color-text)]">{titleCase("immediately")}</b>{" "}
-              {titleCase("after enrollment")}
-            </>
-          )
-        }
-      />
+      {hideStartDelay ? null : (
+        <DelayControl
+          testId="sequence-start-delay"
+          icon={Target}
+          disabled={disabled}
+          open={openDelay === START_DELAY}
+          onToggle={() => setOpenDelay(openDelay === START_DELAY ? null : START_DELAY)}
+          days={leadingWait?.delayDays ?? 0}
+          hours={leadingWait?.delayHours ?? 0}
+          minutes={leadingWait?.delayMinutes ?? 0}
+          businessDaysOnly={businessDaysOnly}
+          onChange={setStartDelay}
+          onCommit={(days, hours, minutes) => {
+            if (leadingWait) commitDelay(0, days, hours, minutes);
+          }}
+          summary={
+            leadingWait ? (
+              <>
+                {titleCase("Start")}{" "}
+                <b className="font-semibold text-[var(--color-text)]">
+                  {describeDelay(
+                    leadingWait.delayDays ?? 0,
+                    leadingWait.delayHours ?? 0,
+                    leadingWait.delayMinutes ?? 0,
+                    businessDaysOnly,
+                  )}
+                </b>{" "}
+                {titleCase("after enrollment")}
+              </>
+            ) : (
+              <>
+                {titleCase("Start")}{" "}
+                <b className="font-semibold text-[var(--color-text)]">{titleCase("immediately")}</b>{" "}
+                {titleCase("after enrollment")}
+              </>
+            )
+          }
+        />
+      )}
 
       {steps.map((step, index) => {
         // Rendered above as the start control rather than as a step of its own.

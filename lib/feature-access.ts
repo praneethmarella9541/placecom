@@ -12,6 +12,7 @@ export const FEATURE_KEYS = [
   "campaigns",
   "whatsapp",
   "mailTemplates",
+  "lusha",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -30,6 +31,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   campaigns: "Campaigns",
   whatsapp: "WhatsApp",
   mailTemplates: "Mail templates",
+  lusha: "Lusha",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -47,6 +49,7 @@ export const GROUP_MANAGEABLE_FEATURES: FeatureKey[] = [
   "campaigns",
   "whatsapp",
   "mailTemplates",
+  "lusha",
 ];
 
 const SET = new Set<string>(FEATURE_KEYS);
@@ -94,6 +97,9 @@ export function pathToFeature(pathname: string): FeatureKey | null {
   // group rows that blocked "inbox" still cascade to it — see
   // mergeRestrictedFeatures in lib/profile-access.ts.
   if (pathname.startsWith("/campaigns")) return "campaigns";
+  // The Connectors page. Lusha is its only connector today, so it follows that switch; once a
+  // second connector exists this should become "any connector is on" rather than one key.
+  if (pathname.startsWith("/admin/connectors")) return "lusha";
   return null;
 }
 
@@ -141,6 +147,11 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   // it is reached entirely from the composer's footer, so pathToFeature has no
   // entry for it and this is the only gate that can refuse it.
   if (pathname.startsWith("/api/mail-templates")) return "mailTemplates";
+
+  // Connector data routes (prospecting, reveals, spend). The /api/integrations summary the
+  // composer and contacts pages poll for "is it connected" stays ungated: it carries no data
+  // beyond a boolean, and the UI hides the entry points itself when the module is off.
+  if (pathname.startsWith("/api/integrations/lusha")) return "lusha";
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";

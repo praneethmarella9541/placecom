@@ -24,17 +24,18 @@ type SequenceListRow = {
 /** Emails this far past due mean the scheduler is not running (a working one defers or sends them). */
 const OVERDUE_MINUTES = 10;
 
-/** GET /api/sequences — every sequence in the caller's mailbox. */
+/** GET /api/sequences — the caller's own sequences (an admin sees every one in the mailbox). */
 export async function GET(request: Request) {
   const ctx = await getSequenceContext(request);
   if (isErrorResponse(ctx)) return ctx;
 
-  const { data, error } = await ctx.svc
+  let listQuery = ctx.svc
     .from("sequences")
     .select("id, name, description, status, published_at, updated_at, origin, scheduled_for")
     .eq("mailbox_owner_id", ctx.mailboxOwnerId)
-    .neq("status", "archived")
-    .order("updated_at", { ascending: false });
+    .neq("status", "archived");
+  if (!ctx.isAdmin) listQuery = listQuery.eq("created_by", ctx.userId);
+  const { data, error } = await listQuery.order("updated_at", { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
@@ -73,10 +74,18 @@ export async function GET(request: Request) {
       }),
     ),
     // Due long ago on a flow that is switched on — the scheduler should have taken these already.
-    ctx.svc
-      .from("sequence_enrollments")
-      .select("id, sequences!inner(status)", { count: "exact", head: true })
-      .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+    // Counted over the flows this caller can see, so someone else's overdue send is not reported.
+    (ctx.isAdmin
+      ? ctx.svc
+          .from("sequence_enrollments")
+          .select("id, sequences!inner(status)", { count: "exact", head: true })
+          .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+      : ctx.svc
+          .from("sequence_enrollments")
+          .select("id, sequences!inner(status)", { count: "exact", head: true })
+          .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+          .in("sequence_id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"])
+    )
       .eq("status", "active")
       .eq("sequences.status", "active")
       .not("next_run_at", "is", null)

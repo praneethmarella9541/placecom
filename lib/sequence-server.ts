@@ -32,6 +32,11 @@ export type SequenceContext = {
   userId: string;
   /** Tenancy key — admins own their mailbox, staff inherit the linked admin's. */
   mailboxOwnerId: string;
+  /**
+   * Admins own the mailbox and see every send on it; everyone else sees only the sends they
+   * created. Applied by loadOwnedSequence and the list route — see `created_by` on sequences.
+   */
+  isAdmin: boolean;
   svc: SupabaseClient;
 };
 
@@ -66,7 +71,7 @@ export async function getSequenceContext(
     );
   }
 
-  return { userId: authed.user.id, mailboxOwnerId, svc };
+  return { userId: authed.user.id, mailboxOwnerId, isAdmin: role === "admin", svc };
 }
 
 export function isErrorResponse(value: unknown): value is NextResponse {
@@ -355,12 +360,15 @@ export async function loadOwnedSequence(
   ctx: SequenceContext,
   sequenceId: string,
 ): Promise<SequenceRecord | null> {
-  const { data } = await ctx.svc
+  let query = ctx.svc
     .from("sequences")
     .select("*")
     .eq("id", sequenceId)
-    .eq("mailbox_owner_id", ctx.mailboxOwnerId)
-    .maybeSingle();
+    .eq("mailbox_owner_id", ctx.mailboxOwnerId);
+  // Not an admin: only their own. Every /api/sequences/[sequenceId]/* route loads the sequence
+  // through here, so this one line keeps all of them private.
+  if (!ctx.isAdmin) query = query.eq("created_by", ctx.userId);
+  const { data } = await query.maybeSingle();
   return (data as SequenceRecord | null) ?? null;
 }
 

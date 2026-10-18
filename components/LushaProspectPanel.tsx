@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Building2, ExternalLink, Loader2, Search, UserPlus, UserRound, Users } from "lucide-react";
+import { Building2, ExternalLink, Loader2, Mail, Phone, Search, UserPlus, UserRound, Users } from "lucide-react";
 import { LushaMark } from "@/components/LushaLogo";
 import {
   CompanyFilters,
@@ -14,6 +14,7 @@ import {
   emptyContactFilters,
 } from "@/components/LushaProspectFilters";
 import type { ProspectPerson } from "@/app/api/integrations/lusha/prospect/route";
+import type { RevealedPerson } from "@/app/api/integrations/lusha/prospect/reveal/route";
 import type { LushaCompany } from "@/lib/integrations/lusha";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,9 @@ type AddResult = {
 };
 
 type Tab = "contacts" | "companies";
+
+/** What the table knows about one person's reveal, and which fields were actually asked for. */
+type Shown = RevealedPerson & { askedEmails: boolean; askedPhones: boolean };
 
 /**
  * Find people and companies with the workspace's Lusha account, and add the people you want to the
@@ -56,6 +60,11 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const [revealEmails, setRevealEmails] = useState(false);
   const [revealPhones, setRevealPhones] = useState(false);
   const [adding, setAdding] = useState(false);
+  // Emails and phones revealed right here in the results, by person id. Adding to contacts is a
+  // separate choice and carries these along.
+  const [revealed, setRevealed] = useState<Record<string, Shown>>({});
+  const [revealing, setRevealing] = useState(false);
+  const [revealNote, setRevealNote] = useState<string | null>(null);
   const [result, setResult] = useState<AddResult | null>(null);
 
   const companyCount = companyFilterCount(company);
@@ -122,6 +131,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
       } else {
         setPeople(json.people ?? []);
         setPicked(new Set());
+        setRevealed({});
+        setRevealNote(null);
       }
       setSearchInfo({ total: json.total ?? 0, creditsCharged: json.creditsCharged ?? 0 });
     } catch {
@@ -132,15 +143,70 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   }
 
   const addable = useMemo(() => (people ?? []).filter((p) => !p.inContactId), [people]);
+  // Anyone ticked can be revealed; only people not yet in the contact book can be added.
+  const pickedPeople = useMemo(() => (people ?? []).filter((p) => picked.has(p.id)), [people, picked]);
   const chosen = useMemo(() => addable.filter((p) => picked.has(p.id)), [addable, picked]);
+  // Most a reveal can cost, counting only what is still missing. Lusha charges each data point once,
+  // so someone already revealed for that field adds nothing.
   const revealEstimate = useMemo(
     () =>
-      chosen.reduce(
-        (sum, p) => sum + (revealEmails ? (p.revealCost.emails ?? 1) : 0) + (revealPhones ? (p.revealCost.phones ?? 5) : 0),
-        0,
-      ),
-    [chosen, revealEmails, revealPhones],
+      pickedPeople.reduce((sum, p) => {
+        const got = revealed[p.id];
+        const needEmail = revealEmails && !(got && got.status !== "not_found" && got.emails.length > 0);
+        const needPhone = revealPhones && !(got && got.status !== "not_found" && got.phones.length > 0);
+        return sum + (needEmail ? (p.revealCost.emails ?? 1) : 0) + (needPhone ? (p.revealCost.phones ?? 5) : 0);
+      }, 0),
+    [pickedPeople, revealed, revealEmails, revealPhones],
   );
+
+  async function reveal() {
+    if (pickedPeople.length === 0 || revealing || (!revealEmails && !revealPhones)) return;
+    setRevealing(true);
+    setError(null);
+    setRevealNote(null);
+    try {
+      const res = await fetch("/api/integrations/lusha/prospect/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ids: pickedPeople.map((p) => p.id),
+          reveal: [...(revealEmails ? ["emails"] : []), ...(revealPhones ? ["phones"] : [])],
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        revealed?: Record<string, RevealedPerson>;
+        creditsCharged?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(json.error || "Could not reveal those details.");
+        return;
+      }
+      const got = json.revealed ?? {};
+      setRevealed((prev) => {
+        const next = { ...prev };
+        for (const [id, r] of Object.entries(got)) {
+          const before = prev[id];
+          // Keep what an earlier reveal already found; a later one for the other field only adds to it.
+          next[id] = {
+            emails: r.emails.length ? r.emails : (before?.emails ?? []),
+            phones: r.phones.length ? r.phones : (before?.phones ?? []),
+            status: before && r.status === "not_found" ? before.status : r.status,
+            askedEmails: revealEmails || !!before?.askedEmails,
+            askedPhones: revealPhones || !!before?.askedPhones,
+          };
+        }
+        return next;
+      });
+      const found = Object.values(got).filter((r) => r.status === "found").length;
+      const n = json.creditsCharged ?? 0;
+      setRevealNote(`Found details for ${found} of ${Object.keys(got).length} · ${n} credit${n === 1 ? "" : "s"} charged.`);
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setRevealing(false);
+    }
+  }
 
   async function add() {
     if (chosen.length === 0 || adding) return;
@@ -151,8 +217,18 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          people: chosen.map((p) => ({ id: p.id, firstName: p.firstName, lastName: p.lastName, title: p.title, company: p.company, location: p.location, linkedin: p.linkedin })),
-          reveal: [...(revealEmails ? ["emails"] : []), ...(revealPhones ? ["phones"] : [])],
+          // What was revealed in the table goes onto the new contact; adding itself costs nothing.
+          people: chosen.map((p) => ({
+            id: p.id,
+            firstName: p.firstName,
+            lastName: p.lastName,
+            title: p.title,
+            company: p.company,
+            location: p.location,
+            linkedin: p.linkedin,
+            email: revealed[p.id]?.emails[0],
+            phone: revealed[p.id]?.phones[0],
+          })),
         }),
       });
       const json = (await res.json().catch(() => ({}))) as Partial<AddResult> & { error?: string };
@@ -374,25 +450,26 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                   <th className="w-10 px-4 py-2.5">
                     <input
                       type="checkbox"
-                      aria-label="Select everyone who isn't already a contact"
-                      checked={addable.length > 0 && addable.every((p) => picked.has(p.id))}
-                      onChange={(e) => setPicked(e.target.checked ? new Set(addable.map((p) => p.id)) : new Set())}
+                      aria-label="Select everyone"
+                      checked={people.length > 0 && people.every((p) => picked.has(p.id))}
+                      onChange={(e) => setPicked(e.target.checked ? new Set(people.map((p) => p.id)) : new Set())}
                     />
                   </th>
                   <th className="px-4 py-2.5">Name</th>
                   <th className="px-4 py-2.5">Title</th>
                   <th className="px-4 py-2.5">Company</th>
                   <th className="px-4 py-2.5">Location</th>
+                  <th className="px-4 py-2.5">Email</th>
+                  <th className="px-4 py-2.5">Phone</th>
                   <th className="px-4 py-2.5" />
                 </tr>
               </thead>
               <tbody>
                 {people.map((p) => (
-                  <tr key={p.id} className={cn("border-b border-[var(--color-border)] last:border-b-0", p.inContactId && "opacity-60")}>
+                  <tr key={p.id} className="border-b border-[var(--color-border)] last:border-b-0">
                     <td className="px-4 py-2.5">
                       <input
                         type="checkbox"
-                        disabled={!!p.inContactId}
                         aria-label={`Select ${p.fullName}`}
                         checked={picked.has(p.id)}
                         onChange={(e) =>
@@ -412,6 +489,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.title || "—"}</td>
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.company || "—"}</td>
                     <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.location || "—"}</td>
+                    <RevealedCell person={revealed[p.id]} field="emails" />
+                    <RevealedCell person={revealed[p.id]} field="phones" />
                     <td className="px-4 py-2.5">
                       {p.linkedin ? (
                         <a href={p.linkedin} target="_blank" rel="noopener noreferrer" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="LinkedIn" aria-label={`${p.fullName} on LinkedIn`}>
@@ -426,26 +505,48 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
             </div>
           ) : null}
 
-          {chosen.length > 0 ? (
+          {pickedPeople.length > 0 ? (
             <div className="space-y-3 border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3">
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
-                <span className="font-semibold text-[var(--color-text)]">{chosen.length} selected</span>
+                <span className="font-semibold text-[var(--color-text)]">{pickedPeople.length} selected</span>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={revealEmails} onChange={(e) => setRevealEmails(e.target.checked)} />
-                  Also find their email
+                  Email
                 </label>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={revealPhones} onChange={(e) => setRevealPhones(e.target.checked)} />
-                  Also find their phone
+                  Phone
                 </label>
+                <button
+                  type="button"
+                  onClick={() => void reveal()}
+                  disabled={revealing || (!revealEmails && !revealPhones) || revealEstimate === 0}
+                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
+                >
+                  {revealing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                  {revealing ? "Revealing…" : revealEstimate > 0 ? `Reveal (up to ${revealEstimate} credit${revealEstimate === 1 ? "" : "s"})` : "Reveal"}
+                </button>
+                <span className="text-[12px] text-[var(--color-text-muted)]">
+                  {!revealEmails && !revealPhones
+                    ? "Tick email and/or phone to reveal them here. 1 credit per email, 5 per phone, only when Lusha finds one."
+                    : revealEstimate === 0
+                      ? "Already revealed for the people selected."
+                      : "Charged only for what Lusha finds."}
+                </span>
               </div>
+              {revealNote ? <p className="text-[12px] text-[var(--color-text-muted)]">{revealNote}</p> : null}
               <div className="flex flex-wrap items-center gap-3">
-                <button type="button" onClick={() => void add()} disabled={adding} className="btn-primary inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60">
+                <button
+                  type="button"
+                  onClick={() => void add()}
+                  disabled={adding || chosen.length === 0}
+                  className="btn-primary inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
+                >
                   {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-                  {adding ? "Adding…" : `Add ${chosen.length} to contacts`}
+                  {adding ? "Adding…" : chosen.length > 0 ? `Add ${chosen.length} to contacts` : "Already in contacts"}
                 </button>
                 <p className="text-[12px] text-[var(--color-text-muted)]">
-                  {revealEstimate > 0 ? `Revealing could use up to ${revealEstimate} more credits.` : "Adding people costs no credits."}
+                  Adding people costs no credits and saves any email or phone you&apos;ve revealed with them.
                 </p>
               </div>
             </div>
@@ -454,5 +555,32 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
       ) : null}
       </div>
     </div>
+  );
+}
+
+
+/** A revealed email or phone in the results table, or a quiet dash while nothing has been revealed. */
+function RevealedCell({ person, field }: { person: Shown | undefined; field: "emails" | "phones" }) {
+  const values = person?.[field] ?? [];
+  if (values.length > 0) {
+    const Icon = field === "emails" ? Mail : Phone;
+    return (
+      <td className="px-4 py-2.5 text-[var(--color-text)]">
+        <span className="inline-flex items-center gap-1.5">
+          <Icon className="h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
+          {field === "emails" ? (
+            <a href={`mailto:${values[0]}`} className="hover:underline">{values[0]}</a>
+          ) : (
+            <span>{values[0]}</span>
+          )}
+          {values.length > 1 ? <span className="text-[11px] text-[var(--color-text-faint)]">+{values.length - 1}</span> : null}
+        </span>
+      </td>
+    );
+  }
+  return (
+    <td className="px-4 py-2.5 text-[var(--color-text-faint)]">
+      {person && (field === "emails" ? person.askedEmails : person.askedPhones) ? "Not found" : "—"}
+    </td>
   );
 }

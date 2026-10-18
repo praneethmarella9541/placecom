@@ -220,6 +220,15 @@ type MailboxContext = {
   sentTodayBySequence: Map<string, number>;
 };
 
+/**
+ * Which Gmail lane this recipient's calls use. Anything scheduled from Compose is mail a person
+ * asked for and expects on time, so it gets the same fast lane as a mass send; only a hand-built
+ * sequence (origin "sequence", none left in use) stays on the slow background lane.
+ */
+function gmailLane(ctx: RunContext, sequence: SequenceRow): "interactive" | "batch" {
+  return ctx.immediate || sequence.origin === "scheduled" ? "interactive" : "batch";
+}
+
 async function processEnrollment(
   ctx: RunContext,
   enrollment: EnrollmentRow,
@@ -270,7 +279,7 @@ async function processEnrollment(
         mailboxAddress: mailbox.mailboxAddress,
         firstSentAt,
         mailboxKey: mailbox.ownerId,
-        priority: "batch",
+        priority: gmailLane(ctx, sequence),
         // Store every reply in the thread for analytics' "Responded" count,
         // from the messages this check fetches anyway.
         onMessages: (messages) =>
@@ -291,7 +300,7 @@ async function processEnrollment(
       const bounced = await searchForBounceNotification(mailbox.accessToken, enrollment.email, {
         sinceMs: firstSentAt,
         mailboxKey: mailbox.ownerId,
-        priority: "batch",
+        priority: gmailLane(ctx, sequence),
       }).catch(() => false);
       if (bounced) outcome = "bounced";
     }
@@ -463,7 +472,7 @@ async function processEnrollment(
       trackingPixelUrl,
       attachments: attachments.length > 0 ? attachments : undefined,
       mailboxKey: mailbox.ownerId,
-      priority: ctx.immediate ? "interactive" : "batch",
+      priority: gmailLane(ctx, sequence),
     });
 
     const sentAt = new Date().toISOString();

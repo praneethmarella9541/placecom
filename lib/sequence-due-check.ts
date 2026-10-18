@@ -32,3 +32,26 @@ export async function hasDueSequenceWork(svc: SupabaseClient): Promise<boolean> 
   if (error) return true;
   return (count ?? 0) > 0;
 }
+
+/**
+ * Is another worker sending right now? True when a send was started in the last `seconds`.
+ *
+ * Best effort and deliberately cheap (one row, no new table). The cron answers instantly and keeps
+ * sending in the background, so the next minute's tick can arrive while the last one is still
+ * working; it should leave the busy one alone instead of starting a second sender beside it.
+ * Duplicates are impossible either way — every recipient is leased to one worker — but two
+ * workers would double the Gmail quota spent per second.
+ */
+export async function sequenceSenderRecentlyActive(svc: SupabaseClient, seconds = 20): Promise<boolean> {
+  const since = new Date(Date.now() - seconds * 1000).toISOString();
+  const { data, error } = await svc
+    .from("sequence_sends")
+    .select("created_at")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  // A failed check must not stall the scheduler: assume nobody is sending.
+  if (error) return false;
+  return !!data;
+}

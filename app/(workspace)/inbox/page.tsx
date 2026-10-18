@@ -5386,6 +5386,15 @@ export default function InboxPage() {
 
     setScheduleBusy(true);
     scheduleInFlightRef.current = true;
+    // Get the window out of the way at once and say what is happening. The request still has real
+    // work to do (copying an attachment, writing every recipient), but there is no reason to keep
+    // the composer on screen for it. Minimizing, not closing, keeps everything the user typed: if the
+    // server turns the request down, the window comes straight back with a message.
+    setComposeMinimized(true);
+    showSendSnack({
+      phase: "sending",
+      message: `Scheduling ${rows.length} email${rows.length === 1 ? "" : "s"}…`,
+    });
     try {
       // An autosave that is mid-flight may be turning the staged file into a Gmail-draft attachment
       // (and deleting the staged copy) right now. Let it finish, then read the list it leaves behind
@@ -5510,6 +5519,9 @@ export default function InboxPage() {
         void fetch(`/api/gmail/drafts/${snapshot.draftId}`, { method: "DELETE" }).catch(() => {});
       }
     } catch (e) {
+      // Bring the composer back with everything intact, and the reason on top of it.
+      setComposeMinimized(false);
+      showSendSnack({ phase: "error", message: "Couldn't schedule — the reason is in the compose window." }, 5000);
       setComposeFieldError({
         title: "Couldn't schedule",
         message: e instanceof Error ? e.message : "Could not schedule this send.",

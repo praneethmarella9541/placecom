@@ -1678,6 +1678,9 @@ export default function InboxPage() {
   const [scheduleStep, setScheduleStep] = useState(0);
   const [scheduleTab, setScheduleTab] = useState<ScheduleTab>("editor");
   const [scheduleBusy, setScheduleBusy] = useState(false);
+  // True while a schedule request is reading the compose attachments: the draft autosave must not
+  // move a staged file onto the Gmail draft (and delete the staged copy) underneath it.
+  const scheduleInFlightRef = useRef(false);
   const followUpEditorRef = useRef<ScheduleFollowUpEditorHandle>(null);
   const [massRecipients, setMassRecipients] = useState<MassRecipient[]>([]);
   /**
@@ -2458,6 +2461,7 @@ export default function InboxPage() {
       draftSavePendingRef.current = true;
       return s.draftId;
     }
+    if (scheduleInFlightRef.current) return s.draftId;
 
     const uploadsInFlight = Object.keys(driveUploadProgress).length > 0;
     if (s.files.some((f) => f.kind === "staged") && uploadsInFlight) {
@@ -5380,17 +5384,50 @@ export default function InboxPage() {
       return;
     }
 
-    const snapshot = {
-      subject: composeSubject,
-      body: composeBody,
-      files: composeFiles,
-      draftId: composeDraftId,
-      labelIds: composeLabelIds,
-    };
-
     setScheduleBusy(true);
+    scheduleInFlightRef.current = true;
+    // Get the window out of the way at once and say what is happening. The request still has real
+    // work to do (copying an attachment, writing every recipient), but there is no reason to keep
+    // the composer on screen for it. Minimizing, not closing, keeps everything the user typed: if the
+    // server turns the request down, the window comes straight back with a message.
+    setComposeMinimized(true);
+    showSendSnack({
+      phase: "sending",
+      message: `Scheduling ${rows.length} email${rows.length === 1 ? "" : "s"}…`,
+    });
     try {
-      const attachments = await resolveAttachmentsForUpload(snapshot.files);
+      // An autosave that is mid-flight may be turning the staged file into a Gmail-draft attachment
+      // (and deleting the staged copy) right now. Let it finish, then read the list it leaves behind
+      // from the ref, which is always newer than React state.
+      for (let waited = 0; draftSavingRef.current && waited < 30_000; waited += 150) {
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      const snapshot = {
+        subject: composeSubject,
+        body: composeBody,
+        files: composeStateRef.current.files,
+        draftId: composeStateRef.current.draftId ?? composeDraftId,
+        labelIds: composeLabelIds,
+      };
+
+      // Small files travel in the request body. A file that already sits on the Gmail draft is named
+      // here and fetched by the server — encoding it into the body would blow past the host's request
+      // size limit for anything over a few MB. Staged files go by id.
+      const attachments = snapshot.files
+        .filter((f): f is Extract<PendingFile, { kind: "new" }> => f.kind === "new")
+        .map((f) => ({
+          filename: f.file.name,
+          mimeType: f.file.type || "application/octet-stream",
+          base64Data: f.base64,
+        }));
+      const savedAttachments = snapshot.files
+        .filter((f): f is Extract<PendingFile, { kind: "saved" }> => f.kind === "saved")
+        .map((f) => ({
+          messageId: f.messageId,
+          attachmentId: f.attachmentId,
+          filename: f.name,
+          mimeType: f.mimeType,
+        }));
       const stagedUploadIds = snapshot.files
         .filter((f): f is Extract<PendingFile, { kind: "staged" }> => f.kind === "staged")
         .map((f) => f.uploadId);
@@ -5428,6 +5465,7 @@ export default function InboxPage() {
           variableFallbacks,
           labelIds: snapshot.labelIds,
           attachments: attachments.length ? attachments : undefined,
+          savedAttachments: savedAttachments.length ? savedAttachments : undefined,
           stagedUploadIds: stagedUploadIds.length ? stagedUploadIds : undefined,
           driveFiles: driveFiles.length ? driveFiles : undefined,
           settings: {
@@ -5481,11 +5519,15 @@ export default function InboxPage() {
         void fetch(`/api/gmail/drafts/${snapshot.draftId}`, { method: "DELETE" }).catch(() => {});
       }
     } catch (e) {
+      // Bring the composer back with everything intact, and the reason on top of it.
+      setComposeMinimized(false);
+      showSendSnack({ phase: "error", message: "Couldn't schedule — the reason is in the compose window." }, 5000);
       setComposeFieldError({
         title: "Couldn't schedule",
         message: e instanceof Error ? e.message : "Could not schedule this send.",
       });
     } finally {
+      scheduleInFlightRef.current = false;
       setScheduleBusy(false);
     }
   }

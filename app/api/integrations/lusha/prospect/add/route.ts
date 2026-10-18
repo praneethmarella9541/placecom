@@ -27,6 +27,9 @@ type Incoming = {
   company?: unknown;
   location?: unknown;
   linkedin?: unknown;
+  /** Already revealed in the results table: saved with the contact, no second reveal needed. */
+  email?: unknown;
+  phone?: unknown;
 };
 
 function text(v: unknown): string | null {
@@ -66,6 +69,8 @@ export async function POST(request: Request) {
       company: text(p.company),
       location: text(p.location),
       linkedin: text(p.linkedin) ? normalizeLinkedInUrl(text(p.linkedin) as string) : null,
+      email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text(p.email) ?? "") ? (text(p.email) as string) : null,
+      phone: text(p.phone)?.slice(0, 40) ?? null,
     }))
     .filter((p) => p.name && p.lushaId);
 
@@ -103,6 +108,9 @@ export async function POST(request: Request) {
         title: p.title,
         location: p.location,
         linkedin_url: linkedin,
+        // Details the person already revealed in the results go straight onto the card.
+        ...(p.email ? { email: p.email } : {}),
+        ...(p.phone ? { phone: p.phone } : {}),
         created_by: ctx.userId,
         updated_by: ctx.userId,
         mailbox_owner_id: ctx.mailboxOwnerId,

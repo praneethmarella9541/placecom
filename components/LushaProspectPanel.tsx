@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Building2, ExternalLink, Loader2, Search, UserPlus, UserRound, Users } from "lucide-react";
+import { Building2, ExternalLink, Loader2, Mail, Phone, Search, UserPlus, UserRound, Users } from "lucide-react";
 import { LushaMark } from "@/components/LushaLogo";
 import {
   CompanyFilters,
@@ -14,6 +14,7 @@ import {
   emptyContactFilters,
 } from "@/components/LushaProspectFilters";
 import type { ProspectPerson } from "@/app/api/integrations/lusha/prospect/route";
+import type { RevealedPerson } from "@/app/api/integrations/lusha/prospect/reveal/route";
 import type { LushaCompany } from "@/lib/integrations/lusha";
 import { cn } from "@/lib/utils";
 
@@ -28,13 +29,17 @@ type AddResult = {
 
 type Tab = "contacts" | "companies";
 
+/** What the table knows about one person's reveal, and which fields were actually asked for. */
+type Shown = RevealedPerson & { askedEmails: boolean; askedPhones: boolean };
+
 /**
  * Find people and companies with the workspace's Lusha account, and add the people you want to the
  * contact book. Two tabs, like Lusha: Contacts (company and contact filters) and Companies.
  *
- * Lusha charges for every result a search returns, so the size you pick is the most a search can
- * cost and is shown on the button. Adding people costs nothing; revealing their email or phone is
- * optional, per person, and priced beforehand.
+ * A search is charged at the plan's search rate (the price list, e.g. 1 credit per 25 results), so the
+ * size you pick sets the most it can cost, shown on the button; the exact charge comes back after the
+ * search. Adding people costs nothing; revealing their email or phone is optional, per person, and
+ * priced beforehand.
  */
 export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const [tab, setTab] = useState<Tab>("contacts");
@@ -43,6 +48,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState<Set<string>>(new Set(["co-name", "ct-title"]));
   const [size, setSize] = useState(25);
   const [estimate, setEstimate] = useState<number | null>(null);
+  // The plan's search price, e.g. 1 credit per 25 results, as the price list states it.
+  const [rate, setRate] = useState<{ credits: number; perQuantity: number } | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [people, setPeople] = useState<ProspectPerson[] | null>(null);
@@ -53,6 +60,11 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   const [revealEmails, setRevealEmails] = useState(false);
   const [revealPhones, setRevealPhones] = useState(false);
   const [adding, setAdding] = useState(false);
+  // Emails and phones revealed right here in the results, by person id. Adding to contacts is a
+  // separate choice and carries these along.
+  const [revealed, setRevealed] = useState<Record<string, Shown>>({});
+  const [revealing, setRevealing] = useState(false);
+  const [revealNote, setRevealNote] = useState<string | null>(null);
   const [result, setResult] = useState<AddResult | null>(null);
 
   const companyCount = companyFilterCount(company);
@@ -70,10 +82,19 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ companies: ["probe.com"], size, dryRun: true }),
         });
-        const json = (await res.json().catch(() => ({}))) as { estimatedCredits?: number };
-        if (live) setEstimate(res.ok ? (json.estimatedCredits ?? null) : null);
+        const json = (await res.json().catch(() => ({}))) as {
+          estimatedCredits?: number;
+          rate?: { credits: number; perQuantity: number } | null;
+        };
+        if (live) {
+          setEstimate(res.ok ? (json.estimatedCredits ?? null) : null);
+          setRate(res.ok ? (json.rate ?? null) : null);
+        }
       } catch {
-        if (live) setEstimate(null);
+        if (live) {
+          setEstimate(null);
+          setRate(null);
+        }
       }
     })();
     return () => {
@@ -110,6 +131,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
       } else {
         setPeople(json.people ?? []);
         setPicked(new Set());
+        setRevealed({});
+        setRevealNote(null);
       }
       setSearchInfo({ total: json.total ?? 0, creditsCharged: json.creditsCharged ?? 0 });
     } catch {
@@ -120,15 +143,88 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
   }
 
   const addable = useMemo(() => (people ?? []).filter((p) => !p.inContactId), [people]);
+  // Anyone ticked can be revealed; only people not yet in the contact book can be added.
+  const pickedPeople = useMemo(() => (people ?? []).filter((p) => picked.has(p.id)), [people, picked]);
   const chosen = useMemo(() => addable.filter((p) => picked.has(p.id)), [addable, picked]);
+  // Most a reveal can cost, counting only what is still missing. Lusha charges each data point once,
+  // so someone already revealed for that field adds nothing.
+  // Who still has nothing on screen for what is ticked. A reveal for them can cost nothing — Lusha says 0
+  // when this account has paid for that person before — and it should still run, to bring it in.
+  const missing = useMemo(
+    () =>
+      pickedPeople.filter((p) => {
+        const noEmail = revealEmails && (revealed[p.id]?.emails.length ?? 0) === 0 && !p.contactEmail;
+        const noPhone = revealPhones && (revealed[p.id]?.phones.length ?? 0) === 0 && !p.contactPhone;
+        return noEmail || noPhone;
+      }),
+    [pickedPeople, revealed, revealEmails, revealPhones],
+  );
   const revealEstimate = useMemo(
     () =>
-      chosen.reduce(
-        (sum, p) => sum + (revealEmails ? (p.revealCost.emails ?? 1) : 0) + (revealPhones ? (p.revealCost.phones ?? 5) : 0),
-        0,
-      ),
-    [chosen, revealEmails, revealPhones],
+      missing.reduce((sum, p) => {
+        const noEmail = revealEmails && (revealed[p.id]?.emails.length ?? 0) === 0 && !p.contactEmail;
+        const noPhone = revealPhones && (revealed[p.id]?.phones.length ?? 0) === 0 && !p.contactPhone;
+        return sum + (noEmail ? (p.revealCost.emails ?? 1) : 0) + (noPhone ? (p.revealCost.phones ?? 5) : 0);
+      }, 0),
+    [missing, revealed, revealEmails, revealPhones],
   );
+
+  /** What the table shows for this person and field: revealed here, else what the contact card holds. */
+  function shownValues(p: ProspectPerson, field: "emails" | "phones"): string[] {
+    const fromReveal = revealed[p.id]?.[field] ?? [];
+    if (fromReveal.length > 0) return fromReveal;
+    const card = field === "emails" ? p.contactEmail : p.contactPhone;
+    return card ? [card] : [];
+  }
+
+  async function reveal() {
+    if (missing.length === 0 || revealing || (!revealEmails && !revealPhones)) return;
+    setRevealing(true);
+    setError(null);
+    setRevealNote(null);
+    try {
+      const res = await fetch("/api/integrations/lusha/prospect/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ids: missing.map((p) => p.id),
+          reveal: [...(revealEmails ? ["emails"] : []), ...(revealPhones ? ["phones"] : [])],
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        revealed?: Record<string, RevealedPerson>;
+        creditsCharged?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(json.error || "Could not reveal those details.");
+        return;
+      }
+      const got = json.revealed ?? {};
+      setRevealed((prev) => {
+        const next = { ...prev };
+        for (const [id, r] of Object.entries(got)) {
+          const before = prev[id];
+          // Keep what an earlier reveal already found; a later one for the other field only adds to it.
+          next[id] = {
+            emails: r.emails.length ? r.emails : (before?.emails ?? []),
+            phones: r.phones.length ? r.phones : (before?.phones ?? []),
+            status: before && r.status === "not_found" ? before.status : r.status,
+            askedEmails: revealEmails || !!before?.askedEmails,
+            askedPhones: revealPhones || !!before?.askedPhones,
+          };
+        }
+        return next;
+      });
+      const found = Object.values(got).filter((r) => r.status === "found").length;
+      const n = json.creditsCharged ?? 0;
+      setRevealNote(`Found details for ${found} of ${Object.keys(got).length} · ${n} credit${n === 1 ? "" : "s"} charged.`);
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setRevealing(false);
+    }
+  }
 
   async function add() {
     if (chosen.length === 0 || adding) return;
@@ -139,8 +235,18 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          people: chosen.map((p) => ({ id: p.id, firstName: p.firstName, lastName: p.lastName, title: p.title, company: p.company, location: p.location, linkedin: p.linkedin })),
-          reveal: [...(revealEmails ? ["emails"] : []), ...(revealPhones ? ["phones"] : [])],
+          // What was revealed in the table goes onto the new contact; adding itself costs nothing.
+          people: chosen.map((p) => ({
+            id: p.id,
+            firstName: p.firstName,
+            lastName: p.lastName,
+            title: p.title,
+            company: p.company,
+            location: p.location,
+            linkedin: p.linkedin,
+            email: revealed[p.id]?.emails[0],
+            phone: revealed[p.id]?.phones[0],
+          })),
         }),
       });
       const json = (await res.json().catch(() => ({}))) as Partial<AddResult> & { error?: string };
@@ -230,9 +336,13 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
             className="btn-primary inline-flex w-full items-center justify-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
           >
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            {searching ? "Searching…" : estimate !== null ? `Search (up to ${estimate} credits)` : "Search"}
+            {searching ? "Searching…" : estimate !== null ? `Search (up to ${estimate} credit${estimate === 1 ? "" : "s"})` : "Search"}
           </button>
-          <p className="text-[11.5px] text-[var(--color-text-faint)]">Lusha charges for each result it shows, so the number of results is the most a search can cost.</p>
+          <p className="text-[11.5px] text-[var(--color-text-faint)]">
+            {rate
+              ? `Your Lusha plan prices a search at ${rate.credits} credit${rate.credits === 1 ? "" : "s"} per ${rate.perQuantity} results, so this is the most it can cost. The exact charge is shown after the search. Adding people is free; revealing an email or phone is charged separately.`
+              : "The cost shown is the most this search can charge. The exact charge is shown after the search. Adding people is free; revealing an email or phone is charged separately."}
+          </p>
           {error ? <p className="rounded-lg bg-[var(--color-danger)]/5 px-3 py-2 text-[13px] text-[var(--color-danger)]">{error}</p> : null}
         </div>
       </div>
@@ -249,8 +359,8 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           <div className="surface-card overflow-hidden" data-testid="lusha-company-results">
             <div className="border-b border-[var(--color-border)] px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">
               {companies.length === 0
-                ? "No companies matched. Try fewer or broader filters."
-                : `Showing ${companies.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credits charged for this search`}
+                ? "No companies matched. Try fewer or broader filters. Lusha still charges 1 credit for a search that finds nothing."
+                : `Showing ${companies.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credit${searchInfo?.creditsCharged === 1 ? "" : "s"} charged for this search`}
             </div>
             {companies.length > 0 ? (
               <div className="overflow-x-auto">
@@ -345,91 +455,130 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3 text-[12.5px] text-[var(--color-text-muted)]">
             <span>
               {people.length === 0
-                ? "No one matched. Try a broader title or another company."
-                : `Showing ${people.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credits charged for this search`}
+                ? `No one matched. Try a broader title or another company. Lusha still charges 1 credit for a search that finds nothing.${company.locations.length > 0 ? " Tip: \"HQ company location\" is where a company's head office is, so it hides companies headquartered elsewhere. To find people who live in a country, use the location under Contact filters instead." : ""}`
+                : `Showing ${people.length} of ${searchInfo?.total.toLocaleString() ?? "many"} matches · ${searchInfo?.creditsCharged ?? 0} credit${searchInfo?.creditsCharged === 1 ? "" : "s"} charged for this search`}
             </span>
           </div>
 
           {people.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-[13px]">
-              <thead>
-                <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
-                  <th className="w-10 px-4 py-2.5">
-                    <input
-                      type="checkbox"
-                      aria-label="Select everyone who isn't already a contact"
-                      checked={addable.length > 0 && addable.every((p) => picked.has(p.id))}
-                      onChange={(e) => setPicked(e.target.checked ? new Set(addable.map((p) => p.id)) : new Set())}
-                    />
-                  </th>
-                  <th className="px-4 py-2.5">Name</th>
-                  <th className="px-4 py-2.5">Title</th>
-                  <th className="px-4 py-2.5">Company</th>
-                  <th className="px-4 py-2.5">Location</th>
-                  <th className="px-4 py-2.5" />
-                </tr>
-              </thead>
-              <tbody>
-                {people.map((p) => (
-                  <tr key={p.id} className={cn("border-b border-[var(--color-border)] last:border-b-0", p.inContactId && "opacity-60")}>
-                    <td className="px-4 py-2.5">
+            <>
+              {/* Wide screens: one row per person. Title and company sit under the name so there is room for
+                  the details people came to reveal — a phone number is never cut off, and nothing scrolls sideways. */}
+              <table className="hidden w-full table-auto text-left text-[13px] md:table">
+                <thead>
+                  <tr className="border-b border-[var(--color-border)] text-[11px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">
+                    <th className="w-10 px-4 py-2.5">
                       <input
                         type="checkbox"
-                        disabled={!!p.inContactId}
-                        aria-label={`Select ${p.fullName}`}
-                        checked={picked.has(p.id)}
-                        onChange={(e) =>
-                          setPicked((prev) => {
-                            const next = new Set(prev);
-                            if (e.target.checked) next.add(p.id);
-                            else next.delete(p.id);
-                            return next;
-                          })
-                        }
+                        aria-label="Select everyone"
+                        checked={people.length > 0 && people.every((p) => picked.has(p.id))}
+                        onChange={(e) => setPicked(e.target.checked ? new Set(people.map((p) => p.id)) : new Set())}
                       />
-                    </td>
-                    <td className="px-4 py-2.5 font-semibold text-[var(--color-text)]">
-                      {p.fullName}
-                      {p.inContactId ? <span className="ml-2 rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">In contacts</span> : null}
-                    </td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.title || "—"}</td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.company || "—"}</td>
-                    <td className="px-4 py-2.5 text-[var(--color-text-muted)]">{p.location || "—"}</td>
-                    <td className="px-4 py-2.5">
-                      {p.linkedin ? (
-                        <a href={p.linkedin} target="_blank" rel="noopener noreferrer" className="text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="LinkedIn" aria-label={`${p.fullName} on LinkedIn`}>
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
-                      ) : null}
-                    </td>
+                    </th>
+                    <th className="px-4 py-2.5">Person</th>
+                    <th className="px-4 py-2.5">Location</th>
+                    <th className="px-4 py-2.5">Email</th>
+                    <th className="px-4 py-2.5">Phone</th>
+                    <th className="w-10 px-4 py-2.5" />
                   </tr>
+                </thead>
+                <tbody>
+                  {people.map((p) => (
+                    <tr key={p.id} className="border-b border-[var(--color-border)] align-top last:border-b-0">
+                      <td className="px-4 py-3">
+                        <PickBox person={p} picked={picked} setPicked={setPicked} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <PersonLine person={p} />
+                      </td>
+                      <td className="min-w-[130px] px-4 py-3 text-[var(--color-text-muted)]">{p.location || "—"}</td>
+                      <td className="min-w-[210px] px-4 py-3">
+                        <RevealedValues person={revealed[p.id]} values={shownValues(p, "emails")} field="emails" />
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <RevealedValues person={revealed[p.id]} values={shownValues(p, "phones")} field="phones" />
+                      </td>
+                      <td className="px-4 py-3">
+                        <LinkedInLink person={p} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Narrow screens: one card per person, everything stacked, no sideways scrolling. */}
+              <ul className="divide-y divide-[var(--color-border)] md:hidden">
+                <li className="flex items-center gap-3 px-4 py-2.5 text-[12px] font-semibold text-[var(--color-text-muted)]">
+                  <input
+                    type="checkbox"
+                    aria-label="Select everyone"
+                    checked={people.length > 0 && people.every((p) => picked.has(p.id))}
+                    onChange={(e) => setPicked(e.target.checked ? new Set(people.map((p) => p.id)) : new Set())}
+                  />
+                  Select everyone
+                </li>
+                {people.map((p) => (
+                  <li key={p.id} className="flex gap-3 px-4 py-3 text-[13px]">
+                    <PickBox person={p} picked={picked} setPicked={setPicked} />
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <PersonLine person={p} />
+                        <LinkedInLink person={p} />
+                      </div>
+                      {p.location ? <p className="text-[var(--color-text-muted)]">{p.location}</p> : null}
+                      <RevealedValues person={revealed[p.id]} values={shownValues(p, "emails")} field="emails" />
+                      <RevealedValues person={revealed[p.id]} values={shownValues(p, "phones")} field="phones" />
+                    </div>
+                  </li>
                 ))}
-              </tbody>
-            </table>
-            </div>
+              </ul>
+            </>
           ) : null}
 
-          {chosen.length > 0 ? (
+          {pickedPeople.length > 0 ? (
             <div className="space-y-3 border-t border-[var(--color-border)] bg-[var(--color-surface-offset)] px-4 py-3">
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
-                <span className="font-semibold text-[var(--color-text)]">{chosen.length} selected</span>
+                <span className="font-semibold text-[var(--color-text)]">{pickedPeople.length} selected</span>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={revealEmails} onChange={(e) => setRevealEmails(e.target.checked)} />
-                  Also find their email
+                  Email
                 </label>
                 <label className="flex items-center gap-2">
                   <input type="checkbox" checked={revealPhones} onChange={(e) => setRevealPhones(e.target.checked)} />
-                  Also find their phone
+                  Phone
                 </label>
+                <button
+                  type="button"
+                  onClick={() => void reveal()}
+                  disabled={revealing || (!revealEmails && !revealPhones) || missing.length === 0}
+                  className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
+                >
+                  {revealing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                  {revealing ? "Revealing…" : missing.length > 0 && revealEstimate === 0 ? "Show (no charge)" : revealEstimate > 0 ? `Reveal (up to ${revealEstimate} credit${revealEstimate === 1 ? "" : "s"})` : "Reveal"}
+                </button>
+                <span className="text-[12px] text-[var(--color-text-muted)]">
+                  {!revealEmails && !revealPhones
+                    ? "Tick email and/or phone to reveal them here. 1 credit per email, 5 per phone, only when Lusha finds one."
+                    : missing.length === 0
+                      ? "Everything you ticked is already showing in the table."
+                      : revealEstimate === 0
+                        ? "Your Lusha account has already paid for these, so showing them costs no credits."
+                        : "Charged only for what Lusha finds."}
+                </span>
               </div>
+              {revealNote ? <p className="text-[12px] text-[var(--color-text-muted)]">{revealNote}</p> : null}
               <div className="flex flex-wrap items-center gap-3">
-                <button type="button" onClick={() => void add()} disabled={adding} className="btn-primary inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60">
+                <button
+                  type="button"
+                  onClick={() => void add()}
+                  disabled={adding || chosen.length === 0}
+                  className="btn-primary inline-flex items-center gap-2 px-4 py-2 text-[13px] font-semibold disabled:opacity-60"
+                >
                   {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
-                  {adding ? "Adding…" : `Add ${chosen.length} to contacts`}
+                  {adding ? "Adding…" : chosen.length > 0 ? `Add ${chosen.length} to contacts` : "Already in contacts"}
                 </button>
                 <p className="text-[12px] text-[var(--color-text-muted)]">
-                  {revealEstimate > 0 ? `Revealing could use up to ${revealEstimate} more credits.` : "Adding people costs no credits."}
+                  Adding people costs no credits and saves any email or phone you&apos;ve revealed with them.
                 </p>
               </div>
             </div>
@@ -438,5 +587,80 @@ export function LushaProspectPanel({ onAdded }: { onAdded: () => void }) {
       ) : null}
       </div>
     </div>
+  );
+}
+
+
+/** A revealed email or phone in the results table, or a quiet dash while nothing has been revealed. */
+function RevealedValues({ person, values, field }: { person: Shown | undefined; values: string[]; field: "emails" | "phones" }) {
+  if (values.length > 0) {
+    const Icon = field === "emails" ? Mail : Phone;
+    return (
+      <div className="space-y-1 text-[var(--color-text)]">
+        {values.map((v) => (
+          <div key={v} className="flex items-start gap-1.5">
+            <Icon className="mt-[3px] h-3.5 w-3.5 shrink-0 text-[var(--color-text-muted)]" strokeWidth={2} />
+            {field === "emails" ? (
+              <a href={`mailto:${v}`} className="min-w-0 break-all hover:underline">{v}</a>
+            ) : (
+              <span className="whitespace-nowrap">{v}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  const asked = person && (field === "emails" ? person.askedEmails : person.askedPhones);
+  return <span className="text-[var(--color-text-faint)]">{asked ? "Not found" : "—"}</span>;
+}
+
+/** A person's name with the "In contacts" badge, and their title and company underneath. */
+function PersonLine({ person: p }: { person: ProspectPerson }) {
+  const sub = [p.title, p.company].filter(Boolean).join(" · ");
+  return (
+    <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold text-[var(--color-text)]">
+        <span>{p.fullName}</span>
+        {p.inContactId ? (
+          <span className="whitespace-nowrap rounded-full bg-[var(--color-surface-offset)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--color-text-muted)]">In contacts</span>
+        ) : null}
+      </div>
+      {sub ? <p className="mt-0.5 text-[12.5px] text-[var(--color-text-muted)]">{sub}</p> : null}
+    </div>
+  );
+}
+
+function PickBox({
+  person: p,
+  picked,
+  setPicked,
+}: {
+  person: ProspectPerson;
+  picked: Set<string>;
+  setPicked: React.Dispatch<React.SetStateAction<Set<string>>>;
+}) {
+  return (
+    <input
+      type="checkbox"
+      aria-label={`Select ${p.fullName}`}
+      checked={picked.has(p.id)}
+      onChange={(e) =>
+        setPicked((prev) => {
+          const next = new Set(prev);
+          if (e.target.checked) next.add(p.id);
+          else next.delete(p.id);
+          return next;
+        })
+      }
+    />
+  );
+}
+
+function LinkedInLink({ person: p }: { person: ProspectPerson }) {
+  if (!p.linkedin) return null;
+  return (
+    <a href={p.linkedin} target="_blank" rel="noopener noreferrer" className="shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-text)]" title="LinkedIn" aria-label={`${p.fullName} on LinkedIn`}>
+      <ExternalLink className="h-3.5 w-3.5" />
+    </a>
   );
 }

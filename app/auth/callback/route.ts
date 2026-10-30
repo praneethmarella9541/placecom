@@ -5,6 +5,7 @@ import {
   MOBILE_OAUTH_RETURN_COOKIE,
   mobileOAuthCookieOptions,
 } from "@/lib/mobile-oauth";
+import { safeNextPath } from "@/lib/safe-redirect";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +23,7 @@ export async function GET(request: Request) {
   const error = searchParams.get("error");
   const description = searchParams.get("error_description") ?? "";
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/inbox";
+  const next = safeNextPath(searchParams.get("next"));
 
   if (error) {
     const msg = `${error}${description ? ` — ${description}` : ""}`;

@@ -8,6 +8,7 @@ import {
   SET_PASSWORD_PATH,
 } from "@/lib/password-setup";
 import { encryptToken } from "@/lib/token-crypto";
+import { safeNextPath } from "@/lib/safe-redirect";
 
 const MSG_MAX = 450;
 
@@ -58,7 +59,7 @@ export async function GET(request: Request) {
   }
 
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/inbox";
+  const next = safeNextPath(searchParams.get("next"));
 
   if (!code) {
     return NextResponse.redirect(

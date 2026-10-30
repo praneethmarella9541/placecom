@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { revokeSessions } from "@/lib/revoke-sessions";
 
 export const runtime = "nodejs";
 
@@ -49,7 +51,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const { error: signInErr } = await supabase.auth.signInWithPassword({
+  // Check the current password on a throwaway client. Signing in on the cookie-bound client would swap
+  // this browser's session for a new one; this keeps the browser's own session as the one we keep below.
+  const verifier = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
+  );
+  const { error: signInErr } = await verifier.auth.signInWithPassword({
     email: user.email,
     password: currentPassword,
   });
@@ -61,6 +70,9 @@ export async function POST(request: Request) {
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 400 });
   }
+
+  // This browser stays signed in; every other session is ended.
+  await revokeSessions(supabase, "others");
 
   return NextResponse.json({ ok: true });
 }

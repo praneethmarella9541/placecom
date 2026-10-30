@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
+import { revokeSessions } from "@/lib/revoke-sessions";
 import { MIN_PASSWORD_LENGTH, MUST_SET_PASSWORD_KEY, mustSetPassword } from "@/lib/password-setup";
 
 export const runtime = "nodejs";
@@ -47,5 +48,7 @@ export async function POST(request: Request) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
+  // The page signs this session out next; end every session now so that doesn't depend on the tab staying open.
+  await revokeSessions(supabase, "global");
   return NextResponse.json({ ok: true });
 }

@@ -28,14 +28,14 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
-import { clearSecondaryFeaturePrefetchCache } from "@/lib/workspace-feature-prefetch";
+import { clearClientData } from "@/lib/clear-client-data";
 import { pathToFeature } from "@/lib/feature-access";
 import { hiddenFeatureSet, isPathVisible } from "@/lib/module-visibility";
 import { titleCase } from "@/lib/title-case";
 import { cn } from "@/lib/utils";
 import { PlacecomLogo, PlacecomMark } from "@/components/PlacecomLogo";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
-import { clearMeMailboxCache, useMeMailbox } from "@/lib/use-me-mailbox";
+import { useMeMailbox } from "@/lib/use-me-mailbox";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { formatPhone } from "@/lib/phone-contacts-display";
 
@@ -490,8 +490,7 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
   }, [router, groups, systemItems]);
 
   const signOut = useCallback(async () => {
-    clearSecondaryFeaturePrefetchCache();
-    clearMeMailboxCache();
+    clearClientData();
     // Pause an in-progress mailbox sync before the session goes away — this needs
     // a valid session, so it has to happen ahead of signOut(). Without it the run
     // is left "idle with a cursor", which the next login treats as resumable and

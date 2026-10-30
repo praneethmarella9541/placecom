@@ -5,7 +5,8 @@ import type { MeProfileResponse } from "@/app/api/me/profile/route";
 import { PasswordInput } from "@/components/PasswordInput";
 import { titleCase } from "@/lib/title-case";
 import { formatPhone } from "@/lib/phone-contacts-display";
-import { clearMeMailboxCache, patchMeMailboxCache, refreshMeMailbox } from "@/lib/use-me-mailbox";
+import { clearClientData } from "@/lib/clear-client-data";
+import { patchMeMailboxCache, refreshMeMailbox } from "@/lib/use-me-mailbox";
 import { createClient } from "@/lib/supabase";
 import { gmailAvatarInitials } from "@/lib/gmail-avatar";
 
@@ -108,7 +109,7 @@ export function ProfileSettings() {
       const res = await fetch("/api/mailbox/disconnect", { method: "DELETE" });
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Could not disconnect Google");
-      clearMeMailboxCache();
+      clearClientData();
       await supabase.auth.signOut();
       window.location.href = "/";
     } catch (e) {

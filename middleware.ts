@@ -8,6 +8,7 @@ import {
   type FeatureKey,
 } from "@/lib/feature-access";
 import { getVerifiedUser } from "@/lib/auth-verify";
+import { isCrossSiteWrite } from "@/lib/csrf-origin";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import {
   readMiddlewareAccessCache,
@@ -61,6 +62,11 @@ function denyFeature(
 }
 
 async function runMiddleware(request: NextRequest) {
+  // Refuse writes that a page on another site made through the signed-in user's browser.
+  if (request.nextUrl.pathname.startsWith("/api/") && isCrossSiteWrite(request.method, request.headers)) {
+    return NextResponse.json({ error: "Cross-site request blocked." }, { status: 403 });
+  }
+
   if (PUBLIC_PATHS.has(request.nextUrl.pathname)) {
     return NextResponse.next();
   }

@@ -7,6 +7,7 @@ import {
   type InlineImageAttachment,
 } from "@/lib/email-html-inline-images";
 import { linkifyBareUrlsInHtml, linkifyPlainTextToHtml } from "@/lib/linkify-plain-text";
+import { fitEmailToWidth } from "@/lib/email-fit-width";
 import { collapseQuotedHtml, splitPlainTextQuote } from "@/lib/email-quote-collapse";
 
 /**
@@ -216,6 +217,8 @@ export function EmailHtmlBody({
   <base target="_blank">
   <style>
     html, body { margin: 0; padding: 0; }
+    /* Templates that pin body width + overflow:hidden would clip the scaled-to-fit content. */
+    html, body { overflow: visible !important; max-width: none !important; }
     body { overflow-wrap: break-word; word-wrap: break-word; }
     img { max-width: 100%; height: auto; }
     /* Gmail-style "···" quoted-history toggle — see lib/email-quote-collapse.ts.
@@ -295,14 +298,7 @@ export function EmailHtmlBody({
         if (cancelled || (updatePasses >= MAX_UPDATES && !opts?.force)) return;
         updatePasses += 1;
 
-        // Fixed-width marketing templates (600px+ tables) overflow a narrower
-        // pane and the iframe doesn't scroll, so they got clipped on the right.
-        // Shrink them to fit, as Gmail does. Reset first so we measure natural width.
-        const body = doc.body;
-        body.style.zoom = "";
-        const avail = iframe.clientWidth;
-        const natural = doc.documentElement.scrollWidth;
-        if (avail > 0 && natural > avail + 1) body.style.zoom = String(avail / natural);
+        fitEmailToWidth(doc, iframe.clientWidth);
 
         const h = measureVisibleEmailHeight(doc);
         if (Math.abs(h - lastMeasured) <= 2 && !opts?.force) {

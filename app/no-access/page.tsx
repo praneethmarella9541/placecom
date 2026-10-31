@@ -2,22 +2,21 @@
 
 import { useEffect, useState } from "react";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
-import { createClient } from "@/lib/supabase";
+import { fetchAuthSession, signOutOnServer } from "@/lib/client-auth";
 import { NOT_IN_TEAM_MESSAGE } from "@/lib/team-membership";
 
 /** Landing spot for a signed-in account that no admin has added to a team. */
 export default function NoAccessPage() {
-  const [supabase] = useState(() => createClient());
   const [email, setEmail] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    void supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
-  }, [supabase]);
+    void fetchAuthSession().then((s) => setEmail(s.signedIn ? s.email : null));
+  }, []);
 
   async function signOut() {
     setBusy(true);
-    await supabase.auth.signOut();
+    await signOutOnServer();
     window.location.replace("/");
   }
 

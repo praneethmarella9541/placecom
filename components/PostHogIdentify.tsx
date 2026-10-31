@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import posthog from "posthog-js";
-import { createClient } from "@/lib/supabase";
+import { fetchAuthSession } from "@/lib/client-auth";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
 
 /**
@@ -18,11 +18,10 @@ export function PostHogIdentify() {
   useEffect(() => {
     if (!me) return;
     let cancelled = false;
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      if (cancelled || !data.user) return;
-      posthog.identify(data.user.id, {
-        email: me.sessionEmail ?? data.user.email ?? undefined,
+    void fetchAuthSession().then((s) => {
+      if (cancelled || !s.signedIn) return;
+      posthog.identify(s.id, {
+        email: me.sessionEmail ?? s.email ?? undefined,
         name: me.displayUsername ?? undefined,
         role: me.role,
         group_name: me.groupName ?? undefined,
@@ -33,18 +32,8 @@ export function PostHogIdentify() {
     };
   }, [me]);
 
-  // Reset on sign-out so the next person on a shared machine doesn't inherit
-  // the previous user's identity — fires regardless of which UI element
-  // triggered the sign-out.
-  useEffect(() => {
-    const supabase = createClient();
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "SIGNED_OUT") posthog.reset();
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+  // The PostHog reset on sign-out lives in signOutOnServer (lib/client-auth.ts), which every
+  // sign-out button goes through.
 
   return null;
 }

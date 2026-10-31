@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { MeProfileResponse } from "@/app/api/me/profile/route";
 import { PasswordInput } from "@/components/PasswordInput";
 import { titleCase } from "@/lib/title-case";
 import { formatPhone } from "@/lib/phone-contacts-display";
 import { clearClientData } from "@/lib/clear-client-data";
 import { patchMeMailboxCache, refreshMeMailbox } from "@/lib/use-me-mailbox";
-import { createClient } from "@/lib/supabase";
+import { signOutOnServer } from "@/lib/client-auth";
 import { gmailAvatarInitials } from "@/lib/gmail-avatar";
 
 export function ProfileSettings() {
@@ -20,7 +20,6 @@ export function ProfileSettings() {
   const [changingPassword, setChangingPassword] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectMsg, setDisconnectMsg] = useState<string | null>(null);
-  const supabase = useMemo(() => createClient(), []);
 
   const [displayUsername, setDisplayUsername] = useState("");
   const [jobTitle, setJobTitle] = useState("");
@@ -110,7 +109,7 @@ export function ProfileSettings() {
       const data = (await res.json()) as { error?: string };
       if (!res.ok) throw new Error(data.error || "Could not disconnect Google");
       clearClientData();
-      await supabase.auth.signOut();
+      await signOutOnServer();
       window.location.href = "/";
     } catch (e) {
       setDisconnectMsg(e instanceof Error ? e.message : "Could not disconnect Google");

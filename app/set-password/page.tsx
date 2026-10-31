@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { PasswordInput } from "@/components/PasswordInput";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
-import { createClient } from "@/lib/supabase";
-import { MIN_PASSWORD_LENGTH, mustSetPassword } from "@/lib/password-setup";
+import { fetchAuthSession, signOutOnServer } from "@/lib/client-auth";
+import { MIN_PASSWORD_LENGTH } from "@/lib/password-setup";
 import { titleCase } from "@/lib/title-case";
 
 /**
@@ -13,7 +13,6 @@ import { titleCase } from "@/lib/title-case";
  * it on the login page.
  */
 export default function SetPasswordPage() {
-  const [supabase] = useState(() => createClient());
   const [ready, setReady] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [password, setPassword] = useState("");
@@ -23,22 +22,21 @@ export default function SetPasswordPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    void supabase.auth.getUser().then(({ data }) => {
-      const user = data.user;
+    void fetchAuthSession().then((user) => {
       // Only reachable through a sign-in link; anyone else has nothing to reset.
-      if (!user) {
+      if (!user.signedIn) {
         window.location.replace("/");
         return;
       }
       // Nothing to set: not signed in through a reset link (or already done).
-      if (!mustSetPassword(user)) {
+      if (!user.mustSetPassword) {
         window.location.replace("/inbox");
         return;
       }
-      setEmail(user.email ?? null);
+      setEmail(user.email);
       setReady(true);
     });
-  }, [supabase]);
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,12 +65,12 @@ export default function SetPasswordPage() {
     // Changing the password ends the session, so go to sign-in with the new one
     // (signOut clears whatever is left of it in this browser).
     window.setTimeout(() => {
-      void supabase.auth.signOut().finally(() => window.location.replace("/"));
+      void signOutOnServer().finally(() => window.location.replace("/"));
     }, 1500);
   }
 
   async function signOut() {
-    await supabase.auth.signOut();
+    await signOutOnServer();
     window.location.replace("/");
   }
 

@@ -22,6 +22,8 @@ export function createServerSupabaseClient() {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, {
                 ...options,
+                // Scripts never need the session: all auth calls go through the server.
+                httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
               })
             );

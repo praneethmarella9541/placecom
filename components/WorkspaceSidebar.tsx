@@ -26,7 +26,7 @@ import {
   Users,
   Workflow,
 } from "lucide-react";
-import { createClient } from "@/lib/supabase";
+import { signOutOnServer } from "@/lib/client-auth";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
 import { clearClientData } from "@/lib/clear-client-data";
 import { pathToFeature } from "@/lib/feature-access";
@@ -434,7 +434,6 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
 }: Props) {
   const pathname = usePathname();
   const router = useRouter();
-  const supabase = useMemo(() => createClient(), []);
   const { me } = useMeMailbox();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
 
@@ -501,9 +500,9 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebar({
       method: "DELETE",
       signal: AbortSignal.timeout(3000),
     }).catch(() => {});
-    await supabase.auth.signOut();
+    await signOutOnServer();
     window.location.href = "/";
-  }, [supabase]);
+  }, []);
 
   const onNavigateStart = useCallback((href: string) => {
     setPendingHref(href);

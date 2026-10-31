@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { GOOGLE_OAUTH_SCOPES } from "@/lib/google-config";
 import { createClient } from "@/lib/supabase";
+import { fetchAuthSession, signInWithPasswordOnServer } from "@/lib/client-auth";
 import { Skeleton } from "@/components/Skeleton";
 import { PasswordInput } from "@/components/PasswordInput";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
@@ -54,17 +55,16 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSignedIn(!!session);
+    let cancelled = false;
+    void fetchAuthSession().then((s) => {
+      if (cancelled) return;
+      setSignedIn(s.signedIn);
       setReady(true);
     });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSignedIn(!!session);
-    });
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!signedIn) {
@@ -196,7 +196,7 @@ export default function HomePage() {
     }
     setStaffMsg(null);
     setStaffPwdBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const error = await signInWithPasswordOnServer(email, password);
     setStaffPwdBusy(false);
     if (error) {
       setStaffMsg(error.message);

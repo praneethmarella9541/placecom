@@ -295,6 +295,15 @@ export function EmailHtmlBody({
         if (cancelled || (updatePasses >= MAX_UPDATES && !opts?.force)) return;
         updatePasses += 1;
 
+        // Fixed-width marketing templates (600px+ tables) overflow a narrower
+        // pane and the iframe doesn't scroll, so they got clipped on the right.
+        // Shrink them to fit, as Gmail does. Reset first so we measure natural width.
+        const body = doc.body;
+        body.style.zoom = "";
+        const avail = iframe.clientWidth;
+        const natural = doc.documentElement.scrollWidth;
+        if (avail > 0 && natural > avail + 1) body.style.zoom = String(avail / natural);
+
         const h = measureVisibleEmailHeight(doc);
         if (Math.abs(h - lastMeasured) <= 2 && !opts?.force) {
           // Same-height re-measures are skipped to avoid a pointless
@@ -325,6 +334,16 @@ export function EmailHtmlBody({
     // applyHeight's `{ force?: boolean }` parameter.
     const remeasure = () => applyHeight();
 
+    // Re-fit when the pane width changes (window resize, sidebar toggle). Width
+    // only: reacting to height would loop with setHeight above.
+    let lastWidth = iframe.clientWidth;
+    const resizeObs = new ResizeObserver(() => {
+      if (iframe.clientWidth === lastWidth) return;
+      lastWidth = iframe.clientWidth;
+      applyHeight({ force: true });
+    });
+    resizeObs.observe(iframe);
+
     const imgs = Array.from(doc.querySelectorAll<HTMLImageElement>("img"));
     for (const img of imgs) {
       if (!img.complete) {
@@ -345,6 +364,7 @@ export function EmailHtmlBody({
       clearTimeout(t2);
       clearTimeout(t3);
       cancelAnimationFrame(rafId);
+      resizeObs.disconnect();
       doc.removeEventListener("click", onLinkClick, true);
       doc.removeEventListener("toggle", onToggle, true);
     };

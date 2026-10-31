@@ -7,10 +7,12 @@ import { fileURLToPath } from "node:url";
 // "Content-Security-Policy-Report-Only" (logs violations to the console, blocks nothing).
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseWs = supabaseUrl.replace(/^https:/, "wss:");
+// Dev-only: React Refresh / HMR evaluate code; production builds do not need eval.
+const scriptEval = process.env.NODE_ENV === "production" ? "" : " 'unsafe-eval'";
 const csp = [
   "default-src 'self'",
   // Next.js injects inline scripts; tighten with nonces later.
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://us-assets.i.posthog.com https://apis.google.com",
+  `script-src 'self' 'unsafe-inline'${scriptEval} https://us-assets.i.posthog.com https://apis.google.com`,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   // Email bodies, Drive thumbnails, avatars and logos load from arbitrary https hosts.

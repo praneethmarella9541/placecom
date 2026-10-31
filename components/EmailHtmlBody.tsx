@@ -7,6 +7,7 @@ import {
   type InlineImageAttachment,
 } from "@/lib/email-html-inline-images";
 import { linkifyBareUrlsInHtml, linkifyPlainTextToHtml } from "@/lib/linkify-plain-text";
+import { fitEmailToWidth } from "@/lib/email-fit-width";
 import { collapseQuotedHtml, splitPlainTextQuote } from "@/lib/email-quote-collapse";
 
 /**
@@ -216,6 +217,8 @@ export function EmailHtmlBody({
   <base target="_blank">
   <style>
     html, body { margin: 0; padding: 0; }
+    /* Templates that pin body width + overflow:hidden would clip the scaled-to-fit content. */
+    html, body { overflow: visible !important; max-width: none !important; }
     body { overflow-wrap: break-word; word-wrap: break-word; }
     img { max-width: 100%; height: auto; }
     /* Gmail-style "···" quoted-history toggle — see lib/email-quote-collapse.ts.
@@ -295,6 +298,8 @@ export function EmailHtmlBody({
         if (cancelled || (updatePasses >= MAX_UPDATES && !opts?.force)) return;
         updatePasses += 1;
 
+        fitEmailToWidth(doc, iframe.clientWidth);
+
         const h = measureVisibleEmailHeight(doc);
         if (Math.abs(h - lastMeasured) <= 2 && !opts?.force) {
           // Same-height re-measures are skipped to avoid a pointless
@@ -325,6 +330,16 @@ export function EmailHtmlBody({
     // applyHeight's `{ force?: boolean }` parameter.
     const remeasure = () => applyHeight();
 
+    // Re-fit when the pane width changes (window resize, sidebar toggle). Width
+    // only: reacting to height would loop with setHeight above.
+    let lastWidth = iframe.clientWidth;
+    const resizeObs = new ResizeObserver(() => {
+      if (iframe.clientWidth === lastWidth) return;
+      lastWidth = iframe.clientWidth;
+      applyHeight({ force: true });
+    });
+    resizeObs.observe(iframe);
+
     const imgs = Array.from(doc.querySelectorAll<HTMLImageElement>("img"));
     for (const img of imgs) {
       if (!img.complete) {
@@ -345,6 +360,7 @@ export function EmailHtmlBody({
       clearTimeout(t2);
       clearTimeout(t3);
       cancelAnimationFrame(rafId);
+      resizeObs.disconnect();
       doc.removeEventListener("click", onLinkClick, true);
       doc.removeEventListener("toggle", onToggle, true);
     };

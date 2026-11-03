@@ -1,3 +1,4 @@
+import { blockedUploadError } from "@/lib/upload-policy";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getWebhookBaseUrlFromRequest } from "@/lib/exotel-webhook-url";
@@ -25,6 +26,8 @@ export async function POST(request: Request) {
   }
 
   const filename = resolveWhatsAppUploadFilename({ form, file, request });
+  const blocked = blockedUploadError(filename);
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
   const mimeType = file.type || "application/octet-stream";
 
   try {

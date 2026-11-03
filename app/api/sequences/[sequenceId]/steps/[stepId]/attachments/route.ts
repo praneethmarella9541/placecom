@@ -1,3 +1,4 @@
+import { blockedUploadError } from "@/lib/upload-policy";
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
@@ -101,6 +102,8 @@ export async function POST(request: Request, props: Params) {
   if (!filename || !Number.isFinite(size) || size <= 0) {
     return NextResponse.json({ error: "No file received" }, { status: 400 });
   }
+  const blocked = blockedUploadError(filename);
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
   if (sendsAsDriveLink(size)) {
     return NextResponse.json({ error: tooBigError(filename, size) }, { status: 413 });
   }
@@ -178,6 +181,11 @@ export async function PUT(request: Request, props: Params) {
   }
 
   // The size declared at signing time is only a promise; what landed counts.
+  const blocked = blockedUploadError(filename);
+  if (blocked) {
+    await removeStepAttachmentFile(path);
+    return NextResponse.json({ error: blocked }, { status: 400 });
+  }
   const size = await stepObjectSize(path);
   if (size === null) {
     return NextResponse.json(

@@ -1,3 +1,4 @@
+import { blockedUploadError } from "@/lib/upload-policy";
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import {
@@ -32,6 +33,8 @@ export async function POST(request: Request) {
   const totalSize = Number(formData.get("totalSize"));
   const mimeType = String(formData.get("mimeType") ?? "application/octet-stream").trim();
   const filename = String(formData.get("filename") ?? "attachment").trim() || "attachment";
+  const blocked = blockedUploadError(filename);
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
   const uploadIdIn = String(formData.get("uploadId") ?? "").trim();
   const chunk = formData.get("chunk");
 

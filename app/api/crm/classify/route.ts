@@ -43,7 +43,7 @@ export async function POST(request: Request) {
   const force = body.force === true;
 
   const { stages, error: stagesError } = await listOrSeedStages(supabase, user.id);
-  if (stagesError) return NextResponse.json({ error: stagesError }, { status: 500 });
+  if (stagesError) return NextResponse.json({ error: dbErrorMessage({ message: stagesError }) }, { status: 500 });
 
   const unsorted = stages.find((s) => s.is_unsorted) ?? null;
   if (stages.filter((s) => !s.is_unsorted).length === 0) {

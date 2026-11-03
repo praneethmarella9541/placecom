@@ -4,6 +4,7 @@ import { fetchAllRows } from "@/lib/supabase-fetch-all";
 import { bucketEmailConnection, type EmailConnectionStrength } from "@/lib/email-connection-strength";
 import { getConnectionStrengthSettings } from "@/lib/connection-strength-settings";
 import { isLikelyAutomatedAddress } from "@/lib/mail-noise-filter";
+import { dbErrorMessage } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 
@@ -138,11 +139,11 @@ export async function GET(request: Request) {
           .order("id", { ascending: true })
           .range(from, to)
       );
-      if (fallback.error) return NextResponse.json({ error: fallback.error }, { status: 500 });
+      if (fallback.error) return NextResponse.json({ error: dbErrorMessage({ message: fallback.error }) }, { status: 500 });
       const contacts = withLiveStrength(fallback.data.filter((c) => !isLikelyAutomatedAddress(c.email)), settings);
       return NextResponse.json({ contacts: toClientRows(contacts) });
     }
-    return NextResponse.json({ error }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage({ message: error }) }, { status: 500 });
   }
 
   const contacts = withLiveStrength(data.filter((c) => !isLikelyAutomatedAddress(c.email)), settings);

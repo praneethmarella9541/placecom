@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
+import { dbErrorMessage } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 
@@ -53,13 +54,18 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       .eq("id", leadId)
       .eq("user_id", user.id)
       .select()
-      .single();
+      .maybeSingle();
 
-    if (error) throw error;
+    if (error) {
+      return NextResponse.json({ error: dbErrorMessage(error, "Failed to update lead") }, { status: 500 });
+    }
+    // No row matched: it doesn't exist or belongs to someone else. Say the same
+    // thing for both so a lead id can't be probed for existence.
+    if (!updatedLead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
     return NextResponse.json({ lead: updatedLead });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Failed to update lead";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error("[api] lead update failed:", err);
+    return NextResponse.json({ error: "Failed to update lead" }, { status: 500 });
   }
 }

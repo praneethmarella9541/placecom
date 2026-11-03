@@ -5,6 +5,7 @@ import { fetchAllRows } from "@/lib/supabase-fetch-all";
 import { resolveCompanyNames } from "@/lib/company-enrichment";
 import { personalEmailCompanyLabel } from "@/lib/personal-email-domains";
 import { countEmailsByCompany, countEmailsByMember, type Outcomes, type ResponseRow, type SequenceSendRow, type TrackingRow, type CompanyEmailCounts } from "@/lib/analytics-emails";
+import { dbErrorMessage } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 
@@ -322,7 +323,7 @@ export async function GET(request: Request) {
   // rather than failing the whole page.
   for (const { error } of [emailsRes, jobsRes, seqRes, responsesRes]) {
     if (error && !/does not exist|42P01|schema cache|PGRST205/i.test(error)) {
-      return NextResponse.json({ error }, { status: 500 });
+      return NextResponse.json({ error: dbErrorMessage({ message: error }) }, { status: 500 });
     }
   }
 

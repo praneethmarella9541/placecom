@@ -6,6 +6,7 @@ import { bucketEmailConnection, type EmailConnectionStrength } from "@/lib/email
 import { getConnectionStrengthSettings } from "@/lib/connection-strength-settings";
 import { isLikelyAutomatedAddress } from "@/lib/mail-noise-filter";
 import { isPersonalEmailDomain, personalEmailCompanyLabel } from "@/lib/personal-email-domains";
+import { dbErrorMessage } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 
@@ -182,10 +183,10 @@ export async function GET(request: Request) {
           .order("email", { ascending: true })
           .range(from, to)
       );
-      if (fallback.error) return NextResponse.json({ error: fallback.error }, { status: 500 });
+      if (fallback.error) return NextResponse.json({ error: dbErrorMessage({ message: fallback.error }) }, { status: 500 });
       return NextResponse.json({ companies: await withLogos(groupByDomain(withLiveStrength(fallback.data, settings))) });
     }
-    return NextResponse.json({ error }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage({ message: error }) }, { status: 500 });
   }
 
   return NextResponse.json({ companies: await withLogos(groupByDomain(withLiveStrength(data, settings))) });

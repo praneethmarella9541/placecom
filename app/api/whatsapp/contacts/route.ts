@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     if (/relation.*wa_contacts.*does not exist/i.test(error)) {
       return NextResponse.json({ contacts: [] });
     }
-    return NextResponse.json({ error }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage({ message: error }) }, { status: 500 });
   }
 
   return NextResponse.json({ contacts: data });

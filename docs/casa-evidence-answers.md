@@ -44,7 +44,12 @@ The only stateless token is the Supabase access JWT. Its lifetime is **3600 seco
 
 ## 2.3.2 Session cookies are HttpOnly
 
-Fixed. The session cookie is now issued by the server only, with `HttpOnly`, `Secure` (production) and `SameSite=Lax`. Password sign-in, sign-out and the "who am I" check run through `/api/auth/signin`, `/api/auth/signout` and `/api/auth/session`; the browser never reads the session (`document.cookie` shows no `sb-*-auth-token`). Cookie writes set `httpOnly: true` in `middleware.ts`, `lib/supabase-server.ts` and `app/auth/callback/exchange/route.ts`. The only script-readable auth cookie is the short-lived OAuth PKCE code-verifier created when sign-in with Google or an email link starts; it is not a session token and is deleted when the code is exchanged. Check run on qa.thenucleus.in on 2026-11-03 while signed in: `GET /api/auth/session` returned `signedIn: true`, while `document.cookie` listed only the analytics cookie, with **no `sb-` session cookie visible to page JavaScript**. **[EVIDENCE: paste the `Set-Cookie` response header from a sign-in request (DevTools > Network > signin > Headers) showing HttpOnly; Secure; SameSite=Lax.]**
+Fixed. The session cookie is now issued by the server only, with `HttpOnly`, `Secure` (production) and `SameSite=Lax`. Password sign-in, sign-out and the "who am I" check run through `/api/auth/signin`, `/api/auth/signout` and `/api/auth/session`; the browser never reads the session (`document.cookie` shows no `sb-*-auth-token`). Cookie writes set `httpOnly: true` in `middleware.ts`, `lib/supabase-server.ts` and `app/auth/callback/exchange/route.ts`. The only script-readable auth cookie is the short-lived OAuth PKCE code-verifier created when sign-in with Google or an email link starts; it is not a session token and is deleted when the code is exchanged. Check run on qa.thenucleus.in on 2026-11-03 while signed in: `GET /api/auth/session` returned `signedIn: true`, while `document.cookie` listed only the analytics cookie, with **no `sb-` session cookie visible to page JavaScript**. Cookie attributes as shown in Chrome DevTools, Application, Cookies, `https://qa.thenucleus.in` (2026-11-03, signed in; values omitted):
+
+| Cookie | Path | HttpOnly | Secure | SameSite |
+|---|---|---|---|---|
+| `sb-mbqodmdnfefiqzjaaphy-auth-token` (Supabase session) | `/` | yes | yes | Lax |
+| `placecom_…` (application cookie) | `/` | yes | yes | Lax |
 
 ## 2.3.3 Session tokens rather than static API secrets
 

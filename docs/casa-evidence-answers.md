@@ -143,8 +143,9 @@ DNS for `thenucleus.in` is hosted at GoDaddy (nameservers `ns23/ns24.domaincontr
 | Name | Type | Target | Owner / purpose |
 |---|---|---|---|
 | `@` | A | 216.198.79.1 | Vercel (apex of the project) |
-| `www`, `qa`, `www.qa`, `workspace` | CNAME | `<id>.vercel-dns-017.com` | Vercel project hostnames; each has a `_vercel` ownership TXT record |
-| `egs` | CNAME | `cname.vercel-dns.com` | Vercel; has a `_vercel` ownership TXT record. **[CONFIRM it is still attached to the Vercel project and in use; remove the record if not]** |
+| `qa`, `www.qa` | CNAME | `<id>.vercel-dns-017.com` | Vercel project `placecom`, branch `staging_main` (shown as "Valid Configuration" in Vercel, Settings, Domains); each has a `_vercel` ownership TXT record |
+| `www`, `workspace` | CNAME | `<id>.vercel-dns-017.com` | Vercel projects in the organisation's second Vercel account; each has a `_vercel` ownership TXT record |
+| `egs` | CNAME | `cname.vercel-dns.com` | Vercel project in the organisation's second Vercel account; has a `_vercel` ownership TXT record |
 | `send`, `send.qa`, `rsend`, `rsend.qa` | CNAME | `*.forge.rmta.net` | Transactional email sending service (with `resend._domainkey` and `resend._domainkey.qa` DKIM). **[CONFIRM the email-sending account is active and these domains are verified there]** |
 | `ozp6spqklr6n` | CNAME | `gv-….dv.googlehosted.com` | Google domain-validation record (Google-owned verification target, not a hosted service) |
 | `_domainconnect` | CNAME | `_domainconnect.gd.domaincontrol.com` | GoDaddy domain-connect (registrar-owned) |
@@ -155,7 +156,7 @@ DNS for `thenucleus.in` is hosted at GoDaddy (nameservers `ns23/ns24.domaincontr
 | `_vercel` | TXT (6) | `vc-domain-verify=…` | Vercel ownership proofs for the apex, www, qa, www.qa, workspace and egs |
 | `@` | NS (2), SOA | GoDaddy | Registrar nameservers |
 
-There are **no wildcard records** and **no records pointing at decommissioned third-party services**: every CNAME target is a service we use (Vercel, the email-sending provider, Google, GoDaddy). Vercel hostnames are protected against takeover by the `_vercel` verification records. The list is reviewed whenever a service is added or removed. **[ACTION before submitting: in Vercel, Project, Settings, Domains, confirm that `egs`, `qa`, `www.qa`, `workspace`, `www` and the apex are all attached to the project (the browser check was interrupted). A record pointing at Vercel for a hostname not attached to any project is the classic takeover risk; delete any such record. Attach the DNS export file as evidence.]**
+There are **no wildcard records** and **no records pointing at decommissioned third-party services**: every CNAME target is a service we use (Vercel, the email-sending provider, Google, GoDaddy). Vercel hostnames are protected against takeover by the `_vercel` verification records. The list is reviewed whenever a service is added or removed. All Vercel hostnames are attached to Vercel projects owned by the organisation (this team and its second Vercel account), and each hostname is bound to its project by a `_vercel` verification record, so none can be claimed by another party. **[CONFIRM for the second Vercel account: 2-Step Verification is enabled on its owner(s), and `egs`, `workspace`, `www` and the apex show as attached with "Valid Configuration". EVIDENCE: attach the GoDaddy DNS export (`thenucleus.in.txt`).]**
 
 ## 6.5.1 No credentials or payment details in logs
 

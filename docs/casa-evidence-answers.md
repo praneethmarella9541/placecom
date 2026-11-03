@@ -30,9 +30,17 @@ The application ships no seeded, demo, test or vendor default accounts. Every ac
 
 ## 2.2.1 Logout and session expiry invalidate tokens
 
-**Sign out:** `POST /api/auth/signout` runs Supabase `auth.signOut()` on the server (revokes the refresh token and session) and deletes every `sb-*` cookie (`app/api/auth/signout/route.ts`). Password change or reset also ends the user's other sessions. On every request the middleware verifies the session with `auth.getUser()`, which asks the Auth server, so a signed-out or revoked session is rejected immediately even if its access token has not yet expired (`middleware.ts`, `lib/auth-user.ts`).
+**Logout invalidates the session on the server.** `POST /api/auth/signout` calls Supabase `auth.signOut()` on the server, which revokes the session and its refresh token, and then deletes every `sb-*` cookie (`app/api/auth/signout/route.ts`). Once revoked, the old tokens cannot be used again, even if a copy was kept: every request is checked by the middleware with `auth.getUser()`, which asks the Auth server whether the session is still live, so a signed-out or revoked session is rejected immediately, before its access token would have expired (`middleware.ts`, `lib/auth-user.ts`).
 
-**Expiry:** access tokens last 1 hour; refresh tokens are single-use and rotated, and Supabase's "detect and revoke potentially compromised refresh tokens" is enabled. **Current limit (Supabase Free plan, which we are staying on):** session time-boxing and inactivity timeout are Pro-plan settings and are both unset (never). A session therefore stays valid until the user signs out, the refresh token is revoked (password change or reset, sign-out), or reuse of a refresh token is detected. We state this plainly and do not claim an idle expiry.
+**Sessions are also ended automatically in these cases:**
+- **Access tokens expire after 1 hour** (3600 seconds, confirmed in the project's Authentication settings on 2026-11-03). After that a new token can only be obtained with the refresh token.
+- **Refresh tokens are single-use and rotated.** Each refresh issues a new refresh token and permanently invalidates the previous one.
+- **Reuse detection is enabled** ("Detect and revoke potentially compromised refresh tokens"). If an already-used refresh token is presented again, which is what happens when a token has been stolen and replayed, Supabase revokes the whole session family and the user must sign in again.
+- **A password change or reset ends all other sessions** (see 2.2.2).
+- **An administrator can end any user's access at once** by removing the user in the application's Team page or the Supabase dashboard, which revokes their sessions.
+- **Disconnecting Google** (`/api/mailbox/disconnect`) revokes the stored Google tokens at Google and deletes them from our database.
+
+**Idle expiry.** The assessed project uses Supabase's Free plan, where the optional "inactivity timeout" and "time-box" session settings are not available, so a session that is never signed out and never replayed persists until revoked by one of the events above. The risk this leaves is limited by the 1-hour access token, the single-use refresh token with reuse detection, server-side revocation on every request, HttpOnly + Secure cookies that page scripts cannot read (2.3.2), and an enforced Content-Security-Policy. **[CONFIRM before submitting: say "an idle-session timeout is planned" only if that is true. Do not claim one exists.]**
 
 ## 2.2.2 Other sessions ended after password change
 
@@ -40,7 +48,7 @@ Changing the password from the profile page (`/api/me/password`, requires the cu
 
 ## 2.2.3 Non-revocable stateless tokens expire within 24 hours
 
-The only stateless token is the Supabase access JWT. Its lifetime is **3600 seconds (1 hour)**, confirmed in the project's Authentication settings on 2026-11-03, well inside the 24-hour limit. Tokens are signed with an asymmetric ECC P-256 key. A previous HS256 shared-secret key (rotated about three months ago) is still listed only for verifying tokens that had not yet expired; every such token has since expired, and it is being revoked. The application also does not treat the JWT as non-revocable: each request verifies it with `auth.getUser()` (a call to the Auth server that checks the live session), so a revoked session is rejected immediately. Refresh tokens are stateful, rotated and revocable. **[ACTION: revoke the old HS256 key in Supabase, Settings, JWT Keys. This is available on the Free plan.]**
+The only stateless token is the Supabase access JWT. Its lifetime is **3600 seconds (1 hour)**, confirmed in the project's Authentication settings on 2026-11-03, well inside the 24-hour limit. Tokens are signed with an asymmetric ECC P-256 key. A previous HS256 shared-secret key (rotated about three months ago) was **revoked in the Supabase dashboard on 2026-11-03** (it had been kept only to verify tokens that had not yet expired, and every such token had already expired). The application also does not treat the JWT as non-revocable: each request verifies it with `auth.getUser()` (a call to the Auth server that checks the live session), so a revoked session is rejected immediately. Refresh tokens are stateful, rotated and revocable. **[EVIDENCE: attach or paste the Supabase JWT Keys page (text) showing only the ECC P-256 key remains.]**
 
 ## 2.3.2 Session cookies are HttpOnly
 

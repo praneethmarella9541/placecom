@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
@@ -54,7 +55,7 @@ export async function GET(request: Request) {
     if (isMissingTable(error.message)) {
       return NextResponse.json({ templates: [], configured: false, error: MIGRATION_HINT });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   const rows = (data ?? []) as Array<{ id: string }>;
@@ -115,7 +116,7 @@ export async function POST(request: Request) {
         { status: 409 }
       );
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ template: rowToMailTemplate(data as never) }, { status: 201 });

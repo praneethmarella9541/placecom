@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { assertAdminUserId } from "@/lib/admin-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
@@ -27,7 +28,7 @@ export async function DELETE(request: Request) {
     .select("refresh_token, access_token")
     .eq("owner_user_id", auth.userId)
     .maybeSingle();
-  if (readErr) return NextResponse.json({ error: readErr.message }, { status: 500 });
+  if (readErr) return NextResponse.json({ error: dbErrorMessage(readErr) }, { status: 500 });
 
   let revoked = false;
   if (row) {
@@ -37,7 +38,7 @@ export async function DELETE(request: Request) {
   }
 
   const { error: delErr } = await svc.from("google_mailbox_credentials").delete().eq("owner_user_id", auth.userId);
-  if (delErr) return NextResponse.json({ error: delErr.message }, { status: 500 });
+  if (delErr) return NextResponse.json({ error: dbErrorMessage(delErr) }, { status: 500 });
 
   return NextResponse.json({ ok: true, revoked });
 }

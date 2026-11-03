@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
@@ -53,7 +54,7 @@ export async function PATCH(request: Request, props: Params) {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (loadError) return NextResponse.json({ error: loadError.message }, { status: 500 });
+  if (loadError) return NextResponse.json({ error: dbErrorMessage(loadError) }, { status: 500 });
   if (!existing) return NextResponse.json({ error: "Template not found" }, { status: 404 });
 
   const current = rowToMailTemplate(existing as never);
@@ -66,7 +67,7 @@ export async function PATCH(request: Request, props: Params) {
       .update({ last_used_at: new Date().toISOString() })
       .eq("id", params.templateId)
       .eq("user_id", user.id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 
@@ -103,7 +104,7 @@ export async function PATCH(request: Request, props: Params) {
         { status: 409 }
       );
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   // The response replaces the client's cached copy, so it has to carry the
@@ -134,7 +135,7 @@ export async function DELETE(request: Request, props: Params) {
     .select("id")
     .maybeSingle();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   if (!data) return NextResponse.json({ error: "Template not found" }, { status: 404 });
 
   // Drive-linked files stay in the user's Drive, as compose's do.

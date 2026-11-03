@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
     .from("directory_contacts")
     .select("id, name, company, email, phone")
     .in("id", contactIds);
-  if (contactsError) return NextResponse.json({ error: contactsError.message }, { status: 500 });
+  if (contactsError) return NextResponse.json({ error: dbErrorMessage(contactsError) }, { status: 500 });
 
   const rows = (contacts ?? []) as DirectoryRow[];
   if (rows.length === 0) return NextResponse.json({ error: "No matching contacts" }, { status: 404 });
@@ -116,7 +117,7 @@ export async function POST(request: Request) {
     )
     .select("id");
 
-  if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 });
+  if (insertError) return NextResponse.json({ error: dbErrorMessage(insertError) }, { status: 500 });
 
   return NextResponse.json({
     created: inserted?.length ?? 0,

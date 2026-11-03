@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { extractAllEmailsFromText } from "@/lib/email-recipients";
@@ -115,7 +116,7 @@ export async function PATCH(request: Request, props: Params) {
     .single();
 
   if (error || !data) {
-    return NextResponse.json({ error: error?.message || "Could not update" }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error, "Could not update") }, { status: 500 });
   }
 
   return NextResponse.json({ enrollment: toEnrollmentDto(data) });

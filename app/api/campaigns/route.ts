@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 
@@ -31,7 +32,7 @@ export async function GET(request: Request) {
     .not("campaign_id", "is", null)
     .order("sent_at", { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
 
   // Counted per person: a flow scheduled with follow-ups has several rows for each recipient.
   type Row = { campaign_id: string; campaign_name: string | null; sent_at: string; opened: boolean; to_address: string };

@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { downloadTemplateFile, loadTemplateFiles } from "@/lib/mail-template-attachments";
@@ -136,7 +137,7 @@ export async function POST(request: Request, props: Params) {
 
     if (error || !inserted) {
       await removeStepAttachmentFile(storagePath);
-      return fail(500, error?.message || "Could not save file");
+      return fail(500, dbErrorMessage(error, "Could not save file"));
     }
     added.push(inserted as AttachmentRow);
   }

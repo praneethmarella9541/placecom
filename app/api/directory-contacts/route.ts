@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { isValidEmail } from "@/lib/broadcast-recipients";
@@ -226,7 +227,7 @@ export async function POST(request: Request) {
     .select("role, mailbox_owner_id")
     .eq("id", user.id)
     .maybeSingle();
-  if (profileErr) return NextResponse.json({ error: profileErr.message }, { status: 500 });
+  if (profileErr) return NextResponse.json({ error: dbErrorMessage(profileErr) }, { status: 500 });
   const mailboxOwnerId = profile?.role === "admin" ? user.id : profile?.mailbox_owner_id;
   if (!mailboxOwnerId) {
     return NextResponse.json(
@@ -246,6 +247,6 @@ export async function POST(request: Request) {
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   return NextResponse.json({ contact: data as DirectoryContact });
 }

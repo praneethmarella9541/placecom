@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { assertAdminUserId } from "@/lib/admin-auth";
@@ -62,7 +63,7 @@ async function assertExotelNotTaken(
     if (/exotel_virtual_number/i.test(error.message ?? "")) {
       return "Database migration 0023_profile_telephony.sql is required.";
     }
-    return error.message;
+    return dbErrorMessage(error);
   }
   const taken = (peers ?? []).find(
     (p) =>
@@ -102,7 +103,7 @@ export async function GET(request: Request) {
     error = fallback.error;
   }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
 
   const emailById = new Map<string, string | null>();
   try {
@@ -207,7 +208,7 @@ export async function PATCH(request: Request) {
     .eq("id", userId)
     .eq("mailbox_owner_id", adminUserId)
     .maybeSingle();
-  if (existsErr) return NextResponse.json({ error: existsErr.message }, { status: 500 });
+  if (existsErr) return NextResponse.json({ error: dbErrorMessage(existsErr) }, { status: 500 });
   if (!existing) return NextResponse.json({ error: "Team member not found." }, { status: 404 });
 
   const role =
@@ -354,7 +355,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: migrationMsg }, { status: 503 });
     }
   }
-  if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+  if (updErr) return NextResponse.json({ error: dbErrorMessage(updErr) }, { status: 500 });
   if (!updatedRow) {
     return NextResponse.json({ error: "Team member not found or update did not apply." }, { status: 404 });
   }
@@ -406,7 +407,7 @@ export async function DELETE(request: Request) {
     .eq("id", targetId)
     .eq("mailbox_owner_id", auth.userId)
     .maybeSingle();
-  if (existsErr) return NextResponse.json({ error: existsErr.message }, { status: 500 });
+  if (existsErr) return NextResponse.json({ error: dbErrorMessage(existsErr) }, { status: 500 });
   if (!existing) return NextResponse.json({ error: "Team member not found." }, { status: 404 });
   if ((existing.role as string) === "admin") {
     return NextResponse.json({ error: "Cannot delete an admin account from here." }, { status: 403 });

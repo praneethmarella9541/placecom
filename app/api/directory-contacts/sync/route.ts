@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
@@ -94,7 +95,7 @@ export async function DELETE(request: Request) {
     .or("status.eq.running,page_token.not.is.null");
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
   return NextResponse.json({ ok: true });
 }

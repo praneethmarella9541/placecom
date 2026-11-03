@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
@@ -49,7 +50,7 @@ async function loadContext(request: Request, templateId: string) {
     .eq("id", templateId)
     .eq("user_id", user.id)
     .maybeSingle();
-  if (error) return { error: NextResponse.json({ error: error.message }, { status: 500 }) } as const;
+  if (error) return { error: NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 }) } as const;
   if (!template) {
     return { error: NextResponse.json({ error: "Template not found" }, { status: 404 }) } as const;
   }
@@ -169,7 +170,7 @@ export async function PUT(request: Request, props: Params) {
     if (error && isMissingAttachmentTable(error.message)) {
       return NextResponse.json({ error: ATTACHMENT_MIGRATION_HINT }, { status: 503 });
     }
-    return NextResponse.json({ error: error?.message || "Could not save file" }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error, "Could not save file") }, { status: 500 });
   }
 
   return NextResponse.json({
@@ -217,7 +218,7 @@ async function recordDriveLink(
     if (error && isMissingAttachmentTable(error.message)) {
       return NextResponse.json({ error: ATTACHMENT_MIGRATION_HINT }, { status: 503 });
     }
-    return NextResponse.json({ error: error?.message || "Could not save file" }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error, "Could not save file") }, { status: 500 });
   }
 
   return NextResponse.json({

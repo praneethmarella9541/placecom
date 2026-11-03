@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { normalizeMergeFieldKey } from "@/lib/mail-merge";
@@ -145,7 +146,7 @@ export async function PATCH(request: Request, props: Params) {
     .single();
 
   if (error || !data) {
-    return NextResponse.json({ error: error?.message || "Could not save" }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error, "Could not save") }, { status: 500 });
   }
 
   // Send times are stored per recipient when they are enrolled, so a changed window or weekday

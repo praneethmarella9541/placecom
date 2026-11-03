@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { assertAdminUserId } from "@/lib/admin-auth";
@@ -41,7 +42,7 @@ export async function GET(request: Request) {
     if (/team_groups/i.test(error.message ?? "")) {
       return NextResponse.json({ groups: [] });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ groups: (data ?? []).map(mapGroup) });
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
     if (/unique/i.test(error.message ?? "")) {
       return NextResponse.json({ error: "A group with this name already exists." }, { status: 409 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, group: mapGroup(data as Record<string, unknown>) });
@@ -139,7 +140,7 @@ export async function PATCH(request: Request) {
     if (/unique/i.test(error.message ?? "")) {
       return NextResponse.json({ error: "A group with this name already exists." }, { status: 409 });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
   if (!data) return NextResponse.json({ error: "Group not found." }, { status: 404 });
 
@@ -174,7 +175,7 @@ export async function DELETE(request: Request) {
     .eq("id", groupId)
     .eq("mailbox_owner_id", auth.userId);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
 

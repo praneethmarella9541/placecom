@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
@@ -49,7 +50,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ skipped: true, reason: "migration_not_applied" });
   }
   if (profileErr) {
-    return NextResponse.json({ error: profileErr.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(profileErr) }, { status: 500 });
   }
   if (!profile) {
     return NextResponse.json({ skipped: true, reason: "no_profile_row" });
@@ -84,7 +85,7 @@ export async function POST(request: Request) {
     .eq("owner_user_id", user.id)
     .maybeSingle();
   if (existingErr && !isMailboxMigrationNotApplied(existingErr)) {
-    return NextResponse.json({ error: existingErr.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(existingErr) }, { status: 500 });
   }
 
   const effectiveRefresh =
@@ -117,7 +118,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ skipped: true, reason: "migration_not_applied" });
     }
     console.error(upErr);
-    return NextResponse.json({ error: upErr.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(upErr) }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });

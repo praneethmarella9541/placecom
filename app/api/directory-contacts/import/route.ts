@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import {
@@ -142,7 +143,7 @@ export async function POST(request: Request) {
     );
     if (error) {
       console.error("[contact-import] insert failed", error);
-      for (const c of chunk) failed.push({ line: c.line, reason: `Couldn't save: ${error.message}` });
+      for (const c of chunk) failed.push({ line: c.line, reason: `Couldn't save: ${dbErrorMessage(error)}` });
     } else {
       created += chunk.length;
     }
@@ -155,7 +156,7 @@ export async function POST(request: Request) {
       .update({ ...u.patch, updated_by: user.id, updated_at: now })
       .eq("id", u.existing.id);
     if (error) {
-      for (const line of u.lines) failed.push({ line, reason: `Couldn't update ${u.existing.name}: ${error.message}` });
+      for (const line of u.lines) failed.push({ line, reason: `Couldn't update ${u.existing.name}: ${dbErrorMessage(error)}` });
       return false;
     }
     return true;

@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { resolveMailboxOwnerId } from "@/lib/team-scope";
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
 
   if (error) {
     console.error("GET Interactions error:", error);
-    return NextResponse.json({ error: "Database error: " + error.message }, { status: 500 });
+    return NextResponse.json({ error: "Database error: " + dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ interactions });

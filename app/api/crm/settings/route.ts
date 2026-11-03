@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { CRM_MODELS, DEFAULT_CRM_SETTINGS, type CrmSettings } from "@/lib/crm-settings";
@@ -29,7 +30,7 @@ export async function GET(request: Request) {
     if (/relation .*crm_settings.* does not exist|could not find the table/i.test(error.message)) {
       return NextResponse.json({ settings: DEFAULT_CRM_SETTINGS, configured: false });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
   // No row yet just means "never configured" — hand back the defaults rather
   // than a null the client has to special-case.
@@ -110,6 +111,6 @@ export async function PATCH(request: Request) {
     .select(SELECT)
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   return NextResponse.json({ settings: data, configured: true });
 }

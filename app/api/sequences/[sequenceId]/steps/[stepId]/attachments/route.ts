@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { formatMb } from "@/lib/mail-template-types";
@@ -159,7 +160,7 @@ export async function PUT(request: Request, props: Params) {
       size_bytes: Math.round(size),
     });
     if (error || !data) {
-      return NextResponse.json({ error: error?.message || "Could not save file" }, { status: 500 });
+      return NextResponse.json({ error: dbErrorMessage(error, "Could not save file") }, { status: 500 });
     }
     return NextResponse.json({ attachment: toAttachmentDto(data as AttachmentRow) });
   }
@@ -198,7 +199,7 @@ export async function PUT(request: Request, props: Params) {
   if (error || !data) {
     // Don't leave bytes behind that nothing points at.
     await removeStepAttachmentFile(path);
-    return NextResponse.json({ error: error?.message || "Could not save file" }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error, "Could not save file") }, { status: 500 });
   }
 
   return NextResponse.json({ attachment: toAttachmentDto(data as AttachmentRow) });

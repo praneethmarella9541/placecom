@@ -1,3 +1,4 @@
+import { blockedUploadError } from "@/lib/upload-policy";
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
@@ -84,6 +85,8 @@ export async function POST(request: Request, props: Params) {
     return NextResponse.json({ error: "No file received" }, { status: 400 });
   }
 
+  const blocked = blockedUploadError(filename);
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
   const tooBig = storedAttachmentError(filename, size);
   if (tooBig) return NextResponse.json({ error: tooBig }, { status: 413 });
 
@@ -144,6 +147,11 @@ export async function PUT(request: Request, props: Params) {
       { error: `"${filename}" didn't finish uploading. Try attaching it again.` },
       { status: 409 }
     );
+  }
+  const blocked = blockedUploadError(filename);
+  if (blocked) {
+    await removeTemplateFiles([path]);
+    return NextResponse.json({ error: blocked }, { status: 400 });
   }
   const tooBig = storedAttachmentError(filename, size);
   if (tooBig) {

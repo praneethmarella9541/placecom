@@ -1,3 +1,4 @@
+import { blockedUploadError } from "@/lib/upload-policy";
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { uploadBinaryToDrive } from "@/lib/drive-upload";
@@ -45,6 +46,8 @@ export async function POST(request: Request) {
     typeof (file as File).name === "string" && (file as File).name
       ? (file as File).name
       : "attachment";
+  const blocked = blockedUploadError(fileName);
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
   const mimeType = file.type || "application/octet-stream";
 
   let buf: Buffer;

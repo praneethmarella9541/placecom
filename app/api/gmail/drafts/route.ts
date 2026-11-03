@@ -1,3 +1,4 @@
+import { blockedAttachmentError } from "@/lib/upload-policy";
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
@@ -440,6 +441,9 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  const blockedAttachment = blockedAttachmentError(body.attachments);
+  if (blockedAttachment) return NextResponse.json({ error: blockedAttachment }, { status: 400 });
 
   const inlineAttachmentBytes = (body.attachments ?? []).reduce(
     (sum, a) => sum + (a.base64Data?.length ?? 0),

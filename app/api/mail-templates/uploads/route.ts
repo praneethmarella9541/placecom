@@ -1,3 +1,4 @@
+import { blockedUploadError } from "@/lib/upload-policy";
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
@@ -30,6 +31,8 @@ export async function POST(request: Request) {
   if (!filename || !Number.isFinite(size) || size <= 0) {
     return NextResponse.json({ error: "No file received" }, { status: 400 });
   }
+  const blocked = blockedUploadError(filename);
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 400 });
   const tooBig = storedAttachmentError(filename, size);
   if (tooBig) return NextResponse.json({ error: tooBig }, { status: 413 });
 

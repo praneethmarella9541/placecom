@@ -13,8 +13,9 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
  *    so existing rows keep working until the backfill script has encrypted them.
  *  - encryptToken is idempotent: an already-encrypted value is returned as-is, so code
  *    that copies a stored value back into an upsert never double-encrypts.
- *  - If no key is configured, encryptToken stores plaintext (and warns once) rather than
- *    taking the mailbox down; decryptToken of an encrypted value without a key throws.
+ *  - If no key is configured, encryptToken throws in production (fails closed) and stores
+ *    plaintext with a one-time warning in development; decryptToken of an encrypted value
+ *    without a key throws.
  */
 
 const PREFIX = "enc:v1:";
@@ -52,6 +53,10 @@ export function encryptToken(plain: string | null | undefined): string | null {
   if (isEncryptedToken(plain)) return plain;
   const key = getKey();
   if (!key) {
+    // Fail closed in production: a missing key must not quietly turn into plaintext tokens at rest.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("GOOGLE_TOKEN_ENCRYPTION_KEY is not configured; refusing to store a token unencrypted");
+    }
     if (!warnedNoKey) {
       warnedNoKey = true;
       console.warn("[token-crypto] GOOGLE_TOKEN_ENCRYPTION_KEY is not set — storing Google tokens unencrypted");

@@ -125,7 +125,7 @@ export async function POST(request: Request) {
       .order("id", { ascending: true })
       .range(from, to)
   );
-  if (loadError) return NextResponse.json({ error: loadError }, { status: 500 });
+  if (loadError) return NextResponse.json({ error: dbErrorMessage({ message: loadError }) }, { status: 500 });
 
   const plan = planImport(valid, existing, mode, batchTag);
   const failed: RowProblem[] = [];

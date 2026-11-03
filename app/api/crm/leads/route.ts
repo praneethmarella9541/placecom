@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
 import { resolveMailboxOwnerId } from "@/lib/team-scope";
+import { dbErrorMessage } from "@/lib/api-error";
 
 export const runtime = "nodejs";
 
@@ -36,7 +37,7 @@ export async function GET() {
 
   if (error) {
     console.error("GET Leads error:", error);
-    return NextResponse.json({ error: "Database error: " + error }, { status: 500 });
+    return NextResponse.json({ error: "Could not load leads" }, { status: 500 });
   }
 
   // Fetch all interactions for these leads to compute last_interaction_at
@@ -111,11 +112,13 @@ export async function POST(request: Request) {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      return NextResponse.json({ error: dbErrorMessage(error, "Failed to create lead") }, { status: 500 });
+    }
 
     return NextResponse.json({ lead: newLead });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Failed to create lead";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    console.error("[api] lead create failed:", err);
+    return NextResponse.json({ error: "Failed to create lead" }, { status: 500 });
   }
 }

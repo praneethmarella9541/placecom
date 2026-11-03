@@ -58,7 +58,7 @@ async function loadContext(request: Request, templateId: string) {
 
   const files = await loadTemplateFiles(supabase, user.id, templateId);
   if (files.error) {
-    return { error: NextResponse.json({ error: files.error }, { status: 500 }) } as const;
+    return { error: NextResponse.json({ error: dbErrorMessage({ message: files.error }) }, { status: 500 }) } as const;
   }
   // Refuse before anything is uploaded, not after the bytes are already in.
   if (files.missingTable) {

@@ -105,7 +105,7 @@ export async function GET(request: Request) {
     if (/relation.*directory_contacts.*does not exist/i.test(error)) {
       return NextResponse.json({ contacts: [] });
     }
-    return NextResponse.json({ error }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage({ message: error }) }, { status: 500 });
   }
 
   const contacts = data;

@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { canonicalWhatsAppPeer } from "@/lib/whatsapp-peer";
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
     if (/wa_thread_reads/i.test(error.message) && /does not exist|42P01/i.test(error.message)) {
       return NextResponse.json({ ok: true, warning: "wa_thread_reads table missing" });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, peer, readAt: at });

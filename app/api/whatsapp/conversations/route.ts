@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
@@ -61,7 +62,7 @@ export async function GET(request: Request) {
         { status: 503 }
       );
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   const readAtByPeer = new Map<string, string>();

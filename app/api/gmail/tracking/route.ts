@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
     const { data: fallbackData, error: fallbackError } = await fallback.limit(200);
     if (fallbackError) {
       console.error(fallbackError);
-      return NextResponse.json({ error: fallbackError.message }, { status: 500 });
+      return NextResponse.json({ error: dbErrorMessage(fallbackError) }, { status: 500 });
     }
     const padded = (fallbackData || []).map((row) => ({
       ...row,
@@ -67,7 +68,7 @@ export async function GET(request: Request) {
       return NextResponse.json({ tracking: [] });
     }
     console.error(error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ tracking: data || [] });

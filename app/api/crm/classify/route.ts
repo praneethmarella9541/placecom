@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
@@ -71,7 +72,7 @@ export async function POST(request: Request) {
   if (requestedIds) query = query.in("id", requestedIds);
 
   const { data: leadRows, error: leadsError } = await query;
-  if (leadsError) return NextResponse.json({ error: leadsError.message }, { status: 500 });
+  if (leadsError) return NextResponse.json({ error: dbErrorMessage(leadsError) }, { status: 500 });
 
   const candidates = ((leadRows ?? []) as LeadRow[]).filter(
     (l) => force || l.stage_set_by !== "human"

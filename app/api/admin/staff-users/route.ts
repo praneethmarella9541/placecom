@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { assertAdminUserId } from "@/lib/admin-auth";
@@ -230,7 +231,7 @@ export async function POST(request: Request) {
 
   if (profErr) {
     await svc.auth.admin.deleteUser(newId);
-    return NextResponse.json({ error: profErr.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(profErr) }, { status: 500 });
   }
 
   if (!updated) {
@@ -263,7 +264,7 @@ export async function POST(request: Request) {
     if (insErr) {
       await svc.auth.admin.deleteUser(newId);
       return NextResponse.json(
-        { error: `Could not create profile row: ${insErr.message}` },
+        { error: `Could not create profile row: ${dbErrorMessage(insErr)}` },
         { status: 500 }
       );
     }

@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import {
@@ -40,7 +41,7 @@ export async function GET(request: Request) {
     if (/relation.*user_connection_strength_settings.*does not exist/i.test(error.message ?? "")) {
       return NextResponse.json(toResponse(null));
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json(toResponse((data as SettingsRow | null) ?? null));
@@ -133,7 +134,7 @@ export async function PATCH(request: Request) {
     .select(SETTINGS_COLUMNS)
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   return NextResponse.json(toResponse(data as SettingsRow));
 }
 
@@ -143,7 +144,7 @@ export async function DELETE(request: Request) {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { error } = await supabase.from("user_connection_strength_settings").delete().eq("user_id", user.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
 
   return NextResponse.json(toResponse(null));
 }

@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { extractAllEmailsFromText, parseRecipientValue } from "@/lib/email-recipients";
@@ -53,7 +54,7 @@ export async function GET(request: Request, props: Params) {
   if (q) query = query.ilike("email", `%${q}%`);
 
   const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
 
   // Read through to the contacts rather than serving the bag stored at
   // enrollment time: the editor's variable coverage and the preview have to
@@ -260,12 +261,12 @@ export async function POST(request: Request, props: Params) {
       .update(row.fields)
       .eq("id", row.id)
       .eq("sequence_id", sequence.id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   if (rows.length > 0) {
     const { error } = await ctx.svc.from("sequence_enrollments").insert(rows);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({

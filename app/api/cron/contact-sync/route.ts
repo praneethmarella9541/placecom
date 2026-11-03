@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-access-cron";
@@ -56,7 +57,7 @@ export async function GET(request: Request) {
     .eq("mailbox_owner_id", ownerUserId)
     .maybeSingle();
   if (stateErr) {
-    return NextResponse.json({ error: stateErr.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(stateErr) }, { status: 500 });
   }
   if (state?.status === "paused") {
     return NextResponse.json({ skipped: true, reason: "paused" });

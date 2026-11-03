@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
@@ -39,7 +40,7 @@ export async function PATCH(request: Request) {
     );
   }
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, display_username });

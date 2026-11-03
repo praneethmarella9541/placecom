@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse, after } from "next/server";
 
 import { isValidEmail } from "@/lib/broadcast-recipients";
@@ -305,7 +306,7 @@ export async function POST(request: Request) {
       .from("sequence_steps")
       .insert(stepRows)
       .select("id, step_order, kind, delay_days, delay_hours, delay_minutes, send_at");
-    if (stepsError || !insertedSteps) throw new Error(stepsError?.message || "Could not save the steps.");
+    if (stepsError || !insertedSteps) throw new Error(dbErrorMessage(stepsError, "Could not save the steps."));
 
     const steps = insertedSteps as {
       id: string;
@@ -401,7 +402,7 @@ export async function POST(request: Request) {
       });
       if (error) {
         await removeStepAttachmentFile(storagePath);
-        throw new Error(error.message);
+        throw new Error(dbErrorMessage(error));
       }
     }
     for (const d of body.driveFiles ?? []) {
@@ -414,7 +415,7 @@ export async function POST(request: Request) {
         mime_type: d.mimeType || "application/octet-stream",
         size_bytes: d.size ?? 0,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(dbErrorMessage(error));
     }
 
     // ── Plan and enrol ────────────────────────────────────────────────────
@@ -465,7 +466,7 @@ export async function POST(request: Request) {
 
     for (let i = 0; i < enrollmentRows.length; i += INSERT_CHUNK) {
       const { error } = await ctx.svc.from("sequence_enrollments").insert(enrollmentRows.slice(i, i + INSERT_CHUNK));
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(dbErrorMessage(error));
     }
 
     if (stagedIds.length > 0) void releaseStagedAttachments(ctx.userId, stagedIds).catch(() => {});

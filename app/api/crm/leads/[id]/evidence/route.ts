@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
@@ -39,7 +40,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
   const { data: settingsRow } = await supabase

@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { CRM_STAGE_SELECT, listOrSeedStages } from "@/lib/crm-stages";
@@ -74,7 +75,7 @@ export async function POST(request: Request) {
   if (error) {
     const duplicate = /duplicate key|crm_stages_user_name_key/i.test(error.message);
     return NextResponse.json(
-      { error: duplicate ? `A "${name}" column already exists.` : error.message },
+      { error: duplicate ? `A "${name}" column already exists.` : dbErrorMessage(error) },
       { status: duplicate ? 409 : 500 }
     );
   }
@@ -102,7 +103,7 @@ export async function PATCH(request: Request) {
       .update({ position: i, updated_at: new Date().toISOString() })
       .eq("id", ids[i])
       .eq("user_id", ctx.user.id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   const { stages, error } = await listOrSeedStages(ctx.supabase, ctx.user.id);

@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { assertConfigsAccess } from "@/lib/configs-auth";
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
         { status: 503 }
       );
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   let updatedByEmail: string | null = null;
@@ -111,7 +112,7 @@ export async function PUT(request: Request) {
         { status: 503 }
       );
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   // Clears this instance only; other instances pick the change up when their

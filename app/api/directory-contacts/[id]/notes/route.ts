@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 
@@ -28,7 +29,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     if (/relation.*crm_contact_notes.*does not exist/i.test(error.message)) {
       return NextResponse.json({ notes: [] });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ notes: (data ?? []) as ContactNoteRow[] });
@@ -55,6 +56,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     .select()
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   return NextResponse.json({ note: data as ContactNoteRow });
 }

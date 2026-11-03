@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { getUserExotelLine } from "@/lib/exotel-line";
@@ -46,7 +47,7 @@ export async function PATCH(
     .maybeSingle();
 
   if (fetchErr) {
-    return NextResponse.json({ error: fetchErr.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(fetchErr) }, { status: 500 });
   }
   if (!row) {
     return NextResponse.json({ error: "Message not found" }, { status: 404 });
@@ -60,7 +61,7 @@ export async function PATCH(
       .update({ deleted_at: new Date().toISOString() })
       .eq("id", id)
       .eq("business_e164", businessLine);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 
@@ -70,7 +71,7 @@ export async function PATCH(
       .update({ is_starred: body.is_starred })
       .eq("id", id)
       .eq("business_e164", businessLine);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
     return NextResponse.json({ ok: true });
   }
 
@@ -87,14 +88,14 @@ export async function PATCH(
         .update({ is_pinned: true })
         .eq("id", id)
         .eq("business_e164", businessLine);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
     } else {
       const { error } = await supabase
         .from("whatsapp_messages")
         .update({ is_pinned: false })
         .eq("id", id)
         .eq("business_e164", businessLine);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
     }
     return NextResponse.json({ ok: true });
   }

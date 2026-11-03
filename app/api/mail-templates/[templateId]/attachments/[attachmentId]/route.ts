@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { getUserOr401 } from "@/lib/request-auth";
@@ -24,7 +25,7 @@ export async function DELETE(request: Request, props: Params) {
     .select("storage_path")
     .maybeSingle();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   if (!data) return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
 
   // A Drive-linked file has no bytes here; it stays in the user's Drive, as

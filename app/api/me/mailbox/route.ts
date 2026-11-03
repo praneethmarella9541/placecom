@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import type { MeMailboxResponse } from "@/lib/me-mailbox-types";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
@@ -65,7 +66,7 @@ export async function GET(request: Request) {
     return NextResponse.json(body);
   }
   if (profileErr) {
-    return NextResponse.json({ error: profileErr.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(profileErr) }, { status: 500 });
   }
 
   if (!profile) {

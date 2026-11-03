@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 
@@ -49,7 +50,7 @@ export async function GET(request: Request) {
     if (/relation.*contact_sync_state.*does not exist/i.test(error.message)) {
       return NextResponse.json({ state: null });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   if (!data) return NextResponse.json({ state: null });

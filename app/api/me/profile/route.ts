@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
@@ -79,7 +80,7 @@ export async function GET(request: Request) {
     profileErr = fallback.error;
   }
 
-  if (profileErr) return NextResponse.json({ error: profileErr.message }, { status: 500 });
+  if (profileErr) return NextResponse.json({ error: dbErrorMessage(profileErr) }, { status: 500 });
 
   const role = (profile?.role as string) ?? "staff";
   const mailboxOwnerId =
@@ -184,10 +185,10 @@ export async function PATCH(request: Request) {
       const fallback: Record<string, unknown> = { updated_at: patch.updated_at };
       if (patch.display_username !== undefined) fallback.display_username = patch.display_username;
       const { error: fbErr } = await supabase.from("profiles").update(fallback).eq("id", user.id);
-      if (fbErr) return NextResponse.json({ error: fbErr.message }, { status: 500 });
+      if (fbErr) return NextResponse.json({ error: dbErrorMessage(fbErr) }, { status: 500 });
       return NextResponse.json({ ok: true });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });

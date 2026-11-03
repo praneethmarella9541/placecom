@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import {
@@ -46,7 +47,7 @@ export async function GET(request: Request, props: Params) {
   if (enrollmentId) query = query.eq("enrollment_id", enrollmentId);
 
   const { data, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
 
   const sends: SequenceSend[] = ((data ?? []) as SendRow[]).map((row) => ({
     id: row.id,

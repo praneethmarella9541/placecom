@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
@@ -66,7 +67,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     .select("email, phone")
     .eq("id", params.id)
     .maybeSingle();
-  if (contactError) return NextResponse.json({ error: contactError.message }, { status: 500 });
+  if (contactError) return NextResponse.json({ error: dbErrorMessage(contactError) }, { status: 500 });
   if (!contact) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
 
   try {
@@ -131,7 +132,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .limit(100);
-    if (waError) return NextResponse.json({ error: waError.message }, { status: 500 });
+    if (waError) return NextResponse.json({ error: dbErrorMessage(waError) }, { status: 500 });
 
     const byId = await attributeToOwners(waRows ?? [], user.id);
     const items: TimelineItem[] = (waRows ?? []).map((r) => ({

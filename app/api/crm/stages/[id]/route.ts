@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { CRM_STAGE_SELECT } from "@/lib/crm-stages";
@@ -43,7 +44,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   if (error) {
     const duplicate = /duplicate key|crm_stages_user_name_key/i.test(error.message);
     return NextResponse.json(
-      { error: duplicate ? "A column with that name already exists." : error.message },
+      { error: duplicate ? "A column with that name already exists." : dbErrorMessage(error) },
       { status: duplicate ? 409 : 500 }
     );
   }
@@ -93,14 +94,14 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
     })
     .eq("stage_id", params.id)
     .eq("user_id", ctx.user.id);
-  if (moveError) return NextResponse.json({ error: moveError.message }, { status: 500 });
+  if (moveError) return NextResponse.json({ error: dbErrorMessage(moveError) }, { status: 500 });
 
   const { error } = await ctx.supabase
     .from("crm_stages")
     .delete()
     .eq("id", params.id)
     .eq("user_id", ctx.user.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
 
   return NextResponse.json({ ok: true, movedTo: fallback?.id ?? null });
 }

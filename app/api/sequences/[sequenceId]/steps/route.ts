@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -99,7 +100,7 @@ export async function PUT(request: Request, props: Params) {
 
     if (step.id && existingIds.has(step.id)) {
       const { error } = await ctx.svc.from("sequence_steps").update(payload).eq("id", step.id);
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
       keptIds.push(step.id);
     } else {
       const { data, error } = await ctx.svc
@@ -108,7 +109,7 @@ export async function PUT(request: Request, props: Params) {
         .select("id")
         .single();
       if (error || !data) {
-        return NextResponse.json({ error: error?.message || "Could not save steps" }, { status: 500 });
+        return NextResponse.json({ error: dbErrorMessage(error, "Could not save steps") }, { status: 500 });
       }
       keptIds.push(data.id as string);
     }

@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { canonicalWhatsAppPeer, peerKeysForQuery } from "@/lib/whatsapp-peer";
@@ -67,7 +68,7 @@ export async function POST(request: Request) {
       { onConflict: "user_id,peer_e164" }
     );
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
 }
 
@@ -91,6 +92,6 @@ export async function DELETE(request: Request) {
     .eq("user_id", user.id)
     .in("peer_e164", peerKeys);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

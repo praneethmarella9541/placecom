@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import { removeStepAttachmentFile } from "@/lib/sequence-attachments";
@@ -37,7 +38,7 @@ export async function DELETE(request: Request, props: Params) {
     .from("sequence_step_attachments")
     .delete()
     .eq("id", row.id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
 
   // A Drive-linked file has no stored bytes; it stays in the mailbox's Drive.
   await removeStepAttachmentFile(row.storage_path as string | null);

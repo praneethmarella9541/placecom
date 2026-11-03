@@ -1,3 +1,4 @@
+import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 
 import {
@@ -37,7 +38,7 @@ export async function GET(request: Request) {
   if (!ctx.isAdmin) listQuery = listQuery.eq("created_by", ctx.userId);
   const { data, error } = await listQuery.order("updated_at", { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
 
   const rows = (data ?? []) as SequenceListRow[];
   const ids = rows.map((r) => r.id);
@@ -160,7 +161,7 @@ export async function POST(request: Request) {
     .single();
 
   if (error || !data) {
-    return NextResponse.json({ error: error?.message || "Could not create sequence" }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(error, "Could not create sequence") }, { status: 500 });
   }
 
   const { error: stepError } = await ctx.svc.from("sequence_steps").insert({
@@ -174,7 +175,7 @@ export async function POST(request: Request) {
 
   if (stepError) {
     await ctx.svc.from("sequences").delete().eq("id", data.id);
-    return NextResponse.json({ error: stepError.message }, { status: 500 });
+    return NextResponse.json({ error: dbErrorMessage(stepError) }, { status: 500 });
   }
 
   return NextResponse.json({ id: data.id as string });

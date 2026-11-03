@@ -19,15 +19,19 @@ Already fixed in code for this submission: `unsafe-eval` removed from the produc
 
 ## 1.1.1 Brute-force resistance
 
-Authentication is delegated to Supabase Auth (external service). Supabase rate-limits sign-in and OTP/link verification per IP (30 verifications per 5 minutes per IP) and returns HTTP 429 beyond that; the application passes that through (`app/api/auth/signin/route.ts`). Administrators are expected to sign in with Google SSO, so their credential is protected by Google's own abuse protections and 2-Step Verification (see 3.3.1 for the one gap). Team-member passwords have a minimum length of 8 characters. Sign-in is performed server-side only, so every attempt reaches a point where it can be rate-limited and logged. **[CONFIRM: Supabase dashboard > Authentication > Rate Limits screenshot or text values; and whether CAPTCHA protection is enabled. If Supabase is on the ADA-approved authentication list, cite where: https://appdefensealliance.dev/casa/casa-requirements ]**
+Authentication is delegated to Supabase Auth (external service); passwords never reach application storage. Settings of the assessed Supabase project (read from the dashboard on 2026-11-03): sign-in and sign-up requests are limited to **30 per 5 minutes per IP address**; OTP and magic-link verifications to **30 per 5 minutes per IP address**; token refreshes to 150 per 5 minutes per IP; outbound auth emails to 50 per hour. Beyond a limit Supabase answers HTTP 429, which the application passes through (`app/api/auth/signin/route.ts`). Sign-in is performed server-side only, so every attempt goes through one controllable point. Administrator accounts sign in with Google SSO, which adds Google's own abuse detection and 2-Step Verification; team-member passwords have a minimum length of 8 characters. Accounts of the people who administer the platform (Supabase, Vercel) have 2-Step Verification enabled (authenticator app, 2026-11-03).
+
+**Honest gaps (do not claim otherwise):** CAPTCHA protection is **not** enabled, and Supabase's "prevent use of leaked passwords" is not enabled (Pro plan feature). There is no per-account lockout beyond Supabase's per-IP limits. **[DECISION: enable CAPTCHA (Cloudflare Turnstile is supported by Supabase on the Free plan; I can wire the token through `/api/auth/signin`), and/or upgrade to Pro for leaked-password protection, then update this answer. If TAC requires the ADA-approved-service route, cite where Supabase appears on the ADA list.]**
 
 ## 1.2.1 No default credentials on public interfaces
 
-The application ships no seeded, demo, test or vendor default accounts. Every account is created by an administrator (first password set over HTTPS) or by Google sign-in. The public interfaces are: the Next.js web application and its API routes (all authenticated except `/privacy`, `/terms`, `/account-deletion` and the sign-in page); there is no CMS, no database admin UI, no framework console and no debug endpoint exposed. The database (Supabase) and hosting dashboards are third-party management planes, protected by the provider's own accounts with 2-Step Verification. **[CONFIRM: 2FA is enabled on the Supabase, Vercel and Google Cloud accounts.]**
+The application ships no seeded, demo, test or vendor default accounts. Every account is created by an administrator (first password set over HTTPS) or by Google sign-in. The public interfaces are the Next.js web application and its API routes, all of which require authentication except the sign-in page and the public `/privacy`, `/terms` and `/account-deletion` pages. There is no CMS, no database admin UI, no framework console and no debug endpoint exposed. The hosting (Vercel) and database (Supabase) dashboards are third-party management planes; the Vercel team has a single owner and 2-Step Verification (authenticator app) is enabled on both the Vercel and Supabase accounts (verified 2026-11-03). **[CONFIRM: 2-Step Verification is enforced on the Google account(s) that own the Google Cloud project and Workspace admin.]**
 
 ## 2.2.1 Logout and session expiry invalidate tokens
 
-Sign out calls `POST /api/auth/signout`, which runs Supabase `auth.signOut()` server-side (revokes the refresh token and session) and deletes every `sb-*` cookie (`app/api/auth/signout/route.ts`). Expiry: the access token (JWT) lifetime is 1 hour; the refresh token is single-use and rotated on every refresh, and a reused token is rejected (Supabase refresh-token reuse detection). On every request the middleware verifies the session with `auth.getUser()`, which asks the Auth server and fails if the session has been revoked or has expired, so an expired or signed-out session cannot be used even with a still-unexpired JWT (`middleware.ts`, `lib/auth-user.ts`). Password change or reset also ends the user's other sessions. **[CONFIRM: Supabase dashboard > Authentication > Sessions: state any inactivity timeout / time-box that is set, or say none is set and sessions last until sign-out.]**
+**Sign out:** `POST /api/auth/signout` runs Supabase `auth.signOut()` on the server (revokes the refresh token and session) and deletes every `sb-*` cookie (`app/api/auth/signout/route.ts`). Password change or reset also ends the user's other sessions. On every request the middleware verifies the session with `auth.getUser()`, which asks the Auth server, so a signed-out or revoked session is rejected immediately even if its access token has not yet expired (`middleware.ts`, `lib/auth-user.ts`).
+
+**Expiry:** access tokens last 1 hour; refresh tokens are single-use and rotated, and Supabase's "detect and revoke potentially compromised refresh tokens" is enabled. **Current gap:** the assessed project is on Supabase's Free plan, where session time-boxing and inactivity timeout cannot be configured, and both are currently 0 (never). A session therefore stays valid until the user signs out. **[BEFORE SUBMITTING: upgrade to Pro and set an inactivity timeout (for example 7 days) and optionally a time-box, then replace this paragraph with: "Sessions expire after N days of inactivity (and after M days regardless), after which the refresh token is invalid and the user must sign in again."]** Do not claim session expiry until that is set.
 
 ## 2.2.2 Other sessions ended after password change
 
@@ -35,7 +39,7 @@ Changing the password from the profile page (`/api/me/password`, requires the cu
 
 ## 2.2.3 Non-revocable stateless tokens expire within 24 hours
 
-The only stateless token is the Supabase access JWT, with a 1-hour lifetime (Supabase default `jwt_exp = 3600`). It is not treated as non-revocable by the application: each request verifies it with `auth.getUser()` (a call to the Auth server that checks the live session), so a revoked session is rejected immediately, not after JWT expiry. Refresh tokens are stateful, rotated and revocable. **[CONFIRM: dashboard shows JWT expiry = 3600.]**
+The only stateless token is the Supabase access JWT. Its lifetime is **3600 seconds (1 hour)**, confirmed in the project's Authentication settings on 2026-11-03, well inside the 24-hour limit. Tokens are signed with an asymmetric ECC P-256 key. A previous HS256 shared-secret key (rotated about three months ago) is still listed only for verifying tokens that had not yet expired; every such token has since expired, and it is being revoked. The application also does not treat the JWT as non-revocable: each request verifies it with `auth.getUser()` (a call to the Auth server that checks the live session), so a revoked session is rejected immediately. Refresh tokens are stateful, rotated and revocable. **[ACTION: revoke the old HS256 key in Supabase, Settings, JWT Keys, then keep this wording.]**
 
 ## 2.3.2 Session cookies are HttpOnly
 
@@ -72,11 +76,17 @@ The application's administrative functions (team management, module configuratio
 
 ## 4.1.1 TLS 1.2+ and secure ciphers
 
-HTTPS is enforced by the hosting platform with HSTS (`Strict-Transport-Security: max-age=63072000; includeSubDomains`, `next.config.mjs`). **[EVIDENCE REQUIRED: run https://www.ssllabs.com/ssltest/ against the production hostname, then attach the report (PDF or text) showing hostname, date, protocols (TLS 1.2/1.3 only), cipher suites and grade. Without it this requirement will fail again.]**
+Qualys SSL Labs report for the assessed hostname **qa.thenucleus.in**, assessed 2026-11-03 06:35 UTC: **overall rating A+** (certificate 100, protocol support 100, key exchange 90, cipher strength 90).
+- Protocols: **TLS 1.3 and TLS 1.2 only**. TLS 1.1, TLS 1.0, SSL 3 and SSL 2 are all disabled.
+- Cipher suites: AEAD only (AES-128/256-GCM, ChaCha20-Poly1305), all with forward secrecy; no RC4, no CBC, no DHE; weak and legacy clients fail the handshake rather than downgrading (TLS_FALLBACK_SCSV supported).
+- Key exchange includes post-quantum X25519MLKEM768, plus x25519 and secp256r1/384r1/521r1.
+- HSTS: `max-age=63072000; includeSubDomains`. Secure renegotiation supported; client-initiated renegotiation, compression, Heartbleed, ROBOT, POODLE, BEAST (mitigated) and OpenSSL CCS/padding-oracle findings are all "No".
+- Minor notes from the report: OCSP stapling not enabled; session-ID caching not used (tickets are). Neither affects the grade.
+**[EVIDENCE: attach `SSL Server Test_ qa.thenucleus.in (Powered by Qualys SSL Labs).pdf`.]**
 
 ## 4.1.2 Trusted certificates
 
-The production certificate is issued by a public CA **[name from the SSL Labs report]**, managed and renewed by the hosting platform; no self-signed or internal CA certificates are used, and the application disables no certificate validation. **[EVIDENCE REQUIRED: the "Certificate" and "Certification Paths" sections of the same SSL Labs report, showing the chain is trusted. Confirm the CA name from the report.]**
+The certificate for **qa.thenucleus.in** is issued by the public CA **Let's Encrypt (intermediate YR2, chaining to Root YR and ISRG Root X1)**, valid 2026-10-17 to 2027-01-15, RSA 2048, SHA-256 with RSA. The SSL Labs report shows **Trusted: Yes** on Mozilla, Apple, Android, Java and Windows, "Chain issues: None", revocation status Good (not revoked), and Certificate Transparency present. Certificates are issued and renewed automatically by the hosting platform (Vercel). No self-signed or internal-CA certificates are used, and the application disables no certificate validation. A DNS CAA policy is published for the domain (issuers: pki.goog, letsencrypt.org, sectigo.com, globalsign.com). **[EVIDENCE: the same SSL Labs PDF, pages 1-2 (certificate and chain sections).]**
 
 ## 4.1.3 No weak cryptography
 
@@ -128,7 +138,24 @@ Production runs the optimised `next build` / `next start` (`NODE_ENV=production`
 
 ## 6.4.1 Subdomain takeover
 
-**[EVIDENCE REQUIRED. Export your DNS zone from the registrar/DNS host and list every record: name, type, target, and who owns the target. Example row format: `app.<domain> CNAME cname.vercel-dns.com — Vercel project <name>, active`.]** Statement to pair with it: every subdomain that exists points at a resource we control and use (the Vercel project, the Supabase custom domain if any, mail records); there are no wildcard records and no records pointing at decommissioned third-party services; the list is reviewed whenever a service is added or removed. **[CONFIRM each clause against the real export.]**
+DNS for `thenucleus.in` is hosted at GoDaddy (nameservers `ns23/ns24.domaincontrol.com`). Complete zone export dated 2026-11-03 (28 records), by purpose:
+
+| Name | Type | Target | Owner / purpose |
+|---|---|---|---|
+| `@` | A | 216.198.79.1 | Vercel (apex of the project) |
+| `www`, `qa`, `www.qa`, `workspace` | CNAME | `<id>.vercel-dns-017.com` | Vercel project hostnames; each has a `_vercel` ownership TXT record |
+| `egs` | CNAME | `cname.vercel-dns.com` | Vercel; has a `_vercel` ownership TXT record. **[CONFIRM it is still attached to the Vercel project and in use; remove the record if not]** |
+| `send`, `send.qa`, `rsend`, `rsend.qa` | CNAME | `*.forge.rmta.net` | Transactional email sending service (with `resend._domainkey` and `resend._domainkey.qa` DKIM). **[CONFIRM the email-sending account is active and these domains are verified there]** |
+| `ozp6spqklr6n` | CNAME | `gv-….dv.googlehosted.com` | Google domain-validation record (Google-owned verification target, not a hosted service) |
+| `_domainconnect` | CNAME | `_domainconnect.gd.domaincontrol.com` | GoDaddy domain-connect (registrar-owned) |
+| `@` | MX | `smtp.google.com` | Google Workspace mail |
+| `@` | TXT | SPF `include:_spf.google.com`, Google site verification | Google Workspace |
+| `google._domainkey` | TXT | DKIM | Google Workspace |
+| `_dmarc` | TXT | `p=quarantine` | DMARC policy |
+| `_vercel` | TXT (6) | `vc-domain-verify=…` | Vercel ownership proofs for the apex, www, qa, www.qa, workspace and egs |
+| `@` | NS (2), SOA | GoDaddy | Registrar nameservers |
+
+There are **no wildcard records** and **no records pointing at decommissioned third-party services**: every CNAME target is a service we use (Vercel, the email-sending provider, Google, GoDaddy). Vercel hostnames are protected against takeover by the `_vercel` verification records. The list is reviewed whenever a service is added or removed. **[ACTION before submitting: in Vercel, Project, Settings, Domains, confirm that `egs`, `qa`, `www.qa`, `workspace`, `www` and the apex are all attached to the project (the browser check was interrupted). A record pointing at Vercel for a hostname not attached to any project is the classic takeover risk; delete any such record. Attach the DNS export file as evidence.]**
 
 ## 6.5.1 No credentials or payment details in logs
 
@@ -140,7 +167,7 @@ Inventory of browser storage: **sessionStorage**, used only as a cache of the si
 
 ## 6.7.1 Secure storage of server-side secrets
 
-Secrets (Supabase service-role key, Google OAuth client secret, Exotel/Lusha/OpenAI keys, `GOOGLE_TOKEN_ENCRYPTION_KEY`) are held as encrypted environment variables on the hosting platform (Vercel), set per environment, and are not committed to source control (gitleaks scan of the full history: no findings). They are read only in server code (`server-only` modules); the only `NEXT_PUBLIC_` values are the Supabase URL and anon key, which are public by design and constrained by row-level security. Third-party credentials that users store (Google tokens, integration API keys) are encrypted at rest with AES-256-GCM (see 4.1.3). **[CONFIRM and add as text: who has access to the Vercel project and its environment variables (list roles, least privilege); whether Vercel audit logging records access to environment variables (plan-dependent); and your rotation practice.]**
+Secrets (Supabase service-role key, Google OAuth client secret, third-party API keys, `GOOGLE_TOKEN_ENCRYPTION_KEY`, `CRON_SECRET`) are held as **Sensitive environment variables** on Vercel (Pro plan), set per environment (Production and Preview have separate values for the encryption key and cron secret), and are not committed to source control (gitleaks scan of the full history: no findings). Sensitive variables cannot be read back from the dashboard after creation. The Vercel team has **one member (the owner)**, so access is least-privilege by construction, and the owner account has 2-Step Verification (authenticator app) enabled, verified 2026-11-03. Secrets are read only in server code (`server-only` modules); the only `NEXT_PUBLIC_` values are the Supabase URL and anon key, which are public by design and constrained by row-level security. Google tokens and stored integration keys are additionally encrypted at rest with AES-256-GCM (see 4.1.3). Vercel's audit log is not available on the current plan, so there is no per-read access log; access is limited by the single-owner model. **[CONFIRM your rotation practice and whether `CONFIGS_ALLOWED_EMAILS` (currently a non-sensitive variable) should be marked Sensitive.]**
 
 ---
 

@@ -1,5 +1,6 @@
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
+import { checkPasswordPolicy } from "@/lib/password-policy";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { assertAdminUserId } from "@/lib/admin-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
@@ -61,6 +62,8 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  const policy = await checkPasswordPolicy(password);
+  if (!policy.ok) return NextResponse.json({ error: policy.error }, { status: 400 });
 
   let mobilePhone: string | null = null;
   if (body.mobilePhone != null && String(body.mobilePhone).trim() !== "") {

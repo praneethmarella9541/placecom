@@ -1,5 +1,6 @@
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
+import { checkPasswordPolicy } from "@/lib/password-policy";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { assertAdminUserId } from "@/lib/admin-auth";
 import { normalizeRestrictedFeatures } from "@/lib/feature-access";
@@ -193,6 +194,10 @@ export async function PATCH(request: Request) {
       { error: `Password must be at least ${MIN_PASSWORD_LEN} characters.` },
       { status: 400 },
     );
+  }
+  if (nextPassword) {
+    const policy = await checkPasswordPolicy(nextPassword);
+    if (!policy.ok) return NextResponse.json({ error: policy.error }, { status: 400 });
   }
 
   let svc: ReturnType<typeof createServiceSupabase>;

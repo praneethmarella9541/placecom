@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { checkPasswordPolicy } from "@/lib/password-policy";
 import { createClient } from "@supabase/supabase-js";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { revokeSessions } from "@/lib/revoke-sessions";
@@ -50,6 +51,8 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  const policy = await checkPasswordPolicy(newPassword);
+  if (!policy.ok) return NextResponse.json({ error: policy.error }, { status: 400 });
 
   // Check the current password on a throwaway client. Signing in on the cookie-bound client would swap
   // this browser's session for a new one; this keeps the browser's own session as the one we keep below.

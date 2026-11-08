@@ -9,6 +9,7 @@ import {
 } from "@/lib/feature-access";
 import { getVerifiedUser } from "@/lib/auth-verify";
 import { isCrossSiteWrite } from "@/lib/csrf-origin";
+import { sessionCookieOptions } from "@/lib/auth-cookies";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import {
   readMiddlewareAccessCache,
@@ -89,11 +90,7 @@ async function runMiddleware(request: NextRequest) {
             request,
           });
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, {
-              ...options,
-              httpOnly: true,
-              secure: process.env.NODE_ENV === "production",
-            })
+            supabaseResponse.cookies.set(name, value, sessionCookieOptions(options))
           );
         },
       },

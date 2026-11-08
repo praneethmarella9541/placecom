@@ -9,6 +9,7 @@ import {
 } from "@/lib/password-setup";
 import { encryptToken } from "@/lib/token-crypto";
 import { safeNextPath } from "@/lib/safe-redirect";
+import { sessionCookieOptions } from "@/lib/auth-cookies";
 
 const MSG_MAX = 450;
 
@@ -78,7 +79,7 @@ export async function GET(request: Request) {
         },
         setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
+            cookieStore.set(name, value, sessionCookieOptions(options))
           );
         },
       },

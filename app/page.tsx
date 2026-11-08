@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { GOOGLE_OAUTH_SCOPES } from "@/lib/google-config";
 import { createClient } from "@/lib/supabase";
+import { createTransientClient } from "@/lib/supabase-transient";
+import { establishSession, fetchSessionUser } from "@/lib/client-auth";
 import { Skeleton } from "@/components/Skeleton";
 import { PasswordInput } from "@/components/PasswordInput";
 import { PlacecomLogo } from "@/components/PlacecomLogo";
@@ -53,18 +55,20 @@ export default function HomePage() {
     }
   }, []);
 
+  // The session is an HttpOnly cookie the page can't read, so ask the server whether there is one.
+  // Every route into a session (Google, emailed link, password) ends in a full page navigation,
+  // so this only needs to run once on load.
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSignedIn(!!session);
+    let cancelled = false;
+    void fetchSessionUser().then((user) => {
+      if (cancelled) return;
+      setSignedIn(!!user);
       setReady(true);
     });
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSignedIn(!!session);
-    });
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!signedIn) {
@@ -196,10 +200,23 @@ export default function HomePage() {
     }
     setStaffMsg(null);
     setStaffPwdBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    // Sign in straight against Supabase with a client that stores nothing (so its per-IP
+    // rate limiting sees this browser), then have the server turn the result into the
+    // HttpOnly session cookie. The tokens exist only in this function.
+    const { data, error } = await createTransientClient().auth.signInWithPassword({ email, password });
+    if (error || !data.session) {
+      setStaffPwdBusy(false);
+      setStaffMsg(error?.message ?? "Couldn't sign you in. Try again.");
+      setStaffMsgIsError(true);
+      return;
+    }
+    const established = await establishSession({
+      access_token: data.session.access_token,
+      refresh_token: data.session.refresh_token,
+    });
     setStaffPwdBusy(false);
-    if (error) {
-      setStaffMsg(error.message);
+    if (!established.ok) {
+      setStaffMsg(established.error);
       setStaffMsgIsError(true);
       return;
     }

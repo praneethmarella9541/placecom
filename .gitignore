@@ -46,3 +46,6 @@ skills/
 skills-lock.json
 design-system/
 DESIGN_SYSTEM_DELIVERY.md
+
+# Supabase CLI link state (project ref / pooler host); local only
+supabase/.temp/

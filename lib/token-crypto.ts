@@ -14,11 +14,29 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
  *  - encryptToken is idempotent: an already-encrypted value is returned as-is, so code
  *    that copies a stored value back into an upsert never double-encrypts.
  *  - If no key is configured, encryptToken stores plaintext (and warns once) rather than
- *    taking the mailbox down; decryptToken of an encrypted value without a key throws.
+ *    taking the mailbox down — but never in production (VERCEL_ENV=production), where a missing
+ *    key throws so a misconfiguration can't quietly downgrade stored credentials to plaintext.
+ *    decryptToken of an encrypted value without a key throws.
+ *
+ * Key lifecycle: one 32-byte key per deployment, held only in the host's environment variables
+ * (never in the repo or the database). Rotating it is a deliberate re-encryption of every stored
+ * value: scripts/rotate-google-token-key.mjs.
  */
 
 const PREFIX = "enc:v1:";
 let warnedNoKey = false;
+
+/**
+ * Every way decryption can fail — no key, a malformed value, a failed authentication tag — ends
+ * in this one error with a fixed message, so nothing about *why* it failed (wrong key, tampered,
+ * truncated) reaches a caller, a response body or a log line (CASA 4.1.4).
+ */
+export class TokenDecryptError extends Error {
+  constructor() {
+    super("Stored credential could not be decrypted");
+    this.name = "TokenDecryptError";
+  }
+}
 
 function getKey(): Buffer | null {
   const raw = process.env.GOOGLE_TOKEN_ENCRYPTION_KEY?.trim();
@@ -52,6 +70,9 @@ export function encryptToken(plain: string | null | undefined): string | null {
   if (isEncryptedToken(plain)) return plain;
   const key = getKey();
   if (!key) {
+    if (process.env.VERCEL_ENV === "production") {
+      throw new Error("GOOGLE_TOKEN_ENCRYPTION_KEY is required in production; refusing to store a credential unencrypted");
+    }
     if (!warnedNoKey) {
       warnedNoKey = true;
       console.warn("[token-crypto] GOOGLE_TOKEN_ENCRYPTION_KEY is not set — storing Google tokens unencrypted");
@@ -68,11 +89,16 @@ export function encryptToken(plain: string | null | undefined): string | null {
 export function decryptToken(stored: string | null | undefined): string | null {
   if (stored == null || stored === "") return stored ?? null;
   if (!isEncryptedToken(stored)) return stored;
-  const key = getKey();
-  if (!key) throw new Error("Stored Google token is encrypted but GOOGLE_TOKEN_ENCRYPTION_KEY is not set");
-  const [iv, tag, ct] = stored.slice(PREFIX.length).split(".");
-  if (!iv || !tag || !ct) throw new Error("Malformed encrypted token");
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+  try {
+    const key = getKey();
+    if (!key) throw new Error("no key");
+    const [iv, tag, ct] = stored.slice(PREFIX.length).split(".");
+    if (!iv || !tag || !ct) throw new Error("malformed");
+    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
+    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+  } catch {
+    // One error for every cause (see TokenDecryptError): the reason stays out of responses and logs.
+    throw new TokenDecryptError();
+  }
 }

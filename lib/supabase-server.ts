@@ -2,6 +2,7 @@ import "server-only";
 
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import { sessionCookieOptions } from "@/lib/auth-cookies";
 
 export function createServerSupabaseClient() {
   // Next 15 made cookies() async. This factory stays synchronous (it has ~30 callers), so the
@@ -20,10 +21,7 @@ export function createServerSupabaseClient() {
           try {
             const cookieStore = await cookieStorePromise;
             cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, {
-                ...options,
-                secure: process.env.NODE_ENV === "production",
-              })
+              cookieStore.set(name, value, sessionCookieOptions(options))
             );
           } catch {
             // Called from a Server Component — ignore if middleware already refreshed session.

@@ -10,6 +10,12 @@ import {
 import { getVerifiedUser } from "@/lib/auth-verify";
 import { isCrossSiteWrite } from "@/lib/csrf-origin";
 import { sessionCookieOptions } from "@/lib/auth-cookies";
+import {
+  SESSION_ACTIVITY_COOKIE,
+  evaluateSession,
+  sessionLimitsFromEnv,
+  sessionSecretFromEnv,
+} from "@/lib/session-limits";
 import { mergeRestrictedFeatures } from "@/lib/profile-access";
 import {
   readMiddlewareAccessCache,
@@ -100,6 +106,52 @@ async function runMiddleware(request: NextRequest) {
   const user = await getVerifiedUser(supabase.auth);
 
   const pathname = request.nextUrl.pathname;
+
+  // Session expiry (CASA 2.2.1): idle and absolute limits enforced here because Supabase's own
+  // are not on this plan. An expired session is revoked at Supabase, its cookies are cleared and
+  // the request is answered as signed out. See lib/session-limits.ts.
+  if (user?.id) {
+    const secret = sessionSecretFromEnv();
+    if (secret) {
+      let sessionId = user.id;
+      try {
+        const { data } = await supabase.auth.getClaims();
+        const sid = (data?.claims as { session_id?: string } | undefined)?.session_id;
+        if (sid) sessionId = sid;
+      } catch {
+        /* bind to the user id instead */
+      }
+      const verdict = await evaluateSession({
+        cookie: request.cookies.get(SESSION_ACTIVITY_COOKIE)?.value,
+        bindTo: sessionId,
+        secret,
+        limits: sessionLimitsFromEnv(),
+      });
+      if (verdict.state === "expired") {
+        try {
+          await supabase.auth.signOut();
+        } catch {
+          /* cookies are cleared below either way */
+        }
+        const expired = pathname.startsWith("/api/")
+          ? NextResponse.json({ error: "Your session has expired. Sign in again.", code: "session_expired" }, { status: 401 })
+          : NextResponse.redirect(new URL("/?session=expired", request.url));
+        for (const { name } of request.cookies.getAll()) {
+          if (name.startsWith("sb-") || name === SESSION_ACTIVITY_COOKIE) {
+            expired.cookies.set(name, "", sessionCookieOptions({ maxAge: 0 }));
+          }
+        }
+        return expired;
+      }
+      if (verdict.setCookie) {
+        supabaseResponse.cookies.set(
+          SESSION_ACTIVITY_COOKIE,
+          verdict.setCookie,
+          sessionCookieOptions({ maxAge: 60 * 60 * 24 * 30 })
+        );
+      }
+    }
+  }
 
   // An account the "Forgot password?" link just signed in must choose a password
   // before anything else — this is what makes the set-password page mandatory

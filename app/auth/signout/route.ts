@@ -32,7 +32,7 @@ export async function POST(request: Request) {
 
   const cookieStore = await cookies();
   for (const { name } of cookieStore.getAll()) {
-    if (name.startsWith("sb-")) {
+    if (name.startsWith("sb-") || name === "nu-session") {
       cookieStore.set(name, "", sessionCookieOptions({ maxAge: 0 }));
     }
   }

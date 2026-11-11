@@ -113,8 +113,9 @@ export async function POST(request: Request) {
     return ok();
   }
 
-  // DEBUG: log the full raw payload so we can see exactly what Exotel sends.
-  console.log("[exotel/whatsapp] RAW body:", JSON.stringify(body).slice(0, 2000));
+  // Payload shape only (field names): the body carries customer phone numbers and message text,
+  // which must not land in logs.
+  console.log("[exotel/whatsapp] webhook fields:", Object.keys(body).join(","));
 
   const inbound = parseExotelInboundWebhook(body);
   if (!inbound) {
@@ -134,11 +135,7 @@ export async function POST(request: Request) {
 
   console.log("[exotel/whatsapp] parsed inbound:", JSON.stringify({
     messageSid: inbound.messageSid,
-    peerE164: inbound.peerE164,
-    displayBody: inbound.displayBody,
     numMedia: inbound.numMedia,
-    mediaId: inbound.mediaId,
-    mediaLink: inbound.mediaLink,
     contentType: inbound.contentType,
   }));
 

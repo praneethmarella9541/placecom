@@ -275,7 +275,7 @@ export async function POST(request: Request, props: { params: Promise<{ campaign
     return true;
   });
   if (pending.length > 0) {
-    const auth = await requireGmailAccessToken(request);
+    const auth = await requireGmailAccessToken(request, { need: "read" });
     if (auth.ok) {
       const results = await Promise.all(
         pending.map(async (row) => {
@@ -283,7 +283,7 @@ export async function POST(request: Request, props: { params: Promise<{ campaign
           const threadOutcome = await checkThreadForReplyOrBounce(auth.accessToken, row.gmail_thread_id!, {
             mailboxAddress: auth.gmailAddress,
             firstSentAt: sinceMs,
-            mailboxKey: auth.mailboxOwnerId,
+            mailboxKey: auth.mailboxKey,
           }).catch(() => null);
           if (threadOutcome) return { id: row.id, outcome: threadOutcome };
 
@@ -292,7 +292,7 @@ export async function POST(request: Request, props: { params: Promise<{ campaign
           // thread itself came back empty.
           const bounced = await searchForBounceNotification(auth.accessToken, row.to_address, {
             sinceMs,
-            mailboxKey: auth.mailboxOwnerId,
+            mailboxKey: auth.mailboxKey,
           }).catch(() => false);
           return { id: row.id, outcome: bounced ? ("bounced" as const) : null };
         })

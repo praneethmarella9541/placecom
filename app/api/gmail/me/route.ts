@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     const res = await fetchGmail(
       "https://www.googleapis.com/gmail/v1/users/me/profile",
       { headers: { Authorization: `Bearer ${auth.accessToken}` } },
-      { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.getProfile }
+      { mailboxKey: auth.mailboxKey, cost: GMAIL_COST.getProfile }
     );
     if (!res.ok) {
       return NextResponse.json({ error: "Failed to fetch Gmail profile" }, { status: 502 });

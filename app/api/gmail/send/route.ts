@@ -1,6 +1,7 @@
 import { blockedAttachmentError } from "@/lib/upload-policy";
 import { NextResponse } from "next/server";
-import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { mailboxActionDenied, requireGmailAccessToken } from "@/lib/gmail-auth";
+import { activityMailboxId } from "@/lib/mailbox-context-shared";
 import { sendMailViaGmail, type SendAttachment } from "@/lib/gmail-inbox";
 import { addMessageLabels } from "@/lib/gmail-labels";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
@@ -57,7 +58,7 @@ function getAppUrl(): string {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "reply" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -68,6 +69,10 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  // Answering inside a conversation needs "reply"; new mail and mass sends need "full".
+  const denied = mailboxActionDenied(auth, body.threadId && !body.campaignId ? "reply" : "send");
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   const blockedAttachment = blockedAttachmentError(body.attachments);
   if (blockedAttachment) return NextResponse.json({ error: blockedAttachment }, { status: 400 });
@@ -94,6 +99,7 @@ export async function POST(request: Request) {
   try {
     const base = {
       user_id: auth.userId,
+      ...(activityMailboxId(auth) ? { mailbox_id: activityMailboxId(auth) } : {}),
       gmail_message_id: "__pending__",
       to_address: to,
       subject: subject || null,
@@ -162,7 +168,7 @@ export async function POST(request: Request) {
       inReplyToMessageId: body.inReplyToMessageId,
       trackingPixelUrl,
       attachments: attachments.length ? attachments : undefined,
-      mailboxKey: auth.mailboxOwnerId,
+      mailboxKey: auth.mailboxKey,
     });
 
     if (trackRow) {
@@ -187,7 +193,7 @@ export async function POST(request: Request) {
     if (labelIds.length > 0 && sent.id) {
       try {
         await addMessageLabels(auth.accessToken, sent.id, labelIds, {
-          mailboxKey: auth.mailboxOwnerId,
+          mailboxKey: auth.mailboxKey,
         });
       } catch (e) {
         labelError = e instanceof Error ? e.message : "Could not apply labels";

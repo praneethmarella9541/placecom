@@ -120,6 +120,20 @@ export async function GET(request: Request) {
   // request never waits on company-name lookups.
   const wantCompanies = !!requestedUserId && searchParams.get("breakdown") === "companies";
   const allTime = searchParams.get("allTime") === "1";
+  // BYOM: `?mailbox=common` or `?mailbox=individual` limits every email figure to mail sent
+  // from (and replies received in) that kind of mailbox; anything else is both. Individual
+  // rows are exactly the ones with a mailbox_id (activityMailboxId), so each is one filter.
+  const mailboxParam = searchParams.get("mailbox");
+  const mailboxFilter = mailboxParam === "common" || mailboxParam === "individual" ? mailboxParam : null;
+  const byMailbox = <Q extends { is: (c: string, v: null) => Q; not: (c: string, op: string, v: null) => Q }>(
+    query: Q,
+    column = "mailbox_id"
+  ): Q =>
+    mailboxFilter === "common"
+      ? query.is(column, null)
+      : mailboxFilter === "individual"
+        ? query.not(column, "is", null)
+        : query;
 
   // Window: `?from=YYYY-MM-DD&to=YYYY-MM-DD` (both UTC midnights, inclusive).
   // `?allTime=1` loads from earliest team activity. Otherwise defaults to
@@ -180,8 +194,21 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Admin only" }, { status: 403 });
   }
 
-  const teamProfiles = (profiles ?? []).filter(
-    (p) => requestedUserId ? p.id === requestedUserId : (p.role as string) !== "admin"
+  // "Own mailboxes" lists only members who have one (connected or since disconnected — their
+  // history still counts); everyone else would only add rows of zeros.
+  let ownMailboxUserIds: Set<string> | null = null;
+  if (mailboxFilter === "individual" && !requestedUserId) {
+    const { data: own } = await svc
+      .from("mailboxes")
+      .select("owner_user_id")
+      .eq("org_owner_id", adminId)
+      .eq("mailbox_type", "individual");
+    ownMailboxUserIds = new Set((own ?? []).map((m) => m.owner_user_id as string));
+  }
+  const teamProfiles = (profiles ?? []).filter((p) =>
+    requestedUserId
+      ? p.id === requestedUserId
+      : (p.role as string) !== "admin" && (!ownMailboxUserIds || ownMailboxUserIds.has(p.id as string))
   );
   const teamUserIds = teamProfiles.map((p) => p.id as string);
   if (requestedUserId && !(profiles ?? []).some((p) => p.id === requestedUserId)) {
@@ -237,9 +264,7 @@ export async function GET(request: Request) {
   const fetchTrackingRows = async () => {
     const page = (columns: string) =>
       fetchAllRows<TrackingRow>((from, to) =>
-        svc
-          .from("email_tracking")
-          .select(columns)
+        byMailbox(svc.from("email_tracking").select(columns))
           .in("user_id", userIdsForQuery)
           .gte("sent_at", sinceIso)
           .lt("sent_at", queryUpperIso)
@@ -271,9 +296,16 @@ export async function GET(request: Request) {
     // "sent" rows: a sequence that exited early (reply, bounce, removed) never
     // writes one for the steps it skipped, so those are not counted.
     fetchAllRows<SequenceSendRow>((from, to) =>
-      svc
-        .from("sequence_sends")
-        .select("id, enrollment_id, created_at, tracking_id, gmail_thread_id, sequence_enrollments(enrolled_by, status, last_sent_at, email), sequences(created_by), email_tracking(opened)")
+      byMailbox(
+        svc
+          .from("sequence_sends")
+          .select(
+            `id, enrollment_id, created_at, tracking_id, gmail_thread_id, sequence_enrollments(enrolled_by, status, last_sent_at, email), ${
+              mailboxFilter ? "sequences!inner(created_by, mailbox_id)" : "sequences(created_by)"
+            }, email_tracking(opened)`
+          ),
+        "sequences.mailbox_id"
+      )
         .eq("mailbox_owner_id", adminId)
         .eq("status", "sent")
         .gte("created_at", sinceIso)
@@ -285,9 +317,7 @@ export async function GET(request: Request) {
     // Every reply received in the range — each message counts (0070). Counted
     // by when it arrived, not by when the email it answers was sent.
     fetchAllRows<ResponseRow & { id: string }>((from, to) =>
-      svc
-        .from("email_responses")
-        .select("id, user_id, received_at, gmail_thread_id, from_address")
+      byMailbox(svc.from("email_responses").select("id, user_id, received_at, gmail_thread_id, from_address"))
         .in("user_id", userIdsForQuery)
         .gte("received_at", sinceIso)
         .lt("received_at", queryUpperIso)

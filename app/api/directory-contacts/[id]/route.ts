@@ -1,6 +1,8 @@
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
+import { commonMailboxAccessForUser } from "@/lib/mailbox-context";
+import { createServiceSupabase } from "@/lib/supabase-service";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { isValidE164, normalizePhone } from "@/lib/phone";
 import { isLikelyLinkedInUrl, normalizeLinkedInUrl } from "@/lib/contact-directory";
@@ -42,7 +44,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   // detail page's LinkedIn link searches Gmail's name rather than whatever the
   // card was renamed to. One row by email here, not the whole table.
   const contact = data as DirectoryContact;
-  if (contact.email) {
+  if (contact.email && (await commonMailboxAccessForUser(createServiceSupabase(), user.id))) {
     const { data: synced } = await supabase
       .from("synced_contacts")
       .select("display_name, company_name")

@@ -32,7 +32,7 @@ export async function GET(request: Request) {
   const res = await fetchGmail(
     url,
     { headers: { Authorization: `Bearer ${auth.accessToken}` } },
-    { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.attachmentsGet }
+    { mailboxKey: auth.mailboxKey, cost: GMAIL_COST.attachmentsGet }
   );
 
   if (!res.ok) {

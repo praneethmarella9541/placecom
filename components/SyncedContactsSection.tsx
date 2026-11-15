@@ -14,6 +14,7 @@ import { titleCase } from "@/lib/title-case";
 import { timeAgo, truncateChars } from "@/lib/utils";
 import type { SyncedCompanyRow } from "@/app/api/synced-contacts/companies/route";
 import { SyncedPersonModal } from "@/components/SyncedPersonModal";
+import { useCommonMailboxAccess } from "@/components/AccountSwitcher";
 import { SyncedCompanyModal } from "@/components/SyncedCompanyModal";
 import { ConnectionStrengthSettingsModal } from "@/components/ConnectionStrengthSettingsModal";
 import { SimpleDropdown, type DropdownOption } from "@/components/SimpleDropdown";
@@ -74,6 +75,7 @@ export function SyncedContactsSection({
   onAddToDirectory: (input: DirectoryContactInput) => void;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("people");
+  const { access: commonAccess, canDriveContactSync } = useCommonMailboxAccess();
   // Reactive read of the shared cache (lib/synced-contacts-prefetch.ts) —
   // warmed by ContactDirectory on mount, so this is usually already populated
   // by the time a user opens this section; re-renders automatically if a
@@ -274,6 +276,16 @@ export function SyncedContactsSection({
             : "Grouped by email domain, bucketed by your strongest contact there."
         );
 
+  // BYOM: these contacts come from the common mailbox. Without access to it the server returns
+  // none, so say why instead of showing an empty list and a sync button that would be refused.
+  if (!commonAccess) {
+    return (
+      <p className="pt-4 text-[13px] text-[var(--color-text-muted)]">
+        {titleCase("Contacts synced from the common mailbox show here once your admin gives you access to it.")}
+      </p>
+    );
+  }
+
   return (
     // No heading or top border of its own: the caller (ContactDirectory) now
     // renders this inside a collapsible card that supplies both.
@@ -288,6 +300,7 @@ export function SyncedContactsSection({
             {statusLine}
           </p>
         </div>
+        {canDriveContactSync && (
         <button
           data-testid="synced-contacts-sync-btn"
           type="button"
@@ -305,6 +318,7 @@ export function SyncedContactsSection({
             syncing ? "Pause syncing" : paused ? "Resume syncing" : "Sync from mailbox"
           )}
         </button>
+        )}
       </div>
 
       {syncing && (

@@ -25,14 +25,14 @@ const CONCURRENCY = 5;
  * empty merge field.
  */
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "read" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
   // Bound outside the workers — the narrowing from `auth.ok` above does not
   // survive into a closure.
   const accessToken = auth.accessToken;
-  const mailboxKey = auth.mailboxOwnerId;
+  const mailboxKey = auth.mailboxKey;
 
   let body: { emails?: unknown };
   try {

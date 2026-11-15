@@ -56,7 +56,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     { id: lead.id as string, email: lead.email as string | null, phone: lead.phone as string | null },
     {
       accessToken: auth.ok ? auth.accessToken : undefined,
-      mailboxKey: auth.ok ? auth.mailboxOwnerId : undefined,
+      mailboxKey: auth.ok ? auth.mailboxKey : undefined,
       ownAddress: auth.ok ? auth.gmailAddress : undefined,
       seasonStart: settings.season_start_date,
       limits: DISPLAY_EVIDENCE_LIMITS,

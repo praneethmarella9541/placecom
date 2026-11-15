@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
+import { createServiceSupabase } from "@/lib/supabase-service";
+import { commonMailboxAccessForUser } from "@/lib/mailbox-context";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
 import { getAllCachedLogos } from "@/lib/company-enrichment";
 import { bucketEmailConnection, type EmailConnectionStrength } from "@/lib/email-connection-strength";
@@ -142,6 +144,10 @@ function groupByDomain(rows: Row[]): SyncedCompanyRow[] {
 export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Grouped from the contacts mined from the common mailbox — see app/api/synced-contacts.
+  if (!(await commonMailboxAccessForUser(createServiceSupabase(), user.id))) {
+    return NextResponse.json({ companies: [] });
+  }
 
   // `email` is unique on this table (migration 0037) — a stable, total sort
   // key on its own, needed so fetchAllRows' page boundaries don't skip or

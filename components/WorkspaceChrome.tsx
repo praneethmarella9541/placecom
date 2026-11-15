@@ -13,6 +13,7 @@ import { PlacecomLogo } from "@/components/PlacecomLogo";
 import { useMeMailbox } from "@/lib/use-me-mailbox";
 import { hiddenFeatureSet } from "@/lib/module-visibility";
 import { ContactPhotoProvider } from "@/components/ContactPhotoProvider";
+import { AccountSwitcher } from "@/components/AccountSwitcher";
 import { WorkspaceSidebar, workspaceNavGroups } from "@/components/WorkspaceSidebar";
 import { titleCase } from "@/lib/title-case";
 import { IconX } from "@/components/Icons";
@@ -62,7 +63,10 @@ function ContentTopbar({
         <span className="text-[var(--color-hairline)]">/</span>
         <span className="text-[14px] font-medium text-[var(--color-text-muted)]">{breadcrumb.label}</span>
       </div>
-      <div ref={actionsNode} className="flex items-center gap-2.5" />
+      <div className="flex items-center gap-2.5">
+        <div ref={actionsNode} className="flex items-center gap-2.5" />
+        <AccountSwitcher />
+      </div>
     </div>
   );
 }
@@ -221,6 +225,7 @@ export function WorkspaceChrome({ children }: { children: React.ReactNode }) {
         <Link href="/inbox" prefetch className="flex-1">
           <PlacecomLogo />
         </Link>
+        <AccountSwitcher compact />
       </header>
 
       {mobileOpen && (

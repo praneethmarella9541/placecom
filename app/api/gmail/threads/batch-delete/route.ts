@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   const forbidden = await deleteForbiddenResponse();
   if (forbidden) return forbidden;
 
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "modify" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
   }
 
   const accessToken = auth.accessToken;
-  const mailboxKey = auth.mailboxOwnerId;
+  const mailboxKey = auth.mailboxKey;
   const succeeded: string[] = [];
   const failed: { threadId: string; error: string }[] = [];
 

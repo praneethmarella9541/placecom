@@ -25,6 +25,9 @@ import type {
   SequenceStepAttachment,
 } from "@/lib/sequence-types";
 import { emptyEnrollmentCounts } from "@/lib/sequence-types";
+import { mailboxActionDenied } from "@/lib/gmail-auth";
+import { isResolveMailboxError, requestedMailboxId, resolveMailboxForUser } from "@/lib/mailbox-context";
+import { activityMailboxId } from "@/lib/mailbox-context-shared";
 
 /** Shared plumbing for the /api/sequences routes. */
 
@@ -37,6 +40,15 @@ export type SequenceContext = {
    * created. Applied by loadOwnedSequence and the list route — see `created_by` on sequences.
    */
   isAdmin: boolean;
+  /**
+   * BYOM: the individual mailbox the caller is working in, or null for the common one. Sequences
+   * are stored and listed per mailbox (see scopeToMailbox) — activityMailboxId's convention.
+   */
+  mailboxId: string | null;
+  /** Whether `sequences.mailbox_id` exists (0085) — scopeToMailbox is a no-op before it. */
+  mailboxScoped: boolean;
+  /** Whose Google credentials this caller's sends use: the org for the common mailbox, else their own. */
+  mailboxKey: string;
   svc: SupabaseClient;
 };
 
@@ -71,7 +83,46 @@ export async function getSequenceContext(
     );
   }
 
-  return { userId: authed.user.id, mailboxOwnerId, isAdmin: role === "admin", svc };
+  const mailbox = await resolveMailboxForUser(svc, {
+    userId: authed.user.id,
+    role,
+    orgOwnerId: mailboxOwnerId,
+    requestedId: requestedMailboxId(request),
+  });
+  if (isResolveMailboxError(mailbox)) {
+    return NextResponse.json({ error: mailbox.error }, { status: mailbox.status });
+  }
+  // Scheduling mail sends new mail, so anything but reading needs full access to the common mailbox.
+  const method = request.method.toUpperCase();
+  if (method !== "GET" && method !== "HEAD") {
+    const denied = mailboxActionDenied(mailbox, "send");
+    if (denied) return NextResponse.json({ error: denied }, { status: 403 });
+  }
+
+  return {
+    userId: authed.user.id,
+    mailboxOwnerId,
+    // In their own mailbox a user sees everything in it, as an admin does in the common one.
+    isAdmin: role === "admin" || mailbox.mailboxType === "individual",
+    mailboxId: activityMailboxId(mailbox),
+    mailboxScoped: mailbox.migrated,
+    mailboxKey: mailbox.credentialOwnerId,
+    svc,
+  };
+}
+
+/** Limits a `sequences` query to the caller's active mailbox. */
+export function scopeToMailbox<Q extends { eq: (c: string, v: string) => Q; is: (c: string, v: null) => Q }>(
+  query: Q,
+  ctx: Pick<SequenceContext, "mailboxId" | "mailboxScoped">,
+): Q {
+  if (ctx.mailboxId) return query.eq("mailbox_id", ctx.mailboxId);
+  return ctx.mailboxScoped ? query.is("mailbox_id", null) : query;
+}
+
+/** `mailbox_id` for a new sequence row — omitted for the common mailbox so inserts work before 0085. */
+export function sequenceMailboxColumn(ctx: Pick<SequenceContext, "mailboxId">): { mailbox_id?: string } {
+  return ctx.mailboxId ? { mailbox_id: ctx.mailboxId } : {};
 }
 
 export function isErrorResponse(value: unknown): value is NextResponse {
@@ -367,6 +418,7 @@ export async function loadOwnedSequence(
     .select("*")
     .eq("id", sequenceId)
     .eq("mailbox_owner_id", ctx.mailboxOwnerId);
+  query = scopeToMailbox(query, ctx);
   // Not an admin: only their own. Every /api/sequences/[sequenceId]/* route loads the sequence
   // through here, so this one line keeps all of them private.
   if (!ctx.isAdmin) query = query.eq("created_by", ctx.userId);

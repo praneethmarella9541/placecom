@@ -9,6 +9,8 @@ import { SHOW_SPEND, SHOW_TOKENS } from "@/lib/analytics-flags";
 import { EmailsChart } from "@/components/analytics/EmailsChart";
 import { InfoTip, METRIC_HELP } from "@/components/analytics/InfoTip";
 import { fetchAnalytics } from "@/lib/analytics-prefetch";
+import { useMeMailbox } from "@/lib/use-me-mailbox";
+import { hiddenFeatureSet } from "@/lib/module-visibility";
 import { Sparkline } from "@/components/analytics/Sparkline";
 import { apiSeriesToPoints, bucketPoints, percent, relativeDay, toCsv, type DayPoint } from "@/lib/analytics-chart";
 import { ArrowLeft, ChevronRight, Cpu, Download, IndianRupee, Loader2, Mail, MailOpen, MailX, Reply } from "lucide-react";
@@ -144,6 +146,11 @@ export default function AdminAnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<DateRange>(() => rangeEndingToday(14));
+  // BYOM: which mailboxes the email figures cover. Only offered while the module is on.
+  const { me } = useMeMailbox();
+  const showMailboxFilter = Boolean(me) && !hiddenFeatureSet(me).has("byom");
+  const [mailboxScope, setMailboxScope] = useState<"all" | "common" | "individual">("all");
+  const scope = showMailboxFilter ? mailboxScope : "all";
 
   // Fetch Exotel balance once on mount — shared wallet, still drawn on by SMS.
   // Skipped entirely while spend is hidden, so no request is made for it.
@@ -179,9 +186,9 @@ export default function AdminAnalyticsPage() {
     setAccountTotals(j.accountTotals ?? null);
   }, []);
 
-  const load = useCallback(async (r: DateRange) => {
+  const load = useCallback(async (r: DateRange, mailbox: "all" | "common" | "individual") => {
     const requestId = ++latestRequest.current;
-    const qs = r.allTime ? "?allTime=1" : `?from=${r.from}&to=${r.to}`;
+    const qs = (r.allTime ? "?allTime=1" : `?from=${r.from}&to=${r.to}`) + (mailbox === "all" ? "" : `&mailbox=${mailbox}`);
     const cached = rangeCache.current.get(qs);
     setError(null);
     if (cached) apply(cached);
@@ -201,7 +208,7 @@ export default function AdminAnalyticsPage() {
     }
   }, [apply]);
 
-  useEffect(() => { void load(range); }, [load, range]);
+  useEffect(() => { void load(range, scope); }, [load, range, scope]);
 
   // Busiest first: by spend when shown, otherwise by emails sent (then tokens,
   // when those are shown).
@@ -320,7 +327,39 @@ export default function AdminAnalyticsPage() {
               )}
             </p>
           </div>
-          <DateRangePicker value={range} onChange={setRange} />
+          <div className="flex flex-wrap items-center gap-2">
+            {showMailboxFilter && (
+              <div
+                role="radiogroup"
+                aria-label="Mailboxes"
+                className="flex gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1"
+              >
+                {(
+                  [
+                    ["all", "All mail"],
+                    ["common", "Common mailbox"],
+                    ["individual", "Own mailboxes"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="radio"
+                    aria-checked={mailboxScope === key}
+                    onClick={() => setMailboxScope(key)}
+                    className={`rounded-lg px-3 py-1.5 text-[12.5px] font-semibold transition-colors ${
+                      mailboxScope === key
+                        ? "bg-[var(--color-surface)] text-[var(--color-text)] shadow-sm"
+                        : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                    }`}
+                  >
+                    {titleCase(label)}
+                  </button>
+                ))}
+              </div>
+            )}
+            <DateRangePicker value={range} onChange={setRange} />
+          </div>
         </div>
       </header>
 
@@ -451,7 +490,7 @@ export default function AdminAnalyticsPage() {
         {error && (
           <div className="mx-5 mb-5 flex items-center justify-between gap-3 rounded-xl border border-[var(--color-danger)]/30 bg-[var(--color-danger)]/5 px-4 py-3 text-[13px] text-[var(--color-danger)]">
             <span>{error}</span>
-            <button type="button" className="btn-secondary h-8 shrink-0 px-3 text-[12.5px]" onClick={() => void load(range)}>
+            <button type="button" className="btn-secondary h-8 shrink-0 px-3 text-[12.5px]" onClick={() => void load(range, scope)}>
               Retry
             </button>
           </div>

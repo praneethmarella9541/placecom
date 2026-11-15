@@ -22,6 +22,7 @@ import {
   getSequenceContext,
   isErrorResponse,
   loadContactSources,
+  sequenceMailboxColumn,
   windowFromSequenceRow,
 } from "@/lib/sequence-server";
 import { runSequencesCron } from "@/lib/sequence-runner";
@@ -219,6 +220,7 @@ export async function POST(request: Request) {
     .from("sequences")
     .insert({
       mailbox_owner_id: ctx.mailboxOwnerId,
+      ...sequenceMailboxColumn(ctx),
       created_by: ctx.userId,
       name,
       origin: "scheduled",
@@ -339,7 +341,8 @@ export async function POST(request: Request) {
     // Files that already sit on the composer's Gmail draft: read them from Gmail here.
     const savedList = (body.savedAttachments ?? []).filter((a) => a.messageId && a.attachmentId);
     if (savedList.length > 0) {
-      const token = await getMailboxAccessTokenForOwner(ctx.mailboxOwnerId);
+      // The draft sits in the mailbox the user is composing in — their own, with BYOM.
+      const token = await getMailboxAccessTokenForOwner(ctx.mailboxKey);
       if (!token.ok) {
         throw Object.assign(new Error(`Couldn't read the attachment from Gmail: ${token.message}`), { status: 409 });
       }
@@ -347,7 +350,7 @@ export async function POST(request: Request) {
         const res = await fetchGmail(
           `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(a.messageId!)}/attachments/${encodeURIComponent(a.attachmentId!)}`,
           { headers: { Authorization: `Bearer ${token.accessToken}` } },
-          { mailboxKey: ctx.mailboxOwnerId, cost: GMAIL_COST.attachmentsGet },
+          { mailboxKey: ctx.mailboxKey, cost: GMAIL_COST.attachmentsGet },
         );
         const payload = res.ok ? ((await res.json().catch(() => null)) as { data?: string } | null) : null;
         if (!payload?.data) {

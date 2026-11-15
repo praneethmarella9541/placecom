@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
+import { createServiceSupabase } from "@/lib/supabase-service";
+import { commonMailboxAccessForUser } from "@/lib/mailbox-context";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
 import { bucketEmailConnection, type EmailConnectionStrength } from "@/lib/email-connection-strength";
 import { getConnectionStrengthSettings } from "@/lib/connection-strength-settings";
@@ -101,6 +103,10 @@ function withLiveStrength<T extends SyncedContactRow>(
 export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // These are mined from the common mailbox: no access to it (BYOM), no contacts from it.
+  if (!(await commonMailboxAccessForUser(createServiceSupabase(), user.id))) {
+    return NextResponse.json({ contacts: [] });
+  }
 
   // The caller's thresholds don't depend on the rows, so the settings lookup
   // rides alongside the first page of contacts instead of delaying it by a

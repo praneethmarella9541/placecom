@@ -117,6 +117,8 @@ type SequenceRow = {
   variable_fallbacks: Record<string, string> | null;
   merge_source: "contacts" | "stored" | null;
   label_ids: string[] | null;
+  /** BYOM (0085): the individual mailbox this sends from; null = the org's common mailbox. */
+  mailbox_id?: string | null;
 };
 
 type StepRow = {
@@ -288,6 +290,7 @@ async function processEnrollment(
             messages,
             mailboxAddress: mailbox.mailboxAddress,
             source: "sequence",
+            mailboxId: sequence.mailbox_id ?? null,
           }),
       },
     );
@@ -421,7 +424,12 @@ async function processEnrollment(
       const { data: trackRow } = await ctx.svc
         .from("email_tracking")
         .insert({
-          user_id: asCampaign ? sequence.created_by ?? sequence.mailbox_owner_id : sequence.mailbox_owner_id,
+          // A sequence in someone's own mailbox (BYOM) is theirs, whatever its origin.
+          user_id:
+            asCampaign || sequence.mailbox_id
+              ? sequence.created_by ?? sequence.mailbox_owner_id
+              : sequence.mailbox_owner_id,
+          ...(sequence.mailbox_id ? { mailbox_id: sequence.mailbox_id } : {}),
           gmail_message_id: "__pending__",
           to_address: enrollment.email,
           subject: built.subject || null,
@@ -726,13 +734,6 @@ export async function runSequencesCron(
     for (const row of rows) handled.add(row.id);
     summary.claimed += rows.length;
 
-    const byMailbox = new Map<string, EnrollmentRow[]>();
-    for (const row of rows) {
-      const list = byMailbox.get(row.mailbox_owner_id) ?? [];
-      list.push(row);
-      byMailbox.set(row.mailbox_owner_id, list);
-    }
-
     const sequenceIds = Array.from(new Set(rows.map((r) => r.sequence_id)));
     const [{ data: sequenceRows }, { data: stepRows }] = await Promise.all([
       svc.from("sequences").select("*").in("id", sequenceIds),
@@ -742,6 +743,41 @@ export async function runSequencesCron(
     const sequences = new Map<string, SequenceRow>(
       ((sequenceRows ?? []) as SequenceRow[]).map((s) => [s.id, s]),
     );
+
+    // Which Gmail account each sequence sends from: the org's common mailbox, or (BYOM) the
+    // individual mailbox it was created in. A disconnected individual mailbox resolves to
+    // nothing, so its enrollments back off with a token error instead of falling back to
+    // the common mailbox and sending from the wrong address.
+    const individualIds = Array.from(
+      new Set(Array.from(sequences.values()).map((s) => s.mailbox_id).filter((id): id is string => Boolean(id))),
+    );
+    const senderByMailboxId = new Map<string, string>();
+    if (individualIds.length > 0) {
+      const { data: mailboxRows } = await svc
+        .from("mailboxes")
+        .select("id, owner_user_id")
+        .in("id", individualIds)
+        .eq("status", "active");
+      for (const m of (mailboxRows ?? []) as { id: string; owner_user_id: string }[]) {
+        senderByMailboxId.set(m.id, m.owner_user_id);
+      }
+    }
+    const senderFor = (row: EnrollmentRow): string => {
+      const mailboxId = sequences.get(row.sequence_id)?.mailbox_id;
+      if (!mailboxId) return row.mailbox_owner_id;
+      return senderByMailboxId.get(mailboxId) ?? `disconnected:${mailboxId}`;
+    };
+
+    // Grouped per org AND sending account: contacts (merge fields) belong to the org, the token
+    // and quota to the account.
+    const byMailbox = new Map<string, { orgId: string; senderId: string; rows: EnrollmentRow[] }>();
+    for (const row of rows) {
+      const senderId = senderFor(row);
+      const key = `${row.mailbox_owner_id}|${senderId}`;
+      const group = byMailbox.get(key) ?? { orgId: row.mailbox_owner_id, senderId, rows: [] };
+      group.rows.push(row);
+      byMailbox.set(key, group);
+    }
     const stepsBySequence = new Map<string, StepRow[]>();
     for (const step of (stepRows ?? []) as StepRow[]) {
       const list = stepsBySequence.get(step.sequence_id) ?? [];
@@ -749,11 +785,13 @@ export async function runSequencesCron(
       stepsBySequence.set(step.sequence_id, list);
     }
 
-    for (const [ownerId, enrollments] of Array.from(byMailbox.entries())) {
-      seenMailboxes.add(ownerId);
+    for (const { orgId, senderId, rows: enrollments } of Array.from(byMailbox.values())) {
+      seenMailboxes.add(senderId);
 
       // One token resolve per mailbox, not per enrollment.
-      const token = await getMailboxAccessTokenForOwner(ownerId);
+      const token = senderId.startsWith("disconnected:")
+        ? ({ ok: false, message: "This sequence's mailbox was disconnected." } as const)
+        : await getMailboxAccessTokenForOwner(senderId);
       if (!token.ok) {
         for (const enrollment of enrollments) {
           await releaseClaim(ctx, enrollment.id, {
@@ -766,7 +804,7 @@ export async function runSequencesCron(
 
       const mailbox: MailboxContext = {
         accessToken: token.accessToken,
-        ownerId,
+        ownerId: senderId,
         mailboxAddress: token.gmailAddress,
         sentTodayBySequence: new Map(),
       };
@@ -777,7 +815,7 @@ export async function runSequencesCron(
       // time. One lookup for the whole mailbox's batch, not one per email.
       const resolvedFields = await resolveEnrollmentMergeFields(
         svc,
-        ownerId,
+        orgId,
         enrollments.map((e: EnrollmentRow) => ({
           email: e.email,
           display_name: e.display_name,

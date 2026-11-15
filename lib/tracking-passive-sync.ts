@@ -44,15 +44,20 @@ export async function syncTrackingFromOpenedThread(
   mailboxAddress: string | undefined,
   threadId: string,
   messages: ThreadMessageView[],
-  /** The shared mailbox's owner: emails from anyone on that team are matched, not just the viewer's. */
-  mailboxOwnerId?: string
+  /**
+   * The Gmail account's owner: in the common mailbox that is the admin, so emails from anyone on
+   * the team are matched, not just the viewer's; in an individual mailbox (BYOM) it is the viewer.
+   */
+  mailboxOwnerId?: string,
+  /** BYOM: the individual mailbox this thread is in; null = the common mailbox. */
+  mailboxId: string | null = null
 ): Promise<void> {
   if (messages.length === 0) return;
 
   // Every recipient reply in this conversation, for the "Responded" count. Not
   // tied to the viewer — whoever opens the thread, the reply is credited to the
   // member who sent the email it answered.
-  await recordThreadResponses(supabase, { threadId, messages, mailboxAddress, source: "inbox" });
+  await recordThreadResponses(supabase, { threadId, messages, mailboxAddress, source: "inbox", mailboxId });
 
   try {
     // In a shared mailbox the person opening a thread is often not the one who

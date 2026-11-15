@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
   try {
-    const labels = await listLabels(auth.accessToken, { mailboxKey: auth.mailboxOwnerId });
+    const labels = await listLabels(auth.accessToken, { mailboxKey: auth.mailboxKey });
     // Sort: user labels first (alpha), then surfaced system labels.
     const sorted = labels.slice().sort((a, b) => {
       if (a.type !== b.type) return a.type === "user" ? -1 : 1;
@@ -54,7 +54,7 @@ type CreateBody = {
 };
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "modify" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -76,7 +76,7 @@ export async function POST(request: Request) {
     const label: GmailLabel = await createLabel(
       auth.accessToken,
       { name, color: body.color },
-      { mailboxKey: auth.mailboxOwnerId }
+      { mailboxKey: auth.mailboxKey }
     );
     return NextResponse.json({ label }, { status: 201 });
   } catch (e) {

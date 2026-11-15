@@ -1,6 +1,7 @@
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
+import { contactSyncTarget } from "@/lib/contact-sync-target";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { runContactSyncBatch } from "@/lib/people-mailbox-sync";
 
@@ -14,12 +15,18 @@ export const maxDuration = 300;
  * contact sync. Returns `{ done: false }` if there's more to do (caller should POST
  * again immediately); progress is persisted in contact_sync_state regardless, so
  * this can be safely re-invoked from a background loop across page navigations.
+ *
+ * Syncs the mailbox the caller is working in — the common one, or (BYOM) their own — into
+ * the org's one shared contact book. See lib/contact-sync-target.ts for who may.
  */
 export async function POST(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const target = await contactSyncTarget(request, user.id, supabase);
+  if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
 
-  const auth = await requireGmailAccessToken(request);
+  // Only reads mail; who may run it at all is the target check above.
+  const auth = await requireGmailAccessToken(request, { need: "read" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -32,12 +39,12 @@ export async function POST(request: Request) {
   const isExplicitResume = new URL(request.url).searchParams.get("resume") === "1";
 
   const result = await runContactSyncBatch(
-    supabase,
+    target.client,
     user.id,
     auth.accessToken,
     auth.gmailAddress,
-    auth.mailboxOwnerId,
-    { resumePaused: isExplicitResume }
+    target.stateKey,
+    { resumePaused: isExplicitResume, poolOwnerId: target.poolOwnerId }
   );
 
   if (result.status === "already_running") {
@@ -75,16 +82,14 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Stops the sync of the mailbox the caller is working in, if they may run it.
+  const target = await contactSyncTarget(request, user.id, supabase);
+  if (!target.ok) return NextResponse.json({ error: target.error }, { status: target.status });
 
-  const auth = await requireGmailAccessToken(request);
-  if (!auth.ok) {
-    return NextResponse.json({ error: auth.message }, { status: auth.status });
-  }
-
-  const { error } = await supabase
+  const { error } = await target.client
     .from("contact_sync_state")
     .update({ status: "paused", updated_at: new Date().toISOString() })
-    .eq("mailbox_owner_id", auth.mailboxOwnerId)
+    .eq("mailbox_owner_id", target.stateKey)
     // Matches "running OR (idle with a stored cursor)". Batches release the lock
     // between each other now, so a Stop click frequently lands while the row is
     // momentarily "idle" mid-sync — matching only "running" would silently no-op

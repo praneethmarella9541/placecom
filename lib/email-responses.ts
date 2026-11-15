@@ -77,7 +77,14 @@ function one<T>(v: Embedded<T>): T | null {
  */
 export async function recordThreadResponses(
   svc: SupabaseClient,
-  opts: { threadId: string; messages: ConversationMessage[]; mailboxAddress: string | undefined; source: "inbox" | "sequence" }
+  opts: {
+    threadId: string;
+    messages: ConversationMessage[];
+    mailboxAddress: string | undefined;
+    source: "inbox" | "sequence";
+    /** BYOM: the individual mailbox the conversation is in; null/omitted = the common mailbox. */
+    mailboxId?: string | null;
+  }
 ): Promise<void> {
   if (!opts.threadId || opts.messages.length === 0 || !opts.mailboxAddress) return;
   try {
@@ -123,6 +130,8 @@ export async function recordThreadResponses(
         from_address: r.fromAddress,
         received_at: r.receivedAt,
         source: opts.source,
+        // Only sent when set, so this still writes before 0085 is applied.
+        ...(opts.mailboxId ? { mailbox_id: opts.mailboxId } : {}),
       })),
       { onConflict: "gmail_message_id", ignoreDuplicates: true }
     );

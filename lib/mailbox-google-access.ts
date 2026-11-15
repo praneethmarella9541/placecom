@@ -6,11 +6,43 @@ import { createServiceSupabase } from "@/lib/supabase-service";
 import { isMailboxMigrationNotApplied } from "@/lib/supabase-mailbox-migration";
 import type { AuthedRequest } from "@/lib/api-auth";
 import { encryptToken, decryptToken } from "@/lib/token-crypto";
+import { isResolveMailboxError, resolveMailboxForUser } from "@/lib/mailbox-context";
+import type { GrantedMailboxAccess, MailboxType } from "@/lib/mailbox-context-shared";
 
 
 export type MailboxTokenResult =
-  | { ok: true; accessToken: string; sessionUserId: string; mailboxOwnerId: string; gmailAddress?: string }
+  | {
+      ok: true;
+      accessToken: string;
+      sessionUserId: string;
+      /** The org (the admin's user id) — the tenant key. Unchanged meaning from before BYOM. */
+      mailboxOwnerId: string;
+      /** The Gmail account the token belongs to — the key for per-account quota and caches. Equals mailboxOwnerId in the common mailbox. */
+      mailboxKey: string;
+      /** mailboxes.id (null when BYOM is off). */
+      mailboxId: string | null;
+      mailboxType: MailboxType;
+      access: GrantedMailboxAccess;
+      labelScope: string[] | null;
+      gmailAddress?: string;
+    }
   | { ok: false; status: number; message: string };
+
+type MailboxFields = Pick<
+  Extract<MailboxTokenResult, { ok: true }>,
+  "mailboxOwnerId" | "mailboxKey" | "mailboxId" | "mailboxType" | "access" | "labelScope"
+>;
+
+function legacyFields(ownerId: string): MailboxFields {
+  return {
+    mailboxOwnerId: ownerId,
+    mailboxKey: ownerId,
+    mailboxId: null,
+    mailboxType: "common",
+    access: "full",
+    labelScope: null,
+  };
+}
 
 /**
  * Short-lived per-user cache for the resolved token, keyed by session user id.
@@ -24,8 +56,21 @@ export type MailboxTokenResult =
 const RESOLVED_CACHE_MS = 60_000;
 const resolvedCache = new Map<string, { result: MailboxTokenResult; expiresAt: number }>();
 
-function cacheKeyFor(authed?: AuthedRequest | null): string | null {
-  return authed?.user.id ?? null;
+// Keyed by the mailbox asked for as well: after a switch the old entry must not
+// hand back the previous mailbox's token.
+function cacheKeyFor(authed: AuthedRequest | null | undefined, requestedMailboxId: string | null): string | null {
+  return authed ? `${authed.user.id}:${requestedMailboxId ?? ""}` : null;
+}
+
+/** Drop cached resolutions — call after an admin changes someone's mailbox access. Per instance only. */
+export function invalidateResolvedMailboxCache(userId?: string): void {
+  if (!userId) {
+    resolvedCache.clear();
+    return;
+  }
+  for (const key of Array.from(resolvedCache.keys())) {
+    if (key.startsWith(`${userId}:`)) resolvedCache.delete(key);
+  }
 }
 
 /** Same behavior as pre–shared-mailbox code: Google access token from the cookie session only. */
@@ -45,7 +90,7 @@ async function legacyGoogleAccessFromSession(
         "No Google access token in session. Sign out and sign in again (Gmail scopes required).",
     };
   }
-  return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId: userId };
+  return { ok: true, accessToken: token, sessionUserId: userId, ...legacyFields(userId) };
 }
 
 /**
@@ -53,19 +98,23 @@ async function legacyGoogleAccessFromSession(
  * - Admin: uses mailbox row for own user id (refresh token), else short-lived session token.
  * - Staff: uses mailbox row for `profiles.mailbox_owner_id` (the admin who connected Google).
  *
+ * - BYOM (lib/mailbox-context.ts): the mailbox the caller switched to, if they may use it —
+ *   their own Gmail, or the common mailbox with the access an admin granted.
+ *
  * Accepts an optional pre-resolved auth context (for Bearer-token requests from mobile).
  * If omitted, falls back to cookie-based auth (web).
  */
 export async function resolveMailboxGoogleAccessToken(
-  authed?: AuthedRequest | null
+  authed?: AuthedRequest | null,
+  requestedMailboxId: string | null = null
 ): Promise<MailboxTokenResult> {
-  const cacheKey = cacheKeyFor(authed);
+  const cacheKey = cacheKeyFor(authed, requestedMailboxId);
   if (cacheKey) {
     const cached = resolvedCache.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.result;
   }
 
-  const result = await resolveMailboxGoogleAccessTokenUncached(authed);
+  const result = await resolveMailboxGoogleAccessTokenUncached(authed, requestedMailboxId);
   if (cacheKey && result.ok) {
     resolvedCache.set(cacheKey, { result, expiresAt: Date.now() + RESOLVED_CACHE_MS });
   }
@@ -73,7 +122,8 @@ export async function resolveMailboxGoogleAccessToken(
 }
 
 async function resolveMailboxGoogleAccessTokenUncached(
-  authed?: AuthedRequest | null
+  authed: AuthedRequest | null | undefined,
+  requestedMailboxId: string | null
 ): Promise<MailboxTokenResult> {
   let userId: string;
   // queryClient is only populated when we have a cookie session (web).
@@ -142,10 +192,30 @@ async function resolveMailboxGoogleAccessTokenUncached(
     };
   }
 
+  const mailbox = await resolveMailboxForUser(svc, {
+    userId,
+    role,
+    orgOwnerId: mailboxOwnerId,
+    requestedId: requestedMailboxId,
+  });
+  if (isResolveMailboxError(mailbox)) {
+    return { ok: false, status: mailbox.status, message: mailbox.error };
+  }
+  // The Gmail account to use. Same as mailboxOwnerId unless the caller is in their own mailbox.
+  const credentialOwnerId = mailbox.credentialOwnerId;
+  const fields: MailboxFields = {
+    mailboxOwnerId,
+    mailboxKey: credentialOwnerId,
+    mailboxId: mailbox.mailboxId,
+    mailboxType: mailbox.mailboxType,
+    access: mailbox.access,
+    labelScope: mailbox.labelScope,
+  };
+
   const { data: row, error: rowErr } = await svc
     .from("google_mailbox_credentials")
     .select("refresh_token, access_token, access_token_expires_at, gmail_address")
-    .eq("owner_user_id", mailboxOwnerId)
+    .eq("owner_user_id", credentialOwnerId)
     .maybeSingle();
 
   if (rowErr && isMailboxMigrationNotApplied(rowErr)) {
@@ -166,7 +236,7 @@ async function resolveMailboxGoogleAccessTokenUncached(
         ok: true,
         accessToken: decryptToken(row.access_token as string) as string,
         sessionUserId: userId,
-        mailboxOwnerId,
+        ...fields,
         gmailAddress,
       };
     }
@@ -185,13 +255,13 @@ async function resolveMailboxGoogleAccessTokenUncached(
           access_token_expires_at: expiresAt,
           updated_at: new Date().toISOString(),
         })
-        .eq("owner_user_id", mailboxOwnerId);
+        .eq("owner_user_id", credentialOwnerId);
 
       return {
         ok: true,
         accessToken: refreshed.access_token,
         sessionUserId: userId,
-        mailboxOwnerId,
+        ...fields,
         gmailAddress,
       };
     } catch (e) {
@@ -199,13 +269,13 @@ async function resolveMailboxGoogleAccessTokenUncached(
       console.error("[mailbox-google-access] refresh failed:", refreshErr);
       // Admin self-heal (web only): if stored refresh token is stale but this admin is
       // currently signed in with Google via cookie, use their session provider_token.
-      if (mailboxOwnerId === userId && queryClient) {
+      if (credentialOwnerId === userId && queryClient) {
         const {
           data: { session },
         } = await queryClient.auth.getSession();
         const token = session?.provider_token;
         if (token) {
-          return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId, gmailAddress };
+          return { ok: true, accessToken: token, sessionUserId: userId, ...fields, gmailAddress };
         }
       }
       // Surface the real Google error so we can tell invalid_grant (expired/revoked)
@@ -222,13 +292,13 @@ async function resolveMailboxGoogleAccessTokenUncached(
   }
 
   // No refresh token stored — last-resort cookie session lookup (web admin only).
-  if (mailboxOwnerId === userId && queryClient) {
+  if (credentialOwnerId === userId && queryClient) {
     const {
       data: { session },
     } = await queryClient.auth.getSession();
     const token = session?.provider_token;
     if (token) {
-      return { ok: true, accessToken: token, sessionUserId: userId, mailboxOwnerId, gmailAddress };
+      return { ok: true, accessToken: token, sessionUserId: userId, ...fields, gmailAddress };
     }
   }
 

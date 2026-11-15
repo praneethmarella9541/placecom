@@ -13,6 +13,7 @@ export const FEATURE_KEYS = [
   "whatsapp",
   "mailTemplates",
   "lusha",
+  "byom",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -32,6 +33,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   whatsapp: "WhatsApp",
   mailTemplates: "Mail templates",
   lusha: "Lusha",
+  byom: "Own mailboxes",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -152,6 +154,10 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   // composer and contacts pages poll for "is it connected" stays ungated: it carries no data
   // beyond a boolean, and the UI hides the entry points itself when the module is off.
   if (pathname.startsWith("/api/integrations/lusha")) return "lusha";
+
+  // BYOM admin settings: who may use the common mailbox, and which domains may sign up.
+  // The switcher's own routes live under /api/me/ and check the module themselves.
+  if (pathname.startsWith("/api/admin/mailbox-access")) return "byom";
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";

@@ -1,6 +1,7 @@
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
+import { contactSyncTarget } from "@/lib/contact-sync-target";
 
 export const runtime = "nodejs";
 
@@ -28,6 +29,10 @@ export type ContactSyncStateRow = {
 export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // The sync of the mailbox the caller is working in, shown only to someone who may run it
+  // (lib/contact-sync-target.ts) — BYOM gives each mailbox its own progress row.
+  const target = await contactSyncTarget(request, user.id, supabase);
+  if (!target.ok) return NextResponse.json({ state: null, unavailable: true });
 
   // No profiles lookup to resolve the mailbox owner first. This table holds one
   // row per owner and its RLS policy already scopes it to exactly the caller's
@@ -39,11 +44,12 @@ export async function GET(request: Request) {
   //
   // Resolved this way rather than through requireGmailAccessToken to keep it a
   // cheap poll target — no Google token refresh round-trip on every call.
-  const { data, error } = await supabase
+  const { data, error } = await target.client
     .from("contact_sync_state")
     .select(
       "status, phase, page_token, messages_scanned_total, contacts_found_total, last_progress, last_summary, completed_backfill_at, error_message, updated_at"
     )
+    .eq("mailbox_owner_id", target.stateKey)
     .maybeSingle();
 
   if (error) {

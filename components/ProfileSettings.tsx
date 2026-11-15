@@ -9,6 +9,7 @@ import { clearClientData } from "@/lib/clear-client-data";
 import { patchMeMailboxCache, refreshMeMailbox } from "@/lib/use-me-mailbox";
 import { signOutOnServer } from "@/lib/client-auth";
 import { gmailAvatarInitials } from "@/lib/gmail-avatar";
+import { OwnMailboxField } from "@/components/OwnMailboxField";
 
 export function ProfileSettings() {
   const [profile, setProfile] = useState<MeProfileResponse | null>(null);
@@ -220,6 +221,7 @@ export function ProfileSettings() {
                   </div>
                 )}
               </div>
+              <OwnMailboxField role={profile.role} />
               <div>
                 <dt className="text-xs font-bold text-[var(--color-text)]">{titleCase("Assigned virtual number")}</dt>
                 <dd className="mt-0.5 text-[var(--color-text)]">

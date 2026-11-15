@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { activityMailboxId } from "@/lib/mailbox-context-shared";
 import { getThreadMessages, markThreadRead } from "@/lib/gmail-inbox";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 import { syncTrackingFromOpenedThread } from "@/lib/tracking-passive-sync";
@@ -28,13 +29,13 @@ export async function GET(
     // Single Gmail round-trip: format=full already contains labelIds on each
     // message, so getThreadMessages extracts them — no second API call needed.
     const { messages, labelIds } = await getThreadMessages(auth.accessToken, threadId, {
-      mailboxKey: auth.mailboxOwnerId,
+      mailboxKey: auth.mailboxKey,
     });
 
     // Hover prefetch must not mark unread mail as read — only explicit opens do.
     if (!prefetchOnly) {
       markThreadRead(auth.accessToken, threadId, {
-        mailboxKey: auth.mailboxOwnerId,
+        mailboxKey: auth.mailboxKey,
       }).catch((e) => {
         console.warn("[gmail] mark-read failed:", e?.message ?? e);
       });
@@ -51,7 +52,8 @@ export async function GET(
       auth.gmailAddress,
       threadId,
       messages,
-      auth.mailboxOwnerId
+      auth.mailboxKey,
+      activityMailboxId(auth)
     );
 
     return NextResponse.json(

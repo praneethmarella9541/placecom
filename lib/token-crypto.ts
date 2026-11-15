@@ -16,6 +16,10 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
  *  - If no key is configured, encryptToken throws in production (fails closed) and stores
  *    plaintext with a one-time warning in development; decryptToken of an encrypted value
  *    without a key throws.
+ *
+ * Key lifecycle: one 32-byte key per deployment, held only in the host's environment variables
+ * (never in the repo or the database). Rotating it is a deliberate re-encryption of every stored
+ * value: scripts/rotate-google-token-key.mjs.
  */
 
 const PREFIX = "enc:v1:";

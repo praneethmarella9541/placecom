@@ -1,5 +1,6 @@
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
+import { secretsMatch } from "@/lib/timing-safe";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { getMailboxAccessTokenForOwner } from "@/lib/mailbox-access-cron";
 import { runContactSyncBatch } from "@/lib/people-mailbox-sync";
@@ -17,10 +18,10 @@ const CRON_TIME_BUDGET_MS = 270_000;
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false; // fail closed if not configured — never run unauthenticated
-  const authHeader = request.headers.get("authorization");
-  if (authHeader === `Bearer ${secret}`) return true;
+  const authHeader = request.headers.get("authorization") ?? "";
+  if (secretsMatch(authHeader, `Bearer ${secret}`)) return true;
   const url = new URL(request.url);
-  return url.searchParams.get("secret") === secret;
+  return secretsMatch(url.searchParams.get("secret") ?? "", secret);
 }
 
 /**

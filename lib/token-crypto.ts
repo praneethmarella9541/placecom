@@ -21,6 +21,18 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 const PREFIX = "enc:v1:";
 let warnedNoKey = false;
 
+/**
+ * Every way decryption can fail — no key, a malformed value, a failed authentication tag — ends
+ * in this one error with a fixed message, so nothing about *why* it failed (wrong key, tampered,
+ * truncated) reaches a caller, a response body or a log line (CASA 4.1.4).
+ */
+export class TokenDecryptError extends Error {
+  constructor() {
+    super("Stored credential could not be decrypted");
+    this.name = "TokenDecryptError";
+  }
+}
+
 function getKey(): Buffer | null {
   const raw = process.env.GOOGLE_TOKEN_ENCRYPTION_KEY?.trim();
   if (!raw) return null;
@@ -73,11 +85,16 @@ export function encryptToken(plain: string | null | undefined): string | null {
 export function decryptToken(stored: string | null | undefined): string | null {
   if (stored == null || stored === "") return stored ?? null;
   if (!isEncryptedToken(stored)) return stored;
-  const key = getKey();
-  if (!key) throw new Error("Stored Google token is encrypted but GOOGLE_TOKEN_ENCRYPTION_KEY is not set");
-  const [iv, tag, ct] = stored.slice(PREFIX.length).split(".");
-  if (!iv || !tag || !ct) throw new Error("Malformed encrypted token");
-  const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+  try {
+    const key = getKey();
+    if (!key) throw new Error("no key");
+    const [iv, tag, ct] = stored.slice(PREFIX.length).split(".");
+    if (!iv || !tag || !ct) throw new Error("malformed");
+    const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
+    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    return Buffer.concat([decipher.update(Buffer.from(ct, "base64url")), decipher.final()]).toString("utf8");
+  } catch {
+    // One error for every cause (see TokenDecryptError): the reason stays out of responses and logs.
+    throw new TokenDecryptError();
+  }
 }

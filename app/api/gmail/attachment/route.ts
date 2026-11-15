@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireGmailAccessToken } from "@/lib/gmail-auth";
 import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
+import { safeServedType } from "@/lib/safe-served-type";
 import {
   gmailInsufficientScopePayload,
   isGmailInsufficientScopeResponse,
@@ -55,7 +56,13 @@ export async function GET(request: Request) {
 
   // Serve inline so the browser can render images, PDFs, video, audio, text.
   // The client passes ?download=1 when it explicitly wants a forced download.
-  const forceDownload = searchParams.get("download") === "1";
+  //
+  // The type comes from the query string and the attachment from whoever sent the email, so it
+  // is never echoed back as-is: only passive types render inline, text is forced to text/plain,
+  // and anything that could run script (HTML, SVG, XML...) is an opaque download. See
+  // lib/safe-served-type.ts.
+  const served = safeServedType(mimeType);
+  const forceDownload = searchParams.get("download") === "1" || !served.inline;
   const disposition = forceDownload
     ? `attachment; filename="${encodeURIComponent(filename)}"`
     : `inline; filename="${encodeURIComponent(filename)}"`;
@@ -63,7 +70,8 @@ export async function GET(request: Request) {
   return new Response(buffer, {
     status: 200,
     headers: {
-      "Content-Type": mimeType,
+      "Content-Type": served.contentType,
+      "X-Content-Type-Options": "nosniff",
       "Content-Disposition": disposition,
       "Content-Length": String(buffer.byteLength),
       // No X-Frame-Options — the client fetches as a blob and uses a

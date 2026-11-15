@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { checkPasswordPolicy } from "@/lib/password-policy";
 import { createServerSupabaseClient } from "@/lib/supabase-server";
 import { createServiceSupabase } from "@/lib/supabase-service";
 import { revokeSessions } from "@/lib/revoke-sessions";
@@ -39,6 +40,8 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+  const policy = await checkPasswordPolicy(newPassword.trim());
+  if (!policy.ok) return NextResponse.json({ error: policy.error }, { status: 400 });
 
   const svc = createServiceSupabase();
   const { error } = await svc.auth.admin.updateUserById(user.id, {

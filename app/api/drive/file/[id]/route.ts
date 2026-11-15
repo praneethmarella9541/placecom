@@ -7,6 +7,7 @@ import {
   suggestedDownloadName,
 } from "@/lib/drive-file-proxy";
 import { csvToPreviewHtml, parseCsvText } from "@/lib/parse-csv";
+import { safeServedType } from "@/lib/safe-served-type";
 import {
   getDriveFileDetails,
   getDriveFileParent,
@@ -140,12 +141,16 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     return NextResponse.json({ error: text || `Upstream ${upstream.status}` }, { status: upstream.status });
   }
 
-  const disposition = mode === "download" ? "attachment" : "inline";
+  // Drive files are written by other people, so the type Drive reports is not passed through
+  // as-is: only passive types render inline, text is forced to text/plain, and anything that
+  // could run script from our origin (HTML, SVG, XML...) is an opaque download. See
+  // lib/safe-served-type.ts.
+  const served = safeServedType(upstream.headers.get("Content-Type") || built.resultMime);
+  const disposition = mode === "download" || !served.inline ? "attachment" : "inline";
   const filename = suggestedDownloadName(name, built.resultMime);
   const cd = `${disposition}; filename*=UTF-8''${encodeURIComponent(filename)}`;
 
-  const contentType =
-    upstream.headers.get("Content-Type")?.split(";")[0]?.trim() || built.resultMime;
+  const contentType = served.contentType;
 
   // Raw CSV in an iframe triggers a download in Chrome/Safari — serve HTML table instead.
   if (mode === "preview" && isCsvMimeType(mimeType, name)) {

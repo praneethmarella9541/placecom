@@ -35,9 +35,13 @@ export const pauseKey = (mailbox: string) => `pause:${mailbox}`;
 /** How long warming stays paused after Gmail throttles. */
 export const WARM_PAUSE_MS = 10 * 60_000;
 
-/** A short, stable id for a page: its Gmail page token can be very long. */
+/**
+ * A short, stable id for a page: its Gmail page token can be very long. Only a cache-key
+ * fingerprint, never a security control — SHA-256 anyway, so no SHA-1 remains in the codebase.
+ * The notes it keys are minutes-long, so changing the digest just lets the old ones expire.
+ */
 export function pageId(token: string): string {
-  return createHash("sha1").update(token).digest("hex").slice(0, 16);
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
 /** Count an event under `key` in a window; returns the count so far (1 = first), or null if the database isn't available. */

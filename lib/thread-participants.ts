@@ -12,7 +12,7 @@ function displayNameOf(from: string): string {
 /** Titles that precede a name ("Dr. M. Mohamed Mustafa"); never the part Gmail shows. */
 const HONORIFIC_RE = /^(dr|mr|mrs|ms|miss|mx|prof|professor|sir|shri|sri|smt|shrimati|er|ar|capt|col|maj|rev|fr)\.?$/i;
 /** A bare initial or dotted initials: "M", "M.", "M.S.". */
-const INITIALS_RE = /^(?:[a-z]\.?)+$/i;
+const INITIALS_RE = /^(?:[a-z]\.)+[a-z]?$|^[a-z]$/i;
 
 /**
  * The name Gmail shows for someone else: their first name, skipping titles and
@@ -24,7 +24,8 @@ export function shortNameOf(full: string): string {
   let name = full.trim();
   const comma = name.split(",");
   if (comma.length === 2 && comma[1].trim()) name = comma[1].trim(); // "Mustafa, Mohamed"
-  const tokens = name.split(/\s+/).filter(Boolean);
+  // Drop separator tokens ("@", "-", "|") — "Joel @ ngrok" is "Joel", never "@".
+  const tokens = name.split(/\s+/).filter((t) => /[\p{L}\p{N}]/u.test(t));
   const first = tokens.find((t) => !HONORIFIC_RE.test(t) && !(t.length <= 4 && INITIALS_RE.test(t) && tokens.length > 1));
   return first ?? tokens[0] ?? full;
 }

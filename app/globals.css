@@ -459,6 +459,27 @@
     box-shadow: 0 0 0 3px var(--color-copper-tint);
   }
 
+  /* Native <select> boxes: the browser's own arrow sits hard against the right edge and changes
+     with the OS. Paired with .input-field, this draws one chevron with room around it. The image
+     is set again on hover and focus because .input-field's `background` shorthand there would
+     otherwise clear it. */
+  select.input-field.select-chevron,
+  select.input-field.select-chevron:hover:not(:focus),
+  select.input-field.select-chevron:focus {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238C857B' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 14px;
+    padding-right: 34px;
+    text-overflow: ellipsis;
+    cursor: pointer;
+  }
+  select.input-field.select-chevron:disabled {
+    cursor: not-allowed;
+  }
+
   /* Search boxes: a visible neutral border so they read as a field, copper on
      hover and focus like every other input. Size, radius and left padding for
      the icon stay with each box; pair with a copper icon (text-[var(--color-copper)]). */

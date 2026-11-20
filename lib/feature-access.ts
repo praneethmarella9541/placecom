@@ -14,6 +14,7 @@ export const FEATURE_KEYS = [
   "mailTemplates",
   "lusha",
   "byom",
+  "dataModel",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -34,6 +35,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   mailTemplates: "Mail templates",
   lusha: "Lusha",
   byom: "Own mailboxes",
+  dataModel: "Data model",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -88,6 +90,7 @@ export function pathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/sheets")) return "sheets";
   if (pathname.startsWith("/docs")) return "docs";
   if (pathname.startsWith("/crm")) return "crm";
+  if (pathname === "/data" || pathname.startsWith("/data/")) return "dataModel";
   if (pathname.startsWith("/calendar")) return "calendar";
   if (pathname.startsWith("/sequences")) return "sequences";
   if (pathname.startsWith("/sms")) return "sms";
@@ -158,6 +161,9 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   // BYOM admin settings: who may use the common mailbox, and which domains may sign up.
   // The switcher's own routes live under /api/me/ and check the module themselves.
   if (pathname.startsWith("/api/admin/mailbox-access")) return "byom";
+
+  // Flexible data model (objects, records, lists). Routes also check the module themselves.
+  if (pathname.startsWith("/api/data/")) return "dataModel";
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";

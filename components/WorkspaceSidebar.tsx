@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Contact,
+  Database,
   FileText,
   Folder,
   Frame,
@@ -57,6 +58,7 @@ const commsNav = [
 
 const pipelineNav: readonly { href: string; label: string; Icon: React.ElementType }[] = [
   { href: "/crm", label: "CRM", Icon: KanbanSquare },
+  { href: "/data", label: "Data", Icon: Database },
 ];
 
 const opsNav = [

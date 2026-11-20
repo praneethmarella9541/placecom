@@ -5,6 +5,7 @@ import { listDenied } from "@/lib/data-model/route-helpers";
 import { ENTRY_COLUMNS, isUuid, loadList, loadStage, nextPosition, type EntryRow } from "@/lib/data-model/lists";
 import { failedRequirements } from "@/lib/data-model/rules";
 import { loadStageRules, recordStageChange } from "@/lib/data-model/rules-server";
+import { emitEvents } from "@/lib/data-model/events";
 import { checkReferences, getRecord, loadAttributes } from "@/lib/data-model/records";
 import { validateRecordInput } from "@/lib/data-model/values";
 
@@ -90,6 +91,20 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     .single();
   if (error) return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   if (patch.stage_id) await recordStageChange(svc, orgOwnerId, list.id, entry.id, entry.stage_id, patch.stage_id as string, auth.ctx.userId);
+  {
+    const actor = { userId: auth.ctx.userId };
+    const events = [];
+    if (patch.stage_id) events.push({ org: orgOwnerId, type: "list.entry_updated" as const, listId: list.id, entryId: entry.id, recordId: entry.record_id, attributeSlug: "stage", oldValue: entry.stage_id, newValue: patch.stage_id, actor });
+    if (patch.values) {
+      const next = patch.values as Record<string, unknown>;
+      for (const slug of new Set([...Object.keys(next), ...Object.keys(entry.values)])) {
+        if (JSON.stringify(next[slug] ?? null) !== JSON.stringify(entry.values[slug] ?? null)) {
+          events.push({ org: orgOwnerId, type: "list.entry_updated" as const, listId: list.id, entryId: entry.id, recordId: entry.record_id, attributeSlug: slug, oldValue: entry.values[slug] ?? null, newValue: next[slug] ?? null, actor });
+        }
+      }
+    }
+    await emitEvents(svc, events);
+  }
   return NextResponse.json({ entry: data });
 }
 

@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AttributeDef, ObjectDef, RecordFilter, RecordRow } from "./types";
+import { emitEvents } from "./events";
 import { nextPosition } from "./lists";
 import { checkRecordRules, applyDefaults } from "./rules";
 import { loadRecordRules } from "./rules-server";
@@ -196,7 +197,7 @@ export async function getRecord(svc: SupabaseClient, org: string, id: string): P
 // Writing
 // ---------------------------------------------------------------------------
 
-type Actor = { userId: string; org: string; source?: string };
+type Actor = { userId: string; org: string; source?: string; /** Set when a workflow made the change, so the event log can tell. */ workflowId?: string };
 
 async function writeHistory(
   svc: SupabaseClient,
@@ -347,6 +348,11 @@ export async function createRecord(
 
   if (object.slug === "deals") await addToDealsPipeline(svc, actor.org, record.id, actor.userId);
 
+  await emitEvents(svc, [
+    { org: actor.org, type: "record.created", objectSlug: object.slug, recordId: record.id, actor, payload: { name: record.name } },
+    ...Object.entries(valid.values).map(([slug, v]) => ({ org: actor.org, type: "attribute.changed" as const, objectSlug: object.slug, recordId: record.id, attributeSlug: slug, oldValue: null, newValue: v, actor })),
+  ]);
+
   await writeHistory(svc, actor, record.id, [
     { slug: null, action: "create", newValue: { name: record.name } },
     ...Object.entries(valid.values).map(([slug, v]) => ({ slug, action: "create" as const, newValue: v })),
@@ -430,6 +436,22 @@ export async function updateRecord(
     if (JSON.stringify(oldV) !== JSON.stringify(newV)) changes.push({ slug, action: "update", oldValue: oldV, newValue: newV });
   }
   await writeHistory(svc, actor, existing.id, changes);
+
+  if (changes.length) {
+    await emitEvents(svc, [
+      { org: actor.org, type: "record.updated", objectSlug: object.slug, recordId: existing.id, actor, payload: { changed: changes.map((c) => c.slug ?? "name") } },
+      ...changes.map((c) => ({
+        org: actor.org,
+        type: "attribute.changed" as const,
+        objectSlug: object.slug,
+        recordId: existing.id,
+        attributeSlug: c.slug ?? "name",
+        oldValue: c.slug === null ? (c.oldValue as { name?: string } | null)?.name : c.oldValue,
+        newValue: c.slug === null ? (c.newValue as { name?: string } | null)?.name : c.newValue,
+        actor,
+      })),
+    ]);
+  }
   return { ok: true, record: row as RecordRow };
 }
 

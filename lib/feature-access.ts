@@ -15,6 +15,7 @@ export const FEATURE_KEYS = [
   "lusha",
   "byom",
   "dataModel",
+  "workflows",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -36,6 +37,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   lusha: "Lusha",
   byom: "Own mailboxes",
   dataModel: "Data model",
+  workflows: "Workflows",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -91,6 +93,7 @@ export function pathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/docs")) return "docs";
   if (pathname.startsWith("/crm")) return "crm";
   if (pathname === "/data" || pathname.startsWith("/data/")) return "dataModel";
+  if (pathname === "/workflows" || pathname.startsWith("/workflows/")) return "workflows";
   if (pathname.startsWith("/calendar")) return "calendar";
   if (pathname.startsWith("/sequences")) return "sequences";
   if (pathname.startsWith("/sms")) return "sms";
@@ -164,6 +167,8 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
 
   // Flexible data model (objects, records, lists). Routes also check the module themselves.
   if (pathname.startsWith("/api/data/")) return "dataModel";
+  // Workflows (builder, runs). The scheduler tick is under /api/cron/ and checks its own secret.
+  if (pathname.startsWith("/api/workflows")) return "workflows";
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";

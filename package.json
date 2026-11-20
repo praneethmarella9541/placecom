@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --test lib/data-model/*.test.mts",
+    "test": "node --import ./scripts/ts-resolve-register.mjs --test lib/data-model/*.test.mts lib/workflows/*.test.mts",
     "env:prod": "cp .env.prod .env.local && echo 'Switched .env.local -> prod DB'",
     "env:testdb": "cp .env.testdb .env.local && echo 'Switched .env.local -> test DB'"
   },

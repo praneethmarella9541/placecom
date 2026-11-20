@@ -5,6 +5,7 @@ import { listDenied } from "@/lib/data-model/route-helpers";
 import { ENTRY_COLUMNS, isUuid, loadList, loadStage, loadStages, nextPosition } from "@/lib/data-model/lists";
 import { failedRequirements } from "@/lib/data-model/rules";
 import { loadStageRules, recordStageChange } from "@/lib/data-model/rules-server";
+import { emitEvents } from "@/lib/data-model/events";
 import { checkReferences, getRecord, loadAttributes } from "@/lib/data-model/records";
 import { validateRecordInput } from "@/lib/data-model/values";
 
@@ -76,5 +77,6 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     return NextResponse.json({ error: dbErrorMessage(error) }, { status: 500 });
   }
   await recordStageChange(svc, orgOwnerId, list.id, (data as { id: string }).id, null, stageId, userId);
+  await emitEvents(svc, [{ org: orgOwnerId, type: "list.added", listId: list.id, entryId: (data as { id: string }).id, recordId: record.id, actor: { userId }, payload: { stage_id: stageId } }]);
   return NextResponse.json({ entry: data }, { status: 201 });
 }

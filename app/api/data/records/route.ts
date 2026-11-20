@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { dbErrorMessage } from "@/lib/api-error";
 import { missingTableResponse, objectDenied, requireDataContext } from "@/lib/data-model/access";
-import { createRecord, listRecords, loadAttributes, loadObject } from "@/lib/data-model/records";
+import { createRecord, listRecords, loadAttributes, loadObject, parseSourceParam } from "@/lib/data-model/records";
 import type { FilterOp, RecordFilter } from "@/lib/data-model/types";
 
 export const runtime = "nodejs";
@@ -52,6 +52,7 @@ export async function GET(request: Request) {
     pageSize: Number(params.get("pageSize") ?? 50),
     filters,
     ids: idList,
+    source: parseSourceParam(params.get("source"), object.slug),
   });
   if (!result.ok) {
     if (result.status >= 500) {

@@ -4,11 +4,21 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Loader2, Paperclip } from "lucide-react";
 import { dataApi } from "@/lib/data-model/client";
+import { ContactMailTab } from "@/components/ContactMailTab";
+import { useModuleVisibility } from "@/lib/module-visibility";
 
 type Thread = { id: string; subject: string; snippet: string; at: string; hasAttachments: boolean };
 
 /** Mail with this person or company, read live from the mailbox you are working in. Nothing is stored. */
 export function EmailsTab({ recordId }: { recordId: string }) {
+  // BYOM: mail from the user's own mailbox and the common one together, cached headers first.
+  // Without it, the original live read of the mailbox in use below.
+  const byom = useModuleVisibility().isVisible("byom");
+  if (byom) return <ContactMailTab recordId={recordId} />;
+  return <LiveEmailsTab recordId={recordId} />;
+}
+
+function LiveEmailsTab({ recordId }: { recordId: string }) {
   const [items, setItems] = useState<Thread[] | null>(null);
   const [reason, setReason] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);

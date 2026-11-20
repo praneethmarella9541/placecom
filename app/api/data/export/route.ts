@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { missingTableResponse, objectDenied, requireDataContext } from "@/lib/data-model/access";
 import { csvRow } from "@/lib/data-model/csv";
-import { listRecords, loadAttributes, loadObject } from "@/lib/data-model/records";
+import { listRecords, loadAttributes, loadObject, parseSourceParam } from "@/lib/data-model/records";
 import type { AttributeDef, FilterOp, RecordFilter } from "@/lib/data-model/types";
 
 export const runtime = "nodejs";
@@ -62,6 +62,7 @@ export async function GET(request: Request) {
       page,
       pageSize: PAGE,
       filters,
+      source: parseSourceParam(params.get("source"), object.slug),
     });
     if (!result.ok) return missingTableResponse(result.error) ?? NextResponse.json({ error: result.status >= 500 ? "Something went wrong. Please try again." : result.error }, { status: result.status });
 

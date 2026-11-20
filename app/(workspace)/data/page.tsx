@@ -16,6 +16,8 @@ import { NewObjectModal } from "@/components/data/NewObjectModal";
 import { AttributesModal } from "@/components/data/AttributesModal";
 import { ColumnPicker } from "@/components/data/ColumnPicker";
 import { FilterBar } from "@/components/data/FilterBar";
+import { SimpleDropdown, type DropdownOption } from "@/components/SimpleDropdown";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { ListsTab, type ListSummary } from "@/components/data/ListsTab";
 import { ViewBar } from "@/components/data/ViewBar";
 import { RecordAvatar } from "@/components/data/RecordAvatar";
@@ -185,6 +187,18 @@ export default function DataPage() {
 // Records table
 // ---------------------------------------------------------------------------
 
+const SOURCE_OPTIONS: DropdownOption<"all" | "common" | "byom">[] = [
+  { value: "all", label: "All contacts" },
+  { value: "common", label: "Common mailbox contacts" },
+  { value: "byom", label: "BYOM contacts" },
+];
+
+const COMPANY_SOURCE_OPTIONS: DropdownOption<"all" | "common" | "byom">[] = [
+  { value: "all", label: "All companies" },
+  { value: "common", label: "Common mailbox companies" },
+  { value: "byom", label: "BYOM companies" },
+];
+
 function RecordsTable({
   object,
   objects,
@@ -216,6 +230,9 @@ function RecordsTable({
   const [importing, setImporting] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
   const [filters, setFilters] = useState<RecordFilter[]>([]);
+  // BYOM: People and Companies seen in the common mailbox / in any individual mailbox. Not part of a saved view.
+  const sourceEnabled = useModuleVisibility().isVisible("byom") && (object.slug === "people" || object.slug === "companies");
+  const [source, setSource] = useState<"all" | "common" | "byom">("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [members, setMembers] = useState<{ id: string; name: string }[]>([]);
   const [editing, setEditing] = useState<{ id: string; slug: string } | null>(null);
@@ -292,6 +309,7 @@ function RecordsTable({
     let live = true;
     const params = new URLSearchParams({ object: object.slug, sort, direction, page: String(page), pageSize: String(PAGE_SIZE) });
     if (term) params.set("q", term);
+    if (sourceEnabled && source !== "all") params.set("source", source);
     for (const f of filters) params.append("filter", `${f.attribute}:${f.op}${f.value ? `:${f.value}` : ""}`);
     const url = `/api/data/records?${params}`;
 
@@ -317,7 +335,7 @@ function RecordsTable({
     return () => {
       live = false;
     };
-  }, [object.slug, sort, direction, page, term, filters, reload]);
+  }, [object.slug, sort, direction, page, term, filters, reload, source, sourceEnabled]);
 
   function toggleSort(key: string) {
     if (sort === key) setDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -332,6 +350,7 @@ function RecordsTable({
   const exportUrl = (() => {
     const params = new URLSearchParams({ object: object.slug, sort, direction, columns: columns.map((c) => c.slug).join(",") });
     if (term) params.set("q", term);
+    if (sourceEnabled && source !== "all") params.set("source", source);
     for (const f of filters) params.append("filter", `${f.attribute}:${f.op}${f.value ? `:${f.value}` : ""}`);
     return `/api/data/export?${params}`;
   })();
@@ -395,6 +414,18 @@ function RecordsTable({
         current={{ columns: columnSlugs ?? undefined, filters, sort, direction, widths }}
         onApply={applyView}
       />
+
+      {sourceEnabled && (
+        <SimpleDropdown
+          label="Source"
+          value={source}
+          options={object.slug === "companies" ? COMPANY_SOURCE_OPTIONS : SOURCE_OPTIONS}
+          onChange={(v) => {
+            setSource(v);
+            setPage(1);
+          }}
+        />
+      )}
 
       <FilterBar
         attributes={object.attributes.filter((a) => !a.archived_at && a.type !== "long_text")}

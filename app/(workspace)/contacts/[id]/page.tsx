@@ -305,7 +305,7 @@ export default function ContactDetailPage() {
             onLogged={() => setTimelineKey((k) => k + 1)}
           />
           <div className="border-t border-[var(--color-border)] pt-5">
-            <ContactActivityTimeline key={timelineKey} contactId={contact.id} />
+            <ContactActivityTimeline key={timelineKey} contactId={contact.id} email={contact.email} />
           </div>
         </div>
       </div>

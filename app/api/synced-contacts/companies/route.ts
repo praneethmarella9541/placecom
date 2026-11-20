@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
 import { createServiceSupabase } from "@/lib/supabase-service";
-import { commonMailboxAccessForUser } from "@/lib/mailbox-context";
+import { isByomEnabled } from "@/lib/mailbox-context";
+import { loadContactSourceFlags, orgOwnerIdForUser } from "@/lib/contact-source-flags";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
 import { getAllCachedLogos } from "@/lib/company-enrichment";
 import { bucketEmailConnection, type EmailConnectionStrength } from "@/lib/email-connection-strength";
@@ -23,6 +24,11 @@ export type SyncedCompanyRow = {
   hasOutboundContact: boolean;
   /** From company_enrichment_cache (lib/company-enrichment.ts) — null until the sync has resolved this domain. */
   logoUrl: string | null;
+  /**
+   * BYOM only: whether anyone at this domain was seen in the common mailbox / in any individual
+   * mailbox. Absent when the module is off. Never says whose.
+   */
+  sources?: { common: boolean; byom: boolean };
 };
 
 // Best-first, matching bucketEmailConnection's own ordering (lib/email-connection-strength.ts).
@@ -144,10 +150,8 @@ function groupByDomain(rows: Row[]): SyncedCompanyRow[] {
 export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  // Grouped from the contacts mined from the common mailbox — see app/api/synced-contacts.
-  if (!(await commonMailboxAccessForUser(createServiceSupabase(), user.id))) {
-    return NextResponse.json({ companies: [] });
-  }
+  // Grouped from the org's shared contact book — see app/api/synced-contacts. Shared by every
+  // member, whether or not they can open the common mailbox.
 
   // `email` is unique on this table (migration 0037) — a stable, total sort
   // key on its own, needed so fetchAllRows' page boundaries don't skip or
@@ -163,6 +167,25 @@ export async function GET(request: Request) {
         .range(from, to)
     ),
   ]);
+
+  // BYOM: a company is "common" / "BYOM" when any person at its domain is. Org-level facts only.
+  const svc = createServiceSupabase();
+  const orgOwnerId = (await isByomEnabled(svc)) ? await orgOwnerIdForUser(user.id) : null;
+  const sourceByEmail = orgOwnerId ? await loadContactSourceFlags(orgOwnerId, user.id) : null;
+  function withSources(companies: SyncedCompanyRow[], rows: Row[]): SyncedCompanyRow[] {
+    if (!sourceByEmail) return companies;
+    const byDomain = new Map<string, { common: boolean; byom: boolean }>();
+    for (const r of rows) {
+      const flags = sourceByEmail.get(r.email);
+      if (!flags || !r.domain) continue;
+      const cur = byDomain.get(r.domain) ?? { common: false, byom: false };
+      cur.common ||= flags.common;
+      cur.byom ||= flags.mine || flags.others;
+      byDomain.set(r.domain, cur);
+    }
+    // A domain whose contacts have no source row yet (synced before 0095's next sync) reads as common.
+    return companies.map((c) => ({ ...c, sources: byDomain.get(c.domain) ?? { common: true, byom: false } }));
+  }
 
   // Best-effort — logos are a nice-to-have; a missing/not-yet-migrated cache
   // table shouldn't break the whole company list.
@@ -190,10 +213,10 @@ export async function GET(request: Request) {
           .range(from, to)
       );
       if (fallback.error) return NextResponse.json({ error: dbErrorMessage({ message: fallback.error }) }, { status: 500 });
-      return NextResponse.json({ companies: await withLogos(groupByDomain(withLiveStrength(fallback.data, settings))) });
+      return NextResponse.json({ companies: withSources(await withLogos(groupByDomain(withLiveStrength(fallback.data, settings))), fallback.data) });
     }
     return NextResponse.json({ error: dbErrorMessage({ message: error }) }, { status: 500 });
   }
 
-  return NextResponse.json({ companies: await withLogos(groupByDomain(withLiveStrength(data, settings))) });
+  return NextResponse.json({ companies: withSources(await withLogos(groupByDomain(withLiveStrength(data, settings))), data) });
 }

@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AttributeDef, ObjectDef, RecordFilter, RecordRow } from "./types";
+import type { AttributeDef, AttributeType, ObjectDef, RecordFilter, RecordRow } from "./types";
 import { emitEvents } from "./events";
 import { nextPosition } from "./lists";
 import { checkRecordRules, applyDefaults } from "./rules";
@@ -106,12 +106,42 @@ export type ListQuery = {
   filters?: RecordFilter[];
   /** Fetch exactly these records (used to show the names behind reference cells). */
   ids?: string[];
+  /**
+   * BYOM, People and Companies: keep the ones whose email address (or domain) was seen in the common mailbox, or in any
+   * individual (BYOM) mailbox. Org-level flags kept by the 0096 triggers — never whose mailbox.
+   */
+  source?: "common" | "byom";
 };
 
 /** A search term made safe for a PostgREST `ilike` value: no wildcards or filter punctuation. */
 function likeTerm(raw: string): string {
   return raw.replace(/[%_\\,()*]/g, " ").trim().slice(0, 100);
 }
+
+/** The `source` query parameter: only meaningful for People and Companies; anything else is ignored. */
+export function parseSourceParam(raw: string | null, objectSlug: string): "common" | "byom" | undefined {
+  if (objectSlug !== "people" && objectSlug !== "companies") return undefined;
+  return raw === "common" || raw === "byom" ? raw : undefined;
+}
+
+/**
+ * A search box term, split into words. Every word must match somewhere on the record — its name or
+ * any of its text-like fields (email addresses, domains, phone numbers, titles…) — so "ravi
+ * xlri.org" and a full email address find the person even when their name is only part of it.
+ * `_` is left alone (in a LIKE pattern it matches itself or any one character, so addresses with an
+ * underscore still match); `%`, `\`, `,`, `(`, `)` and `*` can't be sent through a filter and are dropped.
+ */
+function searchWords(raw: string): string[] {
+  return raw
+    .replace(/[%\\,()*"]/g, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter(Boolean)
+    .slice(0, 5)
+    .map((w) => w.slice(0, 80));
+}
+
+const SEARCHABLE_TYPES = new Set<AttributeType>(["text", "long_text", "email", "phone", "url", "domain"]);
 
 export async function listRecords(
   svc: SupabaseClient,
@@ -132,9 +162,14 @@ export async function listRecords(
     .is("deleted_at", null);
 
   if (query.ids) q = q.in("id", query.ids);
+  if (query.source) q = q.eq(query.source === "common" ? "has_common_source" : "has_byom_source", true);
 
-  const term = query.q ? likeTerm(query.q) : "";
-  if (term) q = q.ilike("name", `%${term}%`);
+  // Each word narrows the result; a word matches the name or any text-like field.
+  const searchable = attrs.filter((a) => !a.archived_at && SEARCHABLE_TYPES.has(a.type)).map((a) => a.slug).slice(0, 8);
+  for (const word of query.q ? searchWords(query.q) : []) {
+    const clauses = ["name", ...searchable.map((slug) => `values->>${slug}`)].map((col) => `${col}.ilike.*${word}*`);
+    q = q.or(clauses.join(","));
+  }
 
   for (const f of query.filters ?? []) {
     if (!known.has(f.attribute)) return { ok: false, status: 400, error: `Unknown attribute "${f.attribute.slice(0, 40)}".` };

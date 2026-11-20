@@ -1,8 +1,6 @@
 import { dbErrorMessage } from "@/lib/api-error";
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
-import { createServiceSupabase } from "@/lib/supabase-service";
-import { commonMailboxAccessForUser } from "@/lib/mailbox-context";
 import { isValidEmail } from "@/lib/broadcast-recipients";
 import { isValidE164, normalizePhone, phoneLookupVariants } from "@/lib/phone";
 import { isLikelyLinkedInUrl, normalizeLinkedInUrl } from "@/lib/contact-directory";
@@ -130,11 +128,9 @@ export async function GET(request: Request) {
    * single directory load to enrich what's typically a much smaller curated
    * list. That was the dominant cost of this endpoint.
    */
-  // Facts from the common mailbox's synced contacts; none for a member without access to it (BYOM).
-  const commonAccess = await commonMailboxAccessForUser(createServiceSupabase(), user.id);
+  // Facts from the org's shared synced contacts (every member sees the contact book, BYOM or not).
   async function loadSyncedByEmail(emails: string[]): Promise<Map<string, SyncedFacts>> {
     const map = new Map<string, SyncedFacts>();
-    if (!commonAccess) return map;
     const uniqueEmails = Array.from(new Set(emails.map((e) => e.trim()).filter(Boolean)));
     if (uniqueEmails.length === 0) return map;
 

@@ -14,6 +14,12 @@ import { bucketEmailConnection } from "@/lib/email-connection-strength";
 import { takeGmailQuotaStats } from "@/lib/gmail-quota";
 import { resolveCompanyNames, takeCompanyEnrichmentStats } from "@/lib/company-enrichment";
 import { isLikelyAutomatedAddress } from "@/lib/mail-noise-filter";
+import {
+  recordContactSources,
+  resetContactSourceCounts,
+  resolveSyncSource,
+  type SyncSource,
+} from "@/lib/contact-sources";
 
 type ParsedAddress = { name: string | null; email: string };
 
@@ -189,7 +195,8 @@ async function processHeadersPage(
   syncedByUserId: string,
   mailboxOwnerId: string,
   ownEmail: string | undefined,
-  headers: GmailMessageHeaders[]
+  headers: GmailMessageHeaders[],
+  source: SyncSource | null
 ): Promise<string[]> {
   type ContactAgg = {
     displayName: string | null;
@@ -370,7 +377,21 @@ async function processHeadersPage(
   const { error } = await supabase
     .from("synced_contacts")
     .upsert(pageRows, { onConflict: "mailbox_owner_id,email" });
-  return error ? [] : pageRows.map((r) => r.email);
+  if (error) return [];
+  // Attribute the page to the mailbox it was read from (BYOM contact sources).
+  if (source) {
+    await recordContactSources(
+      supabase,
+      source,
+      Array.from(pageContacts.entries()).map(([email, agg]) => ({
+        email,
+        dates: agg.dates,
+        hasOutbound: agg.hasOutbound,
+        hasDirect: agg.hasDirect,
+      }))
+    );
+  }
+  return pageRows.map((r) => r.email);
 }
 
 /**
@@ -466,6 +487,7 @@ export async function runContactSyncBatch(
   );
 
   const startedAt = Date.now();
+  const source = await resolveSyncSource(mailboxOwnerId, poolOwnerId);
 
   try {
     if (phase === "backfill") {
@@ -477,7 +499,8 @@ export async function runContactSyncBatch(
         poolOwnerId,
         ownEmail,
         state,
-        startedAt
+        startedAt,
+        source
       );
     }
     return await runIncrementalPhase(
@@ -488,7 +511,8 @@ export async function runContactSyncBatch(
       poolOwnerId,
       ownEmail,
       state,
-      startedAt
+      startedAt,
+      source
     );
   } catch (err: unknown) {
     if (err instanceof GmailRateLimitError) {
@@ -522,7 +546,8 @@ async function runBackfillPhase(
   poolOwnerId: string,
   ownEmail: string | undefined,
   state: SyncStateRow,
-  startedAt: number
+  startedAt: number,
+  source: SyncSource | null
 ): Promise<ContactSyncBatchResult> {
   const seenEmailsThisRun = new Set<string>();
 
@@ -578,6 +603,8 @@ async function runBackfillPhase(
         .update({ message_count_total: 0, message_count_90d: 0 })
         .eq("mailbox_owner_id", poolOwnerId);
     }
+    // This mailbox's own source counts are its alone, so they can always be recounted.
+    if (source) await resetContactSourceCounts(supabase, source);
   }
 
   // +1s so a message stamped in the same second as the start bound is included;
@@ -699,7 +726,8 @@ async function runBackfillPhase(
         syncedByUserId,
         poolOwnerId,
         ownEmail,
-        headers
+        headers,
+        source
       );
       processMs = Date.now() - processStartedAt;
       for (const email of upserted) seenEmailsThisRun.add(email);
@@ -832,7 +860,8 @@ async function runIncrementalPhase(
   poolOwnerId: string,
   ownEmail: string | undefined,
   state: SyncStateRow,
-  startedAt: number
+  startedAt: number,
+  source: SyncSource | null
 ): Promise<ContactSyncBatchResult> {
   if (!state.history_id) {
     // Shouldn't normally happen (backfill always captures one) — re-derive from
@@ -890,8 +919,9 @@ async function runIncrementalPhase(
           syncedByUserId,
           poolOwnerId,
             ownEmail,
-          headers
-        );
+          headers,
+        source
+      );
         for (const email of upserted) seenEmailsThisRun.add(email);
         messagesScannedThisRun += headers.length;
       }
@@ -953,8 +983,9 @@ async function runIncrementalPhase(
           syncedByUserId,
           poolOwnerId,
             ownEmail,
-          headers
-        );
+          headers,
+        source
+      );
         for (const email of upserted) seenEmailsThisRun.add(email);
         messagesScannedThisRun += headers.length;
       }

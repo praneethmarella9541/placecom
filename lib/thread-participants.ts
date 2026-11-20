@@ -3,16 +3,28 @@ import { extractEmailAddress } from "@/lib/email-parse";
 /** The name part of a From header, or the address's local part — never a stray "<". */
 function displayNameOf(from: string): string {
   const m = from.match(/^"?([^"<]+?)"?\s*</);
-  if (m && m[1].trim()) return m[1].trim();
+  // A name of only symbols ("-", "@") is no name — fall through to the address.
+  if (m && /[\p{L}\p{N}]/u.test(m[1])) return m[1].trim();
   const addr = extractEmailAddress(from).replace(/[<>]/g, "");
   const at = addr.indexOf("@");
   return at > 0 ? addr.slice(0, at) : addr || "Unknown";
 }
 
+/**
+ * Gmail's list cell shows a lone sender's full display name, cut after this many
+ * characters with a "." in place of the rest ("Mail Delivery Subsy.").
+ * Measured against a live inbox: 19-char names fit whole, longer ones are cut at 19.
+ */
+export const SINGLE_SENDER_NAME_MAX = 19;
+
+function truncateLikeGmail(name: string): string {
+  return name.length > SINGLE_SENDER_NAME_MAX ? `${name.slice(0, SINGLE_SENDER_NAME_MAX)}.` : name;
+}
+
 /** Titles that precede a name ("Dr. M. Mohamed Mustafa"); never the part Gmail shows. */
 const HONORIFIC_RE = /^(dr|mr|mrs|ms|miss|mx|prof|professor|sir|shri|sri|smt|shrimati|er|ar|capt|col|maj|rev|fr)\.?$/i;
 /** A bare initial or dotted initials: "M", "M.", "M.S.". */
-const INITIALS_RE = /^(?:[a-z]\.?)+$/i;
+const INITIALS_RE = /^(?:[a-z]\.)+[a-z]?$|^[a-z]$/i;
 
 /**
  * The name Gmail shows for someone else: their first name, skipping titles and
@@ -24,13 +36,15 @@ export function shortNameOf(full: string): string {
   let name = full.trim();
   const comma = name.split(",");
   if (comma.length === 2 && comma[1].trim()) name = comma[1].trim(); // "Mustafa, Mohamed"
-  const tokens = name.split(/\s+/).filter(Boolean);
+  // Drop separator tokens ("@", "-", "|") — "Joel @ ngrok" is "Joel", never "@".
+  const tokens = name.split(/\s+/).filter((t) => /[\p{L}\p{N}]/u.test(t));
   const first = tokens.find((t) => !HONORIFIC_RE.test(t) && !(t.length <= 4 && INITIALS_RE.test(t) && tokens.length > 1));
   return first ?? tokens[0] ?? full;
 }
 
 /**
- * How Gmail labels a conversation row: everyone who wrote in it ("me, raghu"),
+ * How Gmail labels a conversation row. A single sender gets their full display
+ * name (cut at SINGLE_SENDER_NAME_MAX); otherwise everyone who wrote in it ("me, raghu"),
  * oldest first, with the mailbox itself as "me" — not just whoever wrote last.
  * Other people get their first name, unless two share one. Long lists fold to
  * "first .. second-last, last".
@@ -52,6 +66,16 @@ export function threadParticipants(
     isMe: Boolean(me) && extractEmailAddress(from).trim().toLowerCase() === me,
     full: displayNameOf(from),
   }));
+
+  // One sender: Gmail shows the whole display name (symbols and all), not a first name.
+  if (entries.length === 1) {
+    const only = entries[0];
+    return {
+      label: only.isMe ? "me" : truncateLikeGmail(only.full),
+      avatarFrom: only.from,
+      avatarName: only.full,
+    };
+  }
 
   const firstNames = entries.map((e) => (e.isMe ? "me" : shortNameOf(e.full)));
   const counts = new Map<string, number>();

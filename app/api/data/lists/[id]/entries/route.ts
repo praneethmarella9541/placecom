@@ -3,8 +3,8 @@ import { dbErrorMessage } from "@/lib/api-error";
 import { requireDataContext } from "@/lib/data-model/access";
 import { listDenied } from "@/lib/data-model/route-helpers";
 import { ENTRY_COLUMNS, isUuid, loadList, loadStage, loadStages, nextPosition } from "@/lib/data-model/lists";
-import { failedRequirements } from "@/lib/data-model/rules";
-import { loadStageRules, recordStageChange } from "@/lib/data-model/rules-server";
+import { checkStageRulesV2 } from "@/lib/data-model/rule-engine-bridge";
+import { recordStageChange } from "@/lib/data-model/rules-server";
 import { emitEvents } from "@/lib/data-model/events";
 import { checkReferences, getRecord, loadAttributes } from "@/lib/data-model/records";
 import { validateRecordInput } from "@/lib/data-model/values";
@@ -49,7 +49,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   // Rules for entering this stage (a deal's value is required to enter Won, say).
   if (stageId) {
     const recordAttrs = await loadAttributes(svc, orgOwnerId, list.object_id);
-    const problems = (await loadStageRules(svc, orgOwnerId, stageId)).flatMap((r) => failedRequirements(r, recordAttrs, record.values, record.name));
+    const problems = await checkStageRulesV2(svc, orgOwnerId, stageId, recordAttrs, record.values, record.name, userId);
     if (problems.length) return NextResponse.json({ error: problems[0], errors: problems }, { status: 422 });
   }
 

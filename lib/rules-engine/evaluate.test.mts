@@ -44,6 +44,11 @@ test("a missing field reads as blank, not an error", async () => {
   assert.equal(await run("ISBLANK(stage)", ctx({})), true);
 });
 
+test("an empty multi-value field reads as blank, matching the platform's own isEmptyInput", async () => {
+  assert.equal(await run("ISBLANK(destinations)", ctx({ destinations: [] })), true);
+  assert.equal(await run("ISBLANK(destinations)", ctx({ destinations: ["Goa"] })), false);
+});
+
 test("date fields compare correctly and subtract to a day count", async () => {
   const c = ctx({ start_date: new Date(Date.UTC(2026, 5, 1)), end_date: new Date(Date.UTC(2026, 5, 10)) });
   assert.equal(await run("end_date >= start_date", c), true);

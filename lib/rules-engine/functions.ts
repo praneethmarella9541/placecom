@@ -77,7 +77,11 @@ export const list = (t: Typed, pos: Position): string[] => {
   if (!Array.isArray(t.value)) throw new FormulaError("Expected a multi-value field here.", pos);
   return t.value;
 };
-export const isBlank = (t: Typed): boolean => t.value === null || (typeof t.value === "string" && t.value.trim() === "");
+/** Blank: null, an all-whitespace (or empty) string, or an empty multi-value list — matching
+ *  lib/data-model/values.ts's isEmptyInput(), which the platform treats "no values selected" the
+ *  same way everywhere else. Zero and FALSE are not blank. */
+export const isBlank = (t: Typed): boolean =>
+  t.value === null || (typeof t.value === "string" && t.value.trim() === "") || (Array.isArray(t.value) && t.value.length === 0);
 /** TRUE only for the literal true — Salesforce formula booleans are never blank, but a bad or
  *  absent value should read as "no" rather than throw mid-evaluation. */
 export const asBoolean = (t: Typed): boolean => t.value === true;

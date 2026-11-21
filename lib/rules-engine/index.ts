@@ -8,7 +8,7 @@ import { FormulaError, type FormulaType, type FormulaValue, type ObjectSchema } 
 export type { Expr } from "./ast";
 export type { EvalContext } from "./context";
 export type { FieldSchema, FormulaType, FormulaValue, ObjectSchema, Position, Typed } from "./types";
-export { FormulaError } from "./types";
+export { FormulaError, MAX_LINK_DEPTH } from "./types";
 export { FUNCTIONS } from "./functions";
 
 export type CompileResult =

@@ -125,6 +125,9 @@ test("ISBLANK, BLANKVALUE, NULLVALUE", () => {
   assert.equal(call("ISBLANK", [T.t("  ")]), true);
   assert.equal(call("ISBLANK", [T.t("x")]), false);
   assert.equal(call("ISBLANK", [T.n(0)]), false); // zero is not blank
+  assert.equal(call("ISBLANK", [T.b(false)]), false); // FALSE is not blank
+  assert.equal(call("ISBLANK", [T.list([])]), true); // an empty multi-value field reads as blank...
+  assert.equal(call("ISBLANK", [T.list(["A"])]), false); // ...matching lib/data-model/values.ts's isEmptyInput
   assert.equal(call("BLANKVALUE", [T.null(), T.t("default")]), "default");
   assert.equal(call("BLANKVALUE", [T.t("x"), T.t("default")]), "x");
 });

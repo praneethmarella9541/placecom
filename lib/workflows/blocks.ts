@@ -4,8 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { emitEvents } from "@/lib/data-model/events";
 import { loadList, loadStage, loadStages, nextPosition } from "@/lib/data-model/lists";
 import { createRecord, getRecord, listRecords, loadAttributes, loadObject, loadObjectById, updateRecord } from "@/lib/data-model/records";
-import { failedRequirements } from "@/lib/data-model/rules";
-import { loadStageRules, recordStageChange } from "@/lib/data-model/rules-server";
+import { checkStageRulesV2 } from "@/lib/data-model/rule-engine-bridge";
+import { recordStageChange } from "@/lib/data-model/rules-server";
 import { validateRecordInput } from "@/lib/data-model/values";
 import type { RecordFilter } from "@/lib/data-model/types";
 import { conditionsHold } from "./conditions";
@@ -268,9 +268,7 @@ export async function runBlock(block: Block, env: RunEnv): Promise<BlockResult> 
 /** Stage rules ("a deal's value is required to enter Won") apply to workflows exactly as to people. */
 async function checkStageRules(env: RunEnv, stageId: string | null, record: { object_id: string; name: string; values: Record<string, unknown> }) {
   if (!stageId) return;
-  const rules = await loadStageRules(env.svc, env.org, stageId);
-  if (!rules.length) return;
   const attrs = await loadAttributes(env.svc, env.org, record.object_id);
-  const problems = rules.flatMap((r) => failedRequirements(r, attrs, record.values, record.name));
+  const problems = await checkStageRulesV2(env.svc, env.org, stageId, attrs, record.values, record.name, env.ownerId);
   if (problems.length) throw new BlockError(problems.join(" "));
 }

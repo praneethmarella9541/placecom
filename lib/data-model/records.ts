@@ -4,8 +4,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AttributeDef, AttributeType, ObjectDef, RecordFilter, RecordRow } from "./types";
 import { emitEvents } from "./events";
 import { nextPosition } from "./lists";
-import { checkRecordRules, applyDefaults } from "./rules";
-import { loadRecordRules } from "./rules-server";
+import { applyDefaults } from "./rules";
+import { checkRecordRulesV2 } from "./rule-engine-bridge";
 import { extractKeys, validateRecordInput, type RecordInput } from "./values";
 
 /**
@@ -357,7 +357,7 @@ export async function createRecord(
   if (!valid.ok) return { ok: false, status: 400, error: valid.errors[0], errors: valid.errors };
   const refErrors = await checkReferences(svc, actor.org, attrs, valid.values);
   if (refErrors.length) return { ok: false, status: 400, error: refErrors[0], errors: refErrors };
-  const ruleErrors = checkRecordRules(await loadRecordRules(svc, actor.org, object.id), attrs, valid.values, valid.name);
+  const ruleErrors = await checkRecordRulesV2(svc, actor.org, object.id, attrs, valid.values, valid.name, { isNew: true }, actor.userId);
   if (ruleErrors.length) return { ok: false, status: 422, error: ruleErrors[0], errors: ruleErrors };
 
   const { data: row, error } = await svc
@@ -430,7 +430,7 @@ export async function updateRecord(
 
   // Rules are checked against the whole record as it would be after this save. Records that
   // already break a newer rule are not flagged until someone next saves them.
-  const ruleErrors = checkRecordRules(await loadRecordRules(svc, actor.org, object.id), attrs, nextValues, nextName);
+  const ruleErrors = await checkRecordRulesV2(svc, actor.org, object.id, attrs, nextValues, nextName, { isNew: false, priorValues: existing.values }, actor.userId);
   if (ruleErrors.length) return { ok: false, status: 422, error: ruleErrors[0], errors: ruleErrors };
 
   // Keys first: if one is taken, nothing about the record has changed yet.

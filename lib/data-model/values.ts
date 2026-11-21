@@ -20,6 +20,70 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@<>()[\],;:"]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 const DOMAIN = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+};
+
+/** `2026-12-31` if y/m/d is a real calendar day, otherwise null. */
+function ymdToIso(y: number, m: number, d: number): string | null {
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null;
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  const iso = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const check = new Date(`${iso}T00:00:00Z`);
+  return !Number.isNaN(check.getTime()) && check.toISOString().slice(0, 10) === iso ? iso : null;
+}
+
+/**
+ * Turns whatever a person typed or a spreadsheet exported as a date into `YYYY-MM-DD`, or says it
+ * can't: ISO and `YYYY/MM/DD`-style, day/month/year or month/day/year with a 2- or 4-digit year
+ * (`/`, `-` or `.` separated — ambiguous day-vs-month, e.g. "05/06/2026", is read as day-month-year,
+ * the convention CSV exports from this platform's own market mostly use), and a named month in
+ * either order ("31 Dec 2026", "December 31, 2026", "31st Dec '26"). A 2-digit year is read as
+ * 2000-2068 or 1969-1999, matching the common spreadsheet convention.
+ */
+export function parseFlexibleDate(input: string): string | null {
+  const s = input.trim().replace(/(\d)(st|nd|rd|th)\b/gi, "$1");
+  if (!s) return null;
+
+  // Year first: 2026-12-31, 2026/12/31, 2026.12.31
+  let m = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (m) return ymdToIso(+m[1], +m[2], +m[3]);
+
+  const yearFromShort = (yy: string): number => {
+    const n = +yy;
+    return n <= 68 ? 2000 + n : 1900 + n;
+  };
+
+  // Year last, numeric: 31/12/2026, 12/31/2026, 31-12-26, 12.31.26
+  m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/);
+  if (m) {
+    const a = +m[1];
+    const b = +m[2];
+    const year = m[3].length === 4 ? +m[3] : yearFromShort(m[3]);
+    if (a > 12 && b <= 12) return ymdToIso(year, b, a); // day/month/year
+    if (b > 12 && a <= 12) return ymdToIso(year, a, b); // month/day/year
+    return ymdToIso(year, b, a); // ambiguous — default day/month/year
+  }
+
+  // Named month, day first: 31 Dec 2026, 31-Dec-2026, 31 December, 2026
+  m = s.match(/^(\d{1,2})[\s-]+([a-zA-Z]+)\.?,?[\s-]+(\d{4}|\d{2})$/);
+  if (m) {
+    const mon = MONTH_NAMES[m[2].toLowerCase()];
+    if (mon) return ymdToIso(m[3].length === 4 ? +m[3] : yearFromShort(m[3]), mon, +m[1]);
+  }
+
+  // Named month, month first: Dec 31, 2026 / December 31 2026
+  m = s.match(/^([a-zA-Z]+)\.?[\s,]+(\d{1,2})[\s,]+(\d{4}|\d{2})$/);
+  if (m) {
+    const mon = MONTH_NAMES[m[1].toLowerCase()];
+    if (mon) return ymdToIso(m[3].length === 4 ? +m[3] : yearFromShort(m[3]), mon, +m[2]);
+  }
+
+  return null;
+}
+
 /** True for "nothing was entered": null, undefined, blank text, or an empty list. */
 export function isEmptyInput(raw: unknown): boolean {
   if (raw === null || raw === undefined) return true;
@@ -56,14 +120,10 @@ function scalar(attr: AttributeDef, raw: unknown): Normalized {
       return fail(attr, "must be true or false.");
     }
     case "date": {
-      if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
-        return fail(attr, "must be a date like 2026-12-31.");
-      }
-      const d = new Date(`${raw.trim()}T00:00:00Z`);
-      if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== raw.trim()) {
-        return fail(attr, "is not a real date.");
-      }
-      return { ok: true, value: raw.trim() };
+      if (typeof raw !== "string") return fail(attr, "must be a date.");
+      const iso = parseFlexibleDate(raw);
+      if (!iso) return fail(attr, `"${raw.trim().slice(0, 40)}" is not a recognisable date.`);
+      return { ok: true, value: iso };
     }
     case "timestamp": {
       if (typeof raw !== "string" && typeof raw !== "number") return fail(attr, "must be a date and time.");

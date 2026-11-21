@@ -44,10 +44,20 @@ test("checkbox takes booleans and the strings true/false", () => {
   bad(attr({ type: "checkbox" }), "yes");
 });
 
-test("dates must be real calendar days", () => {
-  assert.equal(ok(attr({ type: "date" }), "2026-12-31"), "2026-12-31");
-  bad(attr({ type: "date" }), "2026-02-30");
-  bad(attr({ type: "date" }), "31/12/2026");
+test("dates accept common formats and normalize to YYYY-MM-DD", () => {
+  const d = attr({ type: "date" });
+  assert.equal(ok(d, "2026-12-31"), "2026-12-31");
+  assert.equal(ok(d, "31/12/2026"), "2026-12-31");
+  assert.equal(ok(d, "12/31/2026"), "2026-12-31"); // 31 can't be a month, so this must be month/day/year
+  assert.equal(ok(d, "31-12-26"), "2026-12-31");
+  assert.equal(ok(d, "2026/01/05"), "2026-01-05");
+  assert.equal(ok(d, "31 Dec 2026"), "2026-12-31");
+  assert.equal(ok(d, "Dec 31, 2026"), "2026-12-31");
+  assert.equal(ok(d, "December 31 2026"), "2026-12-31");
+  assert.equal(ok(d, "31st December 2026"), "2026-12-31");
+  assert.equal(ok(d, "5/6/2026"), "2026-06-05"); // ambiguous day/month: read as day/month/year
+  bad(d, "2026-02-30");
+  bad(d, "not a date");
 });
 
 test("timestamps are stored as ISO strings", () => {

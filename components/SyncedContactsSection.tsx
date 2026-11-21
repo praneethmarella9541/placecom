@@ -14,6 +14,7 @@ import { titleCase } from "@/lib/title-case";
 import { timeAgo, truncateChars } from "@/lib/utils";
 import type { SyncedCompanyRow } from "@/app/api/synced-contacts/companies/route";
 import { SyncedPersonModal } from "@/components/SyncedPersonModal";
+import { useCommonMailboxAccess } from "@/components/AccountSwitcher";
 import { SyncedCompanyModal } from "@/components/SyncedCompanyModal";
 import { ConnectionStrengthSettingsModal } from "@/components/ConnectionStrengthSettingsModal";
 import { SimpleDropdown, type DropdownOption } from "@/components/SimpleDropdown";
@@ -42,6 +43,17 @@ const STRENGTH_OPTIONS: DropdownOption<StrengthFilter>[] = [
 ];
 
 type ViewMode = "people" | "companies";
+
+/**
+ * BYOM: which mailboxes a contact came from. Contacts are one deduplicated, org-wide book — this
+ * only narrows what is shown, so "All" lists every unique contact exactly once.
+ */
+type SourceFilter = "all" | "common" | "byom";
+const SOURCE_OPTIONS: DropdownOption<SourceFilter>[] = [
+  { value: "all", label: "All contacts" },
+  { value: "common", label: "Common mailbox contacts" },
+  { value: "byom", label: "BYOM contacts" },
+];
 
 function errMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -74,6 +86,7 @@ export function SyncedContactsSection({
   onAddToDirectory: (input: DirectoryContactInput) => void;
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>("people");
+  const { canDriveContactSync } = useCommonMailboxAccess();
   // Reactive read of the shared cache (lib/synced-contacts-prefetch.ts) —
   // warmed by ContactDirectory on mount, so this is usually already populated
   // by the time a user opens this section; re-renders automatically if a
@@ -90,6 +103,7 @@ export function SyncedContactsSection({
   const [companiesError, setCompaniesError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [strengthFilter, setStrengthFilter] = useState<StrengthFilter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [strengthSettingsOpen, setStrengthSettingsOpen] = useState(false);
   const [selectedPerson, setSelectedPerson] = useState<SyncedContactRow | null>(null);
   const [selectedCompany, setSelectedCompany] = useState<SyncedCompanyRow | null>(null);
@@ -189,6 +203,8 @@ export function SyncedContactsSection({
   const filteredContacts = useMemo(() => {
     const q = search.trim().toLowerCase();
     let rows = contacts;
+    if (sourceFilter === "common") rows = rows.filter((c) => c.sources?.common);
+    else if (sourceFilter === "byom") rows = rows.filter((c) => c.sources && (c.sources.mine || c.sources.others));
     if (strengthFilter !== "all") {
       rows = rows.filter((c) => (c.connection_strength ?? "No communication") === strengthFilter);
     }
@@ -201,7 +217,13 @@ export function SyncedContactsSection({
         (c.domain ?? "").toLowerCase().includes(q)
       );
     });
-  }, [contacts, search, strengthFilter]);
+  }, [contacts, search, strengthFilter, sourceFilter]);
+
+  // Present only while the BYOM module is on (the API omits `sources` otherwise).
+  const hasSources = useMemo(
+    () => contacts.some((c) => c.sources) || companies.some((c) => c.sources),
+    [contacts, companies]
+  );
 
   const buckets = useMemo(() => {
     const groups = new Map<EmailConnectionStrength, SyncedContactRow[]>();
@@ -219,6 +241,8 @@ export function SyncedContactsSection({
   const filteredCompanies = useMemo(() => {
     const q = search.trim().toLowerCase();
     let rows = companies;
+    if (sourceFilter === "common") rows = rows.filter((c) => c.sources?.common);
+    else if (sourceFilter === "byom") rows = rows.filter((c) => c.sources?.byom);
     if (strengthFilter !== "all") {
       rows = rows.filter((c) => c.bestConnectionStrength === strengthFilter);
     }
@@ -226,7 +250,7 @@ export function SyncedContactsSection({
     return rows.filter(
       (c) => c.companyName.toLowerCase().includes(q) || c.domain.toLowerCase().includes(q)
     );
-  }, [companies, search, strengthFilter]);
+  }, [companies, search, strengthFilter, sourceFilter]);
 
   const companyBuckets = useMemo(() => {
     const groups = new Map<EmailConnectionStrength, SyncedCompanyRow[]>();
@@ -288,6 +312,7 @@ export function SyncedContactsSection({
             {statusLine}
           </p>
         </div>
+        {canDriveContactSync && (
         <button
           data-testid="synced-contacts-sync-btn"
           type="button"
@@ -305,6 +330,7 @@ export function SyncedContactsSection({
             syncing ? "Pause syncing" : paused ? "Resume syncing" : "Sync from mailbox"
           )}
         </button>
+        )}
       </div>
 
       {syncing && (
@@ -366,6 +392,14 @@ export function SyncedContactsSection({
               className="input-field w-full pl-9 text-[13px]"
             />
           </div>
+          {hasSources && (
+            <SimpleDropdown
+              label="Source"
+              value={sourceFilter}
+              options={SOURCE_OPTIONS}
+              onChange={setSourceFilter}
+            />
+          )}
           <SimpleDropdown
             label="Strength"
             value={strengthFilter}

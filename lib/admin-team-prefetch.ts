@@ -6,6 +6,7 @@
 import type { FeatureKey } from "@/lib/feature-access";
 import type { TeamGroup } from "@/components/AdminGroupsPanel";
 import { filterAvailableExotelNumbers } from "@/lib/admin-exotel-select";
+import type { MailboxAccessLevel } from "@/lib/mailbox-context-shared";
 
 export type AdminTeamMember = {
   id: string;
@@ -21,6 +22,10 @@ export type AdminTeamMember = {
   groupName: string | null;
   openaiTokenLimit: number | null;
   tokensUsed: number;
+  /** BYOM: the member's own connected mailbox, if any. Absent when the module is off. */
+  ownMailbox?: { address: string | null; status: string } | null;
+  /** BYOM: effective access to the common mailbox (see lib/mailbox-context.ts). Absent when the module is off. */
+  commonAccess?: MailboxAccessLevel;
 };
 
 export type AdminTeamPrefetchSnapshot = {

@@ -5,10 +5,13 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { clearAnalyticsPrefetch, prefetchAnalytics } from "@/lib/analytics-prefetch";
 import { rangeEndingToday } from "@/components/DateRangePicker";
-import { BarChart3, Plus } from "lucide-react";
+import { BarChart3, Inbox, Plus } from "lucide-react";
+import { MAILBOX_ACCESS_LABELS } from "@/lib/mailbox-context-shared";
 import { PasswordInput } from "@/components/PasswordInput";
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { AdminGroupsPanel, type TeamGroup } from "@/components/AdminGroupsPanel";
+import { AdminMailboxAccessPanel } from "@/components/AdminMailboxAccessPanel";
+import { hiddenFeatureSet } from "@/lib/module-visibility";
 import { AdminToast, toastVariantForMessage, type AdminToastState } from "@/components/AdminToast";
 import {
   getAdminTeamPrefetchCache,
@@ -26,6 +29,8 @@ type TeamMember = AdminTeamMember & { newPassword?: string };
 /** Pill keys besides a group's own id. */
 const ALL_PILL = "all";
 const NO_GROUP_PILL = "none";
+/** BYOM: members who connected their own mailbox. Not a group — a filter across groups. */
+const OWN_MAILBOX_PILL = "own-mailbox";
 
 function groupIdsOf(members: AdminTeamMember[]): Record<string, string | null> {
   return Object.fromEntries(members.map((m) => [m.id, m.groupId]));
@@ -54,7 +59,9 @@ export default function AdminTeamPage() {
   const [toast, setToast] = useState<AdminToastState>(null);
   const [busy, setBusy] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-  const [tab, setTab] = useState<"members" | "groups">("members");
+  const [tab, setTab] = useState<"members" | "groups" | "mailboxes">("members");
+  // BYOM's tab exists only while the module is on in /configs.
+  const showMailboxAccess = Boolean(me) && !hiddenFeatureSet(me).has("byom");
   const [activePill, setActivePill] = useState(ALL_PILL);
   const [editingId, setEditingId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -89,19 +96,27 @@ export default function AdminTeamPage() {
     const groupOf = (m: TeamMember) => (m.id in savedGroupIds ? savedGroupIds[m.id] : m.groupId);
     const knownGroupIds = new Set(groups.map((g) => g.id));
     const count = (pred: (g: string | null) => boolean) => members.filter((m) => pred(groupOf(m))).length;
+    const byGroup = (match: (g: string | null) => boolean) => (m: TeamMember) => match(groupOf(m));
+    const hasOwnMailbox = (m: TeamMember) => Boolean(m.ownMailbox);
     const list = [
-      { key: ALL_PILL, label: "All", count: members.length, match: () => true },
+      { key: ALL_PILL, label: "All", count: members.length, match: (_m: TeamMember) => true },
+      {
+        key: OWN_MAILBOX_PILL,
+        label: "Own mailbox",
+        count: members.filter(hasOwnMailbox).length,
+        match: hasOwnMailbox,
+      },
       ...groups
-        .map((g) => ({ key: g.id, label: g.name, count: count((id) => id === g.id), match: (id: string | null) => id === g.id }))
+        .map((g) => ({ key: g.id, label: g.name, count: count((id) => id === g.id), match: byGroup((id) => id === g.id) }))
         .filter((p) => p.count > 0),
       {
         key: NO_GROUP_PILL,
         label: "Full access",
         count: count((id) => !id || !knownGroupIds.has(id)),
-        match: (id: string | null) => !id || !knownGroupIds.has(id),
+        match: byGroup((id) => !id || !knownGroupIds.has(id)),
       },
     ].filter((p) => p.key === ALL_PILL || p.count > 0);
-    return list.map((p) => ({ ...p, members: members.filter((m) => p.match(groupOf(m))) }));
+    return list.map((p) => ({ ...p, members: members.filter((m) => p.match(m)) }));
   }, [members, groups, savedGroupIds]);
 
   // The pill someone was on can vanish (its last member moved or was removed).
@@ -348,12 +363,13 @@ export default function AdminTeamPage() {
       <div
         role="tablist"
         aria-label="Team sections"
-        className="flex max-w-md gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1"
+        className={`flex gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-offset)] p-1 ${showMailboxAccess ? "max-w-xl" : "max-w-md"}`}
       >
         {(
           [
             ["members", "Members", members.length],
             ["groups", "Access groups", groups.length],
+            ...(showMailboxAccess ? ([["mailboxes", "Mailbox access", null]] as const) : []),
           ] as const
         ).map(([key, label, count]) => (
           <button
@@ -370,7 +386,9 @@ export default function AdminTeamPage() {
             }`}
           >
             {titleCase(label)}
-            {!loadingMembers && <span className="ml-1.5 font-medium text-[var(--color-text-faint)]">({count})</span>}
+            {!loadingMembers && count !== null && (
+              <span className="ml-1.5 font-medium text-[var(--color-text-faint)]">({count})</span>
+            )}
           </button>
         ))}
       </div>
@@ -445,6 +463,23 @@ export default function AdminTeamPage() {
                       <p className="truncate text-xs text-[var(--color-text-muted)]">{member.email || "no-email"}</p>
                     </div>
                   </div>
+                  {member.ownMailbox && (
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span
+                        title={member.ownMailbox.address ?? undefined}
+                        className="inline-flex items-center gap-1 rounded-full border border-[var(--color-copper)] bg-[var(--color-copper-tint)] px-2 py-0.5 font-semibold text-[var(--color-copper)]"
+                      >
+                        <Inbox className="h-3 w-3" aria-hidden />
+                        {titleCase("Own mailbox")}
+                        {member.ownMailbox.status === "disconnected" ? ` · ${titleCase("disconnected")}` : ""}
+                      </span>
+                      {member.commonAccess && (
+                        <span className="rounded-full border border-[var(--color-border)] px-2 py-0.5 font-medium text-[var(--color-text-muted)]">
+                          {titleCase("Common")}: {MAILBOX_ACCESS_LABELS[member.commonAccess]}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 text-xs text-[var(--color-text-muted)]">
                       <p className="truncate">{member.jobTitle || titleCase("No job title")}</p>
@@ -463,6 +498,8 @@ export default function AdminTeamPage() {
           </div>
         )}
       </div>
+      ) : tab === "mailboxes" && showMailboxAccess ? (
+      <AdminMailboxAccessPanel onToast={showToast} onChanged={() => revalidate({ silent: true })} />
       ) : (
       <AdminGroupsPanel
         groups={groups}

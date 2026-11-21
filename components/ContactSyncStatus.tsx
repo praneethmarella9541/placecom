@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useCommonMailboxAccess } from "@/components/AccountSwitcher";
 import { useModuleVisibility } from "@/lib/module-visibility";
 import { Pause, RefreshCw } from "lucide-react";
 import { IconX } from "@/components/Icons";
@@ -152,7 +153,12 @@ async function refreshStatus() {
 export function ContactSyncStatus() {
   // Mounted globally in AppShell, but it drives the Contacts directory sync —
   // with Contacts off there is nothing to sync and every poll would 403.
-  const contactsEnabled = useModuleVisibility().isVisible("contacts");
+  //
+  // BYOM: the sync reads the common mailbox, so it only runs — and only shows — for someone
+  // with full access working in it. Anyone else would see (and could pause) a sync that isn't
+  // theirs; the status route returns nothing for them anyway.
+  const { canDriveContactSync } = useCommonMailboxAccess();
+  const contactsEnabled = useModuleVisibility().isVisible("contacts") && canDriveContactSync;
   const snapshot = useContactSyncSnapshot();
   const loopActiveRef = useRef(false);
   /** Epoch ms before which driveLoop won't re-POST after a 409 — see driveLoop. */

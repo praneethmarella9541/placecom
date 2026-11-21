@@ -1,4 +1,5 @@
 import type { FeatureKey } from "@/lib/feature-access";
+import type { GrantedMailboxAccess, MailboxOption, MailboxType } from "@/lib/mailbox-context-shared";
 
 export type MeMailboxResponse = {
   sessionEmail: string | null;
@@ -19,7 +20,16 @@ export type MeMailboxResponse = {
   /** True when this email is in CONFIGS_ALLOWED_EMAILS, i.e. may open /configs. */
   isConfigsAdmin: boolean;
   mailboxOwnerId: string | null;
+  /** Address of the mailbox the user is working in now (the common one unless they switched). */
   mailboxEmail: string | null;
   hasStoredMailbox: boolean;
+  /**
+   * BYOM: every mailbox this user may switch to. Empty or one entry means there is
+   * nothing to switch between, and the switcher stays hidden. Absent from older payloads.
+   */
+  mailboxes?: MailboxOption[];
+  activeMailboxId?: string | null;
+  activeMailboxType?: MailboxType;
+  activeMailboxAccess?: GrantedMailboxAccess;
   exotelVirtualNumber: string | null;
 };

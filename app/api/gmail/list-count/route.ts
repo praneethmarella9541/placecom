@@ -38,7 +38,7 @@ export async function GET(request: Request) {
       folder: folderRaw as Exclude<MailFolder, "drafts">,
       labelId,
       searchQuery,
-      mailboxKey: auth.mailboxOwnerId,
+      mailboxKey: auth.mailboxKey,
       cap: COUNT_CAP,
       signal: request.signal,
     });

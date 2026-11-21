@@ -10,6 +10,7 @@ import {
 import { encryptToken } from "@/lib/token-crypto";
 import { safeNextPath } from "@/lib/safe-redirect";
 import { sessionCookieOptions } from "@/lib/auth-cookies";
+import { BYOM_CONNECT_COOKIE, attachIndividualMailbox } from "@/lib/byom-onboarding";
 
 const MSG_MAX = 450;
 
@@ -122,6 +123,25 @@ export async function GET(request: Request) {
       }
     } catch {
       console.error("[auth/callback/exchange] Failed to persist Google mailbox credentials");
+    }
+
+    // Bring Your Own Mailbox: join an org by email domain, or connect/reconnect
+    // this Google account as the user's own mailbox. A no-op with the module off.
+    try {
+      // A connect request names the member who made it. If Google signed in someone else (a
+      // Google account with a different email than the login, which Supabase treats as a new
+      // user), do nothing rather than auto-join that second account by domain.
+      const connectFor = cookieStore.get(BYOM_CONNECT_COOKIE)?.value ?? null;
+      if (connectFor) cookieStore.delete(BYOM_CONNECT_COOKIE);
+      if (!connectFor || connectFor === session.user.id) {
+        await attachIndividualMailbox(createServiceSupabase(), {
+          userId: session.user.id,
+          email: session.user.email ?? null,
+          connectRequested: connectFor === session.user.id,
+        });
+      }
+    } catch (e) {
+      console.error("[auth/callback/exchange] BYOM onboarding failed", e);
     }
   }
 

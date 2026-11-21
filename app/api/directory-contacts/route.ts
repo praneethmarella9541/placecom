@@ -128,6 +128,7 @@ export async function GET(request: Request) {
    * single directory load to enrich what's typically a much smaller curated
    * list. That was the dominant cost of this endpoint.
    */
+  // Facts from the org's shared synced contacts (every member sees the contact book, BYOM or not).
   async function loadSyncedByEmail(emails: string[]): Promise<Map<string, SyncedFacts>> {
     const map = new Map<string, SyncedFacts>();
     const uniqueEmails = Array.from(new Set(emails.map((e) => e.trim()).filter(Boolean)));

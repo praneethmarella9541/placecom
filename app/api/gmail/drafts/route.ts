@@ -1,6 +1,6 @@
 import { blockedAttachmentError } from "@/lib/upload-policy";
 import { NextResponse } from "next/server";
-import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { mailboxActionDenied, requireGmailAccessToken } from "@/lib/gmail-auth";
 import { fetchGmail, GMAIL_COST } from "@/lib/gmail-quota";
 import {
   getStagedAttachment,
@@ -148,7 +148,7 @@ export async function GET(request: Request) {
   const res = await fetchGmail(
     `${GMAIL_API}/drafts/${encodeURIComponent(draftId)}?format=full`,
     { headers: { Authorization: `Bearer ${auth.accessToken}` } },
-    { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.draftsGet }
+    { mailboxKey: auth.mailboxKey, cost: GMAIL_COST.draftsGet }
   );
 
   if (!res.ok) {
@@ -430,7 +430,7 @@ async function buildDraftRaw(
 }
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "reply" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -441,6 +441,9 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  const denied = mailboxActionDenied(auth, body.threadId ? "reply" : "send");
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   const blockedAttachment = blockedAttachmentError(body.attachments);
   if (blockedAttachment) return NextResponse.json({ error: blockedAttachment }, { status: 400 });
@@ -463,7 +466,7 @@ export async function POST(request: Request) {
 
   let raw: string;
   try {
-    raw = await buildDraftRaw(auth.accessToken, auth.userId, body, auth.mailboxOwnerId);
+    raw = await buildDraftRaw(auth.accessToken, auth.userId, body, auth.mailboxKey);
   } catch (e) {
     const err = e as Error;
     console.error("[drafts] build raw", err);
@@ -490,7 +493,7 @@ export async function POST(request: Request) {
           },
           body: JSON.stringify({ message }),
         },
-        { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.draftsUpdate }
+        { mailboxKey: auth.mailboxKey, cost: GMAIL_COST.draftsUpdate }
       );
     } else {
       // Create new draft
@@ -504,7 +507,7 @@ export async function POST(request: Request) {
           },
           body: JSON.stringify({ message }),
         },
-        { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.draftsCreate }
+        { mailboxKey: auth.mailboxKey, cost: GMAIL_COST.draftsCreate }
       );
     }
 
@@ -526,7 +529,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "reply" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -540,7 +543,7 @@ export async function DELETE(request: Request) {
   const res = await fetchGmail(
     `${GMAIL_API}/drafts/${encodeURIComponent(draftId)}`,
     { method: "DELETE", headers: { Authorization: `Bearer ${auth.accessToken}` } },
-    { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.draftsUpdate }
+    { mailboxKey: auth.mailboxKey, cost: GMAIL_COST.draftsUpdate }
   );
 
   // 204 No Content = success; 404 = already gone — both are fine

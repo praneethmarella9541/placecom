@@ -68,7 +68,7 @@ export async function GET(request: Request) {
   }
 
   const accessToken = auth.accessToken;
-  const mailboxKey = auth.mailboxOwnerId;
+  const mailboxKey = auth.mailboxKey;
   const counts: Record<string, { total: number; unread: number }> = {};
   let scopeError: string | null = null;
 

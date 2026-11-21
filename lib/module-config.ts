@@ -42,13 +42,14 @@ export const MODULE_GROUPS: readonly ModuleGroup[] = [
       "contacts",
       "sms",
       "whatsapp",
+      "byom",
     ],
   },
   {
     key: "pipeline",
     label: "Pipeline",
     description: "Lead stages, interactions, and the CRM board.",
-    modules: ["crm"],
+    modules: ["crm", "dataModel", "workflows"],
   },
   {
     key: "ops",
@@ -82,6 +83,12 @@ export const MODULE_DESCRIPTIONS: Record<FeatureKey, string> = {
   forms: "Form builder and response collection.",
   sheets: "Embedded Google Sheets editor.",
   docs: "Embedded Google Docs editor with link sharing.",
+  byom:
+    "Bring your own mailbox: staff sign in with Google to work in their own Gmail, and switch to the common mailbox with the access an admin grants them. Switching it off hides the switcher and the access settings, and everyone works in the common mailbox as before; connected mailboxes are kept.",
+  dataModel:
+    "Flexible data model: People, Companies and Deals as records with attributes an admin can add, plus lists with stages. Version 1 has no screens yet and runs beside the existing Contacts and CRM, which are untouched. Switching it off stops its API; stored records are kept.",
+  workflows:
+    "Workflows: when something happens in the data model, check a condition, then act (update a record, add to a list, create a task, notify someone). Needs the Data model module. Switching it off stops new runs and hides the builder; saved workflows and past runs are kept.",
   lusha:
     "Lusha contact enrichment: find and reveal emails and phone numbers, prospect by company, and enrich a CSV. Switching it off removes the Lusha buttons from Contacts and the Connectors page; a saved connection is kept and works again when it is switched back on.",
 };
@@ -125,6 +132,14 @@ export type ModuleConfig = {
  * restored later; nobody had it while it was gone, so turning it on should be a
  * deliberate choice rather than a side effect of deploying the restore.
  *
+ * `byom` starts off because it changes who can sign up (lib/byom-onboarding.ts) —
+ * turning that on should be a deliberate choice. 0084 adds it to a saved config.
+ *
+ * `dataModel` starts off because version 1 is an API with no screens, and its tables start empty.
+ * 0086 adds it to a saved config.
+ *
+ * `workflows` starts off because it acts on data by itself; 0094 adds it to a saved config.
+ *
  * Migration 0066 seeds these keys (plus the since-removed "dashboard", which
  * normalizeModuleConfig drops). Keep the two in sync: this
  * default applies only when the config row is missing, the seed applies only
@@ -132,7 +147,7 @@ export type ModuleConfig = {
  */
 export const DEFAULT_MODULE_CONFIG: ModuleConfig = {
   disabledGroups: [],
-  disabledModules: ["sms", "whatsapp"],
+  disabledModules: ["sms", "whatsapp", "byom", "dataModel", "workflows"],
   allowDelete: false,
 };
 

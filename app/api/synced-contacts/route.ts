@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { getUserOr401 } from "@/lib/request-auth";
+import { createServiceSupabase } from "@/lib/supabase-service";
+import { isByomEnabled } from "@/lib/mailbox-context";
+import { loadContactSourceFlags, orgOwnerIdForUser, type ContactSourceFlags } from "@/lib/contact-source-flags";
 import { fetchAllRows } from "@/lib/supabase-fetch-all";
 import { bucketEmailConnection, type EmailConnectionStrength } from "@/lib/email-connection-strength";
 import { getConnectionStrengthSettings } from "@/lib/connection-strength-settings";
@@ -22,6 +25,11 @@ export type SyncedContactRow = {
   has_direct_contact?: boolean;
   recent_message_dates?: number[] | null;
   synced_at: string | null;
+  /**
+   * BYOM only: which kinds of mailbox saw this contact, as the viewer may know it (never whose).
+   * Absent when the module is off, so the Contacts page shows no source filter.
+   */
+  sources?: ContactSourceFlags;
 };
 
 /**
@@ -61,12 +69,15 @@ const SELECT_COLUMNS =
 const SELECT_COLUMNS_LEGACY =
   "id, email, display_name, domain, company_name, last_interaction_at, connection_strength, message_count_90d, message_count_total, synced_at, recent_message_dates";
 
-type ClientContact = Pick<SyncedContactRow, (typeof CLIENT_COLUMNS)[number]>;
+type ClientContact = Pick<SyncedContactRow, (typeof CLIENT_COLUMNS)[number]> & { sources?: ContactSourceFlags };
 
-function toClientRows(rows: SyncedContactRow[]): ClientContact[] {
+function toClientRows(rows: SyncedContactRow[], sources?: Map<string, ContactSourceFlags> | null): ClientContact[] {
   return rows.map((row) => {
     const out = {} as Record<string, unknown>;
     for (const key of CLIENT_COLUMNS) out[key] = row[key];
+    // Every contact has a source once 0095 has run; a row with none (synced between the
+    // migration and its next sync) reads as common, which is where it came from.
+    if (sources) out.sources = sources.get(row.email) ?? { common: true, mine: false, others: false };
     return out as ClientContact;
   });
 }
@@ -101,6 +112,13 @@ function withLiveStrength<T extends SyncedContactRow>(
 export async function GET(request: Request) {
   const { supabase, user } = await getUserOr401(request);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // The contact book is shared by the whole org — including members who can't open the common
+  // mailbox itself. Only the contact records are shared (name, address, counts), never the mail
+  // behind them. With BYOM on, each row also says which kinds of mailbox saw it.
+  const svc = createServiceSupabase();
+  const byom = await isByomEnabled(svc);
+  const orgOwnerId = byom ? await orgOwnerIdForUser(user.id) : null;
+  const sources = orgOwnerId ? await loadContactSourceFlags(orgOwnerId, user.id) : null;
 
   // The caller's thresholds don't depend on the rows, so the settings lookup
   // rides alongside the first page of contacts instead of delaying it by a
@@ -141,11 +159,11 @@ export async function GET(request: Request) {
       );
       if (fallback.error) return NextResponse.json({ error: dbErrorMessage({ message: fallback.error }) }, { status: 500 });
       const contacts = withLiveStrength(fallback.data.filter((c) => !isLikelyAutomatedAddress(c.email)), settings);
-      return NextResponse.json({ contacts: toClientRows(contacts) });
+      return NextResponse.json({ contacts: toClientRows(contacts, sources) });
     }
     return NextResponse.json({ error: dbErrorMessage({ message: error }) }, { status: 500 });
   }
 
   const contacts = withLiveStrength(data.filter((c) => !isLikelyAutomatedAddress(c.email)), settings);
-  return NextResponse.json({ contacts: toClientRows(contacts) });
+  return NextResponse.json({ contacts: toClientRows(contacts, sources) });
 }

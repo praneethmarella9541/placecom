@@ -1,5 +1,6 @@
 "use client";
 
+import { MAILBOX_HEADER } from "@/lib/mailbox-context-shared";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, Reply, ReplyAll, Forward } from "lucide-react";
@@ -82,7 +83,21 @@ type ComposeKind = "reply" | "replyAll" | "forward";
  * With Mail off the request would 403 and the reply actions would go nowhere,
  * so the modal renders nothing at all.
  */
-export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: string; onClose: () => void }) {
+export function EmailThreadPreviewModal({
+  threadId,
+  onClose,
+  mailboxId,
+}: {
+  threadId: string;
+  onClose: () => void;
+  /**
+   * BYOM: the mailbox the thread lives in, when it isn't the one the account switcher is on (the
+   * Mail tab spans the user's own and the common mailbox). Sent as a request, never a grant —
+   * the server re-checks the caller's access to it.
+   */
+  mailboxId?: string;
+}) {
+  const mailboxHeaders: Record<string, string> = mailboxId ? { [MAILBOX_HEADER]: mailboxId } : {};
   const mailEnabled = useModuleVisibility().isVisible("inbox");
   const templatesEnabled = useModuleVisibility().isVisible("mailTemplates");
   const [thread, setThread] = useState<ThreadMessageView[] | "loading" | "error">("loading");
@@ -94,7 +109,7 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
     let cancelled = false;
     setThread("loading");
     setExpandedIds(new Set());
-    fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`)
+    fetch(`/api/gmail/threads/${encodeURIComponent(threadId)}`, { headers: mailboxHeaders })
       .then((r) => (r.ok ? r.json() : Promise.reject(r)))
       .then((json: { messages?: ThreadMessageView[] }) => {
         if (cancelled) return;
@@ -112,7 +127,7 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
     return () => {
       cancelled = true;
     };
-  }, [threadId, mailEnabled]);
+  }, [threadId, mailEnabled, mailboxId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reply/Reply All/Forward act on the newest message, as they did when this
   // popup rendered only that one — replying to a thread means replying to its
@@ -232,7 +247,7 @@ export function EmailThreadPreviewModal({ threadId, onClose }: { threadId: strin
       const isReply = composeKind === "reply" || composeKind === "replyAll";
       const res = await fetch("/api/gmail/send", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...mailboxHeaders },
         body: JSON.stringify({
           to: to.trim(),
           cc: cc.trim() || undefined,

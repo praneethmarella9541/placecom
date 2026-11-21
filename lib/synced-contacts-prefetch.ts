@@ -15,6 +15,8 @@ export type SyncedContactRow = {
   message_count_90d: number;
   message_count_total: number;
   synced_at: string | null;
+  /** BYOM only — which kinds of mailbox saw this contact; absent when the module is off. */
+  sources?: { common: boolean; mine: boolean; others: boolean };
 };
 
 type StrengthSettingsCache = { settings: ConnectionStrengthSettings; isDefault: boolean };

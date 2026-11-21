@@ -6,6 +6,8 @@ import { Mail, Calendar as CalendarIcon, UserPlus, Building2, Paperclip } from "
 import { GmailAvatar } from "@/components/GmailAvatar";
 import { IconLinkedin, IconX } from "@/components/Icons";
 import { EmailThreadPreviewModal } from "@/components/EmailThreadPreviewModal";
+import { ContactMailTab } from "@/components/ContactMailTab";
+import { useModuleVisibility } from "@/lib/module-visibility";
 import { CONNECTION_STRENGTH_DOT } from "@/lib/connection-strength-ui";
 import type { EmailConnectionStrength } from "@/lib/email-connection-strength";
 import type { DirectoryContactInput } from "@/hooks/useDirectoryContacts";
@@ -26,9 +28,8 @@ type SyncedContactRow = {
   synced_at: string | null;
 };
 
-type Tab = "Emails" | "Meetings";
-const TABS: Tab[] = ["Emails", "Meetings"];
-const SOURCE_BY_TAB: Record<Tab, "email" | "meeting"> = { Emails: "email", Meetings: "meeting" };
+type Tab = "Emails" | "Mail" | "Meetings";
+const SOURCE_BY_TAB: Partial<Record<Tab, "email" | "meeting">> = { Emails: "email", Meetings: "meeting" };
 
 /**
  * Interaction detail for a person auto-synced from the mailbox — same idea as
@@ -46,7 +47,11 @@ export function SyncedPersonModal({
   onClose: () => void;
   onAddToDirectory: (input: DirectoryContactInput) => void;
 }) {
-  const [activeTab, setActiveTab] = useState<Tab>("Emails");
+  // BYOM: "Mail" replaces "Emails" — it spans the user's own mailbox and the common one, and is
+  // fetched only when the tab is clicked, so the modal opens on Meetings instead of loading mail.
+  const byomMail = useModuleVisibility().isVisible("byom");
+  const TABS: Tab[] = byomMail ? ["Meetings", "Mail"] : ["Emails", "Meetings"];
+  const [activeTab, setActiveTab] = useState<Tab>(byomMail ? "Meetings" : "Emails");
   const [items, setItems] = useState<Partial<Record<"email" | "meeting", TimelineItem[] | "loading" | "error">>>(
     {}
   );
@@ -70,12 +75,13 @@ export function SyncedPersonModal({
   );
 
   useEffect(() => {
-    void load("email");
+    if (!byomMail) void load("email");
     void load("meeting");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact.email]);
 
-  const active = items[SOURCE_BY_TAB[activeTab]];
+  const sourceKey = SOURCE_BY_TAB[activeTab];
+  const active = sourceKey ? items[sourceKey] : undefined;
 
   if (typeof document === "undefined") return null;
 
@@ -166,7 +172,9 @@ export function SyncedPersonModal({
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {active === undefined || active === "loading" ? (
+          {activeTab === "Mail" ? (
+            <ContactMailTab key={contact.email} email={contact.email} />
+          ) : active === undefined || active === "loading" ? (
             <p className="text-[13px] text-[var(--color-text-muted)]">{titleCase("Loading…")}</p>
           ) : active === "error" ? (
             <p className="text-[13px] text-[var(--color-danger)]">{titleCase("Failed to load.")}</p>

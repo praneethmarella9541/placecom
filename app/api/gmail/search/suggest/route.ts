@@ -50,7 +50,7 @@ export async function GET(request: Request) {
     const [people, threads] = await Promise.all([
       searchContactsByQuery(auth.accessToken, q),
       listThreadSearchSuggestions(auth.accessToken, scope ? `${scope} ${q}` : q, 5, {
-        mailboxKey: auth.mailboxOwnerId,
+        mailboxKey: auth.mailboxKey,
       }),
     ]);
 

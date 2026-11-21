@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { labelChangeNeed, mailboxActionDenied, requireGmailAccessToken } from "@/lib/gmail-auth";
 import { deleteForbiddenResponse } from "@/lib/delete-access";
 import { modifyThreadLabels } from "@/lib/gmail-labels";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
@@ -23,7 +23,7 @@ type BatchBody = {
 };
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "read" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -40,6 +40,8 @@ export async function POST(request: Request) {
   );
   const add = Array.isArray(body.add) ? body.add.filter((s) => typeof s === "string") : [];
   const remove = Array.isArray(body.remove) ? body.remove.filter((s) => typeof s === "string") : [];
+  const denied = mailboxActionDenied(auth, labelChangeNeed(add, remove));
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
 
   // Moving to Trash is a delete; everything else here (archive, read, star,
   // labels) is not gated.
@@ -64,7 +66,7 @@ export async function POST(request: Request) {
   // Token / scope errors should fail the whole batch fast (otherwise we'd
   // hammer Gmail with N 401s). Detect by sampling the first call's outcome.
   const accessToken = auth.accessToken;
-  const mailboxKey = auth.mailboxOwnerId;
+  const mailboxKey = auth.mailboxKey;
   const succeeded: string[] = [];
   const failed: { threadId: string; error: string }[] = [];
 

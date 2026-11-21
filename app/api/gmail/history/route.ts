@@ -35,7 +35,7 @@ export async function GET(request: Request) {
       const profileRes = await fetchGmail(
         `${GMAIL_API}/profile`,
         { headers: { Authorization: `Bearer ${auth.accessToken}` }, cache: "no-store" },
-        { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.getProfile }
+        { mailboxKey: auth.mailboxKey, cost: GMAIL_COST.getProfile }
       );
       if (!profileRes.ok) {
         return NextResponse.json({ error: "Failed to fetch Gmail profile" }, { status: 502 });
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
     res = await fetchGmail(
       `${GMAIL_API}/history?${params.toString()}`,
       { headers: { Authorization: `Bearer ${auth.accessToken}` }, cache: "no-store" },
-      { mailboxKey: auth.mailboxOwnerId, cost: GMAIL_COST.historyList }
+      { mailboxKey: auth.mailboxKey, cost: GMAIL_COST.historyList }
     );
   } catch {
     // Network error — treat as no-change so the client doesn't flash a reload.

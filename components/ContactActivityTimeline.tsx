@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconCalendar, IconMail, IconMenu, IconWhatsApp } from "@/components/Icons";
 import { EmailThreadPreviewModal } from "@/components/EmailThreadPreviewModal";
+import { ContactMailTab } from "@/components/ContactMailTab";
 import { useModuleVisibility } from "@/lib/module-visibility";
 import { titleCase } from "@/lib/title-case";
 import type { ContactNoteRow } from "@/app/api/directory-contacts/[id]/notes/route";
 import type { TimelineItem } from "@/app/api/directory-contacts/[id]/timeline/route";
 
-type Tab = "All Interaction" | "Emails" | "Meetings" | "WhatsApp" | "Notes";
+type Tab = "All Interaction" | "Emails" | "Mail" | "Meetings" | "WhatsApp" | "Notes";
 
 const SOURCE_BY_TAB: Partial<Record<Tab, TimelineItem["type"]>> = {
   Emails: "email",
@@ -32,19 +33,28 @@ const ICON_BY_TYPE: Record<TimelineItem["type"] | "note", React.ComponentType<{ 
  * read is gated with it, so showing the tab regardless would mean an empty tab
  * backed by a 403.
  */
-export function ContactActivityTimeline({ contactId }: { contactId: string }) {
+export function ContactActivityTimeline({ contactId, email }: { contactId: string; email?: string | null }) {
   const whatsappEnabled = useModuleVisibility().isVisible("whatsapp");
+  // BYOM: "Emails" becomes "Mail", which spans the user's own mailbox and the common one and is
+  // fetched only when opened — so mail is also left out of the merged "All Interaction" feed,
+  // which would otherwise load it on arrival.
+  const byomMail = useModuleVisibility().isVisible("byom") && Boolean(email);
+  const mailTab: Tab = byomMail ? "Mail" : "Emails";
   const TABS = useMemo<Tab[]>(
     () =>
       whatsappEnabled
-        ? ["All Interaction", "Emails", "Meetings", "WhatsApp", "Notes"]
-        : ["All Interaction", "Emails", "Meetings", "Notes"],
-    [whatsappEnabled],
+        ? ["All Interaction", mailTab, "Meetings", "WhatsApp", "Notes"]
+        : ["All Interaction", mailTab, "Meetings", "Notes"],
+    [whatsappEnabled, mailTab],
   );
   /** Sources merged for "All Interaction", and warmed together. */
   const ALL_SOURCES = useMemo<readonly TimelineItem["type"][]>(
-    () => (whatsappEnabled ? ["email", "meeting", "whatsapp"] : ["email", "meeting"]),
-    [whatsappEnabled],
+    () => [
+      ...(byomMail ? [] : (["email"] as const)),
+      "meeting" as const,
+      ...(whatsappEnabled ? (["whatsapp"] as const) : []),
+    ],
+    [whatsappEnabled, byomMail],
   );
 
   const [activeTab, setActiveTab] = useState<Tab>("All Interaction");
@@ -209,6 +219,8 @@ export function ContactActivityTimeline({ contactId }: { contactId: string }) {
           ) : (
             <TimelineList items={allItems} onOpenThread={setPreviewThreadId} />
           )
+        ) : activeTab === "Mail" && email ? (
+          <ContactMailTab key={email} email={email} />
         ) : (
           <SourceTab items={singleSource ? sources[singleSource] : undefined} onOpenThread={setPreviewThreadId} />
         )}

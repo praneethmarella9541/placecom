@@ -19,7 +19,7 @@ const MAX_BYTES = 500 * 1024 * 1024; // 500 MB ceiling for Drive uploads
  *  3. Return { file: { id, name, mimeType, webViewLink } }.
  */
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "reply" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

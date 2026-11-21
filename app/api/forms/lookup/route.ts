@@ -5,7 +5,7 @@ import { getGoogleForm, parseGoogleFormIdFromInput } from "@/lib/google-forms";
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "read" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

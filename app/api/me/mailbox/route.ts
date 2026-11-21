@@ -9,6 +9,7 @@ import { getAuthedRequest } from "@/lib/api-auth";
 import { isConfigsEmailAllowed } from "@/lib/configs-access";
 import { disabledFeaturesFromConfig } from "@/lib/module-config";
 import { loadModuleConfig } from "@/lib/module-config-store";
+import { isResolveMailboxError, requestedMailboxId, resolveMailboxForUser, type ResolvedMailbox } from "@/lib/mailbox-context";
 
 export const runtime = "nodejs";
 
@@ -92,6 +93,24 @@ export async function GET(request: Request) {
   const mailboxOwnerId =
     role === "admin" ? user.id : (profile.mailbox_owner_id as string | null);
 
+  // BYOM: which mailbox the user is in, and which they could switch to. The
+  // credentials lookup below then reads the active one's address.
+  let active: ResolvedMailbox | null = null;
+  if (mailboxOwnerId) {
+    try {
+      const resolved = await resolveMailboxForUser(createServiceSupabase(), {
+        userId: user.id,
+        role,
+        orgOwnerId: mailboxOwnerId,
+        requestedId: requestedMailboxId(request),
+      });
+      if (!isResolveMailboxError(resolved)) active = resolved;
+    } catch {
+      /* service role env missing in dev — legacy single mailbox */
+    }
+  }
+  const credentialOwnerId = active?.credentialOwnerId ?? mailboxOwnerId;
+
   // The group lookup and mailbox-credential lookup are independent — run them
   // in parallel so the endpoint isn't gated on two sequential round trips.
   const groupId = profile.group_id as string | null;
@@ -112,14 +131,14 @@ export async function GET(request: Request) {
           }
         })()
       : Promise.resolve(null),
-    mailboxOwnerId
+    credentialOwnerId
       ? (async (): Promise<{ mailboxEmail: string | null; hasStoredMailbox: boolean }> => {
           try {
             const svc = createServiceSupabase();
             const { data: cred, error: credErr } = await svc
               .from("google_mailbox_credentials")
               .select("gmail_address, refresh_token")
-              .eq("owner_user_id", mailboxOwnerId)
+              .eq("owner_user_id", credentialOwnerId)
               .maybeSingle();
             if (!credErr) {
               return {
@@ -157,6 +176,10 @@ export async function GET(request: Request) {
     mailboxEmail,
     hasStoredMailbox,
     exotelVirtualNumber,
+    mailboxes: active?.options ?? [],
+    activeMailboxId: active?.mailboxId ?? null,
+    activeMailboxType: active?.mailboxType ?? "common",
+    activeMailboxAccess: active?.access ?? "full",
   };
   return NextResponse.json(body);
 }

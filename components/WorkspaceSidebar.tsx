@@ -10,6 +10,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Contact,
+  Database,
   FileText,
   Folder,
   Frame,
@@ -25,6 +26,7 @@ import {
   UserRound,
   Users,
   Workflow,
+  Zap,
 } from "lucide-react";
 import { signOutOnServer } from "@/lib/client-auth";
 import { prefetchAdminTeamData } from "@/lib/admin-team-prefetch";
@@ -57,6 +59,8 @@ const commsNav = [
 
 const pipelineNav: readonly { href: string; label: string; Icon: React.ElementType }[] = [
   { href: "/crm", label: "CRM", Icon: KanbanSquare },
+  { href: "/data", label: "Data", Icon: Database },
+  { href: "/workflows", label: "Workflows", Icon: Zap },
 ];
 
 const opsNav = [

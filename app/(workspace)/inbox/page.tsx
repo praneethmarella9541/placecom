@@ -106,6 +106,7 @@ import { cn, formatDate, previewLineFromBody, timeAgo } from "@/lib/utils";
 import { titleCase } from "@/lib/title-case";
 import { useModuleVisibility } from "@/lib/module-visibility";
 import { useAllowDelete } from "@/lib/use-allow-delete";
+import { useMailboxAccess } from "@/components/AccountSwitcher";
 import {
   buildDateSearchClauses,
   buildExclusionTokens,
@@ -1139,6 +1140,11 @@ export default function InboxPage() {
   // Templates button in the composer footer.
   const templatesEnabled = useModuleVisibility().isVisible("mailTemplates");
   const allowDelete = useAllowDelete();
+  // BYOM: limited access to the common mailbox hides what it can't do. The server refuses
+  // those actions regardless; this only keeps the buttons from promising them.
+  const mailboxAccess = useMailboxAccess();
+  const canReply = mailboxAccess.can("reply");
+  const canSend = mailboxAccess.can("send");
   const topbarActionsNode = useWorkspaceTopbarActionsNode();
   const [folder, setFolder] = useState<Folder>("inbox");
   const [threads, setThreads] = useState<ThreadRow[]>([]);
@@ -5010,6 +5016,7 @@ export default function InboxPage() {
   );
 
   function openNewCompose() {
+    if (!canSend) return;
     setComposeKind("new");
     setComposeThreadId(null);
     setComposeInReplyToId(null);
@@ -5057,7 +5064,7 @@ export default function InboxPage() {
 
   /** `target`: the message whose Reply was clicked; without one, the thread's last message. */
   async function openReply(mode: "reply" | "replyAll", target?: MsgView) {
-    if (!selectedId || !messages?.length) return;
+    if (!canReply || !selectedId || !messages?.length) return;
     const last = target ?? messages[messages.length - 1];
     const me = await resolveMyEmail();
     const { to, cc } = replyRecipients(last, mode, me);
@@ -5082,7 +5089,8 @@ export default function InboxPage() {
    * The subject is prefixed with "Fwd:" and the last message body is quoted.
    */
   function openForward(target?: MsgView) {
-    if (!messages?.length) return;
+    // Forwarding starts a new conversation, so it needs what new mail needs.
+    if (!canSend || !messages?.length) return;
     const last = target ?? messages[messages.length - 1];
     const fwdSubject = last.subject.startsWith("Fwd:")
       ? last.subject
@@ -6171,6 +6179,7 @@ export default function InboxPage() {
             </div>
           )}
 
+          {canSend && (
           <button
             data-testid="inbox-topbar-compose-btn"
             type="button"
@@ -6180,6 +6189,7 @@ export default function InboxPage() {
             <PencilLine className="h-4 w-4" strokeWidth={2} />
             {titleCase("Compose")}
           </button>
+          )}
         </div>,
         topbarActionsNode,
       )
@@ -6212,6 +6222,7 @@ export default function InboxPage() {
       >
         {/* Compose + Refresh — Gmail pill compose button */}
         <div className="flex items-center gap-2 px-3 py-2">
+          {canSend && (
           <button
             data-testid="inbox-compose-btn"
             type="button"
@@ -6221,6 +6232,7 @@ export default function InboxPage() {
             <PencilLine className="h-[18px] w-[18px] shrink-0" strokeWidth={2} />
             {titleCase("Compose")}
           </button>
+          )}
           <button
             data-testid="inbox-refresh-btn"
             type="button"
@@ -6433,6 +6445,7 @@ export default function InboxPage() {
         {/* Mobile mail nav — compose + primary folders (replaces left rail) */}
         <div className="z-20 flex shrink-0 flex-col border-b border-[var(--color-border)] bg-[var(--color-surface)] md:hidden">
           <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-3 py-2">
+            {canSend && (
             <button
               type="button"
               onClick={() => openNewCompose()}
@@ -6441,6 +6454,7 @@ export default function InboxPage() {
               <PencilLine className="h-4 w-4 shrink-0" strokeWidth={2} />
               {titleCase("Compose")}
             </button>
+            )}
             <button
               type="button"
               onClick={() => void handleMailListRefresh()}
@@ -7178,11 +7192,13 @@ export default function InboxPage() {
                         {messages.length}
                       </span>
                     )}
-                    <ThreadActionsMenu
-                      onReply={() => openReply("reply")}
-                      onReplyAll={() => openReply("replyAll")}
-                      onForward={() => openForward()}
-                    />
+                    {canReply && (
+                      <ThreadActionsMenu
+                        onReply={() => openReply("reply")}
+                        onReplyAll={() => openReply("replyAll")}
+                        onForward={() => openForward()}
+                      />
+                    )}
                   </div>
                   {(openThreadLabelSelected.size > 0 || threadLabelIds.length > 0) && (
                     <div className="mt-1.5 flex flex-wrap gap-1">
@@ -7217,18 +7233,20 @@ export default function InboxPage() {
                         isLast={row.isLast}
                         trackingRow={trackingMap[row.message.id]}
                         myEmail={myEmail}
-                        onReply={() => openReply("reply", row.message)}
-                        onReplyAll={() => openReply("replyAll", row.message)}
-                        onForward={() => openForward(row.message)}
+                        onReply={canReply ? () => openReply("reply", row.message) : undefined}
+                        onReplyAll={canReply ? () => openReply("replyAll", row.message) : undefined}
+                        onForward={canReply ? () => openForward(row.message) : undefined}
                       />
                     )
                   )}
 
-                  <GmailInlineReply
-                    onStartReply={() => openReply("reply")}
-                    onStartReplyAll={() => openReply("replyAll")}
-                    onForward={() => openForward()}
-                  />
+                  {canReply && (
+                    <GmailInlineReply
+                      onStartReply={() => openReply("reply")}
+                      onStartReplyAll={() => openReply("replyAll")}
+                      onForward={() => openForward()}
+                    />
+                  )}
                 </div>
               </>
             ) : (

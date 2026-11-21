@@ -28,7 +28,7 @@ export async function PATCH(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "modify" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -52,7 +52,7 @@ export async function PATCH(
   }
 
   try {
-    const label = await updateLabel(auth.accessToken, id, { name }, { mailboxKey: auth.mailboxOwnerId });
+    const label = await updateLabel(auth.accessToken, id, { name }, { mailboxKey: auth.mailboxKey });
     return NextResponse.json({ label });
   } catch (e) {
     return errResponse(e);
@@ -63,7 +63,7 @@ export async function DELETE(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "modify" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -73,7 +73,7 @@ export async function DELETE(
   }
 
   try {
-    await deleteLabel(auth.accessToken, id, { mailboxKey: auth.mailboxOwnerId });
+    await deleteLabel(auth.accessToken, id, { mailboxKey: auth.mailboxKey });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return errResponse(e);

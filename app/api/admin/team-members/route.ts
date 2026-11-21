@@ -10,6 +10,8 @@ import { isValidEmail } from "@/lib/broadcast-recipients";
 import { getExotelVirtualNumbers } from "@/lib/exotel-numbers";
 import { listGloballyAssignedExotelNumbers } from "@/lib/admin-exotel-numbers";
 import { isValidE164, normalizePhone, phoneMatches } from "@/lib/phone";
+import { commonMailboxId, isByomEnabled } from "@/lib/mailbox-context";
+import { isMailboxAccessLevel, type MailboxAccessLevel } from "@/lib/mailbox-context-shared";
 
 export const runtime = "nodejs";
 const MIN_PASSWORD_LEN = 8;
@@ -133,6 +135,10 @@ export async function GET(request: Request) {
     }
   }
 
+  // BYOM: who has their own mailbox, and what each member may do in the common one — so the
+  // admin can tell BYOM members apart in the list. Same default rule as resolveMailboxForUser.
+  const byom = await loadByomFacts(svc, auth.userId);
+
   const members = await Promise.all(
     (data ?? []).map(async (row) => {
       const id = row.id as string;
@@ -161,6 +167,7 @@ export async function GET(request: Request) {
         groupName: group?.name ?? null,
         openaiTokenLimit,
         tokensUsed,
+        ...(byom ? byomFieldsFor(byom, id) : {}),
       };
     })
   );
@@ -424,4 +431,42 @@ export async function DELETE(request: Request) {
   }
 
   return NextResponse.json({ ok: true, userId: targetId });
+}
+
+type ByomFacts = {
+  own: Map<string, { address: string | null; status: string }>;
+  grants: Map<string, MailboxAccessLevel>;
+};
+
+/** Null when BYOM is off or not migrated: the member list then looks as it did before. */
+async function loadByomFacts(svc: ReturnType<typeof createServiceSupabase>, adminId: string): Promise<ByomFacts | null> {
+  if (!(await isByomEnabled(svc))) return null;
+  const [{ data: own, error }, commonId] = await Promise.all([
+    svc
+      .from("mailboxes")
+      .select("owner_user_id, gmail_address, status")
+      .eq("org_owner_id", adminId)
+      .eq("mailbox_type", "individual"),
+    commonMailboxId(svc, adminId),
+  ]);
+  if (error) return null;
+  const grants = new Map<string, MailboxAccessLevel>();
+  if (commonId) {
+    const { data } = await svc.from("user_mailbox_permissions").select("user_id, access_level").eq("mailbox_id", commonId);
+    for (const g of data ?? []) {
+      if (isMailboxAccessLevel(g.access_level)) grants.set(g.user_id as string, g.access_level);
+    }
+  }
+  return {
+    own: new Map(
+      (own ?? []).map((m) => [m.owner_user_id as string, { address: (m.gmail_address as string | null) ?? null, status: m.status as string }])
+    ),
+    grants,
+  };
+}
+
+function byomFieldsFor(facts: ByomFacts, userId: string) {
+  const ownMailbox = facts.own.get(userId) ?? null;
+  const commonAccess: MailboxAccessLevel = facts.grants.get(userId) ?? (ownMailbox ? "none" : "full");
+  return { ownMailbox, commonAccess };
 }

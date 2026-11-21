@@ -14,6 +14,12 @@ import { bucketEmailConnection } from "@/lib/email-connection-strength";
 import { takeGmailQuotaStats } from "@/lib/gmail-quota";
 import { resolveCompanyNames, takeCompanyEnrichmentStats } from "@/lib/company-enrichment";
 import { isLikelyAutomatedAddress } from "@/lib/mail-noise-filter";
+import {
+  recordContactSources,
+  resetContactSourceCounts,
+  resolveSyncSource,
+  type SyncSource,
+} from "@/lib/contact-sources";
 
 type ParsedAddress = { name: string | null; email: string };
 
@@ -189,7 +195,8 @@ async function processHeadersPage(
   syncedByUserId: string,
   mailboxOwnerId: string,
   ownEmail: string | undefined,
-  headers: GmailMessageHeaders[]
+  headers: GmailMessageHeaders[],
+  source: SyncSource | null
 ): Promise<string[]> {
   type ContactAgg = {
     displayName: string | null;
@@ -370,7 +377,21 @@ async function processHeadersPage(
   const { error } = await supabase
     .from("synced_contacts")
     .upsert(pageRows, { onConflict: "mailbox_owner_id,email" });
-  return error ? [] : pageRows.map((r) => r.email);
+  if (error) return [];
+  // Attribute the page to the mailbox it was read from (BYOM contact sources).
+  if (source) {
+    await recordContactSources(
+      supabase,
+      source,
+      Array.from(pageContacts.entries()).map(([email, agg]) => ({
+        email,
+        dates: agg.dates,
+        hasOutbound: agg.hasOutbound,
+        hasDirect: agg.hasDirect,
+      }))
+    );
+  }
+  return pageRows.map((r) => r.email);
 }
 
 /**
@@ -396,8 +417,18 @@ export async function runContactSyncBatch(
    * paused row alone — otherwise Stop only holds until the next cron tick, or
    * until the next batch in a cron invocation that was already in progress.
    */
-  options?: { resumePaused?: boolean }
+  options?: {
+    resumePaused?: boolean;
+    /**
+     * BYOM: the org whose shared contact book this mailbox feeds, when that isn't the mailbox
+     * itself. `mailboxOwnerId` then names the Gmail account being read — its own progress row
+     * in contact_sync_state and its own quota — while contacts merge into the org's pool.
+     * Omitted: the common mailbox, where the two are the same id.
+     */
+    poolOwnerId?: string;
+  }
 ): Promise<ContactSyncBatchResult> {
+  const poolOwnerId = options?.poolOwnerId ?? mailboxOwnerId;
   const { data: existing, error: readError } = await supabase
     .from("contact_sync_state")
     .select("*")
@@ -456,6 +487,7 @@ export async function runContactSyncBatch(
   );
 
   const startedAt = Date.now();
+  const source = await resolveSyncSource(mailboxOwnerId, poolOwnerId);
 
   try {
     if (phase === "backfill") {
@@ -464,9 +496,11 @@ export async function runContactSyncBatch(
         accessToken,
         syncedByUserId,
         mailboxOwnerId,
+        poolOwnerId,
         ownEmail,
         state,
-        startedAt
+        startedAt,
+        source
       );
     }
     return await runIncrementalPhase(
@@ -474,9 +508,11 @@ export async function runContactSyncBatch(
       accessToken,
       syncedByUserId,
       mailboxOwnerId,
+      poolOwnerId,
       ownEmail,
       state,
-      startedAt
+      startedAt,
+      source
     );
   } catch (err: unknown) {
     if (err instanceof GmailRateLimitError) {
@@ -504,10 +540,14 @@ async function runBackfillPhase(
   supabase: SupabaseClient,
   accessToken: string,
   syncedByUserId: string,
+  /** The Gmail account being read: its contact_sync_state row and quota bucket. */
   mailboxOwnerId: string,
+  /** The org's contact book the contacts go into (same id for the common mailbox). */
+  poolOwnerId: string,
   ownEmail: string | undefined,
   state: SyncStateRow,
-  startedAt: number
+  startedAt: number,
+  source: SyncSource | null
 ): Promise<ContactSyncBatchResult> {
   const seenEmailsThisRun = new Set<string>();
 
@@ -552,10 +592,19 @@ async function runBackfillPhase(
     // totals left by a previous partial or differently-scoped pass have to be
     // cleared or this pass adds on top of them. last_interaction_at is left
     // alone: it merges by max, so it can only improve.
-    await supabase
-      .from("synced_contacts")
-      .update({ message_count_total: 0, message_count_90d: 0 })
-      .eq("mailbox_owner_id", mailboxOwnerId);
+    //
+    // Only for the mailbox that owns the pool. A staff member's own mailbox
+    // (BYOM) adds to the org's pool alongside the common mailbox; resetting
+    // here would wipe every count the common mailbox built up. Its counts are
+    // therefore additive, and a re-scan of it can count its mail twice.
+    if (poolOwnerId === mailboxOwnerId) {
+      await supabase
+        .from("synced_contacts")
+        .update({ message_count_total: 0, message_count_90d: 0 })
+        .eq("mailbox_owner_id", poolOwnerId);
+    }
+    // This mailbox's own source counts are its alone, so they can always be recounted.
+    if (source) await resetContactSourceCounts(supabase, source);
   }
 
   // +1s so a message stamped in the same second as the start bound is included;
@@ -675,9 +724,10 @@ async function runBackfillPhase(
       const upserted = await processHeadersPage(
         supabase,
         syncedByUserId,
-        mailboxOwnerId,
+        poolOwnerId,
         ownEmail,
-        headers
+        headers,
+        source
       );
       processMs = Date.now() - processStartedAt;
       for (const email of upserted) seenEmailsThisRun.add(email);
@@ -736,7 +786,7 @@ async function runBackfillPhase(
   const { count: contactsFoundTotal } = await supabase
     .from("synced_contacts")
     .select("id", { count: "exact", head: true })
-    .eq("mailbox_owner_id", mailboxOwnerId);
+    .eq("mailbox_owner_id", poolOwnerId);
 
   if (doneAllPages) {
     // Keep the cursor taken at backfill START, not one taken now — anything that
@@ -804,10 +854,14 @@ async function runIncrementalPhase(
   supabase: SupabaseClient,
   accessToken: string,
   syncedByUserId: string,
+  /** The Gmail account being read: its contact_sync_state row and quota bucket. */
   mailboxOwnerId: string,
+  /** The org's contact book the contacts go into (same id for the common mailbox). */
+  poolOwnerId: string,
   ownEmail: string | undefined,
   state: SyncStateRow,
-  startedAt: number
+  startedAt: number,
+  source: SyncSource | null
 ): Promise<ContactSyncBatchResult> {
   if (!state.history_id) {
     // Shouldn't normally happen (backfill always captures one) — re-derive from
@@ -863,10 +917,11 @@ async function runIncrementalPhase(
         const upserted = await processHeadersPage(
           supabase,
           syncedByUserId,
-          mailboxOwnerId,
+          poolOwnerId,
             ownEmail,
-          headers
-        );
+          headers,
+        source
+      );
         for (const email of upserted) seenEmailsThisRun.add(email);
         messagesScannedThisRun += headers.length;
       }
@@ -926,10 +981,11 @@ async function runIncrementalPhase(
         const upserted = await processHeadersPage(
           supabase,
           syncedByUserId,
-          mailboxOwnerId,
+          poolOwnerId,
             ownEmail,
-          headers
-        );
+          headers,
+        source
+      );
         for (const email of upserted) seenEmailsThisRun.add(email);
         messagesScannedThisRun += headers.length;
       }
@@ -961,7 +1017,7 @@ async function runIncrementalPhase(
   const { count: contactsFoundTotal } = await supabase
     .from("synced_contacts")
     .select("id", { count: "exact", head: true })
-    .eq("mailbox_owner_id", mailboxOwnerId);
+    .eq("mailbox_owner_id", poolOwnerId);
 
   if (doneAllPages) {
     const summary =

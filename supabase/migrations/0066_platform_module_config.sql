@@ -33,7 +33,7 @@ create table if not exists public.platform_module_config (
 insert into public.platform_module_config (id, config)
 values (
   true,
-  '{"disabledGroups": [], "disabledModules": ["sms", "dashboard", "whatsapp"]}'::jsonb
+  '{"disabledGroups": [], "disabledModules": ["sms", "dashboard", "whatsapp", "byom"]}'::jsonb
 )
 on conflict (id) do nothing;
 

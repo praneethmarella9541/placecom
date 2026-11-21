@@ -42,13 +42,13 @@ export async function GET(request: Request) {
   const labelId = searchParams.get("labelId")?.trim() || undefined;
 
   // A person asking for page N (N > 1): tell the warmer to stop working on this page.
-  if (pageToken && auth.mailboxOwnerId) void bump(inUseKey(auth.mailboxOwnerId, pageToken), 60_000);
+  if (pageToken && auth.mailboxKey) void bump(inUseKey(auth.mailboxKey, pageToken), 60_000);
   // After serving a browse page, warm the one after it in the background.
   const warmNext = (nextPageToken: string | undefined) => {
     if (searchQuery) return;
     scheduleNextPageWarm({
       accessToken: auth.accessToken,
-      mailboxKey: auth.mailboxOwnerId,
+      mailboxKey: auth.mailboxKey,
       folder,
       labelId,
       nextPageToken,
@@ -68,7 +68,7 @@ export async function GET(request: Request) {
     if (pageToken || searchQuery || (folder !== "inbox" && folder !== "allmail" && folder !== "sent")) return;
     void sweepBounceNotices(createServiceSupabase(), {
       accessToken: auth.accessToken,
-      mailboxOwnerId: auth.mailboxOwnerId,
+      mailboxOwnerId: auth.mailboxKey,
       threads,
     });
   };
@@ -88,7 +88,7 @@ export async function GET(request: Request) {
             pageToken,
             searchQuery,
             labelId,
-            mailboxKey: auth.mailboxOwnerId,
+            mailboxKey: auth.mailboxKey,
             onSkeleton: (p) => send({ type: "list", ...p }),
             onRow: (row) => send({ type: "row", row }),
             signal: request.signal,
@@ -132,7 +132,7 @@ export async function GET(request: Request) {
             maxResults,
             pageToken,
             searchQuery,
-            mailboxKey: auth.mailboxOwnerId,
+            mailboxKey: auth.mailboxKey,
           })
         : await listThreadsPage(auth.accessToken, {
             folder,
@@ -140,7 +140,7 @@ export async function GET(request: Request) {
             pageToken,
             searchQuery,
             labelId,
-            mailboxKey: auth.mailboxOwnerId,
+            mailboxKey: auth.mailboxKey,
             signal: request.signal,
           });
     if (folder !== "drafts") sweepNotices(page.threads);

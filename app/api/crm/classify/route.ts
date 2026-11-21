@@ -83,7 +83,7 @@ export async function POST(request: Request) {
 
   // Mail is fetched live from Gmail; without a token we still classify on
   // notes rather than failing the whole run.
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "read" });
   const accessToken = auth.ok ? auth.accessToken : undefined;
   const ownAddress = auth.ok ? auth.gmailAddress : undefined;
   const gmailMailboxKey = auth.ok ? auth.mailboxOwnerId : undefined;

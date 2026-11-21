@@ -17,7 +17,7 @@ const MAX_CHUNK_BYTES = 4 * 1024 * 1024;
  * First chunk (no uploadId): creates a staging session and returns uploadId.
  */
 export async function POST(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "reply" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

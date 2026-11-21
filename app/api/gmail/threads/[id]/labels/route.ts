@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireGmailAccessToken } from "@/lib/gmail-auth";
+import { labelChangeNeed, mailboxActionDenied, requireGmailAccessToken } from "@/lib/gmail-auth";
 import { modifyThreadLabels } from "@/lib/gmail-labels";
 import { GMAIL_INSUFFICIENT_SCOPE } from "@/lib/gmail-scope-error";
 
@@ -14,7 +14,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> }
 ) {
-  const auth = await requireGmailAccessToken(request);
+  const auth = await requireGmailAccessToken(request, { need: "read" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }
@@ -31,12 +31,14 @@ export async function POST(
   }
   const add = Array.isArray(body.add) ? body.add.filter((x) => typeof x === "string") : [];
   const remove = Array.isArray(body.remove) ? body.remove.filter((x) => typeof x === "string") : [];
+  const denied = mailboxActionDenied(auth, labelChangeNeed(add, remove));
+  if (denied) return NextResponse.json({ error: denied }, { status: 403 });
   if (add.length === 0 && remove.length === 0) {
     return NextResponse.json({ error: "Pass at least one label id to add or remove" }, { status: 400 });
   }
 
   try {
-    const result = await modifyThreadLabels(auth.accessToken, id, { add, remove }, { mailboxKey: auth.mailboxOwnerId });
+    const result = await modifyThreadLabels(auth.accessToken, id, { add, remove }, { mailboxKey: auth.mailboxKey });
     return NextResponse.json({ threadId: id, labelIds: result.labelIds });
   } catch (e) {
     const err = e as Error & { code?: string };

@@ -5,6 +5,8 @@ import {
   countEnrollmentsBySequence,
   getSequenceContext,
   isErrorResponse,
+  scopeToMailbox,
+  sequenceMailboxColumn,
 } from "@/lib/sequence-server";
 import type { SequenceListItem, SequenceStatus } from "@/lib/sequence-types";
 import { emptyEnrollmentCounts } from "@/lib/sequence-types";
@@ -20,6 +22,7 @@ type SequenceListRow = {
   updated_at: string;
   origin: string | null;
   scheduled_for: string | null;
+  created_by: string | null;
 };
 
 /** Emails this far past due mean the scheduler is not running (a working one defers or sends them). */
@@ -32,9 +35,10 @@ export async function GET(request: Request) {
 
   let listQuery = ctx.svc
     .from("sequences")
-    .select("id, name, description, status, published_at, updated_at, origin, scheduled_for")
+    .select("id, name, description, status, published_at, updated_at, origin, scheduled_for, created_by")
     .eq("mailbox_owner_id", ctx.mailboxOwnerId)
     .neq("status", "archived");
+  listQuery = scopeToMailbox(listQuery, ctx);
   if (!ctx.isAdmin) listQuery = listQuery.eq("created_by", ctx.userId);
   const { data, error } = await listQuery.order("updated_at", { ascending: false });
 
@@ -42,6 +46,10 @@ export async function GET(request: Request) {
 
   const rows = (data ?? []) as SequenceListRow[];
   const ids = rows.map((r) => r.id);
+  // A flow with no recorded creator is the admin's to chase, so its warning isn't lost.
+  const ownIds = rows
+    .filter((r) => r.created_by === ctx.userId || (r.created_by === null && ctx.userId === ctx.mailboxOwnerId))
+    .map((r) => r.id);
 
   const activeIds = rows.filter((r) => r.status === "active").map((r) => r.id);
   const overdueCutoff = new Date(Date.now() - OVERDUE_MINUTES * 60_000).toISOString();
@@ -75,18 +83,15 @@ export async function GET(request: Request) {
       }),
     ),
     // Due long ago on a flow that is switched on — the scheduler should have taken these already.
-    // Counted over the flows this caller can see, so someone else's overdue send is not reported.
-    (ctx.isAdmin
-      ? ctx.svc
-          .from("sequence_enrollments")
-          .select("id, sequences!inner(status)", { count: "exact", head: true })
-          .eq("mailbox_owner_id", ctx.mailboxOwnerId)
-      : ctx.svc
-          .from("sequence_enrollments")
-          .select("id, sequences!inner(status)", { count: "exact", head: true })
-          .eq("mailbox_owner_id", ctx.mailboxOwnerId)
-          .in("sequence_id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"])
-    )
+    // Counted only over the flows this caller scheduled, in the mailbox they are working in: the
+    // warning is for the person waiting on those emails. An admin seeing every send in the
+    // mailbox doesn't make a teammate's overdue send theirs to chase, and before this a member's
+    // own mailbox (BYOM, where they see everything) reported the whole team's count.
+    ctx.svc
+      .from("sequence_enrollments")
+      .select("id, sequences!inner(status)", { count: "exact", head: true })
+      .eq("mailbox_owner_id", ctx.mailboxOwnerId)
+      .in("sequence_id", ownIds.length ? ownIds : ["00000000-0000-0000-0000-000000000000"])
       .eq("status", "active")
       .eq("sequences.status", "active")
       .not("next_run_at", "is", null)
@@ -154,6 +159,7 @@ export async function POST(request: Request) {
     .from("sequences")
     .insert({
       mailbox_owner_id: ctx.mailboxOwnerId,
+      ...sequenceMailboxColumn(ctx),
       created_by: ctx.userId,
       name,
     })

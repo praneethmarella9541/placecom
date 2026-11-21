@@ -9,7 +9,8 @@ export const runtime = "nodejs";
  * (bypassing the Next.js route body-size limit).
  */
 export async function GET(request: Request) {
-  const auth = await requireGmailAccessToken(request);
+  // A raw token can do anything the mailbox can, so only full access gets one.
+  const auth = await requireGmailAccessToken(request, { need: "modify" });
   if (!auth.ok) {
     return NextResponse.json({ error: auth.message }, { status: auth.status });
   }

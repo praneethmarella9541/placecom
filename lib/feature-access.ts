@@ -13,6 +13,9 @@ export const FEATURE_KEYS = [
   "whatsapp",
   "mailTemplates",
   "lusha",
+  "byom",
+  "dataModel",
+  "workflows",
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -32,6 +35,9 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   whatsapp: "WhatsApp",
   mailTemplates: "Mail templates",
   lusha: "Lusha",
+  byom: "Own mailboxes",
+  dataModel: "Data model",
+  workflows: "Workflows",
 };
 
 /** Features shown in admin access-group checklists. */
@@ -86,6 +92,8 @@ export function pathToFeature(pathname: string): FeatureKey | null {
   if (pathname.startsWith("/sheets")) return "sheets";
   if (pathname.startsWith("/docs")) return "docs";
   if (pathname.startsWith("/crm")) return "crm";
+  if (pathname === "/data" || pathname.startsWith("/data/")) return "dataModel";
+  if (pathname === "/workflows" || pathname.startsWith("/workflows/")) return "workflows";
   if (pathname.startsWith("/calendar")) return "calendar";
   if (pathname.startsWith("/sequences")) return "sequences";
   if (pathname.startsWith("/sms")) return "sms";
@@ -152,6 +160,15 @@ export function apiPathToFeature(pathname: string): FeatureKey | null {
   // composer and contacts pages poll for "is it connected" stays ungated: it carries no data
   // beyond a boolean, and the UI hides the entry points itself when the module is off.
   if (pathname.startsWith("/api/integrations/lusha")) return "lusha";
+
+  // BYOM admin settings: who may use the common mailbox, and which domains may sign up.
+  // The switcher's own routes live under /api/me/ and check the module themselves.
+  if (pathname.startsWith("/api/admin/mailbox-access")) return "byom";
+
+  // Flexible data model (objects, records, lists). Routes also check the module themselves.
+  if (pathname.startsWith("/api/data/")) return "dataModel";
+  // Workflows (builder, runs). The scheduler tick is under /api/cron/ and checks its own secret.
+  if (pathname.startsWith("/api/workflows")) return "workflows";
 
   if (pathname.startsWith("/api/crm")) return "crm";
   if (pathname.startsWith("/api/calendar")) return "calendar";

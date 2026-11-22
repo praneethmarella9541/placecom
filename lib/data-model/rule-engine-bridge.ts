@@ -5,6 +5,7 @@ import { compileExpression, runExpression, type EvalContext, type Expr, type For
 import { buildObjectSchema } from "./rule-schema";
 import { valuesToFormula } from "./rule-values";
 import { isFormulaEngineEnabled } from "./rule-flags";
+import { emitEvents } from "./events";
 import { getRecord, loadAttributes, loadObjectById } from "./records";
 import { appliesOnMatches, renderMessage, requirementErrorFormula, requirementMessage } from "./rule-formula-gen";
 import { logRuleOutcome } from "./rule-audit";
@@ -211,19 +212,43 @@ async function evaluateViaEngine(
     return isAdminPromise;
   };
 
+  // Loaded (and cached — loadObjectById keeps a short-lived cache) only the first time some rule
+  // actually matches, so a save where nothing fires costs no extra query.
+  let objectSlugPromise: Promise<string | null> | null = null;
+  const objectSlug = () => {
+    if (!objectSlugPromise) objectSlugPromise = audit.objectId ? loadObjectById(svc, org, audit.objectId).then((o) => o?.slug ?? null) : Promise.resolve(null);
+    return objectSlugPromise;
+  };
+
+  async function recordOutcome(rule: Rule, outcome: "blocked" | "warned" | "bypassed", message: string): Promise<void> {
+    await logRuleOutcome(svc, org, { ruleId: rule.id, objectId: audit.objectId, recordId: audit.recordId, outcome, message, actorId: actorUserId });
+    const slug = await objectSlug();
+    if (!slug) return;
+    await emitEvents(svc, [
+      {
+        org,
+        type: "rule.matched",
+        objectSlug: slug,
+        recordId: audit.recordId,
+        actor: { userId: actorUserId, source: "system" },
+        payload: { ruleId: rule.id, ruleName: rule.name, ruleApiName: rule.apiName ?? null, outcome, message },
+      },
+    ]);
+  }
+
   for (const rule of rules) {
     const messages = await matchesRule(rule, attrsBySlug, schema, ctx, formulaValues, isStageContext, mode.isNew);
     for (const message of messages) {
       if (rule.mode === "warn") {
         warnings.push(message);
-        await logRuleOutcome(svc, org, { ruleId: rule.id, objectId: audit.objectId, recordId: audit.recordId, outcome: "warned", message, actorId: actorUserId });
+        await recordOutcome(rule, "warned", message);
       } else if (rule.adminBypass && audit.bypassRequested && (await isAdmin())) {
         warnings.push(`${message} (bypassed by an admin)`);
-        await logRuleOutcome(svc, org, { ruleId: rule.id, objectId: audit.objectId, recordId: audit.recordId, outcome: "bypassed", message, actorId: actorUserId });
+        await recordOutcome(rule, "bypassed", message);
       } else {
         errors.push(message);
         if (rule.errorLocation) missingFields.add(rule.errorLocation);
-        await logRuleOutcome(svc, org, { ruleId: rule.id, objectId: audit.objectId, recordId: audit.recordId, outcome: "blocked", message, actorId: actorUserId });
+        await recordOutcome(rule, "blocked", message);
       }
     }
   }

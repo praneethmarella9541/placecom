@@ -1,10 +1,12 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { BLOCK_LABELS } from "@/lib/workflows/graph";
 import type { Block, Condition, FieldSet, Graph, Trigger, TriggerType } from "@/lib/workflows/types";
 import { TRIGGER_TYPES } from "@/lib/workflows/types";
-import { TRIGGER_LABELS, blockTitle, variablesFor, type WorkflowMeta } from "@/lib/workflows/describe";
+import { TRIGGER_LABELS, blockTitle, variablesFor, type VariableOption, type WorkflowMeta } from "@/lib/workflows/describe";
+import { buildStaticFormulaSchema, compileConditionFormula, variablePathToSlug } from "@/lib/workflows/condition-formula";
 import { ConditionsEditor, FieldsEditor, TemplateInput, inputCls, labelCls, selectCls } from "@/components/workflows/fields";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -125,6 +127,24 @@ export function TriggerPanel({ trigger, meta, onChange }: { trigger: Trigger; me
         </>
       )}
 
+      {trigger.type === "rule_matched" && (
+        <>
+          {objectSelect}
+          <Field label="Rule API name (optional)" htmlFor="trg-rule-api-name" hint='Leave blank to match any rule on this object. Set on a formula rule — "Add rule" in its object, Formula tab.'>
+            <input id="trg-rule-api-name" value={String(c.apiName ?? "")} onChange={(e) => set({ apiName: e.target.value || undefined })} className={inputCls} placeholder="package_value_minimum" />
+          </Field>
+          <Field label="Outcome" htmlFor="trg-rule-outcome">
+            <select id="trg-rule-outcome" value={String(c.outcome ?? "any")} onChange={(e) => set({ outcome: e.target.value })} className={selectCls}>
+              <option value="any">Any (blocked, warned or bypassed)</option>
+              <option value="blocked">Blocks the save</option>
+              <option value="warned">Warns, but the save goes through</option>
+              <option value="bypassed">Is bypassed by an admin</option>
+            </select>
+          </Field>
+          <p className="text-[12px] text-[var(--color-text-faint)]">A rule that blocked a new record has no record to work on — only an update, a stage move, or a warn/bypass does.</p>
+        </>
+      )}
+
       {trigger.type === "schedule" && (
         <>
           <Field label="Every" htmlFor="trg-every">
@@ -158,6 +178,39 @@ export function TriggerPanel({ trigger, meta, onChange }: { trigger: Trigger; me
 // Blocks
 // ---------------------------------------------------------------------------
 
+/**
+ * A condition as a formula (lib/workflows/condition-formula.ts) instead of the plain field/op/value
+ * list — the same engine validation rules use. A variable like trigger.record.values.score is
+ * offered under its flat slug (trigger_record_values_score); the real check happens when the
+ * workflow runs, against that run's actual data, so this compile check is a best-effort hint, not a
+ * guarantee (a path only this run's data happens to be missing still runs fine at run time).
+ */
+function ConditionFormulaEditor({ formula, variables, onChange }: { formula: string; variables: VariableOption[]; onChange: (formula: string) => void }) {
+  const schema = useMemo(() => buildStaticFormulaSchema(variables), [variables]);
+  const error = useMemo(() => {
+    if (!formula.trim()) return null;
+    const compiled = compileConditionFormula(formula, schema);
+    return compiled.ok ? null : compiled.error;
+  }, [formula, schema]);
+
+  return (
+    <div className="space-y-2">
+      <Field label="Formula — TRUE means the condition is met" htmlFor="blk-cond-formula">
+        <textarea id="blk-cond-formula" value={formula} onChange={(e) => onChange(e.target.value)} rows={3} maxLength={4000} placeholder="trigger_record_values_score > 90" className="input-field w-full resize-y font-mono text-[12.5px]" />
+      </Field>
+      {error && <p role="alert" className="rounded-lg bg-[var(--color-danger-light)] px-2 py-1.5 text-[12px] text-[var(--color-danger)]">{error}</p>}
+      {variables.length > 0 && (
+        <details className="text-[12px] text-[var(--color-text-faint)]">
+          <summary className="cursor-pointer select-none">Available fields</summary>
+          <ul className="mt-1 space-y-0.5 font-mono">
+            {variables.map((v) => <li key={v.path}>{variablePathToSlug(v.path)} <span className="text-[var(--color-text-faint)]">— {v.label}</span></li>)}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 /** Which object a record reference points at, so the field pickers can offer that object's fields. */
 function objectForRecordRef(template: string, graph: Graph, trigger: Trigger): string | undefined {
   if (/^\{\{\s*trigger\.record\.id\s*\}\}$/.test(template)) return trigger.config.object as string | undefined;
@@ -181,14 +234,26 @@ export function BlockPanel({ block, graph, trigger, meta, onConfig, onLabel, onR
   let body: React.ReactNode = null;
   switch (block.type) {
     case "filter":
-    case "if_else":
+    case "if_else": {
+      const isFormula = c.conditionFormat === "formula";
       body = (
         <>
-          <p className="text-[12.5px] text-[var(--color-text-muted)]">{block.type === "filter" ? "If the conditions aren't met, the run ends here (not a failure)." : "Splits the path: Yes when the conditions are met, No otherwise."}</p>
-          <ConditionsEditor match={c.match === "any" ? "any" : "all"} conditions={(c.conditions as Condition[]) ?? []} variables={vars} onChange={(match, conditions) => set({ match, conditions })} />
+          <div className="flex items-center justify-between">
+            <p className="text-[12.5px] text-[var(--color-text-muted)]">{block.type === "filter" ? "If the conditions aren't met, the run ends here (not a failure)." : "Splits the path: Yes when the conditions are met, No otherwise."}</p>
+            <div className="flex shrink-0 gap-1 rounded-lg border border-[var(--color-border)] p-0.5 text-[11.5px] font-semibold">
+              <button type="button" onClick={() => set({ conditionFormat: "simple" })} className={`rounded-md px-2 py-0.5 ${!isFormula ? "bg-[var(--color-surface-alt)]" : "text-[var(--color-text-faint)]"}`}>Simple</button>
+              <button type="button" onClick={() => set({ conditionFormat: "formula" })} className={`rounded-md px-2 py-0.5 ${isFormula ? "bg-[var(--color-surface-alt)]" : "text-[var(--color-text-faint)]"}`}>Formula</button>
+            </div>
+          </div>
+          {isFormula ? (
+            <ConditionFormulaEditor formula={String(c.formula ?? "")} variables={vars} onChange={(formula) => set({ formula })} />
+          ) : (
+            <ConditionsEditor match={c.match === "any" ? "any" : "all"} conditions={(c.conditions as Condition[]) ?? []} variables={vars} onChange={(match, conditions) => set({ match, conditions })} />
+          )}
         </>
       );
       break;
+    }
     case "delay":
       body = (
         <div className="flex gap-2">

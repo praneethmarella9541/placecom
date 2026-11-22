@@ -18,7 +18,7 @@ export const BLOCK_TYPES = [
 ] as const;
 export type BlockType = (typeof BLOCK_TYPES)[number];
 
-export const TRIGGER_TYPES = ["record_created", "record_updated", "attribute_changed", "list_added", "list_entry_updated", "manual", "schedule"] as const;
+export const TRIGGER_TYPES = ["record_created", "record_updated", "attribute_changed", "list_added", "list_entry_updated", "rule_matched", "manual", "schedule"] as const;
 export type TriggerType = (typeof TRIGGER_TYPES)[number];
 
 export type ConditionOp = "eq" | "neq" | "contains" | "not_contains" | "gt" | "lt" | "empty" | "not_empty";
@@ -46,7 +46,7 @@ export type Trigger = { type: TriggerType | null; config: Record<string, unknown
 export type WorkflowEvent = {
   id: number;
   org_owner_id: string;
-  type: "record.created" | "record.updated" | "attribute.changed" | "list.added" | "list.entry_updated" | "manual";
+  type: "record.created" | "record.updated" | "attribute.changed" | "list.added" | "list.entry_updated" | "rule.matched" | "manual";
   object_slug: string | null;
   record_id: string | null;
   list_id: string | null;

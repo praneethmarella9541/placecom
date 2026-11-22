@@ -27,7 +27,7 @@ export async function referenceProblems(svc: SupabaseClient, org: string, trigge
   };
 
   const c = trigger.config;
-  if (["record_created", "record_updated", "attribute_changed", "manual"].includes(trigger.type ?? "") && !(await hasObject(c.object))) problems.push("The trigger's object no longer exists.");
+  if (["record_created", "record_updated", "attribute_changed", "manual", "rule_matched"].includes(trigger.type ?? "") && !(await hasObject(c.object))) problems.push("The trigger's object no longer exists.");
   if (["list_added", "list_entry_updated"].includes(trigger.type ?? "") && !(await getList(c.list))) problems.push("The trigger's list no longer exists.");
 
   for (const b of Object.values(graph.blocks)) {

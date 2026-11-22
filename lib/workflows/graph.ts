@@ -97,6 +97,14 @@ export function sanitizeBlockConfig(type: BlockType, raw: unknown): Cleaned {
   switch (type) {
     case "filter":
     case "if_else": {
+      // A formula condition (lib/workflows/condition-formula.ts) is checked for syntax and field
+      // references when the workflow actually runs, not here — this function has no graph/trigger
+      // context to build the real schema from, only the raw config.
+      if (c.conditionFormat === "formula") {
+        const formula = text(c.formula, 4000).trim();
+        if (!formula) return fail("Write a formula.");
+        return { ok: true, config: { conditionFormat: "formula", formula } };
+      }
       const conditions = cleanConditions(c.conditions);
       if (typeof conditions === "string") return fail(conditions);
       return { ok: true, config: { match: c.match === "any" ? "any" : "all", conditions } };

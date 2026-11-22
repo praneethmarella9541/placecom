@@ -15,9 +15,12 @@ export const TRIGGER_LABELS: Record<TriggerType, string> = {
   attribute_changed: "A field changes",
   list_added: "A record is added to a list",
   list_entry_updated: "A list entry changes",
+  rule_matched: "A validation rule blocks, warns, or is bypassed",
   manual: "Run by hand on a record",
   schedule: "On a schedule",
 };
+
+const RULE_OUTCOME_LABELS: Record<string, string> = { blocked: "blocks a save", warned: "warns on a save", bypassed: "is bypassed by an admin" };
 
 const OPS: Record<string, string> = { eq: "is", neq: "is not", contains: "contains", not_contains: "doesn't contain", gt: "is more than", lt: "is less than", empty: "is empty", not_empty: "is not empty" };
 export const CONDITION_OP_LABELS = OPS;
@@ -42,6 +45,10 @@ export function describeTrigger(t: Trigger, meta: WorkflowMeta | null): string {
       return `A record is added to ${listName(meta, c.list)}`;
     case "list_entry_updated":
       return `An entry in ${listName(meta, c.list)} changes${c.attribute === "stage" ? " stage" : ""}${c.to ? ` to ${stageName(meta, c.list, c.to) ?? `"${c.to}"`}` : ""}`;
+    case "rule_matched": {
+      const outcome = typeof c.outcome === "string" ? RULE_OUTCOME_LABELS[c.outcome] : undefined;
+      return `A rule on ${objectName(meta, c.object)}${c.apiName ? ` ("${c.apiName}")` : ""} ${outcome ?? "matches"}`;
+    }
     case "manual":
       return `Run by hand on a ${objectName(meta, c.object)} record`;
     case "schedule":
@@ -57,6 +64,7 @@ export function describeBlock(b: Block, meta: WorkflowMeta | null): string {
   switch (b.type) {
     case "filter":
     case "if_else": {
+      if (c.conditionFormat === "formula") return typeof c.formula === "string" && c.formula.trim() ? c.formula.trim().slice(0, 80) : "No formula yet";
       const list = (c.conditions as Condition[]) ?? [];
       return list.length ? list.map(cond).join(c.match === "any" ? " or " : " and ").slice(0, 80) : "No conditions yet";
     }
@@ -113,6 +121,14 @@ export function variablesFor(graph: Graph, key: string | null, trigger: Trigger,
     for (const a of obj?.attributes ?? []) out.push({ path: `trigger.record.values.${a.slug}`, label: `Trigger record · ${a.name}` });
   }
   if (trigger.type === "attribute_changed" || trigger.type === "list_entry_updated") out.push({ path: "trigger.event.new_value", label: "Trigger · new value" }, { path: "trigger.event.old_value", label: "Trigger · old value" });
+  if (trigger.type === "rule_matched") {
+    out.push(
+      { path: "trigger.event.ruleName", label: "Trigger · rule name" },
+      { path: "trigger.event.ruleApiName", label: "Trigger · rule API name" },
+      { path: "trigger.event.outcome", label: "Trigger · outcome (blocked, warned, bypassed)" },
+      { path: "trigger.event.message", label: "Trigger · rule message" }
+    );
+  }
   if (trigger.type) out.push({ path: "trigger.event.actor_kind", label: "Trigger · changed by (user or workflow)" });
 
   const before = key ? ancestorsOf(graph, key) : Object.values(graph.blocks);

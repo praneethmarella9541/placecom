@@ -52,6 +52,14 @@ test("triggers match their own event only", () => {
   assert.equal(triggerMatches({ type: "list_added", config: { list: "L1" } }, ev({ type: "list.added", list_id: "L1" })), true);
   assert.equal(triggerMatches({ type: "list_entry_updated", config: { list: "L1", attribute: "stage", to: "S2" } }, ev({ type: "list.entry_updated", list_id: "L1", attribute_slug: "stage", new_value: "S2" })), true);
   assert.equal(triggerMatches({ type: "schedule", config: {} }, ev({})), false);
+
+  const ruleEv = ev({ type: "rule.matched", object_slug: "deals", payload: { ruleApiName: "package_value_minimum", outcome: "blocked" } });
+  assert.equal(triggerMatches({ type: "rule_matched", config: { object: "deals" } }, ruleEv), true); // no apiName/outcome = matches any
+  assert.equal(triggerMatches({ type: "rule_matched", config: { object: "deals", apiName: "package_value_minimum" } }, ruleEv), true);
+  assert.equal(triggerMatches({ type: "rule_matched", config: { object: "deals", apiName: "other_rule" } }, ruleEv), false);
+  assert.equal(triggerMatches({ type: "rule_matched", config: { object: "deals", outcome: "warned" } }, ruleEv), false);
+  assert.equal(triggerMatches({ type: "rule_matched", config: { object: "deals", outcome: "any" } }, ruleEv), true);
+  assert.equal(triggerMatches({ type: "rule_matched", config: { object: "people" } }, ruleEv), false);
 });
 
 test("sanitizeTrigger checks each trigger's settings", () => {
@@ -63,6 +71,11 @@ test("sanitizeTrigger checks each trigger's settings", () => {
   assert.equal(sanitizeTrigger({ type: "schedule", config: { every: "year" } }).ok, false);
   assert.equal(sanitizeTrigger({ type: "schedule", config: { every: "day", tz: "Mars/Base" } }).ok, false);
   assert.equal(sanitizeTrigger({ type: "launch_missiles" }).ok, false);
+  assert.equal(sanitizeTrigger({ type: "rule_matched", config: {} }).ok, false); // needs an object
+  const rm = sanitizeTrigger({ type: "rule_matched", config: { object: "deals", apiName: "package_value_minimum", outcome: "blocked" } });
+  assert.equal(rm.ok, true);
+  if (rm.ok) assert.deepEqual(rm.trigger.config, { object: "deals", outcome: "blocked", apiName: "package_value_minimum" });
+  assert.equal(sanitizeTrigger({ type: "rule_matched", config: { object: "deals", apiName: "Not Valid!" } }).ok, false);
 });
 
 test("zoned times: 09:00 in Kolkata is 03:30 UTC; summer New York is UTC-4", () => {

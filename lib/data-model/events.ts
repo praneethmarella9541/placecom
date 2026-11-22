@@ -14,7 +14,7 @@ import { isModuleEnabled } from "@/lib/module-config";
 
 export type EventInput = {
   org: string;
-  type: "record.created" | "record.updated" | "attribute.changed" | "list.added" | "list.entry_updated" | "manual";
+  type: "record.created" | "record.updated" | "attribute.changed" | "list.added" | "list.entry_updated" | "rule.matched" | "manual";
   objectSlug?: string | null;
   recordId?: string | null;
   listId?: string | null;
@@ -38,7 +38,7 @@ export async function emitEvents(svc: SupabaseClient, events: EventInput[]): Pro
     attribute_slug: e.attributeSlug ?? null,
     old_value: e.oldValue === undefined ? null : e.oldValue,
     new_value: e.newValue === undefined ? null : e.newValue,
-    actor_kind: e.actor.source === "workflow" ? "workflow" : "user",
+    actor_kind: e.actor.source === "workflow" ? "workflow" : e.actor.source === "system" ? "system" : "user",
     actor_id: e.actor.userId,
     source: e.actor.source ?? "app",
     payload: { ...(e.payload ?? {}), ...(e.actor.workflowId ? { workflow_id: e.actor.workflowId } : {}) },

@@ -8,6 +8,8 @@ import { checkStageRulesV2 } from "@/lib/data-model/rule-engine-bridge";
 import { recordStageChange } from "@/lib/data-model/rules-server";
 import { validateRecordInput } from "@/lib/data-model/values";
 import type { RecordFilter } from "@/lib/data-model/types";
+import { runExpression, type EvalContext } from "../rules-engine/index";
+import { compileConditionFormula, flattenRuntimeData } from "./condition-formula";
 import { conditionsHold } from "./conditions";
 import { resolveValue } from "./template";
 import type { Block, Condition, FieldSet } from "./types";
@@ -90,16 +92,46 @@ async function memberFrom(env: RunEnv, spec: unknown, recordValues?: Record<stri
 
 const summarize = (r: { id: string; name: string }) => ({ id: r.id, name: r.name });
 
+/**
+ * Filter and if/else can use a formula (config.conditionFormat === "formula") instead of the plain
+ * condition list — the same engine lib/data-model/rule-engine-bridge.ts runs validation rules
+ * through, so there's one formula language across the product rather than two. See
+ * lib/workflows/condition-formula.ts for why the schema is built fresh from this run's actual data
+ * instead of a pre-known list: an optional path that's absent this run reads as blank, not an error.
+ */
+async function blockConditionHolds(config: Record<string, unknown>, env: RunEnv): Promise<boolean> {
+  if (config.conditionFormat === "formula") {
+    const source = typeof config.formula === "string" ? config.formula.trim() : "";
+    if (!source) return true; // no formula yet: same as "no conditions" for the plain editor
+    const { schema, values } = flattenRuntimeData(env.data);
+    const compiled = compileConditionFormula(source, schema);
+    if (!compiled.ok) throw new BlockError(`This condition's formula: ${compiled.error}`);
+    const ctx: EvalContext = {
+      values,
+      isNew: true,
+      user: { id: env.ownerId, role: "staff", groupName: null, email: "", emailDomain: "" },
+      workspace: { id: env.org, name: "" },
+      now: new Date(),
+      timeZone: "Asia/Kolkata",
+      resolveLink: async () => null, // no cross-record hops in a workflow condition formula yet
+    };
+    const result = await runExpression(compiled.ast, schema, ctx);
+    if (!result.ok) throw new BlockError(`This condition's formula: ${result.error}`);
+    return result.value === true;
+  }
+  return conditionsHold(config.match === "any" ? "any" : "all", (config.conditions as Condition[]) ?? [], env.data);
+}
+
 export async function runBlock(block: Block, env: RunEnv): Promise<BlockResult> {
   const c = block.config;
   switch (block.type) {
     case "filter": {
-      const ok = conditionsHold(c.match === "any" ? "any" : "all", (c.conditions as Condition[]) ?? [], env.data);
+      const ok = await blockConditionHolds(c, env);
       return ok ? { output: { passed: true } } : { output: { passed: false }, route: "stop", stopReason: "A filter's condition was not met." };
     }
 
     case "if_else": {
-      const ok = conditionsHold(c.match === "any" ? "any" : "all", (c.conditions as Condition[]) ?? [], env.data);
+      const ok = await blockConditionHolds(c, env);
       return { output: { result: ok ? "yes" : "no" }, route: ok ? "yes" : "no" };
     }
 

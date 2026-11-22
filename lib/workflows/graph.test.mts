@@ -79,6 +79,10 @@ test("block settings are cleaned", () => {
   assert.equal(t.ok, true);
   assert.equal(sanitizeBlockConfig("create_task", { title: "Call", dueInDays: -1 }).ok, false);
   assert.equal(sanitizeBlockConfig("filter", { conditions: [{ left: "x", op: "shell" }] }).ok, false);
+  assert.equal(sanitizeBlockConfig("filter", { conditionFormat: "formula", formula: "  " }).ok, false);
+  const f = sanitizeBlockConfig("filter", { conditionFormat: "formula", formula: "trigger_record_values_score > 90", conditions: [{ left: "x", op: "empty" }] });
+  assert.equal(f.ok, true);
+  if (f.ok) assert.deepEqual(f.config, { conditionFormat: "formula", formula: "trigger_record_values_score > 90" }); // a stale conditions list is dropped, not kept alongside
 });
 
 test("too many blocks are refused", () => {

@@ -3,11 +3,21 @@ import { TRIGGER_TYPES } from "./types";
 
 const SLUG = /^[a-z][a-z0-9_]{0,39}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** A formula rule's api_name (lib/data-model/rule-formula-validate.ts) — a legacy rule has none, so
+ *  it can only be matched by leaving this blank ("any rule on this object"). */
+const RULE_API_NAME = /^[a-z][a-z0-9_]{0,59}$/;
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
 
 /** Does this event start a workflow with this trigger? Pure; tested in triggers.test.mts. */
 export function triggerMatches(trigger: Trigger, ev: Pick<WorkflowEvent, "type" | "object_slug" | "list_id" | "attribute_slug" | "old_value" | "new_value" | "payload">): boolean {
+  if (trigger.type === "rule_matched") {
+    if (ev.type !== "rule.matched" || ev.object_slug !== str(trigger.config.object)) return false;
+    const apiName = str(trigger.config.apiName);
+    if (apiName !== undefined && String(ev.payload?.ruleApiName ?? "") !== apiName) return false;
+    const outcome = str(trigger.config.outcome);
+    return outcome === undefined || outcome === "any" || String(ev.payload?.outcome ?? "") === outcome;
+  }
   const c = trigger.config;
   const same = (a: unknown, b: unknown) => String(a ?? "").trim().toLowerCase() === String(b ?? "").trim().toLowerCase();
 
@@ -92,6 +102,12 @@ export function sanitizeTrigger(raw: unknown): { ok: true; trigger: Trigger } | 
         return { ok: true, trigger: { type, config: { list: id(c.list, "a list") } } };
       case "list_entry_updated":
         return { ok: true, trigger: { type, config: { list: id(c.list, "a list"), ...(str(c.attribute) && (str(c.attribute) === "stage" || SLUG.test(str(c.attribute)!)) ? { attribute: str(c.attribute) } : {}), ...(str(c.to) ? { to: str(c.to)!.slice(0, 200) } : {}) } } };
+      case "rule_matched": {
+        const outcome = c.outcome === "blocked" || c.outcome === "warned" || c.outcome === "bypassed" ? c.outcome : "any";
+        const apiName = str(c.apiName);
+        if (apiName !== undefined && !RULE_API_NAME.test(apiName)) return { ok: false, error: "That doesn't look like a rule's API name." };
+        return { ok: true, trigger: { type, config: { object: slug(c.object, "an object"), outcome, ...(apiName !== undefined ? { apiName } : {}) } } };
+      }
       case "schedule": {
         const every = c.every === "hour" || c.every === "day" || c.every === "week" ? c.every : null;
         if (!every) return { ok: false, error: "Choose how often it runs." };

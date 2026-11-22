@@ -95,6 +95,26 @@ export function checkRecordRules(rules: Rule[], attrs: AttributeDef[], values: R
   return rules.flatMap((r) => (conditionHolds(r.condition, values) ? failedRequirements(r, attrs, values, name) : []));
 }
 
+/**
+ * The attribute slugs a "required" requirement is blocking on, deduped — not a message, a field to
+ * ask for. Used to build the board's "fill these in" dialog on a blocked stage move, instead of just
+ * showing an error and reverting the card. Only legacy-shaped rules have a requirement to point at;
+ * a formula rule's equivalent is its own error_location, handled by the caller.
+ */
+export function missingRequiredFields(rules: Rule[], values: Record<string, unknown>, name?: string): string[] {
+  const out = new Set<string>();
+  for (const rule of rules) {
+    if (rule.format === "formula") continue;
+    if (!conditionHolds(rule.condition, values)) continue;
+    for (const req of rule.requirements) {
+      if (req.kind !== "required") continue;
+      const v = req.attribute === "name" ? name : values[req.attribute];
+      if (isEmptyValue(v)) out.add(req.attribute);
+    }
+  }
+  return [...out];
+}
+
 /** Check the shape of a rule from the API. Slugs are only checked for form; the screens offer real ones. */
 export function sanitizeRule(raw: unknown): { ok: true; condition: RuleCondition; requirements: RuleRequirement[] } | { ok: false; error: string } {
   const input = (raw ?? {}) as { condition?: unknown; requirements?: unknown };

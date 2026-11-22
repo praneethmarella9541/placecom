@@ -75,10 +75,20 @@ export function AttributesModal({
   const [newDefault, setNewDefault] = useState("");
   const [required, setRequired] = useState(false);
   const [defaultText, setDefaultText] = useState("");
+  const [minValue, setMinValue] = useState("");
+  const [maxValue, setMaxValue] = useState("");
+  const [minLength, setMinLength] = useState("");
+  const [maxLength, setMaxLength] = useState("");
+  const [pattern, setPattern] = useState("");
+  const [patternMessage, setPatternMessage] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [singular, setSingular] = useState(names?.singular ?? "");
   const [plural, setPlural] = useState(names?.plural ?? "");
   const canMulti = !["checkbox", "rating", "long_text", "multi_select"].includes(type);
+
+  const isNumeric = type === "number" || type === "currency";
+  const isDate = type === "date";
+  const isTextLike = type === "text" || type === "long_text" || type === "email" || type === "phone" || type === "url" || type === "domain";
 
   async function add() {
     setBusy("add");
@@ -93,6 +103,12 @@ export function AttributesModal({
         targetObject: target,
         isRequired: required,
         defaultValue: defaultText.trim() ? (type === "checkbox" ? defaultText === "true" : defaultText.trim()) : undefined,
+        min: isNumeric && minValue.trim() ? Number(minValue) : isDate && minValue.trim() ? minValue.trim() : undefined,
+        max: (isNumeric || type === "rating") && maxValue.trim() ? Number(maxValue) : isDate && maxValue.trim() ? maxValue.trim() : undefined,
+        minLength: isTextLike && minLength.trim() ? Number(minLength) : undefined,
+        maxLength: isTextLike && maxLength.trim() ? Number(maxLength) : undefined,
+        pattern: isTextLike && pattern.trim() ? pattern.trim() : undefined,
+        patternMessage: isTextLike && patternMessage.trim() ? patternMessage.trim() : undefined,
       },
     });
     setBusy(null);
@@ -101,6 +117,12 @@ export function AttributesModal({
     setOptions("");
     setRequired(false);
     setDefaultText("");
+    setMinValue("");
+    setMaxValue("");
+    setMinLength("");
+    setMaxLength("");
+    setPattern("");
+    setPatternMessage("");
     onChanged();
   }
 
@@ -275,6 +297,47 @@ export function AttributesModal({
                 Required on new records
               </label>
             </div>
+
+            {(isNumeric || isDate || type === "rating") && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {type !== "rating" && (
+                  <div>
+                    <label htmlFor="attr-min" className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Minimum (optional)</label>
+                    <input id="attr-min" type={isDate ? "date" : "text"} inputMode={isNumeric ? "decimal" : undefined} value={minValue} onChange={(e) => setMinValue(e.target.value)} className="input-field h-9 text-[13px]" />
+                  </div>
+                )}
+                <div>
+                  <label htmlFor="attr-max" className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Maximum (optional)</label>
+                  <input id="attr-max" type={isDate ? "date" : "text"} inputMode={isNumeric || type === "rating" ? "decimal" : undefined} value={maxValue} onChange={(e) => setMaxValue(e.target.value)} placeholder={type === "rating" ? "5" : undefined} className="input-field h-9 text-[13px]" />
+                </div>
+              </div>
+            )}
+
+            {isTextLike && (
+              <div className="space-y-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="attr-minlen" className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Minimum length (optional)</label>
+                    <input id="attr-minlen" inputMode="numeric" value={minLength} onChange={(e) => setMinLength(e.target.value)} className="input-field h-9 text-[13px]" />
+                  </div>
+                  <div>
+                    <label htmlFor="attr-maxlen" className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Maximum length (optional)</label>
+                    <input id="attr-maxlen" inputMode="numeric" value={maxLength} onChange={(e) => setMaxLength(e.target.value)} className="input-field h-9 text-[13px]" />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="attr-pattern" className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Pattern (optional, regex)</label>
+                  <input id="attr-pattern" value={pattern} onChange={(e) => setPattern(e.target.value)} placeholder="[A-Z]{2}\d{4}" className="input-field h-9 font-mono text-[12.5px]" />
+                </div>
+                {pattern.trim() && (
+                  <div>
+                    <label htmlFor="attr-pattern-msg" className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-[var(--color-text-faint)]">Message when the pattern doesn&apos;t match (optional)</label>
+                    <input id="attr-pattern-msg" value={patternMessage} onChange={(e) => setPatternMessage(e.target.value)} className="input-field h-9 text-[13px]" />
+                  </div>
+                )}
+              </div>
+            )}
+
             <button type="submit" disabled={busy !== null || !name.trim()} className="btn-primary-copper inline-flex items-center gap-2">
               {busy === "add" && <Loader2 className="h-4 w-4 animate-spin" />}
               Add field

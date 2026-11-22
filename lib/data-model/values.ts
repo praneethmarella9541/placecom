@@ -96,14 +96,35 @@ function fail(attr: AttributeDef, why: string): Normalized {
   return { ok: false, error: `${attr.name}: ${why}` };
 }
 
+/** A regex rule on the field definition (text-like types only). The pattern itself is admin-chosen,
+ *  not tenant-user-chosen, but it still runs through a bounded engine (lib/rules-engine/functions.ts's
+ *  safeRegexFullMatch would be the natural fit if this ever needs the same hard timeout — not
+ *  wired to it yet since field patterns are short, admin-authored strings, not formulas). */
+function checkPattern(attr: AttributeDef, text: string): string | null {
+  const pattern = attr.config.pattern;
+  if (!pattern) return null;
+  let re: RegExp;
+  try {
+    re = new RegExp(`^(?:${pattern})$`);
+  } catch {
+    return null; // a bad pattern shouldn't block every save; the admin screen validates it at save time
+  }
+  return re.test(text) ? null : (attr.config.patternMessage?.trim() || "doesn't match the required pattern.");
+}
+
 function scalar(attr: AttributeDef, raw: unknown): Normalized {
   switch (attr.type) {
     case "text":
     case "long_text": {
       if (typeof raw !== "string") return fail(attr, "must be text.");
       const text = raw.trim();
-      const max = attr.type === "text" ? TEXT_MAX : LONG_TEXT_MAX;
+      const hardMax = attr.type === "text" ? TEXT_MAX : LONG_TEXT_MAX;
+      const max = typeof attr.config.maxLength === "number" && attr.config.maxLength > 0 ? Math.min(attr.config.maxLength, hardMax) : hardMax;
       if (text.length > max) return fail(attr, `is longer than ${max} characters.`);
+      const minLength = attr.config.minLength;
+      if (typeof minLength === "number" && minLength > 0 && text.length < minLength) return fail(attr, `must be at least ${minLength} characters.`);
+      const patternError = checkPattern(attr, text);
+      if (patternError) return fail(attr, patternError);
       return { ok: true, value: text };
     }
     case "number":
@@ -111,6 +132,8 @@ function scalar(attr: AttributeDef, raw: unknown): Normalized {
       const n = typeof raw === "string" ? Number(raw.trim().replace(/,/g, "")) : raw;
       if (typeof n !== "number" || !Number.isFinite(n)) return fail(attr, "must be a number.");
       if (Math.abs(n) > 1e15) return fail(attr, "is too large.");
+      if (typeof attr.config.min === "number" && n < attr.config.min) return fail(attr, `must be at least ${attr.config.min}.`);
+      if (typeof attr.config.max === "number" && n > attr.config.max) return fail(attr, `must be at most ${attr.config.max}.`);
       return { ok: true, value: n };
     }
     case "checkbox": {
@@ -123,6 +146,11 @@ function scalar(attr: AttributeDef, raw: unknown): Normalized {
       if (typeof raw !== "string") return fail(attr, "must be a date.");
       const iso = parseFlexibleDate(raw);
       if (!iso) return fail(attr, `"${raw.trim().slice(0, 40)}" is not a recognisable date.`);
+      // ISO date strings sort the same as the calendar, so a plain string comparison is a date comparison.
+      const min = typeof attr.config.min === "string" ? parseFlexibleDate(attr.config.min) : null;
+      if (min && iso < min) return fail(attr, `must be on or after ${min}.`);
+      const max = typeof attr.config.max === "string" ? parseFlexibleDate(attr.config.max) : null;
+      if (max && iso > max) return fail(attr, `must be on or before ${max}.`);
       return { ok: true, value: iso };
     }
     case "timestamp": {
@@ -132,7 +160,7 @@ function scalar(attr: AttributeDef, raw: unknown): Normalized {
       return { ok: true, value: d.toISOString() };
     }
     case "rating": {
-      const max = attr.config.max && attr.config.max > 0 ? attr.config.max : 5;
+      const max = typeof attr.config.max === "number" && attr.config.max > 0 ? attr.config.max : 5;
       const n = typeof raw === "string" ? Number(raw) : raw;
       if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > max) {
         return fail(attr, `must be a whole number from 1 to ${max}.`);
@@ -151,12 +179,16 @@ function scalar(attr: AttributeDef, raw: unknown): Normalized {
       if (typeof raw !== "string") return fail(attr, "must be an email address.");
       const email = raw.trim().toLowerCase();
       if (email.length > 254 || !EMAIL.test(email)) return fail(attr, `"${raw.trim().slice(0, 60)}" is not an email address.`);
+      const patternError = checkPattern(attr, email);
+      if (patternError) return fail(attr, patternError);
       return { ok: true, value: email };
     }
     case "phone": {
       if (typeof raw !== "string") return fail(attr, "must be a phone number.");
       const phone = raw.trim().replace(/[\s().-]/g, "");
       if (!/^\+?\d{6,15}$/.test(phone)) return fail(attr, `"${raw.trim().slice(0, 30)}" is not a phone number.`);
+      const patternError = checkPattern(attr, phone);
+      if (patternError) return fail(attr, patternError);
       return { ok: true, value: phone };
     }
     case "url": {
@@ -171,6 +203,8 @@ function scalar(attr: AttributeDef, raw: unknown): Normalized {
       // Only web links: a stored javascript: or data: URL would run when someone clicks it.
       if (url.protocol !== "http:" && url.protocol !== "https:") return fail(attr, "must start with http or https.");
       if (!url.hostname.includes(".")) return fail(attr, "is not a web address.");
+      const patternError = checkPattern(attr, url.toString());
+      if (patternError) return fail(attr, patternError);
       return { ok: true, value: url.toString() };
     }
     case "domain": {
@@ -182,6 +216,8 @@ function scalar(attr: AttributeDef, raw: unknown): Normalized {
         .replace(/^www\./, "")
         .split(/[/?#]/)[0];
       if (domain.length > 253 || !DOMAIN.test(domain)) return fail(attr, `"${raw.trim().slice(0, 60)}" is not a domain.`);
+      const patternError = checkPattern(attr, domain);
+      if (patternError) return fail(attr, patternError);
       return { ok: true, value: domain };
     }
     case "record_ref":

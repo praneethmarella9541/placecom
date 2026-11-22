@@ -255,7 +255,7 @@ export function AttributeField({
     case "rating": {
       const options =
         attr.type === "rating"
-          ? Array.from({ length: attr.config.max ?? 5 }, (_, i) => String(i + 1))
+          ? Array.from({ length: typeof attr.config.max === "number" ? attr.config.max : 5 }, (_, i) => String(i + 1))
           : (attr.config.options ?? []);
       control = (
         <select

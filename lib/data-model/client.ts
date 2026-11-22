@@ -6,7 +6,16 @@ import type { AttributeDef, ObjectDef, RecordRow } from "./types";
 
 export type ApiResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: string; status: number; errors?: string[]; existingId?: string; pos?: { start: number; end: number } };
+  | {
+      ok: false;
+      error: string;
+      status: number;
+      errors?: string[];
+      existingId?: string;
+      pos?: { start: number; end: number };
+      /** Attribute slugs a blocked stage move could ask for instead of just reverting the card. */
+      missingFields?: string[];
+    };
 
 export async function dataApi<T>(url: string, init?: { method?: string; body?: unknown }): Promise<ApiResult<T>> {
   try {
@@ -32,6 +41,7 @@ export async function dataApi<T>(url: string, init?: { method?: string; body?: u
         errors: Array.isArray(json.errors) ? (json.errors as string[]) : undefined,
         existingId: typeof json.existingId === "string" ? json.existingId : undefined,
         pos: pos && typeof pos.start === "number" && typeof pos.end === "number" ? { start: pos.start, end: pos.end } : undefined,
+        missingFields: Array.isArray(json.missingFields) ? (json.missingFields as string[]) : undefined,
       };
     }
     return { ok: true, data: json as T };

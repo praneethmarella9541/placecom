@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyDefaults, checkRecordRules, conditionHolds, failedRequirements, sanitizeRule } from "./rules.ts";
+import { applyDefaults, checkRecordRules, conditionHolds, failedRequirements, missingRequiredFields, sanitizeRule } from "./rules.ts";
 import type { AttributeDef } from "./types";
 
 const attr = (slug: string, name: string, over: Partial<AttributeDef> = {}): AttributeDef => ({ slug, name, type: "text", is_multi: false, config: {}, is_required: false, is_unique: false, ...over });
@@ -40,6 +40,26 @@ test("sanitizeRule checks shape", () => {
   assert.equal(sanitizeRule({ requirements: [{ attribute: "Bad Slug", kind: "required" }] }).ok, false);
   assert.equal(sanitizeRule({ requirements: [{ attribute: "value", kind: "maybe" }] }).ok, false);
   assert.equal(sanitizeRule({ condition: { attribute: "x", op: "eq" }, requirements: [{ attribute: "value", kind: "required" }] }).ok, false);
+});
+
+test("missingRequiredFields names the fields a \"required\" requirement is blocking on, deduped", () => {
+  const needsValue = { id: "1", name: "Won needs a value", condition: null, requirements: [{ attribute: "value", kind: "required" as const }] };
+  const needsBoth = { id: "2", name: "Also needs status", condition: null, requirements: [{ attribute: "value", kind: "required" as const }, { attribute: "status", kind: "required" as const }] };
+  assert.deepEqual(missingRequiredFields([needsValue, needsBoth], {}), ["value", "status"]);
+  assert.deepEqual(missingRequiredFields([needsValue, needsBoth], { value: 10, status: "Won" }), []);
+});
+
+test("missingRequiredFields respects the rule's condition and \"must be empty\" requirements don't count", () => {
+  const gated = { id: "1", name: "Won needs a value", condition: { attribute: "status", op: "eq" as const, value: "Won" }, requirements: [{ attribute: "value", kind: "required" as const }] };
+  assert.deepEqual(missingRequiredFields([gated], { status: "Open" }), []); // condition doesn't hold
+  assert.deepEqual(missingRequiredFields([gated], { status: "Won" }), ["value"]);
+  const mustBeEmpty = { id: "2", name: "n", condition: null, requirements: [{ attribute: "lost_reason", kind: "empty" as const }] };
+  assert.deepEqual(missingRequiredFields([mustBeEmpty], { lost_reason: "x" }), []); // not a "required" kind
+});
+
+test("missingRequiredFields skips formula-format rules — they have no single field to point at", () => {
+  const formula = { id: "1", name: "n", condition: null, requirements: [], format: "formula" as const };
+  assert.deepEqual(missingRequiredFields([formula], {}), []);
 });
 
 test("defaults fill only what is missing, and skip archived fields", () => {

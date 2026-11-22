@@ -18,6 +18,7 @@ export const MAX_ATTRIBUTES = 60;
 export type AttributeFailure = { ok: false; status: number; error: string };
 export type AttributeInput = {
   name?: unknown;
+  archived?: unknown;
   type?: unknown;
   isMulti?: unknown;
   options?: unknown;
@@ -25,7 +26,98 @@ export type AttributeInput = {
   currency?: unknown;
   isRequired?: unknown;
   defaultValue?: unknown;
+  min?: unknown;
+  max?: unknown;
+  minLength?: unknown;
+  maxLength?: unknown;
+  pattern?: unknown;
+  patternMessage?: unknown;
 };
+
+/** Reads min/max/minLength/maxLength/pattern/patternMessage off a request body into a field's
+ *  config, type-checked against what the field type actually uses them for. Shared by create and
+ *  update so a constraint means the same thing and is checked the same way in both places. */
+function applyConstraints(type: AttributeType, body: AttributeInput, config: AttributeConfig): { ok: true } | { ok: false; error: string } {
+  const isNumeric = type === "number" || type === "currency";
+  const isDate = type === "date";
+  const isTextLike = type === "text" || type === "long_text" || type === "email" || type === "phone" || type === "url" || type === "domain";
+
+  if (body.min !== undefined) {
+    if (!isNumeric && !isDate) return { ok: false, error: "A minimum only applies to a number, currency or date field." };
+    if (isNumeric) {
+      const n = Number(body.min);
+      if (body.min !== null && (!Number.isFinite(n) || typeof body.min === "boolean")) return { ok: false, error: "Minimum must be a number." };
+      if (body.min === null) delete config.min;
+      else config.min = n;
+    } else {
+      if (body.min !== null && typeof body.min !== "string") return { ok: false, error: "Minimum must be a date." };
+      if (body.min === null) delete config.min;
+      else config.min = body.min;
+    }
+  }
+  if (body.max !== undefined) {
+    if (!isNumeric && !isDate && type !== "rating") return { ok: false, error: "A maximum only applies to a number, currency, date or rating field." };
+    if (isNumeric || type === "rating") {
+      const n = Number(body.max);
+      if (body.max !== null && (!Number.isFinite(n) || typeof body.max === "boolean")) return { ok: false, error: "Maximum must be a number." };
+      if (body.max === null) delete config.max;
+      else config.max = n;
+    } else {
+      if (body.max !== null && typeof body.max !== "string") return { ok: false, error: "Maximum must be a date." };
+      if (body.max === null) delete config.max;
+      else config.max = body.max;
+    }
+  }
+  if (typeof config.min === "number" && typeof config.max === "number" && config.min > config.max) {
+    return { ok: false, error: "Minimum can't be more than maximum." };
+  }
+  if (typeof config.min === "string" && typeof config.max === "string" && config.min > config.max) {
+    return { ok: false, error: "Minimum date can't be after the maximum date." };
+  }
+
+  if (body.minLength !== undefined) {
+    if (!isTextLike) return { ok: false, error: "A minimum length only applies to a text field." };
+    if (body.minLength === null) delete config.minLength;
+    else {
+      const n = Number(body.minLength);
+      if (!Number.isInteger(n) || n < 0) return { ok: false, error: "Minimum length must be a whole number." };
+      config.minLength = n;
+    }
+  }
+  if (body.maxLength !== undefined) {
+    if (!isTextLike) return { ok: false, error: "A maximum length only applies to a text field." };
+    if (body.maxLength === null) delete config.maxLength;
+    else {
+      const n = Number(body.maxLength);
+      if (!Number.isInteger(n) || n < 1) return { ok: false, error: "Maximum length must be a whole number." };
+      config.maxLength = n;
+    }
+  }
+  if (typeof config.minLength === "number" && typeof config.maxLength === "number" && config.minLength > config.maxLength) {
+    return { ok: false, error: "Minimum length can't be more than maximum length." };
+  }
+
+  if (body.pattern !== undefined) {
+    if (!isTextLike) return { ok: false, error: "A pattern only applies to a text field." };
+    if (body.pattern === null || body.pattern === "") {
+      delete config.pattern;
+      delete config.patternMessage;
+    } else {
+      if (typeof body.pattern !== "string" || body.pattern.length > 200) return { ok: false, error: "The pattern is too long." };
+      try {
+        new RegExp(body.pattern);
+      } catch {
+        return { ok: false, error: "That isn't a valid pattern." };
+      }
+      config.pattern = body.pattern;
+    }
+  }
+  if (body.patternMessage !== undefined) {
+    if (typeof body.patternMessage === "string" && body.patternMessage.trim()) config.patternMessage = body.patternMessage.trim().slice(0, 200);
+    else delete config.patternMessage;
+  }
+  return { ok: true };
+}
 
 const COLUMNS = "id, slug, name, type, is_multi, config, is_system, is_required, is_unique, position, archived_at, list_id";
 
@@ -59,6 +151,9 @@ export async function createAttribute(
     config.target_object = target.slug;
   }
   if (type === "currency") config.currency = typeof body.currency === "string" && /^[A-Z]{3}$/.test(body.currency) ? body.currency : "INR";
+
+  const constraints = applyConstraints(type, body, config);
+  if (!constraints.ok) return { ok: false, status: 400, error: constraints.error };
 
   // A default is checked like any value for this field, so every new record starts valid.
   if (body.defaultValue !== undefined && !isEmptyInput(body.defaultValue)) {
@@ -110,7 +205,7 @@ export async function updateAttribute(
   objectId: string,
   listId: string | null,
   attrSlug: string,
-  body: { name?: unknown; archived?: unknown; isRequired?: unknown; defaultValue?: unknown } | null
+  body: AttributeInput | null
 ): Promise<{ ok: true } | AttributeFailure> {
   let q = svc.from("data_attributes").select("id, is_system, name, type, is_multi, config").eq("org_owner_id", org).eq("object_id", objectId).eq("slug", attrSlug);
   q = listId ? q.eq("list_id", listId) : q.is("list_id", null);
@@ -126,15 +221,22 @@ export async function updateAttribute(
   }
   if (body?.archived !== undefined) patch.archived_at = body.archived === true ? new Date().toISOString() : null;
   if (body?.isRequired !== undefined) patch.is_required = body.isRequired === true;
-  if (body?.defaultValue !== undefined) {
+
+  const CONSTRAINT_KEYS = ["min", "max", "minLength", "maxLength", "pattern", "patternMessage"] as const;
+  if (body && (body.defaultValue !== undefined || CONSTRAINT_KEYS.some((k) => body[k] !== undefined))) {
     const config = { ...((attr.config as AttributeConfig | null) ?? {}) };
-    if (isEmptyInput(body.defaultValue)) delete config.default;
-    else {
-      const probe: AttributeDef = { slug: "default", name: attr.name as string, type: attr.type as AttributeType, is_multi: attr.is_multi as boolean, config, is_required: false, is_unique: false };
-      const norm = normalizeValue(probe, body.defaultValue);
-      if (!norm.ok) return { ok: false, status: 400, error: `Default value: ${norm.error.replace(/^[^:]*: /, "")}` };
-      if (norm.value === null) delete config.default;
-      else config.default = norm.value;
+    const constraints = applyConstraints(attr.type as AttributeType, body, config);
+    if (!constraints.ok) return { ok: false, status: 400, error: constraints.error };
+
+    if (body.defaultValue !== undefined) {
+      if (isEmptyInput(body.defaultValue)) delete config.default;
+      else {
+        const probe: AttributeDef = { slug: "default", name: attr.name as string, type: attr.type as AttributeType, is_multi: attr.is_multi as boolean, config, is_required: false, is_unique: false };
+        const norm = normalizeValue(probe, body.defaultValue);
+        if (!norm.ok) return { ok: false, status: 400, error: `Default value: ${norm.error.replace(/^[^:]*: /, "")}` };
+        if (norm.value === null) delete config.default;
+        else config.default = norm.value;
+      }
     }
     patch.config = config;
   }

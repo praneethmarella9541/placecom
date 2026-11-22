@@ -7,7 +7,7 @@ import { valuesToFormula } from "./rule-values";
 import { isFormulaEngineEnabled } from "./rule-flags";
 import { getRecord, loadAttributes, loadObjectById } from "./records";
 import { appliesOnMatches, renderMessage, requirementErrorFormula, requirementMessage } from "./rule-formula-gen";
-import { checkRecordRules, failedRequirements, type Rule } from "./rules";
+import { checkRecordRules, failedRequirements, missingRequiredFields, type Rule } from "./rules";
 import { loadRecordRules, loadStageRules } from "./rules-server";
 import type { AttributeDef } from "./types";
 
@@ -88,8 +88,13 @@ export type RuleEvalMode = { isNew: boolean; priorValues?: Record<string, unknow
  * same as before this phase. `warnings` are mode:"warn" failures: the save must NOT be blocked by
  * them. Phase 6 is where these get a banner and an audit-log row; for now a caller that doesn't
  * pass them on is still correct (a warn-mode rule never blocks), just not yet visible to anyone.
+ *
+ * `missingFields` is the attribute slugs the caller could plausibly ask for instead of just
+ * reverting: a legacy requirement's own field, or a blocked formula rule's error_location. Only
+ * meaningful to a caller like the board's stage-move dialog that can offer a small form; ignored
+ * (and still correctly populated) by the others.
  */
-export type RuleCheckResult = { errors: string[]; warnings: string[] };
+export type RuleCheckResult = { errors: string[]; warnings: string[]; missingFields: string[] };
 
 function defaultFormulaMessage(rule: Rule): string {
   return `${rule.name}: this record doesn't pass validation.`;
@@ -124,6 +129,7 @@ async function evaluateViaEngine(
 
   const errors: string[] = [];
   const warnings: string[] = [];
+  const missingFields = new Set(missingRequiredFields(rules, values, name));
 
   for (const rule of rules) {
     if (rule.format === "formula") {
@@ -141,7 +147,12 @@ async function evaluateViaEngine(
       }
       if (result.value !== true) continue;
       const message = rule.message ? renderMessage(rule.message, formulaValues) : defaultFormulaMessage(rule);
-      (rule.mode === "warn" ? warnings : errors).push(message);
+      if (rule.mode === "warn") {
+        warnings.push(message);
+      } else {
+        errors.push(message);
+        if (rule.errorLocation) missingFields.add(rule.errorLocation);
+      }
       continue;
     }
 
@@ -160,7 +171,7 @@ async function evaluateViaEngine(
       if (result.value === true) errors.push(requirementMessage(rule.name, req, attrsBySlug));
     }
   }
-  return { errors, warnings };
+  return { errors, warnings, missingFields: [...missingFields] };
 }
 
 /** Drop-in replacement for checkRecordRules(await loadRecordRules(...)), extended with `warnings`:
@@ -178,9 +189,10 @@ export async function checkRecordRulesV2(
   actorUserId: string
 ): Promise<RuleCheckResult> {
   const rules = await loadRecordRules(svc, org, objectId);
-  if (!rules.length) return { errors: [], warnings: [] };
+  if (!rules.length) return { errors: [], warnings: [], missingFields: [] };
   if (!(await isFormulaEngineEnabled(svc, org))) {
-    return { errors: checkRecordRules(rules.filter((r) => r.format !== "formula"), attrs, values, name), warnings: [] };
+    const legacy = rules.filter((r) => r.format !== "formula");
+    return { errors: checkRecordRules(legacy, attrs, values, name), warnings: [], missingFields: missingRequiredFields(legacy, values, name) };
   }
   return evaluateViaEngine(svc, org, attrs, values, name, rules, mode, actorUserId, false);
 }
@@ -197,9 +209,10 @@ export async function checkStageRulesV2(
   actorUserId: string
 ): Promise<RuleCheckResult> {
   const rules = await loadStageRules(svc, org, stageId);
-  if (!rules.length) return { errors: [], warnings: [] };
+  if (!rules.length) return { errors: [], warnings: [], missingFields: [] };
   if (!(await isFormulaEngineEnabled(svc, org))) {
-    return { errors: rules.filter((r) => r.format !== "formula").flatMap((r) => failedRequirements(r, attrs, values, name)), warnings: [] };
+    const legacy = rules.filter((r) => r.format !== "formula");
+    return { errors: legacy.flatMap((r) => failedRequirements(r, attrs, values, name)), warnings: [], missingFields: missingRequiredFields(legacy, values, name) };
   }
   // A stage rule's legacy condition is always null (entering the stage IS the condition); a
   // formula stage rule has no "condition" either — the whole expression is the check.

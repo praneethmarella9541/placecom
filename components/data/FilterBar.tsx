@@ -41,7 +41,7 @@ function ValueInput({ attr, value, onChange, members, userId }: { attr: Attribut
     );
   }
   if (attr.type === "select" || attr.type === "multi_select" || attr.type === "rating") {
-    const options = attr.type === "rating" ? Array.from({ length: attr.config.max ?? 5 }, (_, i) => String(i + 1)) : (attr.config.options ?? []);
+    const options = attr.type === "rating" ? Array.from({ length: typeof attr.config.max === "number" ? attr.config.max : 5 }, (_, i) => String(i + 1)) : (attr.config.options ?? []);
     return (
       <select aria-label="Value" value={value} onChange={(e) => onChange(e.target.value)} className={`${cls} select-chevron`}>
         <option value="">Choose…</option>

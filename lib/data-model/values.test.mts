@@ -38,6 +38,41 @@ test("numbers accept numeric strings with commas, refuse the rest", () => {
   bad(attr({ type: "number" }), Infinity);
 });
 
+test("number/currency min and max constraints", () => {
+  const packageValue = attr({ type: "currency", config: { min: 90000 } });
+  assert.equal(ok(packageValue, 90000), 90000); // inclusive
+  bad(packageValue, 89999);
+  const travellers = attr({ type: "number", config: { min: 1, max: 50 } });
+  assert.equal(ok(travellers, 25), 25);
+  bad(travellers, 0);
+  bad(travellers, 51);
+});
+
+test("text min/max length and a pattern with a custom message", () => {
+  const t = attr({ type: "text", config: { minLength: 3, maxLength: 10 } });
+  assert.equal(ok(t, "hello"), "hello");
+  bad(t, "hi");
+  bad(t, "a".repeat(11));
+  const patterned = attr({ type: "text", config: { pattern: "[A-Z]{2}\\d{4}", patternMessage: "Use two capital letters then 4 digits." } });
+  assert.equal(ok(patterned, "AB1234"), "AB1234");
+  const r = normalizeValue(patterned, "ab1234");
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.error, /two capital letters/);
+});
+
+test("date min/max constraints, inclusive on both ends", () => {
+  const d = attr({ type: "date", config: { min: "2026-01-01", max: "2026-12-31" } });
+  assert.equal(ok(d, "2026-01-01"), "2026-01-01");
+  assert.equal(ok(d, "2026-12-31"), "2026-12-31");
+  bad(d, "2025-12-31");
+  bad(d, "2027-01-01");
+});
+
+test("an invalid admin-authored pattern doesn't block every save", () => {
+  const broken = attr({ type: "text", config: { pattern: "(" } });
+  assert.equal(ok(broken, "anything"), "anything");
+});
+
 test("checkbox takes booleans and the strings true/false", () => {
   assert.equal(ok(attr({ type: "checkbox" }), false), false);
   assert.equal(ok(attr({ type: "checkbox" }), "true"), true);

@@ -9,6 +9,7 @@ import { dataApi, formatValue, type ObjectsResponse } from "@/lib/data-model/cli
 import { AttributeField, RecordPicker, samePayload, toInput, toPayload, type FieldInput } from "@/components/data/AttributeField";
 import { AttributesModal } from "@/components/data/AttributesModal";
 import { RulesModal } from "@/components/data/RulesModal";
+import { StageGateDialog } from "@/components/data/StageGateDialog";
 import { FavouriteButton } from "@/components/data/FavouriteButton";
 import { RecordAvatar } from "@/components/data/RecordAvatar";
 
@@ -55,6 +56,7 @@ export default function ListPage(props: { params: Promise<{ id: string }> }) {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [targetFor, setTargetFor] = useState<string | null>(null);
   const [targetDays, setTargetDays] = useState("");
+  const [gate, setGate] = useState<{ entryId: string; stageId: string; stageName: string; missingFields: string[] } | null>(null);
 
   const load = useCallback(async () => {
     const [r, objs] = await Promise.all([
@@ -91,7 +93,11 @@ export default function ListPage(props: { params: Promise<{ id: string }> }) {
     const r = await dataApi(`/api/data/lists/${id}/entries/${entryId}`, { method: "PATCH", body: { stageId } });
     if (!r.ok) {
       setEntries(before);
-      setError(r.errors?.length ? r.errors.join(" ") : r.error);
+      if (r.missingFields?.length) {
+        setGate({ entryId, stageId, stageName: stages.find((s) => s.id === stageId)?.name ?? "this stage", missingFields: r.missingFields });
+      } else {
+        setError(r.errors?.length ? r.errors.join(" ") : r.error);
+      }
     } else setError(null);
   }
 
@@ -394,6 +400,26 @@ export default function ListPage(props: { params: Promise<{ id: string }> }) {
           onClose={() => setFieldsOpen(false)}
         />
       )}
+
+      {gate && list && (() => {
+        const entry = entries.find((e) => e.id === gate.entryId);
+        if (!entry) return null;
+        return (
+          <StageGateDialog
+            title={gate.stageName}
+            recordId={entry.record_id}
+            attrs={objects.find((o) => o.id === list.object_id)?.attributes ?? []}
+            missingFields={gate.missingFields}
+            values={entry.record.values}
+            onClose={() => setGate(null)}
+            onFilled={() => {
+              const { entryId, stageId } = gate;
+              setGate(null);
+              void move(entryId, stageId);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

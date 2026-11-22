@@ -31,8 +31,19 @@ export type AttributeConfig = {
   target_object?: string;
   /** currency: ISO code shown next to the number. */
   currency?: string;
-  /** rating: top of the scale; default 5. */
-  max?: number;
+  /** rating: top of the scale (number, default 5). number/currency: maximum allowed value (number).
+   *  date: latest allowed day (an ISO or otherwise parseable date string). */
+  max?: number | string;
+  /** number/currency: minimum allowed value (number). date: earliest allowed day (date string). */
+  min?: number | string;
+  /** text/long_text: minimum character length. */
+  minLength?: number;
+  /** text/long_text: maximum character length — still capped by the field type's own hard limit. */
+  maxLength?: number;
+  /** text-like types: a regex the value must fully match. */
+  pattern?: string;
+  /** Shown instead of the generic "doesn't match the pattern" message when `pattern` fails. */
+  patternMessage?: string;
   /** Filled in for a new record that leaves this field out. Already normalised for the field's type. */
   default?: unknown;
 };

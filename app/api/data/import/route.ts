@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { objectDenied, requireDataContext } from "@/lib/data-model/access";
 import { mergeValues } from "@/lib/data-model/merge-values";
-import { createRecord, getRecord, loadAttributes, loadObject, updateRecord } from "@/lib/data-model/records";
+import { checkRecordWrite, createRecord, getRecord, loadAttributes, loadObject, updateRecord } from "@/lib/data-model/records";
 import { isId } from "@/lib/data-model/route-helpers";
 import { extractKeys, validateRecordInput } from "@/lib/data-model/values";
 import type { AttributeDef, ObjectDef } from "@/lib/data-model/types";
@@ -104,6 +104,8 @@ export async function POST(request: Request) {
   const counters = { linkedCreated: 0 };
   const results: RowOut[] = [];
   const startRow = Number((body as { startRow?: unknown }).startRow) || 1;
+  const asPossibleDuplicates = (dups: { rule: { name: string }; records: { id: string; name: string }[] }[]) =>
+    dups.length ? dups.map((d) => ({ rule: d.rule.name, records: d.records })) : undefined;
 
   for (let i = 0; i < body.rows.length; i++) {
     const rowNo = startRow + i;
@@ -145,10 +147,6 @@ export async function POST(request: Request) {
         results.push({ row: rowNo, status: "duplicate", id: existingId });
         continue;
       }
-      if (dryRun) {
-        results.push({ row: rowNo, status: "updated", id: existingId });
-        continue;
-      }
       const existing = await getRecord(svc, orgOwnerId, existingId);
       if (!existing) {
         fail("The matching record was removed meanwhile.");
@@ -157,18 +155,33 @@ export async function POST(request: Request) {
       const merged = mergeValues(attrs, checked.values, existing.values);
       const sent: Record<string, unknown> = {};
       for (const slug of Object.keys(checked.values)) sent[slug] = merged[slug];
+
+      // A dry run runs the exact same field, dependent-option, lookup-filter, rule and
+      // duplicate-rule checks as the real write below — it just stops short of writing.
+      if (dryRun) {
+        const preview = await checkRecordWrite(svc, { userId, org: orgOwnerId, source: "import" }, object, attrs, { values: sent }, "update", existing);
+        if (!preview.ok) fail(preview.error);
+        else results.push({ row: rowNo, status: "updated", id: existingId, possibleDuplicates: asPossibleDuplicates(preview.duplicates) });
+        continue;
+      }
       const r = await updateRecord(svc, { userId, org: orgOwnerId, source: "import" }, object, attrs, existing, { values: sent });
-      if (r.ok) results.push({ row: rowNo, status: "updated", id: existingId, possibleDuplicates: r.duplicates?.map((d) => ({ rule: d.rule.name, records: d.records })) });
+      if (r.ok) results.push({ row: rowNo, status: "updated", id: existingId, possibleDuplicates: asPossibleDuplicates(r.duplicates ?? []) });
       else fail(r.error);
       continue;
     }
 
     if (dryRun) {
-      results.push({ row: rowNo, status: "created" });
+      const preview = await checkRecordWrite(svc, { userId, org: orgOwnerId, source: "import" }, object, attrs, { name: checked.name, values: checked.values }, "create");
+      if (!preview.ok) {
+        if (preview.status === 409 && preview.existingId) results.push({ row: rowNo, status: "duplicate", id: preview.existingId });
+        else fail(preview.status >= 500 ? "Couldn't save this row. Try again." : preview.error);
+      } else {
+        results.push({ row: rowNo, status: "created", possibleDuplicates: asPossibleDuplicates(preview.duplicates) });
+      }
       continue;
     }
     const r = await createRecord(svc, { userId, org: orgOwnerId, source: "import" }, object, attrs, { name: checked.name, values: checked.values });
-    if (r.ok) results.push({ row: rowNo, status: "created", id: r.record.id, possibleDuplicates: r.duplicates?.map((d) => ({ rule: d.rule.name, records: d.records })) });
+    if (r.ok) results.push({ row: rowNo, status: "created", id: r.record.id, possibleDuplicates: asPossibleDuplicates(r.duplicates ?? []) });
     else if (r.status === 409 && r.existingId) results.push({ row: rowNo, status: "duplicate", id: r.existingId });
     else fail(r.status >= 500 ? "Couldn't save this row. Try again." : r.error);
   }
@@ -177,7 +190,10 @@ export async function POST(request: Request) {
   return NextResponse.json({
     dryRun,
     summary: { created: count("created"), updated: count("updated"), duplicates: count("duplicate"), errors: count("error"), linkedRecordsCreated: counters.linkedCreated },
-    results: results.filter((r) => r.status !== "created" || !dryRun).slice(0, 300),
+    // A plain "would create, nothing to flag" row is only interesting in the summary count; one
+    // worth a second look (an error, an update, a duplicate, or a create with a possible-duplicate
+    // match) is shown in full even in a dry run.
+    results: results.filter((r) => r.status !== "created" || !dryRun || r.possibleDuplicates).slice(0, 300),
     errors: results.filter((r) => r.status === "error"),
   });
 }

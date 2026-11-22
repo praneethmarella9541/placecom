@@ -379,6 +379,68 @@ async function claimKeys(
   return { ok: false, status: 500, error: error.message };
 }
 
+/**
+ * Every check a create or update must pass, with no write to the database — so a dry run (the CSV
+ * import preview) and the real write run through the exact same rules, constraints and duplicate
+ * detection instead of the preview silently skipping them.
+ */
+export type RecordCheck =
+  | { ok: true; name: string; values: Record<string, unknown>; cleared: string[]; nextValues: Record<string, unknown>; duplicates: DuplicateMatch[] }
+  | DbFailure;
+
+export async function checkRecordWrite(
+  svc: SupabaseClient,
+  actor: Actor,
+  object: ObjectDef,
+  attrs: AttributeDef[],
+  input: RecordInput,
+  mode: "create" | "update",
+  existing?: RecordRow
+): Promise<RecordCheck> {
+  // Fields a new record's input leaves out start from their default; an update only checks what was sent.
+  const valid = validateRecordInput(
+    attrs,
+    mode === "create" ? { ...input, values: applyDefaults(attrs, input.values ?? {}) } : input,
+    mode
+  );
+  if (!valid.ok) return { ok: false, status: 400, error: valid.errors[0], errors: valid.errors };
+  const refErrors = await checkReferences(svc, actor.org, attrs, valid.values);
+  if (refErrors.length) return { ok: false, status: 400, error: refErrors[0], errors: refErrors };
+
+  // Dependent options, lookup filters and rules read the record's whole EFFECTIVE values: for an
+  // update that's the existing record with this save's changes merged in, since the controlling or
+  // matched-against field might not be part of this particular save at all.
+  let nextValues: Record<string, unknown>;
+  let nextName: string;
+  if (mode === "create") {
+    nextValues = valid.values;
+    nextName = valid.name ?? "";
+  } else {
+    nextValues = { ...existing!.values, ...valid.values };
+    for (const slug of valid.cleared) delete nextValues[slug];
+    nextName = valid.name ?? existing!.name;
+  }
+
+  const dependentErrors = checkDependentOptions(attrs, nextValues);
+  if (dependentErrors.length) return { ok: false, status: 400, error: dependentErrors[0], errors: dependentErrors };
+  const lookupErrors = await checkLookupFilters(svc, actor.org, attrs, nextValues);
+  if (lookupErrors.length) return { ok: false, status: 400, error: lookupErrors[0], errors: lookupErrors };
+
+  const ruleMode = mode === "create" ? { isNew: true } : { isNew: false, priorValues: existing!.values };
+  const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, nextValues, nextName, ruleMode, actor.userId);
+  if (rules.errors.length) return { ok: false, status: 422, error: rules.errors[0], errors: rules.errors };
+  if (rules.warnings.length) console.warn(`[data-model] warn-mode rule(s) matched on ${mode} (not yet surfaced to the user — phase 6):`, rules.warnings);
+
+  const duplicates = await findDuplicates(svc, actor.org, object.id, nextValues, nextName, existing?.id);
+  const blocking = duplicates.find((d) => d.rule.action === "block");
+  if (blocking) {
+    const msg = `${blocking.rule.name}: this looks like a duplicate of ${blocking.records[0]?.name ?? "an existing record"}.`;
+    return { ok: false, status: 409, error: msg, errors: [msg], existingId: blocking.records[0]?.id };
+  }
+
+  return { ok: true, name: nextName, values: valid.values, cleared: valid.cleared, nextValues, duplicates: duplicates.filter((d) => d.rule.action === "warn") };
+}
+
 export async function createRecord(
   svc: SupabaseClient,
   actor: Actor,
@@ -386,34 +448,17 @@ export async function createRecord(
   attrs: AttributeDef[],
   input: RecordInput
 ): Promise<Result<{ record: RecordRow; duplicates?: DuplicateMatch[] }>> {
-  // Fields the input leaves out start from their default.
-  const valid = validateRecordInput(attrs, { ...input, values: applyDefaults(attrs, input.values ?? {}) }, "create");
-  if (!valid.ok) return { ok: false, status: 400, error: valid.errors[0], errors: valid.errors };
-  const refErrors = await checkReferences(svc, actor.org, attrs, valid.values);
-  if (refErrors.length) return { ok: false, status: 400, error: refErrors[0], errors: refErrors };
-  const dependentErrors = checkDependentOptions(attrs, valid.values);
-  if (dependentErrors.length) return { ok: false, status: 400, error: dependentErrors[0], errors: dependentErrors };
-  const lookupErrors = await checkLookupFilters(svc, actor.org, attrs, valid.values);
-  if (lookupErrors.length) return { ok: false, status: 400, error: lookupErrors[0], errors: lookupErrors };
-  const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, valid.values, valid.name, { isNew: true }, actor.userId);
-  if (rules.errors.length) return { ok: false, status: 422, error: rules.errors[0], errors: rules.errors };
-  if (rules.warnings.length) console.warn("[data-model] warn-mode rule(s) matched on create (not yet surfaced to the user — phase 6):", rules.warnings);
-
-  const duplicates = await findDuplicates(svc, actor.org, object.id, valid.values, valid.name);
-  const blocking = duplicates.find((d) => d.rule.action === "block");
-  if (blocking) {
-    const msg = `${blocking.rule.name}: this looks like a duplicate of ${blocking.records[0]?.name ?? "an existing record"}.`;
-    return { ok: false, status: 409, error: msg, errors: [msg], existingId: blocking.records[0]?.id };
-  }
-  const surfaced = duplicates.filter((d) => d.rule.action === "warn");
+  const checked = await checkRecordWrite(svc, actor, object, attrs, input, "create");
+  if (!checked.ok) return checked;
+  const surfaced = checked.duplicates;
 
   const { data: row, error } = await svc
     .from("data_records")
     .insert({
       org_owner_id: actor.org,
       object_id: object.id,
-      name: valid.name ?? "",
-      values: valid.values,
+      name: checked.name,
+      values: checked.values,
       created_by: actor.userId,
       updated_by: actor.userId,
     })
@@ -422,7 +467,7 @@ export async function createRecord(
   if (error || !row) return { ok: false, status: 500, error: error?.message ?? "Could not create the record." };
   const record = row as RecordRow;
 
-  const claimed = await claimKeys(svc, actor.org, object.id, record.id, extractKeys(attrs, valid.values));
+  const claimed = await claimKeys(svc, actor.org, object.id, record.id, extractKeys(attrs, checked.values));
   if (claimed) {
     await svc.from("data_records").delete().eq("org_owner_id", actor.org).eq("id", record.id);
     return claimed;
@@ -432,12 +477,12 @@ export async function createRecord(
 
   await emitEvents(svc, [
     { org: actor.org, type: "record.created", objectSlug: object.slug, recordId: record.id, actor, payload: { name: record.name } },
-    ...Object.entries(valid.values).map(([slug, v]) => ({ org: actor.org, type: "attribute.changed" as const, objectSlug: object.slug, recordId: record.id, attributeSlug: slug, oldValue: null, newValue: v, actor })),
+    ...Object.entries(checked.values).map(([slug, v]) => ({ org: actor.org, type: "attribute.changed" as const, objectSlug: object.slug, recordId: record.id, attributeSlug: slug, oldValue: null, newValue: v, actor })),
   ]);
 
   await writeHistory(svc, actor, record.id, [
     { slug: null, action: "create", newValue: { name: record.name } },
-    ...Object.entries(valid.values).map(([slug, v]) => ({ slug, action: "create" as const, newValue: v })),
+    ...Object.entries(checked.values).map(([slug, v]) => ({ slug, action: "create" as const, newValue: v })),
   ]);
   return { ok: true, record, duplicates: surfaced.length ? surfaced : undefined };
 }
@@ -466,36 +511,9 @@ export async function updateRecord(
   existing: RecordRow,
   input: RecordInput
 ): Promise<Result<{ record: RecordRow; duplicates?: DuplicateMatch[] }>> {
-  const valid = validateRecordInput(attrs, input, "update");
-  if (!valid.ok) return { ok: false, status: 400, error: valid.errors[0], errors: valid.errors };
-  const refErrors = await checkReferences(svc, actor.org, attrs, valid.values);
-  if (refErrors.length) return { ok: false, status: 400, error: refErrors[0], errors: refErrors };
-
-  const nextValues: Record<string, unknown> = { ...existing.values, ...valid.values };
-  for (const slug of valid.cleared) delete nextValues[slug];
-  const nextName = valid.name ?? existing.name;
-
-  // Dependent options and lookup filters are checked against the record's whole EFFECTIVE values
-  // (existing + this save's changes), not just what was sent — the controlling or matched-against
-  // field might not be part of this particular save at all.
-  const dependentErrors = checkDependentOptions(attrs, nextValues);
-  if (dependentErrors.length) return { ok: false, status: 400, error: dependentErrors[0], errors: dependentErrors };
-  const lookupErrors = await checkLookupFilters(svc, actor.org, attrs, nextValues);
-  if (lookupErrors.length) return { ok: false, status: 400, error: lookupErrors[0], errors: lookupErrors };
-
-  // Rules are checked against the whole record as it would be after this save. Records that
-  // already break a newer rule are not flagged until someone next saves them.
-  const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, nextValues, nextName, { isNew: false, priorValues: existing.values }, actor.userId);
-  if (rules.errors.length) return { ok: false, status: 422, error: rules.errors[0], errors: rules.errors };
-  if (rules.warnings.length) console.warn("[data-model] warn-mode rule(s) matched on update (not yet surfaced to the user — phase 6):", rules.warnings);
-
-  const duplicates = await findDuplicates(svc, actor.org, object.id, nextValues, nextName, existing.id);
-  const blockingDup = duplicates.find((d) => d.rule.action === "block");
-  if (blockingDup) {
-    const msg = `${blockingDup.rule.name}: this looks like a duplicate of ${blockingDup.records[0]?.name ?? "an existing record"}.`;
-    return { ok: false, status: 409, error: msg, errors: [msg], existingId: blockingDup.records[0]?.id };
-  }
-  const surfacedDup = duplicates.filter((d) => d.rule.action === "warn");
+  const checked = await checkRecordWrite(svc, actor, object, attrs, input, "update", existing);
+  if (!checked.ok) return checked;
+  const { values: sentValues, cleared, nextValues, name: nextName, duplicates: surfacedDup } = checked;
 
   // Keys first: if one is taken, nothing about the record has changed yet.
   const before = new Set(extractKeys(attrs, existing.values).map((k) => `${k.kind}:${k.value}`));
@@ -529,7 +547,7 @@ export async function updateRecord(
 
   const changes: { slug: string | null; action: "update"; oldValue: unknown; newValue: unknown }[] = [];
   if (nextName !== existing.name) changes.push({ slug: null, action: "update", oldValue: { name: existing.name }, newValue: { name: nextName } });
-  for (const slug of new Set([...Object.keys(valid.values), ...valid.cleared])) {
+  for (const slug of new Set([...Object.keys(sentValues), ...cleared])) {
     const oldV = existing.values[slug] ?? null;
     const newV = nextValues[slug] ?? null;
     if (JSON.stringify(oldV) !== JSON.stringify(newV)) changes.push({ slug, action: "update", oldValue: oldV, newValue: newV });

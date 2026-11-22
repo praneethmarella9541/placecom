@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { compileExpression, runExpression, type EvalContext, type ObjectSchema } from "../rules-engine/index.ts";
-import { conditionToFormula, requirementErrorFormula, requirementMessage } from "./rule-formula-gen.ts";
+import { appliesOnMatches, conditionToFormula, renderMessage, requirementErrorFormula, requirementMessage } from "./rule-formula-gen.ts";
 import { checkRecordRules, failedRequirements, type Rule, type RuleCondition, type RuleRequirement } from "./rules.ts";
 import { valuesToFormula } from "./rule-values.ts";
 import type { AttributeDef } from "./types.ts";
@@ -185,6 +185,27 @@ test('a condition on "name" reproduces the legacy evaluator\'s blank-name quirk,
   // "not_empty" and "eq" never hold (so the requirement is skipped) — regardless of the real name.
   assert.deepEqual(await newEngineErrors(rule("empty"), values, name), ["Rule: amount is required."]);
   assert.deepEqual(await newEngineErrors(rule("not_empty"), values, name), []);
+});
+
+test("renderMessage substitutes {{field}} references from the record's values", () => {
+  assert.equal(renderMessage("{{title}} must be set", { title: "Hello" }), "Hello must be set");
+  assert.equal(renderMessage("Amount is {{amount}}", { amount: 42 }), "Amount is 42");
+  assert.equal(renderMessage("{{flag}}", { flag: true }), "true");
+  assert.equal(renderMessage("Tags: {{tags}}", { tags: ["A", "B"] }), "Tags: A, B");
+  assert.equal(renderMessage("Start: {{start}}", { start: new Date(Date.UTC(2026, 11, 31)) }), "Start: 2026-12-31");
+  assert.equal(renderMessage("Missing: {{nope}}", {}), "Missing: ");
+  assert.equal(renderMessage("No vars here", { title: "x" }), "No vars here");
+});
+
+test("appliesOnMatches gates a formula rule by create/update, defaulting to always", () => {
+  assert.equal(appliesOnMatches(undefined, true), true);
+  assert.equal(appliesOnMatches(undefined, false), true);
+  assert.equal(appliesOnMatches("both", true), true);
+  assert.equal(appliesOnMatches("both", false), true);
+  assert.equal(appliesOnMatches("create", true), true);
+  assert.equal(appliesOnMatches("create", false), false);
+  assert.equal(appliesOnMatches("update", true), false);
+  assert.equal(appliesOnMatches("update", false), true);
 });
 
 test("conditionToFormula renders the four legacy operators distinctly", () => {

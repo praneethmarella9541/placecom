@@ -4,7 +4,9 @@ import type { AttributeDef, ObjectDef, RecordRow } from "./types";
 
 /** Browser-side helpers for /api/data. Every call returns `{ ok, data | error }` and never throws. */
 
-export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number; errors?: string[]; existingId?: string };
+export type ApiResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; status: number; errors?: string[]; existingId?: string; pos?: { start: number; end: number } };
 
 export async function dataApi<T>(url: string, init?: { method?: string; body?: unknown }): Promise<ApiResult<T>> {
   try {
@@ -22,12 +24,14 @@ export async function dataApi<T>(url: string, init?: { method?: string; body?: u
       return { ok: false, status: res.status, error: `The server sent an unexpected reply (${res.status}). Try again.` };
     }
     if (!res.ok) {
+      const pos = json.pos as { start?: unknown; end?: unknown } | undefined;
       return {
         ok: false,
         status: res.status,
         error: typeof json.error === "string" ? json.error : `Something went wrong (${res.status}).`,
         errors: Array.isArray(json.errors) ? (json.errors as string[]) : undefined,
         existingId: typeof json.existingId === "string" ? json.existingId : undefined,
+        pos: pos && typeof pos.start === "number" && typeof pos.end === "number" ? { start: pos.start, end: pos.end } : undefined,
       };
     }
     return { ok: true, data: json as T };

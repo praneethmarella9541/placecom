@@ -269,6 +269,7 @@ export async function runBlock(block: Block, env: RunEnv): Promise<BlockResult> 
 async function checkStageRules(env: RunEnv, stageId: string | null, record: { object_id: string; name: string; values: Record<string, unknown> }) {
   if (!stageId) return;
   const attrs = await loadAttributes(env.svc, env.org, record.object_id);
-  const problems = await checkStageRulesV2(env.svc, env.org, stageId, attrs, record.values, record.name, env.ownerId);
-  if (problems.length) throw new BlockError(problems.join(" "));
+  const rules = await checkStageRulesV2(env.svc, env.org, stageId, attrs, record.values, record.name, env.ownerId);
+  if (rules.warnings.length) console.warn("[workflows] warn-mode stage rule(s) matched (not yet surfaced to the user — phase 6):", rules.warnings);
+  if (rules.errors.length) throw new BlockError(rules.errors.join(" "));
 }

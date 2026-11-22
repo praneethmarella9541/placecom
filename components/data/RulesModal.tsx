@@ -7,8 +7,26 @@ import type { AttributeDef } from "@/lib/data-model/types";
 import type { RuleCondition, RuleOp, RuleRequirement } from "@/lib/data-model/rules";
 import { dataApi } from "@/lib/data-model/client";
 
-type StoredRule = { id: string; kind: "record" | "stage"; name: string; condition: RuleCondition; requirements: RuleRequirement[]; active: boolean; stage_id: string | null };
+type StoredRule = {
+  id: string;
+  kind: "record" | "stage";
+  name: string;
+  condition: RuleCondition;
+  requirements: RuleRequirement[];
+  active: boolean;
+  stage_id: string | null;
+  format?: "legacy" | "formula";
+  api_name?: string | null;
+  description?: string | null;
+  applies_on?: "create" | "update" | "both";
+  mode?: "block" | "warn";
+  error_location?: string | null;
+  message?: string | null;
+  expression_source?: string | null;
+};
 type Stage = { id: string; name: string };
+
+const APPLIES_ON_LABELS = { create: "On create only", update: "On update only", both: "On create and update" } as const;
 
 type Props = { attributes: AttributeDef[]; onClose: () => void } & (
   | { mode: "record"; objectSlug: string; title: string }
@@ -29,6 +47,8 @@ export function RulesModal(props: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const [formType, setFormType] = useState<"simple" | "formula">("simple");
+
   const [name, setName] = useState("");
   const [useCondition, setUseCondition] = useState(false);
   const [condField, setCondField] = useState(fields[0]?.slug ?? "");
@@ -36,6 +56,32 @@ export function RulesModal(props: Props) {
   const [condValue, setCondValue] = useState("");
   const [stageId, setStageId] = useState(props.mode === "stage" ? (props.stages[0]?.id ?? "") : "");
   const [reqs, setReqs] = useState<RuleRequirement[]>([{ attribute: fields[0]?.slug ?? "name", kind: "required" }]);
+
+  // Formula rule fields. API name auto-follows the name until the admin edits it directly.
+  const [apiName, setApiName] = useState("");
+  const [apiNameTouched, setApiNameTouched] = useState(false);
+  const [description, setDescription] = useState("");
+  const [appliesOn, setAppliesOn] = useState<"create" | "update" | "both">("both");
+  const [ruleMode, setRuleMode] = useState<"block" | "warn">("block");
+  const [errorLocation, setErrorLocation] = useState("");
+  const [message, setMessage] = useState("");
+  const [expressionSource, setExpressionSource] = useState("");
+  const [formulaError, setFormulaError] = useState<{ message: string; pos?: { start: number; end: number } } | null>(null);
+
+  function nameChanged(v: string) {
+    setName(v);
+    if (!apiNameTouched) {
+      setApiName(
+        v
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "_")
+          .replace(/^_+|_+$/g, "")
+          .replace(/^[^a-z]+/, "")
+          .slice(0, 60) || ""
+      );
+    }
+  }
 
   const query = props.mode === "record" ? `object=${props.objectSlug}` : `list=${props.listId}`;
   const load = useCallback(async () => {
@@ -49,6 +95,10 @@ export function RulesModal(props: Props) {
 
   const labelOf = (slug: string) => (slug === "name" ? "Name" : (fields.find((f) => f.slug === slug)?.name ?? slug));
   const describe = (r: StoredRule) => {
+    if (r.format === "formula") {
+      const scope = r.kind === "record" && r.applies_on && r.applies_on !== "both" ? ` (${APPLIES_ON_LABELS[r.applies_on].toLowerCase()})` : "";
+      return `Formula${scope}: ${r.expression_source ?? ""}`;
+    }
     const when = r.kind === "stage" ? `Moving into ${props.mode === "stage" ? (props.stages.find((s) => s.id === r.stage_id)?.name ?? "a stage") : "a stage"}` : r.condition ? `When ${labelOf(r.condition.attribute)} ${OP_LABELS[r.condition.op]}${r.condition.value ? ` "${r.condition.value}"` : ""}` : "Always";
     const needs = r.requirements.map((q) => `${labelOf(q.attribute)} ${q.kind === "required" ? "is required" : "must be empty"}`).join("; ");
     return `${when}: ${needs}`;
@@ -68,6 +118,40 @@ export function RulesModal(props: Props) {
     setName("");
     setUseCondition(false);
     setCondValue("");
+    void load();
+  }
+
+  async function addFormula() {
+    setBusy("add");
+    setError(null);
+    setFormulaError(null);
+    const base = {
+      format: "formula",
+      name,
+      apiName,
+      description: description.trim() || undefined,
+      mode: ruleMode,
+      errorLocation: errorLocation || undefined,
+      message: message.trim() || undefined,
+      expressionSource,
+    };
+    const body =
+      props.mode === "record"
+        ? { kind: "record", object: props.objectSlug, ...base, appliesOn }
+        : { kind: "stage", listId: props.listId, stageId, ...base };
+    const r = await dataApi<{ rule?: unknown }>("/api/data/rules", { method: "POST", body });
+    setBusy(null);
+    if (!r.ok) {
+      setFormulaError({ message: r.error, pos: r.pos });
+      return;
+    }
+    setName("");
+    setApiName("");
+    setApiNameTouched(false);
+    setDescription("");
+    setErrorLocation("");
+    setMessage("");
+    setExpressionSource("");
     void load();
   }
 
@@ -127,16 +211,22 @@ export function RulesModal(props: Props) {
             className="space-y-3 border-t border-[var(--color-border)] pt-4"
             onSubmit={(e) => {
               e.preventDefault();
-              void add();
+              void (formType === "formula" ? addFormula() : add());
             }}
           >
-            <h3 className={lbl}>New rule</h3>
+            <div className="flex items-center justify-between">
+              <h3 className={lbl}>New rule</h3>
+              <div className="flex gap-1 rounded-lg border border-[var(--color-border)] p-0.5 text-[12px] font-semibold">
+                <button type="button" onClick={() => setFormType("simple")} className={`rounded-md px-2 py-1 ${formType === "simple" ? "bg-[var(--color-surface-alt)]" : "text-[var(--color-text-faint)]"}`}>Simple</button>
+                <button type="button" onClick={() => setFormType("formula")} className={`rounded-md px-2 py-1 ${formType === "formula" ? "bg-[var(--color-surface-alt)]" : "text-[var(--color-text-faint)]"}`}>Formula</button>
+              </div>
+            </div>
             <div>
               <label htmlFor="rule-name" className={lbl}>Name</label>
-              <input id="rule-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={100} placeholder={props.mode === "stage" ? "Won deals need a value" : "Customers need a phone number"} className="input-field h-9 text-[13px]" />
+              <input id="rule-name" value={name} onChange={(e) => (formType === "formula" ? nameChanged(e.target.value) : setName(e.target.value))} maxLength={100} placeholder={props.mode === "stage" ? "Won deals need a value" : "Customers need a phone number"} className="input-field h-9 text-[13px]" />
             </div>
 
-            {props.mode === "stage" ? (
+            {props.mode === "stage" && (
               <div>
                 <label htmlFor="rule-stage" className={lbl}>When a card moves into</label>
                 <select id="rule-stage" value={stageId} onChange={(e) => setStageId(e.target.value)} className="input-field select-chevron h-9 text-[13px]">
@@ -145,48 +235,111 @@ export function RulesModal(props: Props) {
                   ))}
                 </select>
               </div>
-            ) : (
-              <div className="space-y-2">
-                <label className="flex items-center gap-2"><input type="checkbox" checked={useCondition} onChange={(e) => setUseCondition(e.target.checked)} /> Only when a field has a certain value</label>
-                {useCondition && (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select aria-label="Field" value={condField} onChange={(e) => setCondField(e.target.value)} className="input-field select-chevron h-8 text-[12.5px]">
-                      {fields.map((f) => <option key={f.slug} value={f.slug}>{f.name}</option>)}
-                    </select>
-                    <select aria-label="Condition" value={condOp} onChange={(e) => setCondOp(e.target.value as RuleOp)} className="input-field select-chevron h-8 text-[12.5px]">
-                      {(Object.keys(OP_LABELS) as RuleOp[]).map((o) => <option key={o} value={o}>{OP_LABELS[o]}</option>)}
-                    </select>
-                    {(condOp === "eq" || condOp === "neq") && <input aria-label="Value" value={condValue} onChange={(e) => setCondValue(e.target.value)} className="input-field h-8 w-[160px] text-[12.5px]" />}
-                  </div>
-                )}
-              </div>
             )}
 
-            <div className="space-y-2">
-              <p className={lbl}>Then</p>
-              {reqs.map((q, i) => (
-                <div key={i} className="flex flex-wrap items-center gap-2">
-                  <select aria-label="Field" value={q.attribute} onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { ...x, attribute: e.target.value } : x)))} className="input-field select-chevron h-8 text-[12.5px]">
-                    <option value="name">Name</option>
-                    {fields.map((f) => <option key={f.slug} value={f.slug}>{f.name}</option>)}
-                  </select>
-                  <select aria-label="Requirement" value={q.kind} onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { ...x, kind: e.target.value as RuleRequirement["kind"] } : x)))} className="input-field select-chevron h-8 text-[12.5px]">
-                    <option value="required">is required</option>
-                    <option value="empty">must be empty</option>
-                  </select>
-                  {reqs.length > 1 && (
-                    <button type="button" aria-label="Remove requirement" onClick={() => setReqs((rs) => rs.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"><X className="h-3.5 w-3.5" /></button>
+            {formType === "simple" ? (
+              <>
+                {props.mode === "record" && (
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={useCondition} onChange={(e) => setUseCondition(e.target.checked)} /> Only when a field has a certain value</label>
+                    {useCondition && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select aria-label="Field" value={condField} onChange={(e) => setCondField(e.target.value)} className="input-field select-chevron h-8 text-[12.5px]">
+                          {fields.map((f) => <option key={f.slug} value={f.slug}>{f.name}</option>)}
+                        </select>
+                        <select aria-label="Condition" value={condOp} onChange={(e) => setCondOp(e.target.value as RuleOp)} className="input-field select-chevron h-8 text-[12.5px]">
+                          {(Object.keys(OP_LABELS) as RuleOp[]).map((o) => <option key={o} value={o}>{OP_LABELS[o]}</option>)}
+                        </select>
+                        {(condOp === "eq" || condOp === "neq") && <input aria-label="Value" value={condValue} onChange={(e) => setCondValue(e.target.value)} className="input-field h-8 w-[160px] text-[12.5px]" />}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <p className={lbl}>Then</p>
+                  {reqs.map((q, i) => (
+                    <div key={i} className="flex flex-wrap items-center gap-2">
+                      <select aria-label="Field" value={q.attribute} onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { ...x, attribute: e.target.value } : x)))} className="input-field select-chevron h-8 text-[12.5px]">
+                        <option value="name">Name</option>
+                        {fields.map((f) => <option key={f.slug} value={f.slug}>{f.name}</option>)}
+                      </select>
+                      <select aria-label="Requirement" value={q.kind} onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { ...x, kind: e.target.value as RuleRequirement["kind"] } : x)))} className="input-field select-chevron h-8 text-[12.5px]">
+                        <option value="required">is required</option>
+                        <option value="empty">must be empty</option>
+                      </select>
+                      {reqs.length > 1 && (
+                        <button type="button" aria-label="Remove requirement" onClick={() => setReqs((rs) => rs.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"><X className="h-3.5 w-3.5" /></button>
+                      )}
+                    </div>
+                  ))}
+                  {reqs.length < 8 && (
+                    <button type="button" onClick={() => setReqs((rs) => [...rs, { attribute: fields[0]?.slug ?? "name", kind: "required" }])} className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                      <Plus className="h-3.5 w-3.5" /> Another requirement
+                    </button>
                   )}
                 </div>
-              ))}
-              {reqs.length < 8 && (
-                <button type="button" onClick={() => setReqs((rs) => [...rs, { attribute: fields[0]?.slug ?? "name", kind: "required" }])} className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
-                  <Plus className="h-3.5 w-3.5" /> Another requirement
-                </button>
-              )}
-            </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label htmlFor="rule-api-name" className={lbl}>API name</label>
+                  <input id="rule-api-name" value={apiName} onChange={(e) => { setApiNameTouched(true); setApiName(e.target.value); }} maxLength={60} placeholder="package_value_minimum" className="input-field h-9 font-mono text-[12.5px]" />
+                </div>
+                <div>
+                  <label htmlFor="rule-description" className={lbl}>Description (optional)</label>
+                  <input id="rule-description" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} className="input-field h-9 text-[13px]" />
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {props.mode === "record" && (
+                    <div>
+                      <label htmlFor="rule-applies-on" className={lbl}>Applies on</label>
+                      <select id="rule-applies-on" value={appliesOn} onChange={(e) => setAppliesOn(e.target.value as typeof appliesOn)} className="input-field select-chevron h-8 text-[12.5px]">
+                        {(Object.keys(APPLIES_ON_LABELS) as (keyof typeof APPLIES_ON_LABELS)[]).map((k) => <option key={k} value={k}>{APPLIES_ON_LABELS[k]}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <div>
+                    <label htmlFor="rule-mode" className={lbl}>Mode</label>
+                    <select id="rule-mode" value={ruleMode} onChange={(e) => setRuleMode(e.target.value as typeof ruleMode)} className="input-field select-chevron h-8 text-[12.5px]">
+                      <option value="block">Block the save</option>
+                      <option value="warn">Warn, but allow the save</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="rule-error-location" className={lbl}>Error shows on</label>
+                    <select id="rule-error-location" value={errorLocation} onChange={(e) => setErrorLocation(e.target.value)} className="input-field select-chevron h-8 text-[12.5px]">
+                      <option value="">Top of form</option>
+                      <option value="name">Name</option>
+                      {fields.map((f) => <option key={f.slug} value={f.slug}>{f.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="rule-message" className={lbl}>Message (optional — can use {"{{field_slug}}"})</label>
+                  <input id="rule-message" value={message} onChange={(e) => setMessage(e.target.value)} maxLength={500} placeholder="Package value must be at least 90000 (got {{package_value}})" className="input-field h-9 text-[13px]" />
+                </div>
+                <div>
+                  <label htmlFor="rule-formula" className={lbl}>Formula — TRUE means the record is invalid</label>
+                  <textarea
+                    id="rule-formula"
+                    value={expressionSource}
+                    onChange={(e) => setExpressionSource(e.target.value)}
+                    maxLength={4000}
+                    rows={3}
+                    placeholder="package_value < 90000"
+                    className="input-field w-full resize-y font-mono text-[12.5px]"
+                  />
+                  {formulaError && (
+                    <p role="alert" className="mt-1 rounded-lg bg-[var(--color-danger-light)] px-2 py-1.5 text-[12px] text-[var(--color-danger)]">
+                      {formulaError.pos ? `Position ${formulaError.pos.start}–${formulaError.pos.end}: ` : ""}{formulaError.message}
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
 
-            <button type="submit" disabled={busy !== null || !name.trim()} className="btn-primary-copper inline-flex items-center gap-2">
+            <button type="submit" disabled={busy !== null || !name.trim() || (formType === "formula" && (!apiName.trim() || !expressionSource.trim()))} className="btn-primary-copper inline-flex items-center gap-2">
               {busy === "add" && <Loader2 className="h-4 w-4 animate-spin" />}
               Add rule
             </button>

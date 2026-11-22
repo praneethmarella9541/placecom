@@ -49,8 +49,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   // Rules for entering this stage (a deal's value is required to enter Won, say).
   if (stageId) {
     const recordAttrs = await loadAttributes(svc, orgOwnerId, list.object_id);
-    const problems = await checkStageRulesV2(svc, orgOwnerId, stageId, recordAttrs, record.values, record.name, userId);
-    if (problems.length) return NextResponse.json({ error: problems[0], errors: problems }, { status: 422 });
+    const rules = await checkStageRulesV2(svc, orgOwnerId, stageId, recordAttrs, record.values, record.name, userId);
+    if (rules.errors.length) return NextResponse.json({ error: rules.errors[0], errors: rules.errors }, { status: 422 });
+    if (rules.warnings.length) console.warn("[data] warn-mode stage rule(s) matched (not yet surfaced to the user — phase 6):", rules.warnings);
   }
 
   const listAttrs = await loadAttributes(svc, orgOwnerId, list.object_id, list.id);

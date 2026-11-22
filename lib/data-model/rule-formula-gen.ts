@@ -1,3 +1,4 @@
+import type { FormulaValue } from "../rules-engine/index";
 import type { RuleCondition, RuleRequirement } from "./rules";
 import type { AttributeDef } from "./types";
 
@@ -62,6 +63,28 @@ export function requirementErrorFormula(condition: RuleCondition, req: RuleRequi
   const reqFormula = `ISBLANK(${fieldRef(req.attribute)})`;
   const failed = req.kind === "required" ? reqFormula : `NOT(${reqFormula})`;
   return condFormula === "TRUE" ? failed : `AND(${condFormula}, ${failed})`;
+}
+
+/** Whether a formula rule's "applies on" setting matches this save. A rule with no setting (or
+ *  "both") always matches; a stage rule has no create/update distinction, so its caller never asks. */
+export function appliesOnMatches(appliesOn: "create" | "update" | "both" | undefined, isNew: boolean): boolean {
+  if (!appliesOn || appliesOn === "both") return true;
+  return appliesOn === "create" ? isNew : !isNew;
+}
+
+const MESSAGE_VAR = /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g;
+
+/** Substitutes `{{field}}` references in a formula rule's custom message with the record's own
+ *  values at the time it failed (§3.12). An unknown or blank reference renders as empty text rather
+ *  than leaving the literal `{{...}}` in front of the person reading the error. */
+export function renderMessage(template: string, values: Record<string, FormulaValue>): string {
+  return template.replace(MESSAGE_VAR, (_m, slug: string) => {
+    const v = values[slug];
+    if (v === undefined || v === null) return "";
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (Array.isArray(v)) return v.join(", ");
+    return String(v);
+  });
 }
 
 /** Exactly rules.ts's failedRequirements() message text, so a workspace sees no difference when it opts in. */

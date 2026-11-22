@@ -13,7 +13,31 @@ import type { AttributeDef } from "./types";
 export type RuleOp = "eq" | "neq" | "empty" | "not_empty";
 export type RuleCondition = { attribute: string; op: RuleOp; value?: string } | null;
 export type RuleRequirement = { attribute: string; kind: "required" | "empty" };
-export type Rule = { id: string; name: string; condition: RuleCondition; requirements: RuleRequirement[] };
+
+/**
+ * `format` discriminates the two rule shapes a row can be (migration 0101): 'legacy' (condition +
+ * requirements, everything above) or 'formula' (an expression compiled to expression_ast —
+ * evaluated by lib/data-model/rule-engine-bridge.ts, never by anything in this file). Every formula
+ * field is optional so existing code that only knows the legacy shape keeps compiling unchanged.
+ */
+export type Rule = {
+  id: string;
+  name: string;
+  condition: RuleCondition;
+  requirements: RuleRequirement[];
+  format?: "legacy" | "formula";
+  apiName?: string | null;
+  description?: string | null;
+  appliesOn?: "create" | "update" | "both";
+  mode?: "block" | "warn";
+  errorLocation?: string | null;
+  message?: string | null;
+  expressionSource?: string | null;
+  expressionAst?: unknown;
+  orderIndex?: number;
+  adminBypass?: boolean;
+  version?: number;
+};
 
 const SLUG = /^[a-z][a-z0-9_]{0,39}$/;
 const OPS = new Set<RuleOp>(["eq", "neq", "empty", "not_empty"]);

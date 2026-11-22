@@ -357,8 +357,9 @@ export async function createRecord(
   if (!valid.ok) return { ok: false, status: 400, error: valid.errors[0], errors: valid.errors };
   const refErrors = await checkReferences(svc, actor.org, attrs, valid.values);
   if (refErrors.length) return { ok: false, status: 400, error: refErrors[0], errors: refErrors };
-  const ruleErrors = await checkRecordRulesV2(svc, actor.org, object.id, attrs, valid.values, valid.name, { isNew: true }, actor.userId);
-  if (ruleErrors.length) return { ok: false, status: 422, error: ruleErrors[0], errors: ruleErrors };
+  const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, valid.values, valid.name, { isNew: true }, actor.userId);
+  if (rules.errors.length) return { ok: false, status: 422, error: rules.errors[0], errors: rules.errors };
+  if (rules.warnings.length) console.warn("[data-model] warn-mode rule(s) matched on create (not yet surfaced to the user — phase 6):", rules.warnings);
 
   const { data: row, error } = await svc
     .from("data_records")
@@ -430,8 +431,9 @@ export async function updateRecord(
 
   // Rules are checked against the whole record as it would be after this save. Records that
   // already break a newer rule are not flagged until someone next saves them.
-  const ruleErrors = await checkRecordRulesV2(svc, actor.org, object.id, attrs, nextValues, nextName, { isNew: false, priorValues: existing.values }, actor.userId);
-  if (ruleErrors.length) return { ok: false, status: 422, error: ruleErrors[0], errors: ruleErrors };
+  const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, nextValues, nextName, { isNew: false, priorValues: existing.values }, actor.userId);
+  if (rules.errors.length) return { ok: false, status: 422, error: rules.errors[0], errors: rules.errors };
+  if (rules.warnings.length) console.warn("[data-model] warn-mode rule(s) matched on update (not yet surfaced to the user — phase 6):", rules.warnings);
 
   // Keys first: if one is taken, nothing about the record has changed yet.
   const before = new Set(extractKeys(attrs, existing.values).map((k) => `${k.kind}:${k.value}`));

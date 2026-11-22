@@ -1,12 +1,12 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { compileExpression, runExpression, type EvalContext, type FormulaValue } from "../rules-engine/index";
+import { compileExpression, runExpression, type EvalContext, type Expr, type FormulaValue } from "../rules-engine/index";
 import { buildObjectSchema } from "./rule-schema";
 import { valuesToFormula } from "./rule-values";
 import { isFormulaEngineEnabled } from "./rule-flags";
 import { getRecord, loadAttributes, loadObjectById } from "./records";
-import { requirementErrorFormula, requirementMessage } from "./rule-formula-gen";
+import { appliesOnMatches, renderMessage, requirementErrorFormula, requirementMessage } from "./rule-formula-gen";
 import { checkRecordRules, failedRequirements, type Rule } from "./rules";
 import { loadRecordRules, loadStageRules } from "./rules-server";
 import type { AttributeDef } from "./types";
@@ -83,6 +83,18 @@ export function createLinkResolver(svc: SupabaseClient, org: string, actorUserId
 
 export type RuleEvalMode = { isNew: boolean; priorValues?: Record<string, unknown> };
 
+/**
+ * `errors` are mode:"block" failures — the only thing any of the five call sites act on today,
+ * same as before this phase. `warnings` are mode:"warn" failures: the save must NOT be blocked by
+ * them. Phase 6 is where these get a banner and an audit-log row; for now a caller that doesn't
+ * pass them on is still correct (a warn-mode rule never blocks), just not yet visible to anyone.
+ */
+export type RuleCheckResult = { errors: string[]; warnings: string[] };
+
+function defaultFormulaMessage(rule: Rule): string {
+  return `${rule.name}: this record doesn't pass validation.`;
+}
+
 async function evaluateViaEngine(
   svc: SupabaseClient,
   org: string,
@@ -91,12 +103,14 @@ async function evaluateViaEngine(
   name: string | undefined,
   rules: Rule[],
   mode: RuleEvalMode,
-  actorUserId: string
-): Promise<string[]> {
+  actorUserId: string,
+  isStageContext: boolean
+): Promise<RuleCheckResult> {
   const attrsBySlug = new Map(attrs.map((a) => [a.slug, a]));
   const schema = await buildObjectSchema(svc, org, attrs);
+  const formulaValues = valuesToFormula(attrs, values, name);
   const ctx: EvalContext = {
-    values: valuesToFormula(attrs, values, name),
+    values: formulaValues,
     priorValues: mode.priorValues ? valuesToFormula(attrs, mode.priorValues, name) : undefined,
     isNew: mode.isNew,
     // $User/$Workspace are real for a phase-3+ authored rule; no legacy-converted formula ever
@@ -109,7 +123,28 @@ async function evaluateViaEngine(
   };
 
   const errors: string[] = [];
+  const warnings: string[] = [];
+
   for (const rule of rules) {
+    if (rule.format === "formula") {
+      // appliesOn only means something for a record rule checked on create vs. update — a stage
+      // rule's "condition" is always "entering this stage", so the setting doesn't apply there.
+      if (!isStageContext && !appliesOnMatches(rule.appliesOn, mode.isNew)) continue;
+      if (!rule.expressionAst) {
+        console.error("[rule-engine-bridge] a formula rule has no compiled expression — it was saved without one, which shouldn't be possible:", rule.id);
+        continue;
+      }
+      const result = await runExpression(rule.expressionAst as Expr, schema, ctx);
+      if (!result.ok) {
+        console.error("[rule-engine-bridge] formula evaluation failed:", result.error, rule.id);
+        continue;
+      }
+      if (result.value !== true) continue;
+      const message = rule.message ? renderMessage(rule.message, formulaValues) : defaultFormulaMessage(rule);
+      (rule.mode === "warn" ? warnings : errors).push(message);
+      continue;
+    }
+
     for (const req of rule.requirements) {
       const source = requirementErrorFormula(rule.condition, req, attrsBySlug);
       const compiled = compileExpression(source, schema);
@@ -125,11 +160,13 @@ async function evaluateViaEngine(
       if (result.value === true) errors.push(requirementMessage(rule.name, req, attrsBySlug));
     }
   }
-  return errors;
+  return { errors, warnings };
 }
 
-/** Drop-in replacement for checkRecordRules(await loadRecordRules(...)): same inputs, same output
- *  shape, routed through the new engine only once the workspace's flag is on. */
+/** Drop-in replacement for checkRecordRules(await loadRecordRules(...)), extended with `warnings`:
+ *  same `errors` shape and meaning as before, routed through the new engine only once the
+ *  workspace's flag is on. A 'formula' rule only ever runs through the new engine — there is no
+ *  legacy evaluator for it — so the flag effectively gates "respect formula rules at all". */
 export async function checkRecordRulesV2(
   svc: SupabaseClient,
   org: string,
@@ -139,15 +176,17 @@ export async function checkRecordRulesV2(
   name: string | undefined,
   mode: RuleEvalMode,
   actorUserId: string
-): Promise<string[]> {
+): Promise<RuleCheckResult> {
   const rules = await loadRecordRules(svc, org, objectId);
-  if (!rules.length) return [];
-  if (!(await isFormulaEngineEnabled(svc, org))) return checkRecordRules(rules, attrs, values, name);
-  return evaluateViaEngine(svc, org, attrs, values, name, rules, mode, actorUserId);
+  if (!rules.length) return { errors: [], warnings: [] };
+  if (!(await isFormulaEngineEnabled(svc, org))) {
+    return { errors: checkRecordRules(rules.filter((r) => r.format !== "formula"), attrs, values, name), warnings: [] };
+  }
+  return evaluateViaEngine(svc, org, attrs, values, name, rules, mode, actorUserId, false);
 }
 
-/** Drop-in replacement for failedRequirements() over loadStageRules(): same inputs, same output
- *  shape, routed through the new engine only once the workspace's flag is on. */
+/** Drop-in replacement for failedRequirements() over loadStageRules(), extended with `warnings` —
+ *  see checkRecordRulesV2. */
 export async function checkStageRulesV2(
   svc: SupabaseClient,
   org: string,
@@ -156,10 +195,13 @@ export async function checkStageRulesV2(
   values: Record<string, unknown>,
   name: string | undefined,
   actorUserId: string
-): Promise<string[]> {
+): Promise<RuleCheckResult> {
   const rules = await loadStageRules(svc, org, stageId);
-  if (!rules.length) return [];
-  if (!(await isFormulaEngineEnabled(svc, org))) return rules.flatMap((r) => failedRequirements(r, attrs, values, name));
-  // A stage rule's condition is always null (DB constraint: entering the stage IS the condition).
-  return evaluateViaEngine(svc, org, attrs, values, name, rules, { isNew: false }, actorUserId);
+  if (!rules.length) return { errors: [], warnings: [] };
+  if (!(await isFormulaEngineEnabled(svc, org))) {
+    return { errors: rules.filter((r) => r.format !== "formula").flatMap((r) => failedRequirements(r, attrs, values, name)), warnings: [] };
+  }
+  // A stage rule's legacy condition is always null (entering the stage IS the condition); a
+  // formula stage rule has no "condition" either — the whole expression is the check.
+  return evaluateViaEngine(svc, org, attrs, values, name, rules, { isNew: false }, actorUserId, true);
 }

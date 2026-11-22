@@ -6,7 +6,8 @@ import { emitEvents } from "./events";
 import { nextPosition } from "./lists";
 import { applyDefaults } from "./rules";
 import { checkRecordRulesV2 } from "./rule-engine-bridge";
-import { extractKeys, validateRecordInput, type RecordInput } from "./values";
+import { findDuplicates, type DuplicateMatch } from "./duplicates";
+import { checkDependentOptions, extractKeys, validateRecordInput, type RecordInput } from "./values";
 
 /**
  * Database operations for records. Every query is scoped by `org` (from lib/data-model/access.ts);
@@ -311,6 +312,39 @@ export async function checkReferences(
   return errors;
 }
 
+/**
+ * Lookup filters (config.memberGroupId, config.lookupMatchSource/lookupMatchField): narrower checks
+ * than checkReferences' plain existence/type check, so they need the record's full EFFECTIVE values
+ * (the caller passes whatever update() already merged with the existing record, same reason
+ * checkDependentOptions does) — a lookupMatchSource field might not be part of THIS particular save.
+ */
+export async function checkLookupFilters(svc: SupabaseClient, org: string, attrs: AttributeDef[], values: Record<string, unknown>): Promise<string[]> {
+  const errors: string[] = [];
+
+  for (const attr of attrs) {
+    if (attr.archived_at) continue;
+
+    if (attr.type === "member" && attr.config.memberGroupId && typeof values[attr.slug] === "string") {
+      const { data } = await svc.from("profiles").select("group_id").eq("id", values[attr.slug] as string).maybeSingle();
+      if (!data || data.group_id !== attr.config.memberGroupId) {
+        errors.push(`${attr.name}: that person isn't in the right access group.`);
+      }
+    }
+
+    if (attr.type === "record_ref" && attr.config.lookupMatchSource && attr.config.lookupMatchField && typeof values[attr.slug] === "string") {
+      const sourceValue = values[attr.config.lookupMatchSource];
+      if (sourceValue === undefined || sourceValue === null || sourceValue === "") continue; // nothing of this record's own to match against yet
+      const target = await getRecord(svc, org, values[attr.slug] as string);
+      if (!target) continue; // checkReferences already reports a missing target
+      if (target.values[attr.config.lookupMatchField] !== sourceValue) {
+        const sourceAttr = attrs.find((a) => a.slug === attr.config.lookupMatchSource);
+        errors.push(`${attr.name}: must share the same ${sourceAttr?.name ?? attr.config.lookupMatchSource} as this record.`);
+      }
+    }
+  }
+  return errors;
+}
+
 /** Claims matching keys for a record. A key already held by another record is refused. */
 async function claimKeys(
   svc: SupabaseClient,
@@ -351,15 +385,27 @@ export async function createRecord(
   object: ObjectDef,
   attrs: AttributeDef[],
   input: RecordInput
-): Promise<Result<{ record: RecordRow }>> {
+): Promise<Result<{ record: RecordRow; duplicates?: DuplicateMatch[] }>> {
   // Fields the input leaves out start from their default.
   const valid = validateRecordInput(attrs, { ...input, values: applyDefaults(attrs, input.values ?? {}) }, "create");
   if (!valid.ok) return { ok: false, status: 400, error: valid.errors[0], errors: valid.errors };
   const refErrors = await checkReferences(svc, actor.org, attrs, valid.values);
   if (refErrors.length) return { ok: false, status: 400, error: refErrors[0], errors: refErrors };
+  const dependentErrors = checkDependentOptions(attrs, valid.values);
+  if (dependentErrors.length) return { ok: false, status: 400, error: dependentErrors[0], errors: dependentErrors };
+  const lookupErrors = await checkLookupFilters(svc, actor.org, attrs, valid.values);
+  if (lookupErrors.length) return { ok: false, status: 400, error: lookupErrors[0], errors: lookupErrors };
   const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, valid.values, valid.name, { isNew: true }, actor.userId);
   if (rules.errors.length) return { ok: false, status: 422, error: rules.errors[0], errors: rules.errors };
   if (rules.warnings.length) console.warn("[data-model] warn-mode rule(s) matched on create (not yet surfaced to the user — phase 6):", rules.warnings);
+
+  const duplicates = await findDuplicates(svc, actor.org, object.id, valid.values, valid.name);
+  const blocking = duplicates.find((d) => d.rule.action === "block");
+  if (blocking) {
+    const msg = `${blocking.rule.name}: this looks like a duplicate of ${blocking.records[0]?.name ?? "an existing record"}.`;
+    return { ok: false, status: 409, error: msg, errors: [msg], existingId: blocking.records[0]?.id };
+  }
+  const surfaced = duplicates.filter((d) => d.rule.action === "warn");
 
   const { data: row, error } = await svc
     .from("data_records")
@@ -393,7 +439,7 @@ export async function createRecord(
     { slug: null, action: "create", newValue: { name: record.name } },
     ...Object.entries(valid.values).map(([slug, v]) => ({ slug, action: "create" as const, newValue: v })),
   ]);
-  return { ok: true, record };
+  return { ok: true, record, duplicates: surfaced.length ? surfaced : undefined };
 }
 
 /** A new deal starts in the first stage of the org's Deals pipeline, if it has one. Best effort. */
@@ -419,7 +465,7 @@ export async function updateRecord(
   attrs: AttributeDef[],
   existing: RecordRow,
   input: RecordInput
-): Promise<Result<{ record: RecordRow }>> {
+): Promise<Result<{ record: RecordRow; duplicates?: DuplicateMatch[] }>> {
   const valid = validateRecordInput(attrs, input, "update");
   if (!valid.ok) return { ok: false, status: 400, error: valid.errors[0], errors: valid.errors };
   const refErrors = await checkReferences(svc, actor.org, attrs, valid.values);
@@ -429,11 +475,27 @@ export async function updateRecord(
   for (const slug of valid.cleared) delete nextValues[slug];
   const nextName = valid.name ?? existing.name;
 
+  // Dependent options and lookup filters are checked against the record's whole EFFECTIVE values
+  // (existing + this save's changes), not just what was sent — the controlling or matched-against
+  // field might not be part of this particular save at all.
+  const dependentErrors = checkDependentOptions(attrs, nextValues);
+  if (dependentErrors.length) return { ok: false, status: 400, error: dependentErrors[0], errors: dependentErrors };
+  const lookupErrors = await checkLookupFilters(svc, actor.org, attrs, nextValues);
+  if (lookupErrors.length) return { ok: false, status: 400, error: lookupErrors[0], errors: lookupErrors };
+
   // Rules are checked against the whole record as it would be after this save. Records that
   // already break a newer rule are not flagged until someone next saves them.
   const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, nextValues, nextName, { isNew: false, priorValues: existing.values }, actor.userId);
   if (rules.errors.length) return { ok: false, status: 422, error: rules.errors[0], errors: rules.errors };
   if (rules.warnings.length) console.warn("[data-model] warn-mode rule(s) matched on update (not yet surfaced to the user — phase 6):", rules.warnings);
+
+  const duplicates = await findDuplicates(svc, actor.org, object.id, nextValues, nextName, existing.id);
+  const blockingDup = duplicates.find((d) => d.rule.action === "block");
+  if (blockingDup) {
+    const msg = `${blockingDup.rule.name}: this looks like a duplicate of ${blockingDup.records[0]?.name ?? "an existing record"}.`;
+    return { ok: false, status: 409, error: msg, errors: [msg], existingId: blockingDup.records[0]?.id };
+  }
+  const surfacedDup = duplicates.filter((d) => d.rule.action === "warn");
 
   // Keys first: if one is taken, nothing about the record has changed yet.
   const before = new Set(extractKeys(attrs, existing.values).map((k) => `${k.kind}:${k.value}`));
@@ -489,7 +551,7 @@ export async function updateRecord(
       })),
     ]);
   }
-  return { ok: true, record: row as RecordRow };
+  return { ok: true, record: row as RecordRow, duplicates: surfacedDup.length ? surfacedDup : undefined };
 }
 
 /** Soft delete: the row stays (history keeps pointing at it); its keys are freed for reuse. */

@@ -108,5 +108,5 @@ export async function POST(request: Request) {
     if (result.status >= 500) return NextResponse.json({ error: dbErrorMessage({ message: result.error }) }, { status: 500 });
     return NextResponse.json({ error: result.error, errors: result.errors, existingId: result.existingId }, { status: result.status });
   }
-  return NextResponse.json({ record: result.record }, { status: 201 });
+  return NextResponse.json({ record: result.record, duplicates: result.duplicates }, { status: 201 });
 }

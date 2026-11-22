@@ -32,12 +32,30 @@ export type AttributeInput = {
   maxLength?: unknown;
   pattern?: unknown;
   patternMessage?: unknown;
+  controlledBy?: unknown;
+  dependentOptions?: unknown;
+  memberGroupId?: unknown;
+  lookupMatchSource?: unknown;
+  lookupMatchField?: unknown;
 };
 
-/** Reads min/max/minLength/maxLength/pattern/patternMessage off a request body into a field's
- *  config, type-checked against what the field type actually uses them for. Shared by create and
- *  update so a constraint means the same thing and is checked the same way in both places. */
-function applyConstraints(type: AttributeType, body: AttributeInput, config: AttributeConfig): { ok: true } | { ok: false; error: string } {
+/** Reads min/max/minLength/maxLength/pattern/patternMessage/controlledBy/dependentOptions/
+ *  memberGroupId/lookupMatchSource/lookupMatchField off a request body into a field's config,
+ *  type-checked against what the field type actually uses them for, and (for the two lookup-style
+ *  settings) checked against the database — a group id that doesn't exist, or a target field that
+ *  isn't real, is refused at save time rather than silently matching nothing forever. Shared by
+ *  create and update so a constraint means the same thing and is checked the same way in both
+ *  places; `svc`/`org`/`objectId`/`ownSlug` are only used by the two DB-backed checks. */
+async function applyConstraints(
+  svc: SupabaseClient,
+  org: string,
+  objectId: string,
+  ownSlug: string | null,
+  attrs: AttributeDef[],
+  type: AttributeType,
+  body: AttributeInput,
+  config: AttributeConfig
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const isNumeric = type === "number" || type === "currency";
   const isDate = type === "date";
   const isTextLike = type === "text" || type === "long_text" || type === "email" || type === "phone" || type === "url" || type === "domain";
@@ -116,6 +134,71 @@ function applyConstraints(type: AttributeType, body: AttributeInput, config: Att
     if (typeof body.patternMessage === "string" && body.patternMessage.trim()) config.patternMessage = body.patternMessage.trim().slice(0, 200);
     else delete config.patternMessage;
   }
+
+  const isSelectLike = type === "select" || type === "multi_select";
+  if (body.controlledBy !== undefined) {
+    if (!isSelectLike) return { ok: false, error: "Only a select field can depend on another field." };
+    if (body.controlledBy === null || body.controlledBy === "") {
+      delete config.controlledBy;
+      delete config.dependentOptions;
+    } else {
+      if (typeof body.controlledBy !== "string") return { ok: false, error: "Choose a field this depends on." };
+      const controlling = attrs.find((a) => a.slug === body.controlledBy && !a.archived_at);
+      if (!controlling || controlling.slug === ownSlug) return { ok: false, error: "Choose a real field other than this one." };
+      if (controlling.type !== "select" && controlling.type !== "multi_select") return { ok: false, error: "A field can only depend on another select field." };
+      config.controlledBy = controlling.slug;
+    }
+  }
+  if (body.dependentOptions !== undefined) {
+    if (!isSelectLike) return { ok: false, error: "Only a select field can have dependent options." };
+    if (!config.controlledBy) return { ok: false, error: "Choose the field this depends on first." };
+    if (body.dependentOptions === null) delete config.dependentOptions;
+    else {
+      if (typeof body.dependentOptions !== "object" || Array.isArray(body.dependentOptions)) {
+        return { ok: false, error: "Dependent options must map each controlling value to a list of options." };
+      }
+      const ownOptions = new Set((config.options ?? []).map((o) => o.toLowerCase()));
+      const map: Record<string, string[]> = {};
+      for (const [key, value] of Object.entries(body.dependentOptions as Record<string, unknown>).slice(0, 200)) {
+        if (!Array.isArray(value)) return { ok: false, error: `The allowed options for "${key.slice(0, 40)}" must be a list.` };
+        const allowed = value.filter((o): o is string => typeof o === "string" && ownOptions.has(o.toLowerCase()));
+        if (allowed.length !== value.length) return { ok: false, error: `One of the options for "${key.slice(0, 40)}" isn't one of this field's own options.` };
+        map[key.slice(0, 60)] = allowed;
+      }
+      config.dependentOptions = map;
+    }
+  }
+
+  if (body.memberGroupId !== undefined) {
+    if (type !== "member") return { ok: false, error: "An access-group filter only applies to a team-member field." };
+    if (body.memberGroupId === null || body.memberGroupId === "") delete config.memberGroupId;
+    else {
+      if (typeof body.memberGroupId !== "string") return { ok: false, error: "Choose an access group." };
+      const { data } = await svc.from("team_groups").select("id").eq("org_owner_id", org).eq("id", body.memberGroupId).maybeSingle();
+      if (!data) return { ok: false, error: "Unknown access group." };
+      config.memberGroupId = body.memberGroupId;
+    }
+  }
+
+  if (body.lookupMatchSource !== undefined || body.lookupMatchField !== undefined) {
+    if (type !== "record_ref") return { ok: false, error: "A lookup filter only applies to a link field." };
+    if (body.lookupMatchSource === null || body.lookupMatchSource === "") {
+      delete config.lookupMatchSource;
+      delete config.lookupMatchField;
+    } else {
+      const source = typeof body.lookupMatchSource === "string" ? attrs.find((a) => a.slug === body.lookupMatchSource && !a.archived_at && a.slug !== ownSlug) : null;
+      if (!source) return { ok: false, error: "Choose a real field on this object to match against." };
+      const targetSlug = config.target_object;
+      if (!targetSlug) return { ok: false, error: "Choose what this field points at first." };
+      const target = await loadObject(svc, org, targetSlug);
+      const targetAttrs = target ? await loadAttributes(svc, org, target.id) : [];
+      const field = typeof body.lookupMatchField === "string" ? targetAttrs.find((a) => a.slug === body.lookupMatchField && !a.archived_at) : null;
+      if (!field) return { ok: false, error: `Choose a field on the linked object to match ${source.name} against.` };
+      config.lookupMatchSource = source.slug;
+      config.lookupMatchField = field.slug;
+    }
+  }
+
   return { ok: true };
 }
 
@@ -152,7 +235,9 @@ export async function createAttribute(
   }
   if (type === "currency") config.currency = typeof body.currency === "string" && /^[A-Z]{3}$/.test(body.currency) ? body.currency : "INR";
 
-  const constraints = applyConstraints(type, body, config);
+  const existing = await loadAttributes(svc, org, objectId, listId);
+
+  const constraints = await applyConstraints(svc, org, objectId, null, existing, type, body, config);
   if (!constraints.ok) return { ok: false, status: 400, error: constraints.error };
 
   // A default is checked like any value for this field, so every new record starts valid.
@@ -163,7 +248,6 @@ export async function createAttribute(
     if (norm.value !== null) config.default = norm.value;
   }
 
-  const existing = await loadAttributes(svc, org, objectId, listId);
   if (existing.length >= MAX_ATTRIBUTES) {
     return { ok: false, status: 400, error: `There can be at most ${MAX_ATTRIBUTES} fields here.` };
   }
@@ -222,10 +306,14 @@ export async function updateAttribute(
   if (body?.archived !== undefined) patch.archived_at = body.archived === true ? new Date().toISOString() : null;
   if (body?.isRequired !== undefined) patch.is_required = body.isRequired === true;
 
-  const CONSTRAINT_KEYS = ["min", "max", "minLength", "maxLength", "pattern", "patternMessage"] as const;
+  const CONSTRAINT_KEYS = [
+    "min", "max", "minLength", "maxLength", "pattern", "patternMessage",
+    "controlledBy", "dependentOptions", "memberGroupId", "lookupMatchSource", "lookupMatchField",
+  ] as const;
   if (body && (body.defaultValue !== undefined || CONSTRAINT_KEYS.some((k) => body[k] !== undefined))) {
     const config = { ...((attr.config as AttributeConfig | null) ?? {}) };
-    const constraints = applyConstraints(attr.type as AttributeType, body, config);
+    const siblings = await loadAttributes(svc, org, objectId, listId);
+    const constraints = await applyConstraints(svc, org, objectId, attrSlug, siblings, attr.type as AttributeType, body, config);
     if (!constraints.ok) return { ok: false, status: 400, error: constraints.error };
 
     if (body.defaultValue !== undefined) {

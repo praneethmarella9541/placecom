@@ -345,3 +345,39 @@ export function extractKeys(attrs: AttributeDef[], values: Record<string, unknow
   }
   return keys;
 }
+
+/**
+ * Dependent select fields: `attr.config.controlledBy` names another select field on the same
+ * object; `attr.config.dependentOptions[controllingValue]` is the subset of this field's own
+ * options allowed when that's chosen. Checked against the record's whole EFFECTIVE values (after
+ * merging in whatever an update left unchanged — the caller does that merge, same as for rules),
+ * since the controlling field might not be part of this particular save at all.
+ *
+ * A controlling value with no entry in `dependentOptions` allows none of this field's options —
+ * an admin who adds a new controlling option without mapping it yet gets records refused, not
+ * silently let through with a combination nobody approved.
+ */
+export function checkDependentOptions(attrs: AttributeDef[], values: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+  for (const attr of attrs) {
+    if (attr.archived_at) continue;
+    if (attr.type !== "select" && attr.type !== "multi_select") continue;
+    const controlledBy = attr.config.controlledBy;
+    if (!controlledBy) continue;
+    const controllingValue = values[controlledBy];
+    if (isEmptyInput(controllingValue)) continue; // nothing chosen upstream yet — nothing to enforce
+    if (typeof controllingValue !== "string") continue;
+
+    const allowed = new Set((attr.config.dependentOptions?.[controllingValue] ?? []).map((o) => o.toLowerCase()));
+    const stored = values[attr.slug];
+    if (stored === undefined || stored === null) continue;
+    const controllingAttr = attrs.find((a) => a.slug === controlledBy);
+    const controllingLabel = controllingAttr?.name ?? controlledBy;
+    for (const v of Array.isArray(stored) ? stored : [stored]) {
+      if (typeof v === "string" && !allowed.has(v.toLowerCase())) {
+        errors.push(`${attr.name}: "${v}" isn't allowed when ${controllingLabel} is "${controllingValue}".`);
+      }
+    }
+  }
+  return errors;
+}

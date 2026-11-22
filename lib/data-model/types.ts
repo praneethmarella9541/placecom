@@ -44,6 +44,20 @@ export type AttributeConfig = {
   pattern?: string;
   /** Shown instead of the generic "doesn't match the pattern" message when `pattern` fails. */
   patternMessage?: string;
+  /** select/multi_select: the slug of another select field on the same object whose chosen value
+   *  decides which of THIS field's own options are allowed (dependentOptions). */
+  controlledBy?: string;
+  /** select/multi_select: controlling field's option value -> the subset of this field's own
+   *  options allowed when that's chosen. A controlling value with no entry here allows none of
+   *  this field's options — an unmapped combination is refused, not silently let through. */
+  dependentOptions?: Record<string, string[]>;
+  /** member: restrict the picker (and enforce on save) to team members in this access group id. */
+  memberGroupId?: string;
+  /** record_ref: this field's value must point at a record whose `lookupMatchField` equals THIS
+   *  record's own `lookupMatchSource` field — e.g. "Traveller must be in the same company": a link
+   *  field's target must share a value with one of this record's own fields. */
+  lookupMatchSource?: string;
+  lookupMatchField?: string;
   /** Filled in for a new record that leaves this field out. Already normalised for the field's type. */
   default?: unknown;
 };

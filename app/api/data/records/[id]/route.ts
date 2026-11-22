@@ -46,7 +46,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (result.status >= 500) return NextResponse.json({ error: dbErrorMessage({ message: result.error }) }, { status: 500 });
     return NextResponse.json({ error: result.error, errors: result.errors, existingId: result.existingId }, { status: result.status });
   }
-  return NextResponse.json({ record: result.record });
+  return NextResponse.json({ record: result.record, duplicates: result.duplicates });
 }
 
 /** DELETE /api/data/records/[id] — soft delete. */

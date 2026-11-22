@@ -1,7 +1,7 @@
 // Run with: npm test   (node's built-in runner; no extra dependency)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractKeys, normalizeValue, validateRecordInput } from "./values.ts";
+import { checkDependentOptions, extractKeys, normalizeValue, validateRecordInput } from "./values.ts";
 import type { AttributeDef } from "./types";
 
 const attr = (over: Partial<AttributeDef> & Pick<AttributeDef, "type">): AttributeDef => ({
@@ -200,4 +200,50 @@ test("keys come from unique email and domain attributes only", () => {
     { kind: "email", value: "b@x.com" },
   ]);
   assert.deepEqual(extractKeys(people, {}), []);
+});
+
+const dependentAttrs: AttributeDef[] = [
+  {
+    slug: "destination_type",
+    name: "Destination type",
+    type: "select",
+    is_multi: false,
+    config: { options: ["International", "Domestic"] },
+    is_required: false,
+    is_unique: false,
+  },
+  {
+    slug: "package",
+    name: "Package",
+    type: "select",
+    is_multi: false,
+    config: {
+      options: ["Beach Resort", "City Tour", "Safari", "Local Homestay"],
+      controlledBy: "destination_type",
+      dependentOptions: {
+        International: ["Beach Resort", "Safari"],
+        Domestic: ["City Tour", "Local Homestay"],
+      },
+    },
+    is_required: false,
+    is_unique: false,
+  },
+];
+
+test("checkDependentOptions allows only the mapped subset for the controlling value", () => {
+  assert.deepEqual(checkDependentOptions(dependentAttrs, { destination_type: "International", package: "Beach Resort" }), []);
+  assert.deepEqual(checkDependentOptions(dependentAttrs, { destination_type: "Domestic", package: "Beach Resort" }), [
+    'Package: "Beach Resort" isn\'t allowed when Destination type is "Domestic".',
+  ]);
+});
+
+test("checkDependentOptions does nothing until the controlling field has a value", () => {
+  assert.deepEqual(checkDependentOptions(dependentAttrs, { package: "Beach Resort" }), []);
+});
+
+test("checkDependentOptions refuses a controlling value with no mapped entry at all", () => {
+  const withGap = [dependentAttrs[0], { ...dependentAttrs[1], config: { ...dependentAttrs[1].config, dependentOptions: { International: ["Beach Resort"] } } }];
+  assert.deepEqual(checkDependentOptions(withGap, { destination_type: "Domestic", package: "City Tour" }), [
+    'Package: "City Tour" isn\'t allowed when Destination type is "Domestic".',
+  ]);
 });

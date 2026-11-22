@@ -13,7 +13,7 @@ export const maxDuration = 60;
 const MAX_ROWS_PER_CALL = 100;
 
 type RowIn = { name?: unknown; values?: Record<string, unknown> };
-type RowOut = { row: number; status: "created" | "updated" | "duplicate" | "error"; error?: string; id?: string };
+type RowOut = { row: number; status: "created" | "updated" | "duplicate" | "error"; error?: string; id?: string; possibleDuplicates?: { rule: string; records: { id: string; name: string }[] }[] };
 
 /** Turns a person's name or a company name typed in a cell into the id the field stores. */
 async function resolveLinks(
@@ -158,7 +158,7 @@ export async function POST(request: Request) {
       const sent: Record<string, unknown> = {};
       for (const slug of Object.keys(checked.values)) sent[slug] = merged[slug];
       const r = await updateRecord(svc, { userId, org: orgOwnerId, source: "import" }, object, attrs, existing, { values: sent });
-      if (r.ok) results.push({ row: rowNo, status: "updated", id: existingId });
+      if (r.ok) results.push({ row: rowNo, status: "updated", id: existingId, possibleDuplicates: r.duplicates?.map((d) => ({ rule: d.rule.name, records: d.records })) });
       else fail(r.error);
       continue;
     }
@@ -168,7 +168,7 @@ export async function POST(request: Request) {
       continue;
     }
     const r = await createRecord(svc, { userId, org: orgOwnerId, source: "import" }, object, attrs, { name: checked.name, values: checked.values });
-    if (r.ok) results.push({ row: rowNo, status: "created", id: r.record.id });
+    if (r.ok) results.push({ row: rowNo, status: "created", id: r.record.id, possibleDuplicates: r.duplicates?.map((d) => ({ rule: d.rule.name, records: d.records })) });
     else if (r.status === 409 && r.existingId) results.push({ row: rowNo, status: "duplicate", id: r.existingId });
     else fail(r.status >= 500 ? "Couldn't save this row. Try again." : r.error);
   }

@@ -105,11 +105,11 @@ export async function POST(request: Request) {
     if (await apiNameTaken(svc, orgOwnerId, scope.object_id, validated.row.api_name)) {
       return NextResponse.json({ error: `"${validated.row.api_name}" is already used by another rule on this object.` }, { status: 409 });
     }
-    row = { ...scope, condition: scope.kind === "stage" ? null : null, requirements: [], ...validated.row };
+    row = { ...scope, condition: scope.kind === "stage" ? null : null, requirements: [], admin_bypass: body.adminBypass === true, ...validated.row };
   } else {
     const shape = sanitizeRule(body);
     if (!shape.ok) return NextResponse.json({ error: shape.error }, { status: 400 });
-    row = { ...scope, condition: scope.kind === "stage" ? null : shape.condition, requirements: shape.requirements };
+    row = { ...scope, condition: scope.kind === "stage" ? null : shape.condition, requirements: shape.requirements, admin_bypass: body.adminBypass === true };
   }
 
   const { data, error } = await svc

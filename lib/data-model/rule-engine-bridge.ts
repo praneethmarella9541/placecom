@@ -1,14 +1,15 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { compileExpression, runExpression, type EvalContext, type Expr, type FormulaValue } from "../rules-engine/index";
+import { compileExpression, runExpression, type EvalContext, type Expr, type FormulaValue, type ObjectSchema } from "../rules-engine/index";
 import { buildObjectSchema } from "./rule-schema";
 import { valuesToFormula } from "./rule-values";
 import { isFormulaEngineEnabled } from "./rule-flags";
 import { getRecord, loadAttributes, loadObjectById } from "./records";
 import { appliesOnMatches, renderMessage, requirementErrorFormula, requirementMessage } from "./rule-formula-gen";
+import { logRuleOutcome } from "./rule-audit";
 import { checkRecordRules, failedRequirements, missingRequiredFields, type Rule } from "./rules";
-import { loadRecordRules, loadStageRules } from "./rules-server";
+import { loadRecordRules, loadRuleById, loadStageRules } from "./rules-server";
 import type { AttributeDef } from "./types";
 
 /**
@@ -96,8 +97,90 @@ export type RuleEvalMode = { isNew: boolean; priorValues?: Record<string, unknow
  */
 export type RuleCheckResult = { errors: string[]; warnings: string[]; missingFields: string[] };
 
+/** Where to log an outcome, and whether this save asked to bypass an admin-bypassable rule. A
+ *  bypass only ever takes effect for an actual admin — evaluateViaEngine checks that itself, so a
+ *  caller can pass through whatever the request asked for without checking the role first. */
+export type RuleAuditContext = { objectId: string | null; recordId: string | null; bypassRequested: boolean };
+
 function defaultFormulaMessage(rule: Rule): string {
   return `${rule.name}: this record doesn't pass validation.`;
+}
+
+/**
+ * Whether ONE rule matches a record right now, and the message(s) it would show — no side effects
+ * (no audit log, no bypass decision), so it's safe to call many times over existing data (the
+ * impact scan) or once against made-up values (the test panel), as well as from evaluateViaEngine's
+ * real per-save loop below.
+ */
+async function matchesRule(
+  rule: Rule,
+  attrsBySlug: Map<string, AttributeDef>,
+  schema: ObjectSchema,
+  ctx: EvalContext,
+  formulaValues: Record<string, FormulaValue>,
+  isStageContext: boolean,
+  isNew: boolean
+): Promise<string[]> {
+  if (rule.format === "formula") {
+    // appliesOn only means something for a record rule checked on create vs. update — a stage
+    // rule's "condition" is always "entering this stage", so the setting doesn't apply there.
+    if (!isStageContext && !appliesOnMatches(rule.appliesOn, isNew)) return [];
+    if (!rule.expressionAst) {
+      console.error("[rule-engine-bridge] a formula rule has no compiled expression — it was saved without one, which shouldn't be possible:", rule.id);
+      return [];
+    }
+    const result = await runExpression(rule.expressionAst as Expr, schema, ctx);
+    if (!result.ok) {
+      console.error("[rule-engine-bridge] formula evaluation failed:", result.error, rule.id);
+      return [];
+    }
+    if (result.value !== true) return [];
+    return [rule.message ? renderMessage(rule.message, formulaValues) : defaultFormulaMessage(rule)];
+  }
+
+  const out: string[] = [];
+  for (const req of rule.requirements) {
+    const source = requirementErrorFormula(rule.condition, req, attrsBySlug);
+    const compiled = compileExpression(source, schema);
+    if (!compiled.ok) {
+      console.error("[rule-engine-bridge] a generated formula failed to compile — this is a bridge bug, not a bad rule:", compiled.error, source);
+      continue;
+    }
+    const result = await runExpression(compiled.ast, schema, ctx);
+    if (!result.ok) {
+      console.error("[rule-engine-bridge] formula evaluation failed:", result.error, source);
+      continue;
+    }
+    if (result.value === true) out.push(requirementMessage(rule.name, req, attrsBySlug));
+  }
+  return out;
+}
+
+function buildEvalContext(
+  svc: SupabaseClient,
+  org: string,
+  attrs: AttributeDef[],
+  values: Record<string, unknown>,
+  name: string | undefined,
+  mode: RuleEvalMode,
+  actorUserId: string
+): { formulaValues: Record<string, FormulaValue>; ctx: EvalContext } {
+  const formulaValues = valuesToFormula(attrs, values, name);
+  return {
+    formulaValues,
+    ctx: {
+      values: formulaValues,
+      priorValues: mode.priorValues ? valuesToFormula(attrs, mode.priorValues, name) : undefined,
+      isNew: mode.isNew,
+      // $User/$Workspace are real for a phase-3+ authored rule; no legacy-converted formula ever
+      // references them, so there is nothing yet worth an extra database round trip per save for.
+      user: { id: actorUserId, role: "staff", groupName: null, email: "", emailDomain: "" },
+      workspace: { id: org, name: "" },
+      now: new Date(),
+      timeZone: "Asia/Kolkata",
+      resolveLink: createLinkResolver(svc, org, actorUserId),
+    },
+  };
 }
 
 async function evaluateViaEngine(
@@ -109,66 +192,39 @@ async function evaluateViaEngine(
   rules: Rule[],
   mode: RuleEvalMode,
   actorUserId: string,
-  isStageContext: boolean
+  isStageContext: boolean,
+  audit: RuleAuditContext
 ): Promise<RuleCheckResult> {
   const attrsBySlug = new Map(attrs.map((a) => [a.slug, a]));
   const schema = await buildObjectSchema(svc, org, attrs);
-  const formulaValues = valuesToFormula(attrs, values, name);
-  const ctx: EvalContext = {
-    values: formulaValues,
-    priorValues: mode.priorValues ? valuesToFormula(attrs, mode.priorValues, name) : undefined,
-    isNew: mode.isNew,
-    // $User/$Workspace are real for a phase-3+ authored rule; no legacy-converted formula ever
-    // references them, so there is nothing yet worth an extra database round trip per save for.
-    user: { id: actorUserId, role: "staff", groupName: null, email: "", emailDomain: "" },
-    workspace: { id: org, name: "" },
-    now: new Date(),
-    timeZone: "Asia/Kolkata",
-    resolveLink: createLinkResolver(svc, org, actorUserId),
-  };
+  const { formulaValues, ctx } = buildEvalContext(svc, org, attrs, values, name, mode, actorUserId);
 
   const errors: string[] = [];
   const warnings: string[] = [];
   const missingFields = new Set(missingRequiredFields(rules, values, name));
 
+  // Only checked, and only once, if some rule is actually bypassable and this save asked for it —
+  // most saves touch no admin_bypass rule at all, so this must not cost a query by default.
+  let isAdminPromise: Promise<boolean> | null = null;
+  const isAdmin = () => {
+    if (!isAdminPromise) isAdminPromise = isAdminUser(svc, actorUserId);
+    return isAdminPromise;
+  };
+
   for (const rule of rules) {
-    if (rule.format === "formula") {
-      // appliesOn only means something for a record rule checked on create vs. update — a stage
-      // rule's "condition" is always "entering this stage", so the setting doesn't apply there.
-      if (!isStageContext && !appliesOnMatches(rule.appliesOn, mode.isNew)) continue;
-      if (!rule.expressionAst) {
-        console.error("[rule-engine-bridge] a formula rule has no compiled expression — it was saved without one, which shouldn't be possible:", rule.id);
-        continue;
-      }
-      const result = await runExpression(rule.expressionAst as Expr, schema, ctx);
-      if (!result.ok) {
-        console.error("[rule-engine-bridge] formula evaluation failed:", result.error, rule.id);
-        continue;
-      }
-      if (result.value !== true) continue;
-      const message = rule.message ? renderMessage(rule.message, formulaValues) : defaultFormulaMessage(rule);
+    const messages = await matchesRule(rule, attrsBySlug, schema, ctx, formulaValues, isStageContext, mode.isNew);
+    for (const message of messages) {
       if (rule.mode === "warn") {
         warnings.push(message);
+        await logRuleOutcome(svc, org, { ruleId: rule.id, objectId: audit.objectId, recordId: audit.recordId, outcome: "warned", message, actorId: actorUserId });
+      } else if (rule.adminBypass && audit.bypassRequested && (await isAdmin())) {
+        warnings.push(`${message} (bypassed by an admin)`);
+        await logRuleOutcome(svc, org, { ruleId: rule.id, objectId: audit.objectId, recordId: audit.recordId, outcome: "bypassed", message, actorId: actorUserId });
       } else {
         errors.push(message);
         if (rule.errorLocation) missingFields.add(rule.errorLocation);
+        await logRuleOutcome(svc, org, { ruleId: rule.id, objectId: audit.objectId, recordId: audit.recordId, outcome: "blocked", message, actorId: actorUserId });
       }
-      continue;
-    }
-
-    for (const req of rule.requirements) {
-      const source = requirementErrorFormula(rule.condition, req, attrsBySlug);
-      const compiled = compileExpression(source, schema);
-      if (!compiled.ok) {
-        console.error("[rule-engine-bridge] a generated formula failed to compile — this is a bridge bug, not a bad rule:", compiled.error, source);
-        continue;
-      }
-      const result = await runExpression(compiled.ast, schema, ctx);
-      if (!result.ok) {
-        console.error("[rule-engine-bridge] formula evaluation failed:", result.error, source);
-        continue;
-      }
-      if (result.value === true) errors.push(requirementMessage(rule.name, req, attrsBySlug));
     }
   }
   return { errors, warnings, missingFields: [...missingFields] };
@@ -186,7 +242,8 @@ export async function checkRecordRulesV2(
   values: Record<string, unknown>,
   name: string | undefined,
   mode: RuleEvalMode,
-  actorUserId: string
+  actorUserId: string,
+  options: { recordId?: string | null; bypassRequested?: boolean } = {}
 ): Promise<RuleCheckResult> {
   const rules = await loadRecordRules(svc, org, objectId);
   if (!rules.length) return { errors: [], warnings: [], missingFields: [] };
@@ -194,7 +251,8 @@ export async function checkRecordRulesV2(
     const legacy = rules.filter((r) => r.format !== "formula");
     return { errors: checkRecordRules(legacy, attrs, values, name), warnings: [], missingFields: missingRequiredFields(legacy, values, name) };
   }
-  return evaluateViaEngine(svc, org, attrs, values, name, rules, mode, actorUserId, false);
+  const audit: RuleAuditContext = { objectId, recordId: options.recordId ?? null, bypassRequested: options.bypassRequested === true };
+  return evaluateViaEngine(svc, org, attrs, values, name, rules, mode, actorUserId, false, audit);
 }
 
 /** Drop-in replacement for failedRequirements() over loadStageRules(), extended with `warnings` —
@@ -206,7 +264,8 @@ export async function checkStageRulesV2(
   attrs: AttributeDef[],
   values: Record<string, unknown>,
   name: string | undefined,
-  actorUserId: string
+  actorUserId: string,
+  options: { objectId?: string | null; recordId?: string | null; bypassRequested?: boolean } = {}
 ): Promise<RuleCheckResult> {
   const rules = await loadStageRules(svc, org, stageId);
   if (!rules.length) return { errors: [], warnings: [], missingFields: [] };
@@ -216,5 +275,104 @@ export async function checkStageRulesV2(
   }
   // A stage rule's legacy condition is always null (entering the stage IS the condition); a
   // formula stage rule has no "condition" either — the whole expression is the check.
-  return evaluateViaEngine(svc, org, attrs, values, name, rules, { isNew: false }, actorUserId, true);
+  const audit: RuleAuditContext = { objectId: options.objectId ?? null, recordId: options.recordId ?? null, bypassRequested: options.bypassRequested === true };
+  return evaluateViaEngine(svc, org, attrs, values, name, rules, { isNew: false }, actorUserId, true, audit);
+}
+
+/**
+ * Test panel: does ONE rule — saved or still a draft (the caller compiles/validates it first, same
+ * as a real save would) — match a made-up record? No audit log row (nothing was actually saved)
+ * and no bypass logic (there is nothing yet to bypass). Works for either format.
+ */
+export async function testRuleAgainstValues(
+  svc: SupabaseClient,
+  org: string,
+  objectId: string,
+  rule: Rule,
+  values: Record<string, unknown>,
+  name: string | undefined,
+  isNew: boolean,
+  isStageContext: boolean,
+  actorUserId: string
+): Promise<{ matched: boolean; messages: string[]; mode: "block" | "warn" }> {
+  const attrs = await loadAttributes(svc, org, objectId);
+  const attrsBySlug = new Map(attrs.map((a) => [a.slug, a]));
+  const schema = await buildObjectSchema(svc, org, attrs);
+  const { formulaValues, ctx } = buildEvalContext(svc, org, attrs, values, name, { isNew }, actorUserId);
+  const messages = await matchesRule(rule, attrsBySlug, schema, ctx, formulaValues, isStageContext, isNew);
+  return { matched: messages.length > 0, messages, mode: rule.mode === "warn" ? "warn" : "block" };
+}
+
+const MAX_IMPACT_SCAN = 1000;
+const IMPACT_BATCH = 200;
+const IMPACT_SAMPLE_SIZE = 10;
+
+export type RuleImpactScan = { scanned: number; failing: number; sample: { id: string; name: string }[]; truncated: boolean };
+
+/**
+ * "Existing data" impact scan (spec 3.9): before activating or tightening a rule, how much of what's
+ * already there would fail it right now? Capped at MAX_IMPACT_SCAN records — an admin-triggered,
+ * occasional check, not a per-save hot path, so a capped scan beats a full-table one that might time
+ * out on a large object. A stage rule is scanned against records CURRENTLY in that stage only, since
+ * that's the only population it could plausibly be checked against again.
+ */
+export async function scanRuleImpact(svc: SupabaseClient, org: string, ruleId: string, actorUserId: string): Promise<({ ok: true } & RuleImpactScan) | { ok: false; error: string }> {
+  const scope = await loadRuleById(svc, org, ruleId);
+  if (!scope) return { ok: false, error: "Not found." };
+  const { rule, kind, objectId, stageId } = scope;
+  if (kind === "stage" && !stageId) return { ok: false, error: "This rule has no stage." };
+
+  const attrs = await loadAttributes(svc, org, objectId);
+  const attrsBySlug = new Map(attrs.map((a) => [a.slug, a]));
+  const schema = await buildObjectSchema(svc, org, attrs);
+
+  let stageRecordIds: string[] | null = null;
+  if (kind === "stage") {
+    const { data } = await svc.from("data_list_entries").select("record_id").eq("org_owner_id", org).eq("stage_id", stageId as string).limit(MAX_IMPACT_SCAN + 1);
+    stageRecordIds = (data ?? []).map((r) => r.record_id as string);
+  }
+
+  let scanned = 0;
+  let failing = 0;
+  let truncated = false;
+  const sample: { id: string; name: string }[] = [];
+
+  for (let offset = 0; scanned < MAX_IMPACT_SCAN; offset += IMPACT_BATCH) {
+    type Row = { id: string; name: string; values: Record<string, unknown> };
+    let batch: Row[];
+    if (stageRecordIds) {
+      const slice = stageRecordIds.slice(offset, offset + IMPACT_BATCH);
+      if (!slice.length) break;
+      const { data } = await svc.from("data_records").select("id, name, values").eq("org_owner_id", org).in("id", slice).is("deleted_at", null);
+      batch = (data ?? []) as Row[];
+    } else {
+      const { data } = await svc
+        .from("data_records")
+        .select("id, name, values")
+        .eq("org_owner_id", org)
+        .eq("object_id", objectId)
+        .is("deleted_at", null)
+        .order("id", { ascending: true })
+        .range(offset, offset + IMPACT_BATCH - 1);
+      batch = (data ?? []) as Row[];
+    }
+    if (!batch.length) break;
+
+    for (const record of batch) {
+      if (scanned >= MAX_IMPACT_SCAN) {
+        truncated = true;
+        break;
+      }
+      scanned++;
+      const { formulaValues, ctx } = buildEvalContext(svc, org, attrs, record.values, record.name, { isNew: false }, actorUserId);
+      const messages = await matchesRule(rule, attrsBySlug, schema, ctx, formulaValues, kind === "stage", false);
+      if (messages.length) {
+        failing++;
+        if (sample.length < IMPACT_SAMPLE_SIZE) sample.push({ id: record.id, name: record.name });
+      }
+    }
+    if (batch.length < IMPACT_BATCH) break;
+  }
+
+  return { ok: true, scanned, failing, sample, truncated };
 }

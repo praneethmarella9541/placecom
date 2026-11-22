@@ -94,7 +94,7 @@ export async function POST(request: Request) {
   if (!auth.ok) return auth.response;
   const { svc, orgOwnerId, userId } = auth.ctx;
 
-  const body = (await request.json().catch(() => null)) as { object?: unknown; name?: unknown; values?: Record<string, unknown> } | null;
+  const body = (await request.json().catch(() => null)) as { object?: unknown; name?: unknown; values?: Record<string, unknown>; bypassRules?: unknown } | null;
   if (!body || typeof body.object !== "string") return NextResponse.json({ error: "object is required." }, { status: 400 });
 
   const object = await loadObject(svc, orgOwnerId, body.object);
@@ -103,7 +103,9 @@ export async function POST(request: Request) {
   if (denied) return denied;
 
   const attrs = await loadAttributes(svc, orgOwnerId, object.id);
-  const result = await createRecord(svc, { userId, org: orgOwnerId }, object, attrs, { name: body.name, values: body.values });
+  // bypassRules only takes effect for an actual admin, and only on a rule marked admin_bypass —
+  // both checked in rule-engine-bridge.ts, not here; a non-admin sending it is simply ignored.
+  const result = await createRecord(svc, { userId, org: orgOwnerId, bypassRules: body.bypassRules === true }, object, attrs, { name: body.name, values: body.values });
   if (!result.ok) {
     if (result.status >= 500) return NextResponse.json({ error: dbErrorMessage({ message: result.error }) }, { status: 500 });
     return NextResponse.json({ error: result.error, errors: result.errors, existingId: result.existingId }, { status: result.status });

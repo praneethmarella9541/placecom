@@ -56,7 +56,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       const record = await getRecord(svc, orgOwnerId, entry.record_id);
       if (record) {
         const recordAttrs = await loadAttributes(svc, orgOwnerId, list.object_id);
-        const rules = await checkStageRulesV2(svc, orgOwnerId, stage.id, recordAttrs, record.values, record.name, auth.ctx.userId);
+        const rules = await checkStageRulesV2(svc, orgOwnerId, stage.id, recordAttrs, record.values, record.name, auth.ctx.userId, { objectId: list.object_id, recordId: record.id });
         if (rules.errors.length) return NextResponse.json({ error: rules.errors[0], errors: rules.errors, missingFields: rules.missingFields }, { status: 422 });
         if (rules.warnings.length) console.warn("[data] warn-mode stage rule(s) matched (not yet surfaced to the user — phase 6):", rules.warnings);
       }

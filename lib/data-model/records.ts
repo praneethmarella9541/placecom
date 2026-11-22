@@ -233,7 +233,17 @@ export async function getRecord(svc: SupabaseClient, org: string, id: string): P
 // Writing
 // ---------------------------------------------------------------------------
 
-type Actor = { userId: string; org: string; source?: string; /** Set when a workflow made the change, so the event log can tell. */ workflowId?: string };
+type Actor = {
+  userId: string;
+  org: string;
+  source?: string;
+  /** Set when a workflow made the change, so the event log can tell. */
+  workflowId?: string;
+  /** Asks to bypass an admin_bypass-marked rule that would otherwise block this save. Only ever
+   *  honoured for an actual admin (checked in rule-engine-bridge.ts, not here) — safe to pass
+   *  through unchecked from a request body. */
+  bypassRules?: boolean;
+};
 
 async function writeHistory(
   svc: SupabaseClient,
@@ -427,7 +437,10 @@ export async function checkRecordWrite(
   if (lookupErrors.length) return { ok: false, status: 400, error: lookupErrors[0], errors: lookupErrors };
 
   const ruleMode = mode === "create" ? { isNew: true } : { isNew: false, priorValues: existing!.values };
-  const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, nextValues, nextName, ruleMode, actor.userId);
+  const rules = await checkRecordRulesV2(svc, actor.org, object.id, attrs, nextValues, nextName, ruleMode, actor.userId, {
+    recordId: existing?.id ?? null,
+    bypassRequested: actor.bypassRules === true,
+  });
   if (rules.errors.length) return { ok: false, status: 422, error: rules.errors[0], errors: rules.errors };
   if (rules.warnings.length) console.warn(`[data-model] warn-mode rule(s) matched on ${mode} (not yet surfaced to the user — phase 6):`, rules.warnings);
 

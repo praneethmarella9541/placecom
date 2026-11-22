@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Loader2, Plus, X } from "lucide-react";
 import type { AttributeDef } from "@/lib/data-model/types";
 import type { RuleCondition, RuleOp, RuleRequirement } from "@/lib/data-model/rules";
+import type { RuleTemplate } from "@/lib/data-model/rule-templates";
 import { dataApi } from "@/lib/data-model/client";
 
 type StoredRule = {
@@ -66,7 +67,57 @@ export function RulesModal(props: Props) {
   const [errorLocation, setErrorLocation] = useState("");
   const [message, setMessage] = useState("");
   const [expressionSource, setExpressionSource] = useState("");
+  const [adminBypass, setAdminBypass] = useState(false);
   const [formulaError, setFormulaError] = useState<{ message: string; pos?: { start: number; end: number } } | null>(null);
+
+  // Templates: starter formulas, fetched once, offered as a picker above the formula textarea.
+  const [templates, setTemplates] = useState<RuleTemplate[] | null>(null);
+  useEffect(() => {
+    if (formType !== "formula" || templates !== null) return;
+    void dataApi<{ templates: RuleTemplate[] }>("/api/data/rules/templates").then((r) => r.ok && setTemplates(r.data.templates));
+  }, [formType, templates]);
+
+  function applyTemplate(id: string) {
+    const t = templates?.find((x) => x.id === id);
+    if (!t) return;
+    nameChanged(t.label);
+    setRuleMode(t.mode);
+    setMessage(t.message);
+    setExpressionSource(t.expressionSource);
+    setFormulaError(null);
+  }
+
+  // Test panel: tries the form's current rule (saved or not) against made-up values — the same
+  // check a real save would run, with nothing written anywhere.
+  const [testOpen, setTestOpen] = useState(false);
+  const [testName, setTestName] = useState("");
+  const [testValues, setTestValues] = useState("{\n  \n}");
+  const [testBusy, setTestBusy] = useState(false);
+  const [testResult, setTestResult] = useState<{ matched: boolean; messages: string[]; mode: "block" | "warn" } | { error: string } | null>(null);
+
+  async function runTest() {
+    setTestBusy(true);
+    setTestResult(null);
+    let values: unknown;
+    try {
+      values = JSON.parse(testValues);
+    } catch {
+      setTestBusy(false);
+      setTestResult({ error: "Test values must be valid JSON, e.g. { \"field_slug\": \"value\" }." });
+      return;
+    }
+    const base =
+      formType === "formula"
+        ? { format: "formula", apiName: apiName || "test", appliesOn, mode: ruleMode, errorLocation: errorLocation || undefined, message: message.trim() || undefined, expressionSource }
+        : { requirements: reqs, condition: props.mode === "record" && useCondition ? { attribute: condField, op: condOp, value: condOp === "eq" || condOp === "neq" ? condValue : undefined } : null };
+    const body =
+      props.mode === "record"
+        ? { kind: "record", object: props.objectSlug, ...base, values, name: testName || undefined }
+        : { kind: "stage", listId: props.listId, stageId, ...base, values, name: testName || undefined };
+    const r = await dataApi<{ matched: boolean; messages: string[]; mode: "block" | "warn" }>("/api/data/rules/test", { method: "POST", body });
+    setTestBusy(false);
+    setTestResult(r.ok ? r.data : { error: r.error });
+  }
 
   function nameChanged(v: string) {
     setName(v);
@@ -134,6 +185,7 @@ export function RulesModal(props: Props) {
       errorLocation: errorLocation || undefined,
       message: message.trim() || undefined,
       expressionSource,
+      adminBypass,
     };
     const body =
       props.mode === "record"
@@ -152,6 +204,7 @@ export function RulesModal(props: Props) {
     setErrorLocation("");
     setMessage("");
     setExpressionSource("");
+    setAdminBypass(false);
     void load();
   }
 
@@ -168,6 +221,15 @@ export function RulesModal(props: Props) {
     setBusy(null);
     if (!r.ok) return setError(r.error);
     void load();
+  }
+
+  // Impact scan (formula rules only — see lib/data-model/rule-engine-bridge.ts's scanRuleImpact):
+  // how much of what's already there would fail this rule right now.
+  const [impact, setImpact] = useState<Record<string, { scanned: number; failing: number; truncated: boolean } | { error: string } | "loading">>({});
+  async function checkImpact(rule: StoredRule) {
+    setImpact((m) => ({ ...m, [rule.id]: "loading" }));
+    const r = await dataApi<{ scanned: number; failing: number; truncated: boolean }>(`/api/data/rules/${rule.id}/impact`, { method: "POST" });
+    setImpact((m) => ({ ...m, [rule.id]: r.ok ? r.data : { error: r.error } }));
   }
 
   if (typeof document === "undefined") return null;
@@ -195,8 +257,25 @@ export function RulesModal(props: Props) {
                     <div className={r.active ? "" : "text-[var(--color-text-faint)]"}>
                       <p className="font-semibold">{r.name}{!r.active && " (off)"}</p>
                       <p className="text-[12.5px] text-[var(--color-text-muted)]">{describe(r)}</p>
+                      {r.format === "formula" && impact[r.id] && impact[r.id] !== "loading" && (
+                        "error" in (impact[r.id] as object)
+                          ? <p className="text-[12px] text-[var(--color-danger)]">{(impact[r.id] as { error: string }).error}</p>
+                          : (() => {
+                              const i = impact[r.id] as { scanned: number; failing: number; truncated: boolean };
+                              return (
+                                <p className="text-[12px] text-[var(--color-text-faint)]">
+                                  {i.failing} of {i.scanned}{i.truncated ? "+" : ""} existing record{i.scanned === 1 ? "" : "s"} would currently fail this rule.
+                                </p>
+                              );
+                            })()
+                      )}
                     </div>
-                    <span className="flex shrink-0 gap-3 text-[12.5px] font-semibold">
+                    <span className="flex shrink-0 items-start gap-3 text-[12.5px] font-semibold">
+                      {r.format === "formula" && (
+                        <button type="button" disabled={impact[r.id] === "loading"} onClick={() => void checkImpact(r)} className="underline">
+                          {impact[r.id] === "loading" ? "Checking…" : "Check impact"}
+                        </button>
+                      )}
                       <button type="button" disabled={busy !== null} onClick={() => void toggle(r)} className="underline">{r.active ? "Turn off" : "Turn on"}</button>
                       <button type="button" disabled={busy !== null} onClick={() => void remove(r)} className="text-[var(--color-danger)] underline">Delete</button>
                     </span>
@@ -282,6 +361,16 @@ export function RulesModal(props: Props) {
               </>
             ) : (
               <>
+                {templates && templates.length > 0 && (
+                  <div>
+                    <label htmlFor="rule-template" className={lbl}>Start from a template (optional)</label>
+                    <select id="rule-template" defaultValue="" onChange={(e) => e.target.value && applyTemplate(e.target.value)} className="input-field select-chevron h-9 text-[12.5px]">
+                      <option value="">Blank formula</option>
+                      {templates.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                    </select>
+                    <p className="mt-1 text-[11.5px] text-[var(--color-text-faint)]">Fills in a starting formula with ALL_CAPS placeholders to replace with real field names and values.</p>
+                  </div>
+                )}
                 <div>
                   <label htmlFor="rule-api-name" className={lbl}>API name</label>
                   <input id="rule-api-name" value={apiName} onChange={(e) => { setApiNameTouched(true); setApiName(e.target.value); }} maxLength={60} placeholder="package_value_minimum" className="input-field h-9 font-mono text-[12.5px]" />
@@ -315,6 +404,10 @@ export function RulesModal(props: Props) {
                     </select>
                   </div>
                 </div>
+                <label className="flex items-center gap-2 text-[12.5px]">
+                  <input type="checkbox" checked={adminBypass} onChange={(e) => setAdminBypass(e.target.checked)} />
+                  Let an admin override a block on this rule (logged when they do)
+                </label>
                 <div>
                   <label htmlFor="rule-message" className={lbl}>Message (optional — can use {"{{field_slug}}"})</label>
                   <input id="rule-message" value={message} onChange={(e) => setMessage(e.target.value)} maxLength={500} placeholder="Package value must be at least 90000 (got {{package_value}})" className="input-field h-9 text-[13px]" />
@@ -339,10 +432,42 @@ export function RulesModal(props: Props) {
               </>
             )}
 
-            <button type="submit" disabled={busy !== null || !name.trim() || (formType === "formula" && (!apiName.trim() || !expressionSource.trim()))} className="btn-primary-copper inline-flex items-center gap-2">
-              {busy === "add" && <Loader2 className="h-4 w-4 animate-spin" />}
-              Add rule
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="submit" disabled={busy !== null || !name.trim() || (formType === "formula" && (!apiName.trim() || !expressionSource.trim()))} className="btn-primary-copper inline-flex items-center gap-2">
+                {busy === "add" && <Loader2 className="h-4 w-4 animate-spin" />}
+                Add rule
+              </button>
+              <button type="button" onClick={() => setTestOpen((v) => !v)} className="text-[12.5px] font-semibold text-[var(--color-text-muted)] underline hover:text-[var(--color-text)]">
+                {testOpen ? "Hide test panel" : "Test this rule"}
+              </button>
+            </div>
+
+            {testOpen && (
+              <div className="space-y-2 rounded-lg border border-[var(--color-border)] p-3">
+                <p className={lbl}>Test panel — tries the rule above against made-up values; nothing is saved.</p>
+                <div>
+                  <label htmlFor="rule-test-name" className={lbl}>Name (optional)</label>
+                  <input id="rule-test-name" value={testName} onChange={(e) => setTestName(e.target.value)} className="input-field h-8 text-[12.5px]" />
+                </div>
+                <div>
+                  <label htmlFor="rule-test-values" className={lbl}>Test values (JSON, by field slug)</label>
+                  <textarea id="rule-test-values" value={testValues} onChange={(e) => setTestValues(e.target.value)} rows={3} className="input-field w-full resize-y font-mono text-[12.5px]" />
+                </div>
+                <button type="button" disabled={testBusy} onClick={() => void runTest()} className="btn-secondary inline-flex items-center gap-2 text-[12.5px]">
+                  {testBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Run test
+                </button>
+                {testResult && (
+                  "error" in testResult ? (
+                    <p role="alert" className="rounded-lg bg-[var(--color-danger-light)] px-2 py-1.5 text-[12px] text-[var(--color-danger)]">{testResult.error}</p>
+                  ) : (
+                    <p className={`rounded-lg px-2 py-1.5 text-[12.5px] ${testResult.matched ? (testResult.mode === "warn" ? "bg-[var(--color-warning-light)] text-[var(--color-warning)]" : "bg-[var(--color-danger-light)] text-[var(--color-danger)]") : "bg-[var(--color-success-light)] text-[var(--color-success)]"}`}>
+                      {testResult.matched ? `${testResult.mode === "warn" ? "Would warn" : "Would block"}: ${testResult.messages.join(" ")}` : "Would pass — this rule doesn't match these values."}
+                    </p>
+                  )
+                )}
+              </div>
+            )}
           </form>
 
           {error && <p role="alert" className="rounded-lg bg-[var(--color-danger-light)] px-3 py-2 text-[12.5px] text-[var(--color-danger)]">{error}</p>}

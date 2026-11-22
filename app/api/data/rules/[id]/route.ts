@@ -4,6 +4,7 @@ import { requireDataContext } from "@/lib/data-model/access";
 import { isUuid } from "@/lib/data-model/lists";
 import { loadAttributes } from "@/lib/data-model/records";
 import { apiNameTaken, validateFormulaRule } from "@/lib/data-model/rule-formula-validate";
+import { snapshotRuleVersion } from "@/lib/data-model/rule-audit";
 
 export const runtime = "nodejs";
 
@@ -29,7 +30,9 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
 
   const { data: existing } = await svc
     .from("data_validation_rules")
-    .select("id, object_id, format, version, api_name, description, applies_on, mode, error_location, message, expression_source")
+    .select(
+      "id, object_id, name, kind, active, order_index, admin_bypass, condition, requirements, format, version, api_name, description, applies_on, mode, error_location, message, expression_source"
+    )
     .eq("org_owner_id", orgOwnerId)
     .eq("id", id)
     .maybeSingle();
@@ -69,7 +72,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     const { format: _format, ...formulaPatch } = validated.row;
     void _format; // format itself never changes via PATCH — this row was already 'formula'
     Object.assign(patch, formulaPatch);
-    patch.version = (typeof existing.version === "number" ? existing.version : 1) + 1;
+    const currentVersion = typeof existing.version === "number" ? existing.version : 1;
+    patch.version = currentVersion + 1;
+    // Snapshot the rule exactly as it reads right now, filed under the version number it's about
+    // to stop being. Best effort — never blocks the edit it's a record of.
+    await snapshotRuleVersion(svc, orgOwnerId, id, currentVersion, existing as unknown as Record<string, unknown>, userId);
   }
 
   if (!Object.keys(patch).length) return NextResponse.json({ error: "Nothing to change." }, { status: 400 });

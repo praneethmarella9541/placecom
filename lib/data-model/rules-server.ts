@@ -105,6 +105,26 @@ export async function loadStageRules(svc: SupabaseClient, org: string, stageId: 
   return fallback.error ? [] : ((fallback.data ?? []) as unknown as RawRow[]).map(toRule);
 }
 
+export type RuleScope = { rule: Rule; kind: "record" | "stage"; objectId: string; stageId: string | null };
+
+/** One rule by id, with enough of its row (kind, object, stage) to know how to re-run it outside a
+ *  real save — the impact scan and test-panel endpoints, neither of which goes through loadRecordRules
+ *  or loadStageRules since both already know which object or stage they're scoped to. */
+export async function loadRuleById(svc: SupabaseClient, org: string, id: string): Promise<RuleScope | null> {
+  const first = await svc.from("data_validation_rules").select(`kind, object_id, stage_id, ${FORMULA_COLUMNS}`).eq("org_owner_id", org).eq("id", id).maybeSingle();
+  if (!first.error) {
+    if (!first.data) return null;
+    const row = first.data as unknown as RawRow & { kind: "record" | "stage"; object_id: string; stage_id: string | null };
+    return { rule: toRule(row), kind: row.kind, objectId: row.object_id, stageId: row.stage_id };
+  }
+  if (!isMissingColumn(first.error.message)) return null;
+
+  const fallback = await svc.from("data_validation_rules").select(`kind, object_id, stage_id, ${LEGACY_COLUMNS}`).eq("org_owner_id", org).eq("id", id).maybeSingle();
+  if (fallback.error || !fallback.data) return null;
+  const row = fallback.data as unknown as RawRow & { kind: "record" | "stage"; object_id: string; stage_id: string | null };
+  return { rule: toRule(row), kind: row.kind, objectId: row.object_id, stageId: row.stage_id };
+}
+
 /** Remember a card entering a stage (and which it left). Best effort: history never blocks a move. */
 export async function recordStageChange(
   svc: SupabaseClient,

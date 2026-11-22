@@ -33,12 +33,12 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   const found = await load(request, (await props.params).id, "write");
   if ("response" in found) return found.response;
-  const body = (await request.json().catch(() => null)) as { name?: unknown; values?: Record<string, unknown> } | null;
+  const body = (await request.json().catch(() => null)) as { name?: unknown; values?: Record<string, unknown>; bypassRules?: unknown } | null;
   if (!body) return NextResponse.json({ error: "Invalid JSON." }, { status: 400 });
 
   const { svc, orgOwnerId, userId } = found.ctx;
   const attrs = await loadAttributes(svc, orgOwnerId, found.object.id);
-  const result = await updateRecord(svc, { userId, org: orgOwnerId }, found.object, attrs, found.record, {
+  const result = await updateRecord(svc, { userId, org: orgOwnerId, bypassRules: body.bypassRules === true }, found.object, attrs, found.record, {
     name: body.name,
     values: body.values,
   });

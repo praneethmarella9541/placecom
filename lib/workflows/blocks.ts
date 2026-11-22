@@ -266,10 +266,10 @@ export async function runBlock(block: Block, env: RunEnv): Promise<BlockResult> 
 }
 
 /** Stage rules ("a deal's value is required to enter Won") apply to workflows exactly as to people. */
-async function checkStageRules(env: RunEnv, stageId: string | null, record: { object_id: string; name: string; values: Record<string, unknown> }) {
+async function checkStageRules(env: RunEnv, stageId: string | null, record: { id: string; object_id: string; name: string; values: Record<string, unknown> }) {
   if (!stageId) return;
   const attrs = await loadAttributes(env.svc, env.org, record.object_id);
-  const rules = await checkStageRulesV2(env.svc, env.org, stageId, attrs, record.values, record.name, env.ownerId);
+  const rules = await checkStageRulesV2(env.svc, env.org, stageId, attrs, record.values, record.name, env.ownerId, { objectId: record.object_id, recordId: record.id });
   if (rules.warnings.length) console.warn("[workflows] warn-mode stage rule(s) matched (not yet surfaced to the user — phase 6):", rules.warnings);
   if (rules.errors.length) throw new BlockError(rules.errors.join(" "));
 }

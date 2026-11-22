@@ -12,7 +12,9 @@ import type { AttributeDef } from "./types";
 
 export type RuleOp = "eq" | "neq" | "empty" | "not_empty";
 export type RuleCondition = { attribute: string; op: RuleOp; value?: string } | null;
-export type RuleRequirement = { attribute: string; kind: "required" | "empty" };
+/** "gte"/"lte" need `value` (a number, or a YYYY-MM-DD date) — the dropdown-only way to express
+ *  "Package value must be at least 90000" without anyone writing a formula. */
+export type RuleRequirement = { attribute: string; kind: "required" | "empty" | "gte" | "lte"; value?: string };
 
 /**
  * `format` discriminates the two rule shapes a row can be (migration 0101): 'legacy' (condition +
@@ -57,6 +59,26 @@ function valueMatches(stored: unknown, wanted: string): boolean {
   return items.some((i) => String(i).trim().toLowerCase() === want);
 }
 
+function asNumber(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v !== "string") return null;
+  const n = Number(v.replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** "gte"/"lte" against a number when both sides parse as one, else a lexicographic string compare
+ *  (what a YYYY-MM-DD date needs — sorts the same as time, same trick used elsewhere in this
+ *  codebase for dates stored as ISO text). A blank stored value never meets either threshold. */
+function meetsThreshold(stored: unknown, kind: "gte" | "lte", threshold: string | undefined): boolean {
+  if (threshold === undefined) return true; // a malformed row should never be the reason a save fails
+  if (isEmptyValue(stored)) return false;
+  const storedNum = asNumber(stored);
+  const thresholdNum = asNumber(threshold);
+  if (storedNum !== null && thresholdNum !== null) return kind === "gte" ? storedNum >= thresholdNum : storedNum <= thresholdNum;
+  const storedText = String(stored);
+  return kind === "gte" ? storedText >= threshold : storedText <= threshold;
+}
+
 export function conditionHolds(cond: RuleCondition, values: Record<string, unknown>): boolean {
   if (!cond) return true;
   const v = values[cond.attribute];
@@ -86,6 +108,9 @@ export function failedRequirements(
     const v = req.attribute === "name" ? name : values[req.attribute];
     if (req.kind === "required" && isEmptyValue(v)) out.push(`${rule.name}: ${label} is required.`);
     if (req.kind === "empty" && !isEmptyValue(v)) out.push(`${rule.name}: ${label} must be empty.`);
+    if ((req.kind === "gte" || req.kind === "lte") && !meetsThreshold(v, req.kind, req.value)) {
+      out.push(`${rule.name}: ${label} must be ${req.kind === "gte" ? "at least" : "at most"} ${req.value}.`);
+    }
   }
   return out;
 }
@@ -107,9 +132,9 @@ export function missingRequiredFields(rules: Rule[], values: Record<string, unkn
     if (rule.format === "formula") continue;
     if (!conditionHolds(rule.condition, values)) continue;
     for (const req of rule.requirements) {
-      if (req.kind !== "required") continue;
       const v = req.attribute === "name" ? name : values[req.attribute];
-      if (isEmptyValue(v)) out.add(req.attribute);
+      if (req.kind === "required" && isEmptyValue(v)) out.add(req.attribute);
+      if ((req.kind === "gte" || req.kind === "lte") && !meetsThreshold(v, req.kind, req.value)) out.add(req.attribute);
     }
   }
   return [...out];
@@ -132,11 +157,19 @@ export function sanitizeRule(raw: unknown): { ok: true; condition: RuleCondition
     return { ok: false, error: `A rule needs between 1 and ${MAX_REQUIREMENTS} requirements.` };
   }
   const requirements: RuleRequirement[] = [];
-  for (const r of input.requirements as { attribute?: unknown; kind?: unknown }[]) {
-    if (!r || typeof r.attribute !== "string" || !(SLUG.test(r.attribute) || r.attribute === "name") || (r.kind !== "required" && r.kind !== "empty")) {
+  for (const r of input.requirements as { attribute?: unknown; kind?: unknown; value?: unknown }[]) {
+    if (!r || typeof r.attribute !== "string" || !(SLUG.test(r.attribute) || r.attribute === "name")) return { ok: false, error: "A requirement isn't valid." };
+    if (r.kind === "required" || r.kind === "empty") {
+      requirements.push({ attribute: r.attribute, kind: r.kind });
+    } else if (r.kind === "gte" || r.kind === "lte") {
+      const value = typeof r.value === "string" ? r.value.trim().slice(0, 60) : "";
+      const isNumber = value !== "" && Number.isFinite(Number(value.replace(/,/g, "")));
+      const isDate = /^\d{4}-\d{2}-\d{2}$/.test(value);
+      if (!isNumber && !isDate) return { ok: false, error: "A threshold needs a number, or a date like 2026-12-31." };
+      requirements.push({ attribute: r.attribute, kind: r.kind, value });
+    } else {
       return { ok: false, error: "A requirement isn't valid." };
     }
-    requirements.push({ attribute: r.attribute, kind: r.kind });
   }
   return { ok: true, condition, requirements };
 }

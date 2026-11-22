@@ -151,7 +151,13 @@ export function RulesModal(props: Props) {
       return `Formula${scope}: ${r.expression_source ?? ""}`;
     }
     const when = r.kind === "stage" ? `Moving into ${props.mode === "stage" ? (props.stages.find((s) => s.id === r.stage_id)?.name ?? "a stage") : "a stage"}` : r.condition ? `When ${labelOf(r.condition.attribute)} ${OP_LABELS[r.condition.op]}${r.condition.value ? ` "${r.condition.value}"` : ""}` : "Always";
-    const needs = r.requirements.map((q) => `${labelOf(q.attribute)} ${q.kind === "required" ? "is required" : "must be empty"}`).join("; ");
+    const needs = r.requirements
+      .map((q) => {
+        if (q.kind === "required") return `${labelOf(q.attribute)} is required`;
+        if (q.kind === "empty") return `${labelOf(q.attribute)} must be empty`;
+        return `${labelOf(q.attribute)} must be ${q.kind === "gte" ? "at least" : "at most"} ${q.value}`;
+      })
+      .join("; ");
     return `${when}: ${needs}`;
   };
 
@@ -337,21 +343,36 @@ export function RulesModal(props: Props) {
 
                 <div className="space-y-2">
                   <p className={lbl}>Then</p>
-                  {reqs.map((q, i) => (
+                  {reqs.map((q, i) => {
+                    const attr = q.attribute === "name" ? undefined : fields.find((f) => f.slug === q.attribute);
+                    const hasThreshold = !!attr && (attr.type === "number" || attr.type === "currency" || attr.type === "rating" || attr.type === "date");
+                    return (
                     <div key={i} className="flex flex-wrap items-center gap-2">
-                      <select aria-label="Field" value={q.attribute} onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { ...x, attribute: e.target.value } : x)))} className="input-field select-chevron h-8 text-[12.5px]">
+                      <select aria-label="Field" value={q.attribute} onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { attribute: e.target.value, kind: "required" } : x)))} className="input-field select-chevron h-8 text-[12.5px]">
                         <option value="name">Name</option>
                         {fields.map((f) => <option key={f.slug} value={f.slug}>{f.name}</option>)}
                       </select>
-                      <select aria-label="Requirement" value={q.kind} onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { ...x, kind: e.target.value as RuleRequirement["kind"] } : x)))} className="input-field select-chevron h-8 text-[12.5px]">
+                      <select aria-label="Requirement" value={q.kind} onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { ...x, kind: e.target.value as RuleRequirement["kind"], value: undefined } : x)))} className="input-field select-chevron h-8 text-[12.5px]">
                         <option value="required">is required</option>
                         <option value="empty">must be empty</option>
+                        {hasThreshold && <option value="gte">is at least</option>}
+                        {hasThreshold && <option value="lte">is at most</option>}
                       </select>
+                      {(q.kind === "gte" || q.kind === "lte") && (
+                        <input
+                          aria-label="Threshold"
+                          type={attr?.type === "date" ? "date" : "number"}
+                          value={q.value ?? ""}
+                          onChange={(e) => setReqs((rs) => rs.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))}
+                          className="input-field h-8 w-[140px] text-[12.5px]"
+                        />
+                      )}
                       {reqs.length > 1 && (
                         <button type="button" aria-label="Remove requirement" onClick={() => setReqs((rs) => rs.filter((_, j) => j !== i))} className="text-[var(--color-text-faint)] hover:text-[var(--color-danger)]"><X className="h-3.5 w-3.5" /></button>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                   {reqs.length < 8 && (
                     <button type="button" onClick={() => setReqs((rs) => [...rs, { attribute: fields[0]?.slug ?? "name", kind: "required" }])} className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
                       <Plus className="h-3.5 w-3.5" /> Another requirement
@@ -433,7 +454,7 @@ export function RulesModal(props: Props) {
             )}
 
             <div className="flex items-center gap-2">
-              <button type="submit" disabled={busy !== null || !name.trim() || (formType === "formula" && (!apiName.trim() || !expressionSource.trim()))} className="btn-primary-copper inline-flex items-center gap-2">
+              <button type="submit" disabled={busy !== null || !name.trim() || (formType === "formula" ? (!apiName.trim() || !expressionSource.trim()) : reqs.some((r) => (r.kind === "gte" || r.kind === "lte") && !String(r.value ?? "").trim()))} className="btn-primary-copper inline-flex items-center gap-2">
                 {busy === "add" && <Loader2 className="h-4 w-4 animate-spin" />}
                 Add rule
               </button>

@@ -26,6 +26,23 @@ test("zero is a real value, not empty", () => {
   assert.deepEqual(failedRequirements({ name: "r", requirements: [{ attribute: "value", kind: "required" }] }, attrs, { value: 0 }), []);
 });
 
+test("requirements: at-least and at-most thresholds, numeric and date, blank always fails", () => {
+  const minValue = { name: "Minimum value", requirements: [{ attribute: "value", kind: "gte" as const, value: "90000" }] };
+  assert.deepEqual(failedRequirements(minValue, attrs, { value: 90000 }), []);
+  assert.deepEqual(failedRequirements(minValue, attrs, { value: "1,20,000" }), []); // comma-formatted numeric text
+  assert.deepEqual(failedRequirements(minValue, attrs, { value: 50000 }), ["Minimum value: Deal value must be at least 90000."]);
+  assert.deepEqual(failedRequirements(minValue, attrs, {}), ["Minimum value: Deal value must be at least 90000."]); // blank never meets a minimum
+
+  const maxValue = { name: "Maximum value", requirements: [{ attribute: "value", kind: "lte" as const, value: "90000" }] };
+  assert.deepEqual(failedRequirements(maxValue, attrs, { value: 90000 }), []);
+  assert.deepEqual(failedRequirements(maxValue, attrs, { value: 95000 }), ["Maximum value: Deal value must be at most 90000."]);
+
+  const dateAttrs = [attr("deadline", "Deadline", { type: "date" })];
+  const minDate = { name: "Not too early", requirements: [{ attribute: "deadline", kind: "gte" as const, value: "2026-01-01" }] };
+  assert.deepEqual(failedRequirements(minDate, dateAttrs, { deadline: "2026-06-15" }), []);
+  assert.deepEqual(failedRequirements(minDate, dateAttrs, { deadline: "2025-12-01" }), ["Not too early: Deadline must be at least 2026-01-01."]);
+});
+
 test("a record rule only bites when its condition holds", () => {
   const rule = { id: "1", name: "Won needs a value", condition: { attribute: "status", op: "eq" as const, value: "Won" }, requirements: [{ attribute: "value", kind: "required" as const }] };
   assert.deepEqual(checkRecordRules([rule], attrs, { status: "Open" }), []);
@@ -40,6 +57,12 @@ test("sanitizeRule checks shape", () => {
   assert.equal(sanitizeRule({ requirements: [{ attribute: "Bad Slug", kind: "required" }] }).ok, false);
   assert.equal(sanitizeRule({ requirements: [{ attribute: "value", kind: "maybe" }] }).ok, false);
   assert.equal(sanitizeRule({ condition: { attribute: "x", op: "eq" }, requirements: [{ attribute: "value", kind: "required" }] }).ok, false);
+  assert.equal(sanitizeRule({ requirements: [{ attribute: "value", kind: "gte" }] }).ok, false); // needs a value
+  assert.equal(sanitizeRule({ requirements: [{ attribute: "value", kind: "gte", value: "not a number" }] }).ok, false);
+  const gte = sanitizeRule({ requirements: [{ attribute: "value", kind: "gte", value: "90000" }] });
+  assert.equal(gte.ok, true);
+  if (gte.ok) assert.deepEqual(gte.requirements, [{ attribute: "value", kind: "gte", value: "90000" }]);
+  assert.equal(sanitizeRule({ requirements: [{ attribute: "deadline", kind: "lte", value: "2026-12-31" }] }).ok, true);
 });
 
 test("missingRequiredFields names the fields a \"required\" requirement is blocking on, deduped", () => {
@@ -55,6 +78,12 @@ test("missingRequiredFields respects the rule's condition and \"must be empty\" 
   assert.deepEqual(missingRequiredFields([gated], { status: "Won" }), ["value"]);
   const mustBeEmpty = { id: "2", name: "n", condition: null, requirements: [{ attribute: "lost_reason", kind: "empty" as const }] };
   assert.deepEqual(missingRequiredFields([mustBeEmpty], { lost_reason: "x" }), []); // not a "required" kind
+});
+
+test("missingRequiredFields also names a field a failing at-least/at-most threshold is blocking on", () => {
+  const minValue = { id: "1", name: "Minimum value", condition: null, requirements: [{ attribute: "value", kind: "gte" as const, value: "90000" }] };
+  assert.deepEqual(missingRequiredFields([minValue], { value: 50000 }), ["value"]);
+  assert.deepEqual(missingRequiredFields([minValue], { value: 95000 }), []);
 });
 
 test("missingRequiredFields skips formula-format rules — they have no single field to point at", () => {

@@ -90,6 +90,13 @@ function randomCondition(rand: () => number): RuleCondition {
 }
 
 function randomRequirement(rand: () => number): RuleRequirement {
+  // gte/lte only ever target "amount" (a number field) — that's all the UI offers thresholds for
+  // besides date fields, which this fuzzer's ATTRS doesn't include (covered by a dedicated test below).
+  if (rand() < 0.3) {
+    const kind = rand() < 0.5 ? "gte" : "lte";
+    const value = String([-10, 0, 1, 5, 42, 100][Math.floor(rand() * 6)]);
+    return { attribute: "amount", kind, value };
+  }
   const attribute = ATTR_SLUGS[Math.floor(rand() * ATTR_SLUGS.length)];
   const kind = rand() < 0.5 ? "required" : "empty";
   return { attribute, kind };
@@ -162,6 +169,35 @@ test("stage rules (failedRequirements with no condition) match too", async () =>
     const fresh = await newEngineErrors(rule, values, name);
     assert.deepEqual(fresh, legacy, `seed ${SEED + 2} iter ${i}`);
   }
+});
+
+test("requirementErrorFormula builds DATE(y, m, d) for an at-least/at-most threshold on a date field", async () => {
+  const dateAttrs: AttributeDef[] = [attr({ slug: "deadline", type: "date" })];
+  const dateSchema: ObjectSchema = { Name: { type: "text" }, deadline: { type: "date" } };
+  const attrsBySlug = new Map(dateAttrs.map((a) => [a.slug, a]));
+  const req: RuleRequirement = { attribute: "deadline", kind: "gte", value: "2026-01-15" };
+  const source = requirementErrorFormula(null, req, attrsBySlug);
+  assert.match(source, /DATE\(2026, 1, 15\)/);
+  const compiled = compileExpression(source, dateSchema);
+  assert.equal(compiled.ok, true);
+  if (!compiled.ok) return;
+
+  const ctx = (deadline: string | null): EvalContext => ({
+    values: { deadline: deadline ? new Date(`${deadline}T00:00:00.000Z`) : null },
+    isNew: false,
+    user: { id: "u1", role: "staff", groupName: null, email: "", emailDomain: "" },
+    workspace: { id: "w1", name: "" },
+    now: new Date(),
+    timeZone: "Asia/Kolkata",
+    resolveLink: () => null,
+  });
+
+  const before = await runExpression(compiled.ast, dateSchema, ctx("2025-12-01"));
+  assert.deepEqual(before, { ok: true, value: true, type: "boolean" }); // too early: requirement failed
+  const after = await runExpression(compiled.ast, dateSchema, ctx("2026-06-15"));
+  assert.deepEqual(after, { ok: true, value: false, type: "boolean" }); // on/after the threshold: met
+  const blank = await runExpression(compiled.ast, dateSchema, ctx(null));
+  assert.deepEqual(blank, { ok: true, value: true, type: "boolean" }); // blank never meets a minimum
 });
 
 test('a condition on "name" reproduces the legacy evaluator\'s blank-name quirk, not the real name', async () => {

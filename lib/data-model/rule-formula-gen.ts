@@ -21,6 +21,20 @@ function quote(s: string): string {
   return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/** A "gte"/"lte" requirement's stored threshold (a plain number, or a YYYY-MM-DD date — see
+ *  rules.ts's sanitizeRule) as a formula literal of the right shape for the field it's compared
+ *  against: DATE(y, m, d) for a date field (the engine's date constructor takes three numbers, not
+ *  a string), a bare number otherwise. The UI only ever offers "is at least/at most" for number,
+ *  currency, rating and date fields, so those are the only two shapes this ever needs to produce. */
+function thresholdLiteral(attr: AttributeDef | undefined, raw: string): string {
+  if (attr?.type === "date") {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+    if (m) return `DATE(${Number(m[1])}, ${Number(m[2])}, ${Number(m[3])})`;
+  }
+  const n = Number(raw.replace(/,/g, ""));
+  return Number.isFinite(n) ? String(n) : "0";
+}
+
 /** Case-insensitive, trimmed match — identical to rules.ts's valueMatches(), expressed as a formula. */
 function matchesFormula(attribute: string, attrsBySlug: Map<string, AttributeDef>, value: string): string {
   const ref = fieldRef(attribute);
@@ -60,8 +74,14 @@ export function conditionToFormula(cond: RuleCondition, attrsBySlug: Map<string,
 /** The error-condition formula for one requirement: TRUE means this requirement has failed. */
 export function requirementErrorFormula(condition: RuleCondition, req: RuleRequirement, attrsBySlug: Map<string, AttributeDef>): string {
   const condFormula = conditionToFormula(condition, attrsBySlug);
-  const reqFormula = `ISBLANK(${fieldRef(req.attribute)})`;
-  const failed = req.kind === "required" ? reqFormula : `NOT(${reqFormula})`;
+  const ref = fieldRef(req.attribute);
+  let failed: string;
+  if (req.kind === "required") failed = `ISBLANK(${ref})`;
+  else if (req.kind === "empty") failed = `NOT(ISBLANK(${ref}))`;
+  else {
+    const literal = thresholdLiteral(attrsBySlug.get(req.attribute), req.value ?? "0");
+    failed = `OR(ISBLANK(${ref}), ${ref} ${req.kind === "gte" ? "<" : ">"} ${literal})`;
+  }
   return condFormula === "TRUE" ? failed : `AND(${condFormula}, ${failed})`;
 }
 
@@ -91,5 +111,7 @@ export function renderMessage(template: string, values: Record<string, FormulaVa
 export function requirementMessage(ruleName: string, req: RuleRequirement, attrsBySlug: Map<string, AttributeDef>): string {
   const attr = attrsBySlug.get(req.attribute);
   const label = attr?.name ?? (req.attribute === "name" ? "Name" : req.attribute);
-  return req.kind === "required" ? `${ruleName}: ${label} is required.` : `${ruleName}: ${label} must be empty.`;
+  if (req.kind === "required") return `${ruleName}: ${label} is required.`;
+  if (req.kind === "empty") return `${ruleName}: ${label} must be empty.`;
+  return `${ruleName}: ${label} must be ${req.kind === "gte" ? "at least" : "at most"} ${req.value}.`;
 }

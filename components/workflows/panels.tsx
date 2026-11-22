@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Trash2 } from "lucide-react";
 import { BLOCK_LABELS } from "@/lib/workflows/graph";
 import type { Block, Condition, FieldSet, Graph, Trigger, TriggerType } from "@/lib/workflows/types";
 import { TRIGGER_TYPES } from "@/lib/workflows/types";
 import { TRIGGER_LABELS, blockTitle, variablesFor, type VariableOption, type WorkflowMeta } from "@/lib/workflows/describe";
-import { buildStaticFormulaSchema, compileConditionFormula, variablePathToSlug } from "@/lib/workflows/condition-formula";
+import { variablePathToSlug } from "@/lib/workflows/variable-slug";
 import { ConditionsEditor, FieldsEditor, TemplateInput, inputCls, labelCls, selectCls } from "@/components/workflows/fields";
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -186,19 +186,11 @@ export function TriggerPanel({ trigger, meta, onChange }: { trigger: Trigger; me
  * guarantee (a path only this run's data happens to be missing still runs fine at run time).
  */
 function ConditionFormulaEditor({ formula, variables, onChange }: { formula: string; variables: VariableOption[]; onChange: (formula: string) => void }) {
-  const schema = useMemo(() => buildStaticFormulaSchema(variables), [variables]);
-  const error = useMemo(() => {
-    if (!formula.trim()) return null;
-    const compiled = compileConditionFormula(formula, schema);
-    return compiled.ok ? null : compiled.error;
-  }, [formula, schema]);
-
   return (
     <div className="space-y-2">
-      <Field label="Formula — TRUE means the condition is met" htmlFor="blk-cond-formula">
+      <Field label="Formula — TRUE means the condition is met" htmlFor="blk-cond-formula" hint="Checked when the workflow runs, not while you type here.">
         <textarea id="blk-cond-formula" value={formula} onChange={(e) => onChange(e.target.value)} rows={3} maxLength={4000} placeholder="trigger_record_values_score > 90" className="input-field w-full resize-y font-mono text-[12.5px]" />
       </Field>
-      {error && <p role="alert" className="rounded-lg bg-[var(--color-danger-light)] px-2 py-1.5 text-[12px] text-[var(--color-danger)]">{error}</p>}
       {variables.length > 0 && (
         <details className="text-[12px] text-[var(--color-text-faint)]">
           <summary className="cursor-pointer select-none">Available fields</summary>

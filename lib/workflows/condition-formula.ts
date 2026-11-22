@@ -1,24 +1,19 @@
 import { compileExpression, type CompileResult, type FormulaValue, type ObjectSchema } from "../rules-engine/index";
+import { variablePathToSlug } from "./variable-slug";
 import type { VariableOption } from "./describe";
+
+export { variablePathToSlug } from "./variable-slug";
 
 /**
  * An optional formula mode for the Filter and If-else blocks, sharing lib/rules-engine — the same
- * engine validation rules use — instead of a second condition language. Pure and client-safe (no
- * database), same as the rest of this file's siblings in lib/workflows.
+ * engine validation rules use — instead of a second condition language.
  *
- * A workflow variable path like "trigger.record.values.score" isn't a valid formula identifier (the
- * engine reads a dot as a cross-record hop, which this isn't), so it's offered to the formula as a
- * flat slug instead: TRIGGER_RECORD_VALUES_SCORE. variablePathToSlug is the one place that mapping is
- * made, used both by the builder's live hint (buildStaticFormulaSchema, from the same variable list
- * variablesFor() already offers the simple condition editor) and by the engine's real evaluation at
- * run time (blocks.ts's flattenRuntimeData, built from that run's actual data rather than a
- * pre-known list, so an optional path that happens to be absent this run reads as blank instead of
- * failing to compile at all).
+ * Server-only in practice, even though nothing here touches a database: lib/rules-engine pulls in
+ * node:vm (REGEX()'s sandboxed timeout), which webpack can't put in a browser bundle. blocks.ts
+ * (server-only) is the one real caller; the builder UI imports variablePathToSlug directly from
+ * ./variable-slug instead of from here, so its reference list doesn't drag the engine into the
+ * client bundle too.
  */
-
-export function variablePathToSlug(path: string): string {
-  return path.replace(/[^A-Za-z0-9_]/g, "_").replace(/^(?=[0-9])/, "_");
-}
 
 export function buildStaticFormulaSchema(variables: VariableOption[]): ObjectSchema {
   const schema: ObjectSchema = {};

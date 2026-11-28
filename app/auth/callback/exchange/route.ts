@@ -96,8 +96,14 @@ export async function GET(request: Request) {
   }
 
   const session = sessionData?.session;
-  const provider = session?.user?.app_metadata?.provider;
-  if (provider === "google" && session) {
+  // NOT session.user.app_metadata.provider: that's the account's ORIGINAL identity (e.g. "email",
+  // from an invited staff member's first sign-in), which never changes once set — so it stays
+  // wrong forever for exactly the case BYOM's "Connect with Google" exists for: an existing
+  // password/invite account linking Google as a SECOND identity. provider_token/provider_refresh_token
+  // only appear on a session that itself just came from an OAuth exchange (Google is the only OAuth
+  // provider this app uses), so they correctly answer "was THIS sign-in via Google" instead.
+  const signedInViaGoogleJustNow = !!session && !!(session.provider_token || session.provider_refresh_token);
+  if (signedInViaGoogleJustNow && session) {
     try {
       const refreshToken = session.provider_refresh_token;
       const accessToken = session.provider_token;
